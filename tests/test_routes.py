@@ -12,11 +12,16 @@ from handlers.routes import (
     KARGASTAN_RE,
     LEGS_RE,
     JOKE_COOLDOWN_SECONDS,
+    MAKE_SLAVE_RE,
+    MAKE_SLAVE_REPLY_RE,
+    METAL_RASCALS_RE,
     MODERATION_RE,
     CLEAR_RE,
     RESTORE_RE,
     STATS_RE,
+    TRANSFER_RE,
     resolve_target,
+    select_safebooru_post,
     user_is_immune,
 )
 
@@ -55,6 +60,27 @@ class RoutePatternTests(unittest.TestCase):
         )
         self.assertTrue(KARGASTAN_RE.match(command))
         self.assertTrue(LEGS_RE.match("Скинь ножки"))
+
+    def test_slave_management_commands(self):
+        self.assertTrue(TRANSFER_RE.match("/передать @slave @owner"))
+        self.assertTrue(MAKE_SLAVE_RE.match("/сделать @user1 рабом @user2"))
+        self.assertTrue(MAKE_SLAVE_REPLY_RE.match("/сделать рабом @owner"))
+
+    def test_metal_rascals_command(self):
+        self.assertTrue(METAL_RASCALS_RE.match("Металлические поганцы"))
+
+    def test_safebooru_selector_keeps_only_safe_static_art(self):
+        post = select_safebooru_post(
+            {
+                "post": [
+                    {"id": 1, "rating": "e", "file_url": "https://x/unsafe.jpg"},
+                    {"id": 2, "rating": "s", "file_url": "https://x/video.webm"},
+                    {"id": 3, "rating": "safe", "sample_url": "//x/art.jpg"},
+                ]
+            }
+        )
+        self.assertEqual(post["id"], 3)
+        self.assertEqual(post["selected_url"], "https://x/art.jpg")
 
     def test_kit_is_immune_case_insensitively(self):
         user = User(id=77, is_bot=False, first_name="Kit", username="KIT_Kitovich23")

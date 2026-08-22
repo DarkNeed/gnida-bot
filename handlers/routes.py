@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
+import aiohttp
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import (
@@ -20,6 +21,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
     TelegramObject,
+    URLInputFile,
     User,
 )
 
@@ -36,6 +38,7 @@ from parsing import (
 
 GROUP_TYPES = {"group", "supergroup"}
 JOKE_COOLDOWN_SECONDS = 120
+CHALLENGE_DEADLINE_SECONDS = 86400
 IMMUNE_USERNAME = "kit_kitovich23"
 IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настолько сочные что ему плевать."
 MODERATION_RE = re.compile(r"^[!/](бан|мут|пред)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
@@ -64,7 +67,18 @@ KARGASTAN_RE = re.compile(
     r"выеби\s+эту\s+ньюху\s+за\s+каргастан[!?.\s]*$",
     re.IGNORECASE,
 )
+TRANSFER_RE = re.compile(r"^[!/]передать(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+CLEAR_SLAVES_RE = re.compile(r"^[!/]очистить\s+рабов[!?.\s]*$", re.IGNORECASE)
+MAKE_SLAVE_REPLY_RE = re.compile(
+    r"^[!/]сделать\s+рабом\s+(@\w+|-?\d+)[!?.\s]*$", re.IGNORECASE
+)
+MAKE_SLAVE_RE = re.compile(
+    r"^[!/]сделать\s+(@\w+|-?\d+)\s+рабом\s+(@\w+|-?\d+)[!?.\s]*$",
+    re.IGNORECASE,
+)
+METAL_RASCALS_RE = re.compile(r"^металлические\s+поганцы[!?.\s]*$", re.IGNORECASE)
 SAMOVAR_RE = re.compile(r"(?<![а-яёa-z])самовар(?![а-яёa-z])", re.IGNORECASE)
+SAFEBOORU_API_URL = "https://safebooru.org/index.php"
 
 
 def display_name(user: User) -> str:
@@ -82,6 +96,79 @@ def user_is_immune(user: User) -> bool:
 async def target_is_immune(database: Database, chat_id: int, user_id: int) -> bool:
     row = await database.get_user(chat_id, user_id)
     return bool(row and row["username"] and row["username"].casefold() == IMMUNE_USERNAME)
+
+
+def is_mister_sleepy(user: User | None) -> bool:
+    return bool(user and user.username and user.username.casefold() == "mistersleeppy")
+
+
+async def resolve_user_token(
+    message: Message, database: Database, token: str
+) -> tuple[int, str] | None:
+    if not looks_like_user_token(token):
+        await message.answer("Укажите @username или числовой Telegram ID.")
+        return None
+    row = await database.resolve_user(message.chat.id, token)
+    if row:
+        return int(row["user_id"]), str(row["display_name"])
+    if token.lstrip("-").isdigit():
+        return int(token), token
+    await message.answer("Я ещё не видел этого @username в чате.")
+    return None
+
+
+def select_safebooru_post(payload) -> dict | None:
+    if isinstance(payload, dict):
+        posts = payload.get("post", [])
+    elif isinstance(payload, list):
+        posts = payload
+    else:
+        return None
+    candidates: list[dict] = []
+    for post in posts:
+        if not isinstance(post, dict) or str(post.get("rating", "s")).casefold() not in {
+            "s",
+            "safe",
+        }:
+            continue
+        url = post.get("sample_url") or post.get("file_url")
+        if not url and post.get("directory") and post.get("image"):
+            url = f"https://safebooru.org/images/{post['directory']}/{post['image']}"
+        if not url:
+            continue
+        if str(url).startswith("//"):
+            url = "https:" + str(url)
+        extension = str(url).split("?", 1)[0].rsplit(".", 1)[-1].casefold()
+        if extension not in {"jpg", "jpeg", "png", "webp"}:
+            continue
+        candidate = dict(post)
+        candidate["selected_url"] = str(url)
+        candidates.append(candidate)
+    return random.choice(candidates) if candidates else None
+
+
+async def fetch_random_safebooru_post() -> dict:
+    timeout = aiohttp.ClientTimeout(total=20)
+    headers = {"User-Agent": "GnidaBot/1.0 (Telegram bot)"}
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        for page in [random.randint(0, 1000), random.randint(0, 1000), 0]:
+            async with session.get(
+                SAFEBOORU_API_URL,
+                params={
+                    "page": "dapi",
+                    "s": "post",
+                    "q": "index",
+                    "json": "1",
+                    "limit": "100",
+                    "pid": str(page),
+                    "tags": "rating:safe",
+                },
+            ) as response:
+                response.raise_for_status()
+                post = select_safebooru_post(await response.json(content_type=None))
+                if post:
+                    return post
+    raise ValueError("Safebooru returned no suitable posts")
 
 
 def plain_name(row) -> str:
@@ -207,10 +294,11 @@ async def challenge_text(database: Database, challenge) -> str:
     opponent = await database.get_user(challenge["chat_id"], challenge["opponent_id"])
     first_state = "✅" if challenge["challenger_choice"] else "⌛"
     second_state = "✅" if challenge["opponent_choice"] else "⌛"
+    forced_text = "\n🔒 Принудительный вызов: владелец не может отказаться." if challenge["forced"] else ""
     return (
         f"КНБ: {plain_name(challenger)} против {plain_name(opponent)}\n"
         f"{first_state} {plain_name(challenger)} · {second_state} {plain_name(opponent)}\n"
-        "Выберите ход — соперник его не увидит."
+        f"Выберите ход — соперник его не увидит. На ход даётся 24 часа.{forced_text}"
     )
 
 
@@ -219,15 +307,17 @@ def create_router(database: Database) -> Router:
     router.message.middleware(TrackingMiddleware(database))
     joke_cooldowns: dict[tuple[int, str], float] = {}
     leg_tasks: set[asyncio.Task[None]] = set()
+    challenge_tasks: set[asyncio.Task[None]] = set()
 
     async def enforce_leg_request(request_id: int, bot: Bot) -> None:
         request = await database.get_leg_request(request_id)
-        if not request or request["status"] != "pending":
+        if not request or request["status"] not in {"pending", "enforcing"}:
             return
-        await asyncio.sleep(max(0, int(request["deadline"]) - utc_timestamp()))
-        request = await database.claim_expired_leg_request(request_id)
-        if not request:
-            return
+        if request["status"] == "pending":
+            await asyncio.sleep(max(0, int(request["deadline"]) - utc_timestamp()))
+            request = await database.claim_expired_leg_request(request_id)
+            if not request:
+                return
         chat_id = int(request["chat_id"])
         target_id = int(request["target_id"])
         if await target_is_immune(database, chat_id, target_id):
@@ -251,14 +341,14 @@ def create_router(database: Database) -> Router:
                 "mute",
                 "не скинул ножки",
                 int(request["requester_id"]),
-                duration_seconds=600,
+                duration_seconds=180,
                 active_until=int(until.timestamp()),
             )
             await database.finish_leg_request(request_id, "muted")
             await bot.send_message(
                 chat_id,
                 f"{mention(target_id, name)} не скинул ножки и за это просидит "
-                "с кляпом 10 минут.",
+                "с кляпом 3 минуты.",
                 parse_mode="HTML",
             )
         except (TelegramBadRequest, TelegramForbiddenError) as error:
@@ -272,14 +362,123 @@ def create_router(database: Database) -> Router:
         leg_tasks.add(task)
         task.add_done_callback(leg_tasks.discard)
 
+    async def edit_challenge(challenge, bot: Bot, text: str) -> None:
+        if not challenge["message_id"]:
+            return
+        try:
+            await bot.edit_message_text(
+                text,
+                chat_id=int(challenge["chat_id"]),
+                message_id=int(challenge["message_id"]),
+                parse_mode="HTML",
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            logging.getLogger(__name__).warning(
+                "Could not edit challenge %s: %s", challenge["id"], error
+            )
+
+    async def publish_game_win(
+        challenge, bot: Bot, winner_id: int, loser_id: int, heading: str
+    ) -> None:
+        chat_id = int(challenge["chat_id"])
+        winner = await database.get_user(chat_id, winner_id)
+        loser = await database.get_user(chat_id, loser_id)
+        outcome, affected_id = await database.transfer_after_loss(
+            chat_id, loser_id, winner_id
+        )
+        if outcome == "freed":
+            consequence = f"{plain_name(winner)} побеждает владельца и становится свободным."
+        elif outcome == "no_reward":
+            consequence = f"{plain_name(winner)} пока раб и не может получить собственного раба."
+        elif outcome == "kept":
+            consequence = f"{plain_name(loser)} остаётся рабом победителя."
+        elif outcome == "transferred":
+            slave = await database.get_user(chat_id, affected_id)
+            consequence = f"{plain_name(loser)} отдаёт раба {plain_name(slave)}."
+        else:
+            consequence = f"{plain_name(loser)} становится рабом победителя."
+        await edit_challenge(
+            challenge,
+            bot,
+            f"{heading}\n🏆 Победил {plain_name(winner)}. {consequence}",
+        )
+
+    async def publish_played_result(challenge, bot: Bot) -> None:
+        first = challenge["challenger_choice"]
+        second = challenge["opponent_choice"]
+        icons = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+        if first == second:
+            await edit_challenge(
+                challenge,
+                bot,
+                f"🤝 Ничья: {icons[first]} — {icons[second]}. Никто не пострадал.",
+            )
+            return
+        first_wins = (first, second) in {
+            ("rock", "scissors"),
+            ("scissors", "paper"),
+            ("paper", "rock"),
+        }
+        winner_id = int(
+            challenge["challenger_id"] if first_wins else challenge["opponent_id"]
+        )
+        loser_id = int(
+            challenge["opponent_id"] if first_wins else challenge["challenger_id"]
+        )
+        await publish_game_win(
+            challenge, bot, winner_id, loser_id, f"{icons[first]} — {icons[second]}"
+        )
+
+    async def enforce_challenge_deadline(challenge_id: int, bot: Bot) -> None:
+        challenge = await database.get_challenge(challenge_id)
+        if not challenge or challenge["status"] not in {"active", "deadline"}:
+            return
+        if challenge["status"] == "active":
+            await asyncio.sleep(max(0, int(challenge["deadline"]) - utc_timestamp()))
+            challenge = await database.claim_expired_challenge(challenge_id)
+            if not challenge:
+                return
+        first_moved = bool(challenge["challenger_choice"])
+        second_moved = bool(challenge["opponent_choice"])
+        if first_moved and second_moved:
+            await publish_played_result(challenge, bot)
+        elif first_moved != second_moved:
+            winner_id = int(
+                challenge["challenger_id"] if first_moved else challenge["opponent_id"]
+            )
+            loser_id = int(
+                challenge["opponent_id"] if first_moved else challenge["challenger_id"]
+            )
+            loser = await database.get_user(int(challenge["chat_id"]), loser_id)
+            await publish_game_win(
+                challenge,
+                bot,
+                winner_id,
+                loser_id,
+                f"⌛ {plain_name(loser)} не сделал ход за 24 часа.",
+            )
+        else:
+            await edit_challenge(
+                challenge, bot, "⌛ Оба игрока не сделали ход за 24 часа. Бой закрыт."
+            )
+
+    def schedule_challenge(challenge_id: int, bot: Bot) -> None:
+        task = asyncio.create_task(enforce_challenge_deadline(challenge_id, bot))
+        challenge_tasks.add(task)
+        task.add_done_callback(challenge_tasks.discard)
+
     @router.startup()
     async def resume_leg_requests(bot: Bot) -> None:
         for request in await database.pending_leg_requests():
             schedule_leg_request(int(request["id"]), bot)
+        for challenge in await database.pending_challenges():
+            schedule_challenge(int(challenge["id"]), bot)
 
     @router.shutdown()
     async def stop_leg_timers() -> None:
         for task in tuple(leg_tasks):
+            task.cancel()
+        for task in tuple(challenge_tasks):
             task.cancel()
 
     @router.message(F.text.regexp(START_RE))
@@ -636,6 +835,132 @@ def create_router(database: Database) -> Router:
         else:
             await message.answer("Этот участник не ваш раб.")
 
+    @router.message(F.text.regexp(TRANSFER_RE))
+    async def transfer_slave(message: Message) -> None:
+        if message.chat.type not in GROUP_TYPES or not message.from_user:
+            return
+        payload = command_payload(message.text or "")
+        replied = message.reply_to_message
+        if replied and replied.sender_chat:
+            await message.answer("Нельзя определить автора сообщения от имени канала.")
+            return
+        if replied and replied.from_user:
+            slave_user = replied.from_user
+            recipient_token, extra = split_first(payload)
+            if extra:
+                await message.answer("Формат: /передать @получатель — ответом на сообщение раба.")
+                return
+            await database.upsert_user(
+                message.chat.id,
+                slave_user.id,
+                slave_user.username,
+                display_name(slave_user),
+                touch=False,
+            )
+            slave_id, slave_name = slave_user.id, display_name(slave_user)
+        else:
+            slave_token, remainder = split_first(payload)
+            recipient_token, extra = split_first(remainder)
+            if not slave_token or not recipient_token or extra:
+                await message.answer("Формат: /передать @раб @получатель")
+                return
+            slave = await resolve_user_token(message, database, slave_token)
+            if not slave:
+                return
+            slave_id, slave_name = slave
+        recipient = await resolve_user_token(message, database, recipient_token)
+        if not recipient:
+            return
+        recipient_id, recipient_name = recipient
+        if await target_is_immune(database, message.chat.id, slave_id):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        result = await database.transfer_slave(
+            message.chat.id, message.from_user.id, slave_id, recipient_id
+        )
+        if result == "not_owned":
+            await message.answer("Этот участник не ваш раб.")
+        elif result == "recipient_is_slave":
+            await message.answer("Раб не может владеть другими рабами.")
+        elif result == "self":
+            await message.answer("Нельзя передать человека самому себе.")
+        elif result == "same_owner":
+            await message.answer("Этот участник уже принадлежит вам.")
+        else:
+            await message.answer(
+                f"🤝 {mention(slave_id, slave_name)} передан владельцу "
+                f"{mention(recipient_id, recipient_name)}.",
+                parse_mode="HTML",
+            )
+
+    @router.message(F.text.regexp(CLEAR_SLAVES_RE))
+    async def sleepy_clear_slaves(message: Message) -> None:
+        replied = message.reply_to_message
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not is_mister_sleepy(message.from_user)
+            or not replied
+            or replied.sender_chat
+            or not replied.from_user
+        ):
+            return
+        target = replied.from_user
+        amount = await database.release_all_slaves(message.chat.id, target.id)
+        await message.answer(
+            f"🕊 Все рабы {mention(target.id, display_name(target))} отпущены: {amount}.",
+            parse_mode="HTML",
+        )
+
+    @router.message(F.text.regexp(MAKE_SLAVE_REPLY_RE) | F.text.regexp(MAKE_SLAVE_RE))
+    async def sleepy_make_slave(message: Message) -> None:
+        if message.chat.type not in GROUP_TYPES or not is_mister_sleepy(message.from_user):
+            return
+        text = message.text or ""
+        reply_match = MAKE_SLAVE_REPLY_RE.match(text)
+        full_match = MAKE_SLAVE_RE.match(text)
+        replied = message.reply_to_message
+        if reply_match:
+            if not replied or replied.sender_chat or not replied.from_user:
+                return
+            slave_user = replied.from_user
+            if slave_user.is_bot:
+                return
+            await database.upsert_user(
+                message.chat.id,
+                slave_user.id,
+                slave_user.username,
+                display_name(slave_user),
+                touch=False,
+            )
+            slave_id, slave_name = slave_user.id, display_name(slave_user)
+            owner_token = reply_match.group(1)
+        elif full_match:
+            slave = await resolve_user_token(message, database, full_match.group(1))
+            if not slave:
+                return
+            slave_id, slave_name = slave
+            owner_token = full_match.group(2)
+        else:
+            return
+        owner = await resolve_user_token(message, database, owner_token)
+        if not owner:
+            return
+        owner_id, owner_name = owner
+        if await target_is_immune(database, message.chat.id, slave_id):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        result = await database.force_enslave(message.chat.id, slave_id, owner_id)
+        if result == "self":
+            await message.answer("Нельзя сделать участника рабом самого себя.")
+        elif result == "owner_is_slave":
+            await message.answer("Раб не может владеть другими рабами.")
+        else:
+            await message.answer(
+                f"⛓ {mention(slave_id, slave_name)} теперь раб "
+                f"{mention(owner_id, owner_name)}.",
+                parse_mode="HTML",
+            )
+
     @router.message(F.text.regexp(CHALLENGE_RE))
     async def challenge(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
@@ -653,8 +978,23 @@ def create_router(database: Database) -> Router:
         await database.upsert_user(
             message.chat.id, opponent.id, opponent.username, display_name(opponent), touch=False
         )
+        owner = await database.get_owner(message.chat.id, message.from_user.id)
+        if owner and int(owner["owner_id"]) != opponent.id:
+            owner_name = owner["display_name"] or owner["username"] or str(owner["owner_id"])
+            await message.answer(
+                f"Рабы могут вызывать на бой только своего владельца: {html.escape(owner_name)}.",
+                parse_mode="HTML",
+            )
+            return
+        forced = bool(
+            owner
+            and int(owner["owner_id"]) == opponent.id
+            and await database.can_force_owner(
+                message.chat.id, message.from_user.id, opponent.id
+            )
+        )
         challenge_id = await database.create_challenge(
-            message.chat.id, message.from_user.id, opponent.id
+            message.chat.id, message.from_user.id, opponent.id, forced=forced
         )
         if challenge_id is None:
             await message.answer("У вас уже есть активный вызов друг с другом.")
@@ -666,6 +1006,7 @@ def create_router(database: Database) -> Router:
             parse_mode="HTML",
         )
         await database.set_challenge_message(challenge_id, sent.message_id)
+        schedule_challenge(challenge_id, bot)
 
     @router.callback_query(F.data.startswith("rps:"))
     async def rps_callback(callback: CallbackQuery, bot: Bot) -> None:
@@ -691,13 +1032,17 @@ def create_router(database: Database) -> Router:
         if callback.from_user.id not in (challenge["challenger_id"], challenge["opponent_id"]):
             await callback.answer("Это не ваш поединок.", show_alert=True)
             return
-        if utc_timestamp() - challenge["created_at"] > 300:
-            if await database.finish_challenge(challenge_id, "expired"):
-                await callback.message.edit_text("⌛ Вызов истёк.")
-            await callback.answer()
+        if utc_timestamp() >= int(challenge["deadline"]):
+            await callback.answer("Время на ход уже истекло.", show_alert=True)
             return
         if choice == "refuse":
             is_opponent = callback.from_user.id == challenge["opponent_id"]
+            if is_opponent and challenge["forced"]:
+                await callback.answer(
+                    "Это принудительный вызов — владелец не может отказаться.",
+                    show_alert=True,
+                )
+                return
             if is_opponent and await database.is_vulnerable(
                 challenge["chat_id"], callback.from_user.id
             ):
@@ -727,39 +1072,7 @@ def create_router(database: Database) -> Router:
             return
         if not await database.finish_challenge(challenge_id):
             return
-
-        first = challenge["challenger_choice"]
-        second = challenge["opponent_choice"]
-        icons = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
-        first_row = await database.get_user(challenge["chat_id"], challenge["challenger_id"])
-        second_row = await database.get_user(challenge["chat_id"], challenge["opponent_id"])
-        if first == second:
-            await callback.message.edit_text(
-                f"🤝 Ничья: {icons[first]} — {icons[second]}. Никто не пострадал."
-            )
-            return
-        first_wins = (first, second) in {
-            ("rock", "scissors"),
-            ("scissors", "paper"),
-            ("paper", "rock"),
-        }
-        winner_id = challenge["challenger_id"] if first_wins else challenge["opponent_id"]
-        loser_id = challenge["opponent_id"] if first_wins else challenge["challenger_id"]
-        winner_row = first_row if first_wins else second_row
-        loser_row = second_row if first_wins else first_row
-        outcome, slave_id = await database.transfer_after_loss(
-            challenge["chat_id"], loser_id, winner_id
-        )
-        if outcome == "transferred":
-            slave = await database.get_user(challenge["chat_id"], slave_id)
-            consequence = f"{plain_name(loser_row)} отдаёт раба {plain_name(slave)}."
-        else:
-            consequence = f"{plain_name(loser_row)} становится рабом победителя."
-        await callback.message.edit_text(
-            f"{icons[first]} — {icons[second]}\n"
-            f"🏆 Победил {plain_name(winner_row)}. {consequence}",
-            parse_mode="HTML",
-        )
+        await publish_played_result(challenge, bot)
 
     @router.message(F.text.regexp(TOP_RE))
     async def top_owners(message: Message) -> None:
@@ -783,6 +1096,43 @@ def create_router(database: Database) -> Router:
             return False
         joke_cooldowns[key] = now
         return True
+
+    @router.message(F.text.regexp(METAL_RASCALS_RE))
+    async def metal_rascals(message: Message) -> None:
+        sender = message.from_user
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not sender
+            or not sender.username
+            or sender.username.casefold() != "olmus23"
+            or not joke_available(message.chat.id, "metal_rascals")
+        ):
+            return
+        try:
+            post = await fetch_random_safebooru_post()
+            post_id = post.get("id")
+            caption = "Металлические поганцы"
+            if post_id:
+                caption += (
+                    f' · <a href="https://safebooru.org/index.php?page=post&amp;s=view&amp;id='
+                    f'{int(post_id)}">Safebooru #{int(post_id)}</a>'
+                )
+            image = URLInputFile(
+                post["selected_url"],
+                headers={"User-Agent": "GnidaBot/1.0 (Telegram bot)"},
+                filename=f"safebooru_{post_id or 'art'}.jpg",
+                timeout=30,
+            )
+            await message.answer_photo(image, caption=caption, parse_mode="HTML")
+        except (
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            TelegramBadRequest,
+            TelegramForbiddenError,
+            ValueError,
+        ) as error:
+            logging.getLogger(__name__).warning("Safebooru request failed: %s", error)
+            await message.answer("Safebooru сейчас не отдал картинку. Попробуй позже.")
 
     @router.message(F.text.regexp(GNIDA_RE))
     async def random_gnida(message: Message) -> None:

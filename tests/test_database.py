@@ -86,6 +86,53 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(claimed["target_id"], 20)
         self.assertIsNone(await self.database.claim_expired_leg_request(request_id))
 
+    async def test_slave_cannot_receive_another_slave(self):
+        await self.database.force_enslave(1, 20, 10)
+        await self.database.force_enslave(1, 30, 10)
+        result = await self.database.transfer_slave(1, 10, 30, 20)
+        self.assertEqual(result, "recipient_is_slave")
+
+    async def test_beating_owner_frees_slave(self):
+        await self.database.force_enslave(1, 20, 10)
+        outcome, affected = await self.database.transfer_after_loss(1, 10, 20)
+        self.assertEqual((outcome, affected), ("freed", 20))
+        self.assertIsNone(await self.database.get_owner(1, 20))
+
+    async def test_slave_winner_cannot_own_unrelated_loser(self):
+        await self.database.force_enslave(1, 20, 10)
+        outcome, _ = await self.database.transfer_after_loss(1, 30, 20)
+        self.assertEqual(outcome, "no_reward")
+        self.assertEqual((await self.database.get_owner(1, 20))["owner_id"], 10)
+
+    async def test_enslaving_an_owner_releases_their_slaves(self):
+        await self.database.force_enslave(1, 30, 20)
+        await self.database.force_enslave(1, 20, 10)
+        self.assertEqual(await self.database.list_slaves(1, 20), [])
+        self.assertIsNone(await self.database.get_owner(1, 30))
+
+    async def test_forced_owner_challenge_is_monthly(self):
+        await self.database.force_enslave(1, 20, 10)
+        self.database.connection.execute(
+            "UPDATE ownership SET acquired_at=0 WHERE chat_id=1 AND slave_id=20"
+        )
+        self.database.connection.commit()
+        self.assertTrue(await self.database.can_force_owner(1, 20, 10))
+        challenge_id = await self.database.create_challenge(1, 20, 10, forced=True)
+        challenge = await self.database.get_challenge(challenge_id)
+        self.assertEqual(challenge["forced"], 1)
+        self.assertEqual(challenge["deadline"] - challenge["created_at"], 86400)
+        self.assertFalse(await self.database.can_force_owner(1, 20, 10))
+
+    async def test_expired_challenge_is_claimed_once(self):
+        challenge_id = await self.database.create_challenge(1, 10, 20)
+        self.database.connection.execute(
+            "UPDATE challenges SET deadline=0 WHERE id=?", (challenge_id,)
+        )
+        self.database.connection.commit()
+        claimed = await self.database.claim_expired_challenge(challenge_id)
+        self.assertEqual(claimed["challenger_id"], 10)
+        self.assertIsNone(await self.database.claim_expired_challenge(challenge_id))
+
 
 if __name__ == "__main__":
     unittest.main()

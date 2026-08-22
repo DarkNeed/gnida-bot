@@ -105,7 +105,35 @@ class Database:
                 ON leg_requests(status, deadline);
             """
         )
+        self._ensure_column("ownership", "last_forced_at", "INTEGER")
+        self._ensure_column(
+            "challenges", "forced", "INTEGER NOT NULL DEFAULT 0"
+        )
+        self._ensure_column("challenges", "deadline", "INTEGER")
+        self._connection.execute(
+            """UPDATE challenges SET deadline=created_at + 86400
+               WHERE deadline IS NULL"""
+        )
+        # Apply the invariant introduced later: an enslaved user cannot own slaves.
+        self._connection.execute(
+            """DELETE FROM ownership
+               WHERE EXISTS (
+                   SELECT 1 FROM ownership parent
+                   WHERE parent.chat_id=ownership.chat_id
+                     AND parent.slave_id=ownership.owner_id
+               )"""
+        )
         self._connection.commit()
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        columns = {
+            row["name"]
+            for row in self.connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            self.connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            )
 
     async def close(self) -> None:
         if self._connection is not None:
@@ -289,7 +317,14 @@ class Database:
             self.connection.commit()
             return cursor.rowcount
 
-    async def create_challenge(self, chat_id: int, challenger_id: int, opponent_id: int) -> int | None:
+    async def create_challenge(
+        self,
+        chat_id: int,
+        challenger_id: int,
+        opponent_id: int,
+        *,
+        forced: bool = False,
+    ) -> int | None:
         async with self._lock:
             existing = self.connection.execute(
                 """SELECT id FROM challenges WHERE chat_id=? AND status='active'
@@ -299,11 +334,19 @@ class Database:
             ).fetchone()
             if existing:
                 return None
+            now = utc_timestamp()
             cursor = self.connection.execute(
-                """INSERT INTO challenges(chat_id, challenger_id, opponent_id, created_at)
-                   VALUES (?, ?, ?, ?)""",
-                (chat_id, challenger_id, opponent_id, utc_timestamp()),
+                """INSERT INTO challenges(
+                       chat_id, challenger_id, opponent_id, forced, created_at, deadline
+                   ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (chat_id, challenger_id, opponent_id, int(forced), now, now + 86400),
             )
+            if forced:
+                self.connection.execute(
+                    """UPDATE ownership SET last_forced_at=?
+                       WHERE chat_id=? AND slave_id=? AND owner_id=?""",
+                    (now, chat_id, challenger_id, opponent_id),
+                )
             self.connection.commit()
             return int(cursor.lastrowid)
 
@@ -319,6 +362,30 @@ class Database:
             return self.connection.execute(
                 "SELECT * FROM challenges WHERE id=?", (challenge_id,)
             ).fetchone()
+
+    async def pending_challenges(self) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT * FROM challenges
+                   WHERE status IN ('active', 'deadline') ORDER BY deadline"""
+            ).fetchall()
+
+    async def claim_expired_challenge(self, challenge_id: int) -> sqlite3.Row | None:
+        now = utc_timestamp()
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT * FROM challenges
+                   WHERE id=? AND status='active' AND deadline <= ?""",
+                (challenge_id, now),
+            ).fetchone()
+            if row is None:
+                return None
+            self.connection.execute(
+                "UPDATE challenges SET status='deadline' WHERE id=?",
+                (challenge_id,),
+            )
+            self.connection.commit()
+            return row
 
     async def choose(self, challenge_id: int, user_id: int, choice: str) -> sqlite3.Row | None:
         async with self._lock:
@@ -352,13 +419,29 @@ class Database:
             return cursor.rowcount > 0
 
     async def transfer_after_loss(self, chat_id: int, loser_id: int, winner_id: int) -> tuple[str, int]:
-        """Give one of loser's slaves, otherwise enslave the loser."""
+        """Apply slavery consequences while preserving the no-slave-owners rule."""
         async with self._lock:
-            # Winning against your own owner always frees you first.
-            self.connection.execute(
-                "DELETE FROM ownership WHERE chat_id=? AND slave_id=? AND owner_id=?",
-                (chat_id, winner_id, loser_id),
-            )
+            winner_owner = self.connection.execute(
+                "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
+                (chat_id, winner_id),
+            ).fetchone()
+            if winner_owner:
+                if int(winner_owner["owner_id"]) == loser_id:
+                    self.connection.execute(
+                        "DELETE FROM ownership WHERE chat_id=? AND slave_id=?",
+                        (chat_id, winner_id),
+                    )
+                    self.connection.commit()
+                    return "freed", winner_id
+                self.connection.commit()
+                return "no_reward", loser_id
+            loser_owner = self.connection.execute(
+                "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
+                (chat_id, loser_id),
+            ).fetchone()
+            if loser_owner and int(loser_owner["owner_id"]) == winner_id:
+                self.connection.commit()
+                return "kept", loser_id
             owned = self.connection.execute(
                 """SELECT slave_id FROM ownership
                    WHERE chat_id=? AND owner_id=? AND slave_id != ?
@@ -368,22 +451,115 @@ class Database:
             if owned:
                 slave_id = int(owned["slave_id"])
                 self.connection.execute(
-                    "UPDATE ownership SET owner_id=?, acquired_at=? WHERE chat_id=? AND slave_id=?",
+                    """UPDATE ownership SET owner_id=?, acquired_at=?, last_forced_at=NULL
+                       WHERE chat_id=? AND slave_id=?""",
                     (winner_id, utc_timestamp(), chat_id, slave_id),
                 )
                 outcome = "transferred"
             else:
                 slave_id = loser_id
                 self.connection.execute(
-                    """INSERT INTO ownership(chat_id, slave_id, owner_id, acquired_at)
-                       VALUES (?, ?, ?, ?)
+                    """INSERT INTO ownership(
+                           chat_id, slave_id, owner_id, acquired_at, last_forced_at
+                       ) VALUES (?, ?, ?, ?, NULL)
                        ON CONFLICT(chat_id, slave_id) DO UPDATE SET
-                           owner_id=excluded.owner_id, acquired_at=excluded.acquired_at""",
+                           owner_id=excluded.owner_id,
+                           acquired_at=excluded.acquired_at,
+                           last_forced_at=NULL""",
                     (chat_id, slave_id, winner_id, utc_timestamp()),
                 )
                 outcome = "enslaved"
             self.connection.commit()
             return outcome, slave_id
+
+    async def get_owner(self, chat_id: int, slave_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT o.*, u.username, u.display_name
+                   FROM ownership o
+                   LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.owner_id
+                   WHERE o.chat_id=? AND o.slave_id=?""",
+                (chat_id, slave_id),
+            ).fetchone()
+
+    async def can_force_owner(self, chat_id: int, slave_id: int, owner_id: int) -> bool:
+        month = 30 * 86400
+        now = utc_timestamp()
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT acquired_at, last_forced_at FROM ownership
+                   WHERE chat_id=? AND slave_id=? AND owner_id=?""",
+                (chat_id, slave_id, owner_id),
+            ).fetchone()
+            if not row or now < int(row["acquired_at"]) + month:
+                return False
+            return row["last_forced_at"] is None or now >= int(row["last_forced_at"]) + month
+
+    async def transfer_slave(
+        self, chat_id: int, current_owner_id: int, slave_id: int, new_owner_id: int
+    ) -> str:
+        async with self._lock:
+            if slave_id == new_owner_id:
+                return "self"
+            if current_owner_id == new_owner_id:
+                return "same_owner"
+            owned = self.connection.execute(
+                """SELECT 1 FROM ownership
+                   WHERE chat_id=? AND slave_id=? AND owner_id=?""",
+                (chat_id, slave_id, current_owner_id),
+            ).fetchone()
+            if not owned:
+                return "not_owned"
+            recipient_is_slave = self.connection.execute(
+                "SELECT 1 FROM ownership WHERE chat_id=? AND slave_id=?",
+                (chat_id, new_owner_id),
+            ).fetchone()
+            if recipient_is_slave:
+                return "recipient_is_slave"
+            self.connection.execute(
+                """UPDATE ownership
+                   SET owner_id=?, acquired_at=?, last_forced_at=NULL
+                   WHERE chat_id=? AND slave_id=?""",
+                (new_owner_id, utc_timestamp(), chat_id, slave_id),
+            )
+            self.connection.commit()
+            return "transferred"
+
+    async def force_enslave(self, chat_id: int, slave_id: int, owner_id: int) -> str:
+        async with self._lock:
+            if slave_id == owner_id:
+                return "self"
+            owner_is_slave = self.connection.execute(
+                "SELECT 1 FROM ownership WHERE chat_id=? AND slave_id=?",
+                (chat_id, owner_id),
+            ).fetchone()
+            if owner_is_slave:
+                return "owner_is_slave"
+            self.connection.execute(
+                "DELETE FROM ownership WHERE chat_id=? AND owner_id=?",
+                (chat_id, slave_id),
+            )
+            self.connection.execute(
+                """INSERT INTO ownership(
+                       chat_id, slave_id, owner_id, acquired_at, last_forced_at
+                   ) VALUES (?, ?, ?, ?, NULL)
+                   ON CONFLICT(chat_id, slave_id) DO UPDATE SET
+                       owner_id=excluded.owner_id,
+                       acquired_at=excluded.acquired_at,
+                       last_forced_at=NULL""",
+                (chat_id, slave_id, owner_id, utc_timestamp()),
+            )
+            self.connection.commit()
+            return "enslaved"
+
+    async def release_all_slaves(self, chat_id: int, owner_id: int) -> int:
+        async with self._lock:
+            cursor = self.connection.execute(
+                "DELETE FROM ownership WHERE chat_id=? AND owner_id=?",
+                (chat_id, owner_id),
+            )
+            self.connection.commit()
+            return cursor.rowcount
 
     async def list_slaves(self, chat_id: int, owner_id: int) -> list[sqlite3.Row]:
         async with self._lock:
@@ -457,7 +633,8 @@ class Database:
     async def pending_leg_requests(self) -> list[sqlite3.Row]:
         async with self._lock:
             return self.connection.execute(
-                "SELECT * FROM leg_requests WHERE status='pending' ORDER BY deadline"
+                """SELECT * FROM leg_requests
+                   WHERE status IN ('pending', 'enforcing') ORDER BY deadline"""
             ).fetchall()
 
     async def complete_leg_requests(self, chat_id: int, target_id: int) -> int:
