@@ -133,6 +133,21 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(claimed["challenger_id"], 10)
         self.assertIsNone(await self.database.claim_expired_challenge(challenge_id))
 
+    async def test_each_user_can_have_only_one_active_challenge(self):
+        first = await self.database.create_challenge(1, 10, 20)
+        self.assertIsNotNone(first)
+        self.assertIsNone(await self.database.create_challenge(1, 10, 30))
+        self.assertIsNone(await self.database.create_challenge(1, 30, 20))
+        await self.database.finish_challenge(first)
+        self.assertIsNotNone(await self.database.create_challenge(1, 10, 30))
+
+    async def test_challenge_remembers_newcomer_status(self):
+        challenge_id = await self.database.create_challenge(
+            1, 10, 20, opponent_newcomer=True
+        )
+        challenge = await self.database.get_challenge(challenge_id)
+        self.assertEqual(challenge["opponent_newcomer"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

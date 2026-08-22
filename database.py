@@ -109,6 +109,9 @@ class Database:
         self._ensure_column(
             "challenges", "forced", "INTEGER NOT NULL DEFAULT 0"
         )
+        self._ensure_column(
+            "challenges", "opponent_newcomer", "INTEGER NOT NULL DEFAULT 0"
+        )
         self._ensure_column("challenges", "deadline", "INTEGER")
         self._connection.execute(
             """UPDATE challenges SET deadline=created_at + 86400
@@ -324,22 +327,31 @@ class Database:
         opponent_id: int,
         *,
         forced: bool = False,
+        opponent_newcomer: bool = False,
     ) -> int | None:
         async with self._lock:
             existing = self.connection.execute(
                 """SELECT id FROM challenges WHERE chat_id=? AND status='active'
-                   AND ((challenger_id=? AND opponent_id=?)
-                     OR (challenger_id=? AND opponent_id=?))""",
-                (chat_id, challenger_id, opponent_id, opponent_id, challenger_id),
+                   AND (challenger_id IN (?, ?) OR opponent_id IN (?, ?))""",
+                (chat_id, challenger_id, opponent_id, challenger_id, opponent_id),
             ).fetchone()
             if existing:
                 return None
             now = utc_timestamp()
             cursor = self.connection.execute(
                 """INSERT INTO challenges(
-                       chat_id, challenger_id, opponent_id, forced, created_at, deadline
-                   ) VALUES (?, ?, ?, ?, ?, ?)""",
-                (chat_id, challenger_id, opponent_id, int(forced), now, now + 86400),
+                       chat_id, challenger_id, opponent_id, forced,
+                       opponent_newcomer, created_at, deadline
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    chat_id,
+                    challenger_id,
+                    opponent_id,
+                    int(forced),
+                    int(opponent_newcomer),
+                    now,
+                    now + 86400,
+                ),
             )
             if forced:
                 self.connection.execute(

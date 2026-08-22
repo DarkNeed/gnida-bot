@@ -225,6 +225,17 @@ async def has_restrict_rights(bot: Bot, chat_id: int, user_id: int) -> bool:
     return isinstance(member, ChatMemberAdministrator) and bool(member.can_restrict_members)
 
 
+async def is_chat_participant(bot: Bot, chat_id: int, user_id: int) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+    except (TelegramBadRequest, TelegramForbiddenError):
+        return False
+    status = getattr(member.status, "value", member.status)
+    if status == "restricted":
+        return bool(getattr(member, "is_member", False))
+    return status not in {"left", "kicked"}
+
+
 async def ensure_admin(message: Message, bot: Bot) -> bool:
     if not message.from_user:
         await message.answer("Команда недоступна анонимным администраторам.")
@@ -296,10 +307,16 @@ async def challenge_text(database: Database, challenge) -> str:
     first_state = "✅" if challenge["challenger_choice"] else "⌛"
     second_state = "✅" if challenge["opponent_choice"] else "⌛"
     forced_text = "\n🔒 Принудительный вызов: владелец не может отказаться." if challenge["forced"] else ""
+    newcomer_text = (
+        "\n⏳ Если новичок не сделает ход за 24 часа, он автоматически станет рабом."
+        if challenge["opponent_newcomer"]
+        else ""
+    )
     return (
         f"КНБ: {plain_name(challenger)} против {plain_name(opponent)}\n"
         f"{first_state} {plain_name(challenger)} · {second_state} {plain_name(opponent)}\n"
-        f"Выберите ход — соперник его не увидит. На ход даётся 24 часа.{forced_text}"
+        f"Выберите ход — соперник его не увидит. На ход даётся 24 часа."
+        f"{forced_text}{newcomer_text}"
     )
 
 
@@ -443,24 +460,29 @@ def create_router(database: Database) -> Router:
         second_moved = bool(challenge["opponent_choice"])
         if first_moved and second_moved:
             await publish_played_result(challenge, bot)
-        elif first_moved != second_moved:
-            winner_id = int(
-                challenge["challenger_id"] if first_moved else challenge["opponent_id"]
-            )
-            loser_id = int(
-                challenge["opponent_id"] if first_moved else challenge["challenger_id"]
-            )
-            loser = await database.get_user(int(challenge["chat_id"]), loser_id)
-            await publish_game_win(
-                challenge,
-                bot,
-                winner_id,
-                loser_id,
-                f"⌛ {plain_name(loser)} не сделал ход за 24 часа.",
-            )
+        elif challenge["opponent_newcomer"] and not second_moved:
+            chat_id = int(challenge["chat_id"])
+            challenger_id = int(challenge["challenger_id"])
+            opponent_id = int(challenge["opponent_id"])
+            challenger = await database.get_user(chat_id, challenger_id)
+            opponent = await database.get_user(chat_id, opponent_id)
+            result = await database.force_enslave(chat_id, opponent_id, challenger_id)
+            if result == "enslaved":
+                text = (
+                    f"⌛ {plain_name(opponent)} не ответил на вызов за 24 часа и "
+                    f"становится рабом {plain_name(challenger)}."
+                )
+            else:
+                text = (
+                    "⌛ Новичок не ответил на вызов, но вызывающий сам является рабом "
+                    "и не может получить собственного."
+                )
+            await edit_challenge(challenge, bot, text)
         else:
             await edit_challenge(
-                challenge, bot, "⌛ Оба игрока не сделали ход за 24 часа. Бой закрыт."
+                challenge,
+                bot,
+                "⌛ За 24 часа бой не был завершён. Для обычных участников последствий нет.",
             )
 
     def schedule_challenge(challenge_id: int, bot: Bot) -> None:
@@ -966,7 +988,12 @@ def create_router(database: Database) -> Router:
     async def challenge(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
             return
-        if not message.reply_to_message or not message.reply_to_message.from_user:
+        if (
+            message.sender_chat
+            or not message.reply_to_message
+            or message.reply_to_message.sender_chat
+            or not message.reply_to_message.from_user
+        ):
             await message.answer("Отправьте «Вызов» в ответ на сообщение соперника.")
             return
         opponent = message.reply_to_message.from_user
@@ -975,6 +1002,13 @@ def create_router(database: Database) -> Router:
             return
         if user_is_immune(opponent):
             await message.answer(IMMUNITY_TEXT)
+            return
+        challenger_present, opponent_present = await asyncio.gather(
+            is_chat_participant(bot, message.chat.id, message.from_user.id),
+            is_chat_participant(bot, message.chat.id, opponent.id),
+        )
+        if not challenger_present or not opponent_present:
+            await message.answer("Оба участника вызова должны состоять в этом чате.")
             return
         await database.upsert_user(
             message.chat.id, opponent.id, opponent.username, display_name(opponent), touch=False
@@ -994,11 +1028,16 @@ def create_router(database: Database) -> Router:
                 message.chat.id, message.from_user.id, opponent.id
             )
         )
+        opponent_newcomer = await database.is_vulnerable(message.chat.id, opponent.id)
         challenge_id = await database.create_challenge(
-            message.chat.id, message.from_user.id, opponent.id, forced=forced
+            message.chat.id,
+            message.from_user.id,
+            opponent.id,
+            forced=forced,
+            opponent_newcomer=opponent_newcomer,
         )
         if challenge_id is None:
-            await message.answer("У вас уже есть активный вызов друг с другом.")
+            await message.answer("У одного из участников уже есть активный вызов.")
             return
         row = await database.get_challenge(challenge_id)
         sent = await message.answer(

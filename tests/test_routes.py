@@ -23,6 +23,7 @@ from handlers.routes import (
     TRANSFER_RE,
     resolve_target,
     select_safebooru_post,
+    is_chat_participant,
     user_is_immune,
 )
 
@@ -91,6 +92,20 @@ class RoutePatternTests(unittest.TestCase):
 
 
 class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_users_who_left_are_not_chat_participants(self):
+        bot = SimpleNamespace(
+            get_chat_member=AsyncMock(return_value=SimpleNamespace(status="left"))
+        )
+        self.assertFalse(await is_chat_participant(bot, -1001, 42))
+
+    async def test_restricted_non_member_is_not_chat_participant(self):
+        bot = SimpleNamespace(
+            get_chat_member=AsyncMock(
+                return_value=SimpleNamespace(status="restricted", is_member=False)
+            )
+        )
+        self.assertFalse(await is_chat_participant(bot, -1001, 42))
+
     async def test_spaced_reply_duration_is_not_treated_as_user_id(self):
         replied_user = User(id=42, is_bot=False, first_name="Сон")
         message = SimpleNamespace(
