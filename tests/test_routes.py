@@ -6,8 +6,11 @@ from aiogram.types import User
 
 from handlers.routes import (
     BASEMENT_RE,
+    BASEMENT_LIST_RE,
+    BASEMENT_RELEASE_RE,
     FEMBOY_RE,
     HUILO_RE,
+    HEAVENLY_PUNISHMENT_RE,
     IMMUNITY_TEXT,
     KARGASTAN_RE,
     LEGS_RE,
@@ -19,8 +22,10 @@ from handlers.routes import (
     CLEAR_RE,
     RESTORE_RE,
     SAFEBOORU_TAGS,
+    SLAP_RE,
     STATS_RE,
     TRANSFER_RE,
+    ART_THEFT_RE,
     resolve_target,
     select_safebooru_post,
     is_chat_participant,
@@ -53,6 +58,16 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(FEMBOY_RE.match("Дима фембой"))
         self.assertTrue(BASEMENT_RE.match("Забрать в Подвалград"))
         self.assertTrue(BASEMENT_RE.match("В подвалград"))
+
+    def test_basement_management_phrases(self):
+        self.assertTrue(BASEMENT_LIST_RE.match("/подвалград"))
+        self.assertTrue(BASEMENT_RELEASE_RE.match("/отпустить из подвалграда @user"))
+        self.assertTrue(SLAP_RE.match("Леща @user"))
+
+    def test_personal_trigger_phrases(self):
+        self.assertTrue(ART_THEFT_RE.search("Я спизжу этот арт"))
+        self.assertTrue(ART_THEFT_RE.search("Уже спиздил"))
+        self.assertTrue(HEAVENLY_PUNISHMENT_RE.match("Это кара небесная, сосунок!"))
 
     def test_special_command_phrases(self):
         command = (

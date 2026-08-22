@@ -148,6 +148,20 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         challenge = await self.database.get_challenge(challenge_id)
         self.assertEqual(challenge["opponent_newcomer"], 1)
 
+    async def test_counter_increments_persistently(self):
+        self.assertEqual(await self.database.increment_counter(1, "stolen_art"), 1)
+        self.assertEqual(await self.database.increment_counter(1, "stolen_art"), 2)
+        self.assertEqual(await self.database.increment_counter(2, "stolen_art"), 1)
+
+    async def test_basement_membership_is_separate_and_removable(self):
+        self.assertTrue(await self.database.add_basement_member(1, 20, 10))
+        self.assertFalse(await self.database.add_basement_member(1, 20, 10))
+        self.assertTrue(await self.database.is_basement_member(1, 20))
+        members = await self.database.list_basement_members(1)
+        self.assertEqual(members[0]["username"], "loser")
+        self.assertTrue(await self.database.remove_basement_member(1, 20))
+        self.assertFalse(await self.database.is_basement_member(1, 20))
+
 
 if __name__ == "__main__":
     unittest.main()

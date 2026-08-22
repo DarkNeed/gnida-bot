@@ -60,6 +60,15 @@ FEMBOY_RE = re.compile(r"^дима\s+фембой[!?.\s]*$", re.IGNORECASE)
 BASEMENT_RE = re.compile(
     r"^(?:в\s+подвалград|забрать\s+в\s+подвалград)[!?.\s]*$", re.IGNORECASE
 )
+BASEMENT_RELEASE_RE = re.compile(
+    r"^[!/]отпустить\s+из\s+подвалграда(?:@\w+)?(?:\s|$)", re.IGNORECASE
+)
+BASEMENT_LIST_RE = re.compile(r"^[!/]подвалград(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
+SLAP_RE = re.compile(r"^леща(?:\s|$)", re.IGNORECASE)
+ART_THEFT_RE = re.compile(r"(?<![а-яёa-z])(спизжу|спиздил)(?![а-яёa-z])", re.IGNORECASE)
+HEAVENLY_PUNISHMENT_RE = re.compile(
+    r"^это\s+кара\s+небесная,?\s+сосунок[!?.\s]*$", re.IGNORECASE
+)
 LEGS_RE = re.compile(r"^скинь\s+ножки[!?.\s]*$", re.IGNORECASE)
 KARGASTAN_RE = re.compile(
     r"^пусть\s+звенят\s+позолоченные\s+кранчики\s+самоваров\s+8\s+народов\.\s*"
@@ -101,6 +110,10 @@ async def target_is_immune(database: Database, chat_id: int, user_id: int) -> bo
 
 def is_mister_sleepy(user: User | None) -> bool:
     return bool(user and user.username and user.username.casefold() == "mistersleeppy")
+
+
+def is_cheto_neveru(user: User | None) -> bool:
+    return bool(user and user.username and user.username.casefold() == "cheto_neveru")
 
 
 async def resolve_user_token(
@@ -532,6 +545,136 @@ def create_router(database: Database) -> Router:
     async def complete_leg_request(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and message.from_user:
             await database.complete_leg_requests(message.chat.id, message.from_user.id)
+
+    @router.message(F.text.regexp(HEAVENLY_PUNISHMENT_RE))
+    async def heavenly_punishment(message: Message, bot: Bot) -> None:
+        replied = message.reply_to_message
+        target = replied.from_user if replied and not replied.sender_chat else None
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not message.from_user
+            or not message.from_user.username
+            or message.from_user.username.casefold() != IMMUNE_USERNAME
+            or not target
+            or target.is_bot
+        ):
+            return
+        await database.upsert_user(
+            message.chat.id,
+            target.id,
+            target.username,
+            display_name(target),
+            touch=False,
+        )
+        if user_is_immune(target):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        until = datetime.now(timezone.utc) + timedelta(hours=10)
+        try:
+            await bot.restrict_chat_member(
+                message.chat.id,
+                target.id,
+                permissions=ChatPermissions(can_send_messages=False),
+                until_date=until,
+                use_independent_chat_permissions=True,
+            )
+            await database.record_action(
+                message.chat.id,
+                target.id,
+                "mute",
+                "кара небесная",
+                message.from_user.id,
+                duration_seconds=36000,
+                active_until=int(until.timestamp()),
+            )
+            await message.answer(
+                f"На {mention(target.id, display_name(target))} обрушена кара небесная, "
+                "он умолкнет на 10 часов.",
+                parse_mode="HTML",
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            await message.answer(
+                f"Не получилось обрушить кару: {html.escape(str(error))}"
+            )
+
+    @router.message(F.text.regexp(BASEMENT_RELEASE_RE))
+    async def release_from_basement(message: Message) -> None:
+        if message.chat.type not in GROUP_TYPES or not is_cheto_neveru(message.from_user):
+            return
+        match = BASEMENT_RELEASE_RE.match(message.text or "")
+        if not match:
+            return
+        payload = (message.text or "")[match.end() :].strip()
+        target = await resolve_target(message, database, payload)
+        if not target:
+            return
+        target_id, target_name, _ = target
+        if await database.remove_basement_member(message.chat.id, target_id):
+            await message.answer(
+                f"🚪 {mention(target_id, target_name)} выпущен из Подвалграда.",
+                parse_mode="HTML",
+            )
+        else:
+            await message.answer("Этого участника нет в Подвалграде.")
+
+    @router.message(F.text.regexp(BASEMENT_LIST_RE))
+    async def basement_list(message: Message) -> None:
+        if message.chat.type not in GROUP_TYPES:
+            return
+        members = await database.list_basement_members(message.chat.id)
+        if not members:
+            await message.answer("В Подвалграде пока никого нет.")
+            return
+        lines = ["Жители Подвалграда:"]
+        for index, member in enumerate(members, 1):
+            nickname = member["display_name"] or member["username"] or str(member["user_id"])
+            lines.append(f"{index}. {html.escape(nickname)}")
+        await message.answer("\n".join(lines), parse_mode="HTML")
+
+    @router.message(F.text.regexp(SLAP_RE))
+    async def basement_slap(message: Message, bot: Bot) -> None:
+        if message.chat.type not in GROUP_TYPES or not is_cheto_neveru(message.from_user):
+            return
+        match = SLAP_RE.match(message.text or "")
+        if not match:
+            return
+        payload = (message.text or "")[match.end() :].strip()
+        target = await resolve_target(message, database, payload)
+        if not target:
+            return
+        target_id, target_name, _ = target
+        if await target_is_immune(database, message.chat.id, target_id):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        if not await database.is_basement_member(message.chat.id, target_id):
+            await message.answer("Этот участник не состоит в Подвалграде.")
+            return
+        try:
+            member = await bot.get_chat_member(message.chat.id, target_id)
+            status = getattr(member.status, "value", member.status)
+        except (TelegramBadRequest, TelegramForbiddenError):
+            status = "left"
+        if status in {"administrator", "creator"}:
+            await message.answer("Администраторам леща дать нельзя.")
+            return
+        if status not in {"left", "kicked"} and random.randrange(10) == 0:
+            try:
+                await bot.ban_chat_member(message.chat.id, target_id)
+                await bot.unban_chat_member(
+                    message.chat.id, target_id, only_if_banned=True
+                )
+                await message.answer(
+                    f"Лещ @cheto_neveru был слишком мощным и "
+                    f"{mention(target_id, target_name)} вылетел из чата.",
+                    parse_mode="HTML",
+                )
+                return
+            except (TelegramBadRequest, TelegramForbiddenError) as error:
+                logging.getLogger(__name__).warning("Basement kick failed: %s", error)
+        await message.answer(
+            f"Властитель Подвалграда дал леща {mention(target_id, target_name)}, работай раб.",
+            parse_mode="HTML",
+        )
 
     @router.message(F.text.regexp(LEGS_RE))
     async def request_legs(message: Message, bot: Bot) -> None:
@@ -1174,6 +1317,25 @@ def create_router(database: Database) -> Router:
             logging.getLogger(__name__).warning("Safebooru request failed: %s", error)
             await message.answer("Safebooru сейчас не отдал картинку. Попробуй позже.")
 
+    @router.message(F.text.regexp(ART_THEFT_RE, mode="search"))
+    async def art_theft_counter(message: Message) -> None:
+        sender = message.from_user
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not sender
+            or not sender.username
+            or sender.username.casefold() != "pirojoksostajem"
+        ):
+            return
+        count = await database.increment_counter(message.chat.id, "stolen_art")
+        responses = (
+            f"Спизжено {count} артов, ваша коллекция растёт милорд",
+            f"Спизжено {count} артов, галерея будет заполнена",
+            f"Спизжено {count} артов, куда тебе столько?",
+            f"Спизжено {count} артов, одна порнуха на уме",
+        )
+        await message.answer(random.choice(responses))
+
     @router.message(F.text.regexp(GNIDA_RE))
     async def random_gnida(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES or not joke_available(message.chat.id, "gnida"):
@@ -1219,6 +1381,16 @@ def create_router(database: Database) -> Router:
             return
         if not joke_available(message.chat.id, "basement"):
             return
+        await database.upsert_user(
+            message.chat.id,
+            replied_user.id,
+            replied_user.username,
+            display_name(replied_user),
+            touch=False,
+        )
+        await database.add_basement_member(
+            message.chat.id, replied_user.id, sender.id
+        )
         await message.answer(
             f"{mention(replied_user.id, display_name(replied_user))} забран в Подвалград, "
             "продуктивной работы в шахтах.",

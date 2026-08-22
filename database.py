@@ -103,6 +103,24 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_leg_requests_pending
                 ON leg_requests(status, deadline);
+
+            CREATE TABLE IF NOT EXISTS counters (
+                chat_id INTEGER NOT NULL,
+                counter_key TEXT NOT NULL,
+                value INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (chat_id, counter_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS basement_members (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                added_by INTEGER NOT NULL,
+                added_at INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, user_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_basement_members_added
+                ON basement_members(chat_id, added_at);
             """
         )
         self._ensure_column("ownership", "last_forced_at", "INTEGER")
@@ -572,6 +590,60 @@ class Database:
             )
             self.connection.commit()
             return cursor.rowcount
+
+    async def increment_counter(self, chat_id: int, key: str) -> int:
+        async with self._lock:
+            self.connection.execute(
+                """INSERT INTO counters(chat_id, counter_key, value) VALUES (?, ?, 1)
+                   ON CONFLICT(chat_id, counter_key) DO UPDATE SET value=value + 1""",
+                (chat_id, key),
+            )
+            row = self.connection.execute(
+                "SELECT value FROM counters WHERE chat_id=? AND counter_key=?",
+                (chat_id, key),
+            ).fetchone()
+            self.connection.commit()
+            return int(row["value"])
+
+    async def add_basement_member(
+        self, chat_id: int, user_id: int, added_by: int
+    ) -> bool:
+        async with self._lock:
+            cursor = self.connection.execute(
+                """INSERT INTO basement_members(chat_id, user_id, added_by, added_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(chat_id, user_id) DO NOTHING""",
+                (chat_id, user_id, added_by, utc_timestamp()),
+            )
+            self.connection.commit()
+            return cursor.rowcount > 0
+
+    async def remove_basement_member(self, chat_id: int, user_id: int) -> bool:
+        async with self._lock:
+            cursor = self.connection.execute(
+                "DELETE FROM basement_members WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            )
+            self.connection.commit()
+            return cursor.rowcount > 0
+
+    async def is_basement_member(self, chat_id: int, user_id: int) -> bool:
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT 1 FROM basement_members WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            ).fetchone()
+            return row is not None
+
+    async def list_basement_members(self, chat_id: int) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT b.user_id, b.added_at, u.username, u.display_name
+                   FROM basement_members b
+                   LEFT JOIN users u ON u.chat_id=b.chat_id AND u.user_id=b.user_id
+                   WHERE b.chat_id=? ORDER BY b.added_at, b.user_id""",
+                (chat_id,),
+            ).fetchall()
 
     async def list_slaves(self, chat_id: int, owner_id: int) -> list[sqlite3.Row]:
         async with self._lock:
