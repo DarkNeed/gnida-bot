@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import html
+import logging
 import random
 import re
 import time
@@ -34,6 +36,8 @@ from parsing import (
 
 GROUP_TYPES = {"group", "supergroup"}
 JOKE_COOLDOWN_SECONDS = 120
+IMMUNE_USERNAME = "kit_kitovich23"
+IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настолько сочные что ему плевать."
 MODERATION_RE = re.compile(r"^[!/](бан|мут|пред)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RESTORE_RE = re.compile(r"^[!/](разбан|размут)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 CLEAR_RE = re.compile(
@@ -53,6 +57,13 @@ FEMBOY_RE = re.compile(r"^дима\s+фембой[!?.\s]*$", re.IGNORECASE)
 BASEMENT_RE = re.compile(
     r"^(?:в\s+подвалград|забрать\s+в\s+подвалград)[!?.\s]*$", re.IGNORECASE
 )
+LEGS_RE = re.compile(r"^скинь\s+ножки[!?.\s]*$", re.IGNORECASE)
+KARGASTAN_RE = re.compile(
+    r"^пусть\s+звенят\s+позолоченные\s+кранчики\s+самоваров\s+8\s+народов\.\s*"
+    r"божественный\s+ебатель\s+самоваров\s+@kit_kitovich23\.\s*"
+    r"выеби\s+эту\s+ньюху\s+за\s+каргастан[!?.\s]*$",
+    re.IGNORECASE,
+)
 SAMOVAR_RE = re.compile(r"(?<![а-яёa-z])самовар(?![а-яёa-z])", re.IGNORECASE)
 
 
@@ -62,6 +73,15 @@ def display_name(user: User) -> str:
 
 def mention(user_id: int, name: str) -> str:
     return f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
+
+
+def user_is_immune(user: User) -> bool:
+    return bool(user.username and user.username.casefold() == IMMUNE_USERNAME)
+
+
+async def target_is_immune(database: Database, chat_id: int, user_id: int) -> bool:
+    row = await database.get_user(chat_id, user_id)
+    return bool(row and row["username"] and row["username"].casefold() == IMMUNE_USERNAME)
 
 
 def plain_name(row) -> str:
@@ -198,6 +218,69 @@ def create_router(database: Database) -> Router:
     router = Router(name="gnida-bot")
     router.message.middleware(TrackingMiddleware(database))
     joke_cooldowns: dict[tuple[int, str], float] = {}
+    leg_tasks: set[asyncio.Task[None]] = set()
+
+    async def enforce_leg_request(request_id: int, bot: Bot) -> None:
+        request = await database.get_leg_request(request_id)
+        if not request or request["status"] != "pending":
+            return
+        await asyncio.sleep(max(0, int(request["deadline"]) - utc_timestamp()))
+        request = await database.claim_expired_leg_request(request_id)
+        if not request:
+            return
+        chat_id = int(request["chat_id"])
+        target_id = int(request["target_id"])
+        if await target_is_immune(database, chat_id, target_id):
+            await database.finish_leg_request(request_id, "immune")
+            await bot.send_message(chat_id, IMMUNITY_TEXT)
+            return
+        user = await database.get_user(chat_id, target_id)
+        name = user["display_name"] if user else str(target_id)
+        until = datetime.now(timezone.utc) + timedelta(minutes=10)
+        try:
+            await bot.restrict_chat_member(
+                chat_id,
+                target_id,
+                permissions=ChatPermissions(can_send_messages=False),
+                until_date=until,
+                use_independent_chat_permissions=True,
+            )
+            await database.record_action(
+                chat_id,
+                target_id,
+                "mute",
+                "не скинул ножки",
+                int(request["requester_id"]),
+                duration_seconds=600,
+                active_until=int(until.timestamp()),
+            )
+            await database.finish_leg_request(request_id, "muted")
+            await bot.send_message(
+                chat_id,
+                f"{mention(target_id, name)} не скинул ножки и за это просидит "
+                "с кляпом 10 минут.",
+                parse_mode="HTML",
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            await database.finish_leg_request(request_id, "failed")
+            logging.getLogger(__name__).warning(
+                "Could not enforce leg request %s: %s", request_id, error
+            )
+
+    def schedule_leg_request(request_id: int, bot: Bot) -> None:
+        task = asyncio.create_task(enforce_leg_request(request_id, bot))
+        leg_tasks.add(task)
+        task.add_done_callback(leg_tasks.discard)
+
+    @router.startup()
+    async def resume_leg_requests(bot: Bot) -> None:
+        for request in await database.pending_leg_requests():
+            schedule_leg_request(int(request["id"]), bot)
+
+    @router.shutdown()
+    async def stop_leg_timers() -> None:
+        for task in tuple(leg_tasks):
+            task.cancel()
 
     @router.message(F.text.regexp(START_RE))
     async def start(message: Message) -> None:
@@ -223,6 +306,74 @@ def create_router(database: Database) -> Router:
                 touch=False,
             )
 
+    @router.message(F.photo | F.document.mime_type.startswith("image/"))
+    async def complete_leg_request(message: Message) -> None:
+        if message.chat.type in GROUP_TYPES and message.from_user:
+            await database.complete_leg_requests(message.chat.id, message.from_user.id)
+
+    @router.message(F.text.regexp(LEGS_RE))
+    async def request_legs(message: Message, bot: Bot) -> None:
+        sender = message.from_user
+        replied = message.reply_to_message
+        target = replied.from_user if replied and not replied.sender_chat else None
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not sender
+            or not sender.username
+            or sender.username.casefold() != "utochka8"
+            or not target
+            or target.is_bot
+        ):
+            return
+        await database.upsert_user(
+            message.chat.id,
+            target.id,
+            target.username,
+            display_name(target),
+            touch=False,
+        )
+        if user_is_immune(target):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        deadline = utc_timestamp() + 180
+        request_id = await database.create_leg_request(
+            message.chat.id, target.id, sender.id, deadline
+        )
+        schedule_leg_request(request_id, bot)
+        await message.answer(
+            f"{mention(target.id, display_name(target))}, у тебя 3 минуты, чтобы скинуть картинку.",
+            parse_mode="HTML",
+        )
+
+    @router.message(F.text.regexp(KARGASTAN_RE))
+    async def kargastan_ban(message: Message, bot: Bot) -> None:
+        if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
+            return
+        target = await resolve_target(message, database, "")
+        if not target or not message.from_user:
+            return
+        target_id, target_name, _ = target
+        if await target_is_immune(database, message.chat.id, target_id):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        try:
+            await bot.ban_chat_member(message.chat.id, target_id)
+            await database.record_action(
+                message.chat.id,
+                target_id,
+                "ban",
+                "выебан за Каргастан",
+                message.from_user.id,
+            )
+            await message.answer(
+                f"🔨 {mention(target_id, target_name)} выебан за Каргастан.",
+                parse_mode="HTML",
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            await message.answer(
+                f"Не получилось применить действие: {html.escape(str(error))}"
+            )
+
     @router.message(F.text.regexp(MODERATION_RE))
     async def moderation(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
@@ -235,6 +386,9 @@ def create_router(database: Database) -> Router:
         if not target:
             return
         target_id, target_name, remainder = target
+        if await target_is_immune(database, message.chat.id, target_id):
+            await message.answer(IMMUNITY_TEXT)
+            return
         if target_id == message.from_user.id:
             await message.answer("На себя эту команду применить нельзя.")
             return
@@ -493,6 +647,9 @@ def create_router(database: Database) -> Router:
         if opponent.is_bot or opponent.id == message.from_user.id:
             await message.answer("Нужен другой живой соперник.")
             return
+        if user_is_immune(opponent):
+            await message.answer(IMMUNITY_TEXT)
+            return
         await database.upsert_user(
             message.chat.id, opponent.id, opponent.username, display_name(opponent), touch=False
         )
@@ -523,6 +680,13 @@ def create_router(database: Database) -> Router:
         challenge = await database.get_challenge(challenge_id)
         if not challenge or challenge["status"] != "active":
             await callback.answer("Этот вызов уже завершён.", show_alert=True)
+            return
+        if await target_is_immune(
+            database, int(challenge["chat_id"]), int(challenge["opponent_id"])
+        ):
+            if await database.finish_challenge(challenge_id, "immune"):
+                await callback.message.edit_text(IMMUNITY_TEXT)
+            await callback.answer()
             return
         if callback.from_user.id not in (challenge["challenger_id"], challenge["opponent_id"]):
             await callback.answer("Это не ваш поединок.", show_alert=True)
@@ -658,8 +822,12 @@ def create_router(database: Database) -> Router:
             or not sender.username
             or sender.username.casefold() != "cheto_neveru"
             or not replied_user
-            or not joke_available(message.chat.id, "basement")
         ):
+            return
+        if user_is_immune(replied_user):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        if not joke_available(message.chat.id, "basement"):
             return
         await message.answer(
             f"{mention(replied_user.id, display_name(replied_user))} забран в Подвалград, "

@@ -74,6 +74,18 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         row = await self.database.choose(challenge_id, 10, "rock")
         self.assertEqual(row["challenger_choice"], "rock")
 
+    async def test_leg_request_can_be_completed_before_deadline(self):
+        request_id = await self.database.create_leg_request(1, 20, 10, 4102444800)
+        self.assertEqual(len(await self.database.pending_leg_requests()), 1)
+        self.assertEqual(await self.database.complete_leg_requests(1, 20), 1)
+        self.assertIsNone(await self.database.claim_expired_leg_request(request_id))
+
+    async def test_expired_leg_request_is_claimed_once(self):
+        request_id = await self.database.create_leg_request(1, 20, 10, 0)
+        claimed = await self.database.claim_expired_leg_request(request_id)
+        self.assertEqual(claimed["target_id"], 20)
+        self.assertIsNone(await self.database.claim_expired_leg_request(request_id))
+
 
 if __name__ == "__main__":
     unittest.main()

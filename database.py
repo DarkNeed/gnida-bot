@@ -90,6 +90,19 @@ class Database:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_pair
                 ON challenges(chat_id, challenger_id, opponent_id)
                 WHERE status = 'active';
+
+            CREATE TABLE IF NOT EXISTS leg_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                requester_id INTEGER NOT NULL,
+                deadline INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_leg_requests_pending
+                ON leg_requests(status, deadline);
             """
         )
         self._connection.commit()
@@ -416,3 +429,68 @@ class Database:
     async def is_vulnerable(self, chat_id: int, user_id: int) -> bool:
         row = await self.get_user(chat_id, user_id)
         return bool(row and row["vulnerable_until"] and row["vulnerable_until"] > utc_timestamp())
+
+    async def create_leg_request(
+        self, chat_id: int, target_id: int, requester_id: int, deadline: int
+    ) -> int:
+        async with self._lock:
+            self.connection.execute(
+                """UPDATE leg_requests SET status='replaced'
+                   WHERE chat_id=? AND target_id=? AND status='pending'""",
+                (chat_id, target_id),
+            )
+            cursor = self.connection.execute(
+                """INSERT INTO leg_requests(
+                       chat_id, target_id, requester_id, deadline, created_at
+                   ) VALUES (?, ?, ?, ?, ?)""",
+                (chat_id, target_id, requester_id, deadline, utc_timestamp()),
+            )
+            self.connection.commit()
+            return int(cursor.lastrowid)
+
+    async def get_leg_request(self, request_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM leg_requests WHERE id=?", (request_id,)
+            ).fetchone()
+
+    async def pending_leg_requests(self) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM leg_requests WHERE status='pending' ORDER BY deadline"
+            ).fetchall()
+
+    async def complete_leg_requests(self, chat_id: int, target_id: int) -> int:
+        async with self._lock:
+            cursor = self.connection.execute(
+                """UPDATE leg_requests SET status='completed'
+                   WHERE chat_id=? AND target_id=? AND status='pending'""",
+                (chat_id, target_id),
+            )
+            self.connection.commit()
+            return cursor.rowcount
+
+    async def claim_expired_leg_request(self, request_id: int) -> sqlite3.Row | None:
+        now = utc_timestamp()
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT * FROM leg_requests
+                   WHERE id=? AND status='pending' AND deadline <= ?""",
+                (request_id, now),
+            ).fetchone()
+            if row is None:
+                return None
+            self.connection.execute(
+                "UPDATE leg_requests SET status='enforcing' WHERE id=?",
+                (request_id,),
+            )
+            self.connection.commit()
+            return row
+
+    async def finish_leg_request(self, request_id: int, status: str) -> None:
+        async with self._lock:
+            self.connection.execute(
+                "UPDATE leg_requests SET status=? WHERE id=?",
+                (status, request_id),
+            )
+            self.connection.commit()
