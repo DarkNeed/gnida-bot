@@ -79,6 +79,7 @@ MAKE_SLAVE_RE = re.compile(
 METAL_RASCALS_RE = re.compile(r"^металлические\s+поганцы[!?.\s]*$", re.IGNORECASE)
 SAMOVAR_RE = re.compile(r"(?<![а-яёa-z])самовар(?![а-яёa-z])", re.IGNORECASE)
 SAFEBOORU_API_URL = "https://safebooru.org/index.php"
+SAFEBOORU_TAGS = "murder_drones rating:safe"
 
 
 def display_name(user: User) -> str:
@@ -161,7 +162,7 @@ async def fetch_random_safebooru_post() -> dict:
                     "json": "1",
                     "limit": "100",
                     "pid": str(page),
-                    "tags": "rating:safe",
+                    "tags": SAFEBOORU_TAGS,
                 },
             ) as response:
                 response.raise_for_status()

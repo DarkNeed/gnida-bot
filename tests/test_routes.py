@@ -18,6 +18,7 @@ from handlers.routes import (
     MODERATION_RE,
     CLEAR_RE,
     RESTORE_RE,
+    SAFEBOORU_TAGS,
     STATS_RE,
     TRANSFER_RE,
     resolve_target,
@@ -68,6 +69,7 @@ class RoutePatternTests(unittest.TestCase):
 
     def test_metal_rascals_command(self):
         self.assertTrue(METAL_RASCALS_RE.match("Металлические поганцы"))
+        self.assertEqual(SAFEBOORU_TAGS, "murder_drones rating:safe")
 
     def test_safebooru_selector_keeps_only_safe_static_art(self):
         post = select_safebooru_post(
