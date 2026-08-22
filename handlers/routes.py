@@ -33,6 +33,7 @@ from parsing import (
 
 
 GROUP_TYPES = {"group", "supergroup"}
+JOKE_COOLDOWN_SECONDS = 120
 MODERATION_RE = re.compile(r"^[!/](бан|мут|пред)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RESTORE_RE = re.compile(r"^[!/](разбан|размут)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 CLEAR_RE = re.compile(
@@ -196,7 +197,7 @@ async def challenge_text(database: Database, challenge) -> str:
 def create_router(database: Database) -> Router:
     router = Router(name="gnida-bot")
     router.message.middleware(TrackingMiddleware(database))
-    joke_cooldowns: dict[int, float] = {}
+    joke_cooldowns: dict[tuple[int, str], float] = {}
 
     @router.message(F.text.regexp(START_RE))
     async def start(message: Message) -> None:
@@ -610,17 +611,18 @@ def create_router(database: Database) -> Router:
             lines.append(f"{index}. {name} — {row['amount']}")
         await message.answer("\n".join(lines), parse_mode="HTML")
 
-    def joke_available(chat_id: int) -> bool:
+    def joke_available(chat_id: int, command: str) -> bool:
         now = time.monotonic()
-        previous = joke_cooldowns.get(chat_id, 0.0)
-        if now - previous < 300:
+        key = (chat_id, command)
+        previous = joke_cooldowns.get(key, 0.0)
+        if now - previous < JOKE_COOLDOWN_SECONDS:
             return False
-        joke_cooldowns[chat_id] = now
+        joke_cooldowns[key] = now
         return True
 
     @router.message(F.text.regexp(GNIDA_RE))
     async def random_gnida(message: Message) -> None:
-        if message.chat.type not in GROUP_TYPES or not joke_available(message.chat.id):
+        if message.chat.type not in GROUP_TYPES or not joke_available(message.chat.id, "gnida"):
             return
         users = await database.recent_users(message.chat.id, 20)
         if not users:
@@ -633,17 +635,17 @@ def create_router(database: Database) -> Router:
 
     @router.message(F.text.regexp(DUCK_RE))
     async def duck(message: Message) -> None:
-        if message.chat.type in GROUP_TYPES and joke_available(message.chat.id):
+        if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "duck"):
             await message.answer("40 см")
 
     @router.message(F.text.regexp(HUILO_RE))
     async def huilo(message: Message) -> None:
-        if message.chat.type in GROUP_TYPES and joke_available(message.chat.id):
+        if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "huilo"):
             await message.answer("сам хуйло")
 
     @router.message(F.text.regexp(FEMBOY_RE))
     async def femboy(message: Message) -> None:
-        if message.chat.type in GROUP_TYPES and joke_available(message.chat.id):
+        if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "femboy"):
             await message.answer("бинарный")
 
     @router.message(F.text.regexp(BASEMENT_RE))
@@ -656,7 +658,7 @@ def create_router(database: Database) -> Router:
             or not sender.username
             or sender.username.casefold() != "cheto_neveru"
             or not replied_user
-            or not joke_available(message.chat.id)
+            or not joke_available(message.chat.id, "basement")
         ):
             return
         await message.answer(
@@ -667,7 +669,7 @@ def create_router(database: Database) -> Router:
 
     @router.message(F.text.regexp(SAMOVAR_RE, mode="search"))
     async def samovar(message: Message) -> None:
-        if message.chat.type in GROUP_TYPES and joke_available(message.chat.id):
+        if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "samovar"):
             await message.answer("Зовите Кита")
 
     return router

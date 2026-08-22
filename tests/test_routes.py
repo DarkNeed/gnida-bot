@@ -8,6 +8,7 @@ from handlers.routes import (
     BASEMENT_RE,
     FEMBOY_RE,
     HUILO_RE,
+    JOKE_COOLDOWN_SECONDS,
     MODERATION_RE,
     CLEAR_RE,
     RESTORE_RE,
@@ -17,6 +18,9 @@ from handlers.routes import (
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_joke_cooldown_is_two_minutes(self):
+        self.assertEqual(JOKE_COOLDOWN_SECONDS, 120)
+
     def test_moderation_accepts_bang_prefix(self):
         self.assertTrue(MODERATION_RE.match("!мут @user 1 минута причина"))
         self.assertTrue(MODERATION_RE.match("!бан @user причина"))
