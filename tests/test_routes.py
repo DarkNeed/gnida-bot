@@ -8,7 +8,10 @@ from handlers.routes import (
     BASEMENT_RE,
     BASEMENT_LIST_RE,
     BASEMENT_RELEASE_RE,
+    DUCK_RE,
+    DUCK_SLAPS_RE,
     FEMBOY_RE,
+    GNIDA_RE,
     HUILO_RE,
     HEAVENLY_PUNISHMENT_RE,
     IMMUNITY_TEXT,
@@ -23,6 +26,7 @@ from handlers.routes import (
     RESTORE_RE,
     SAFEBOORU_TAGS,
     SLAP_RE,
+    SLEEP_RE,
     STATS_RE,
     TRANSFER_RE,
     ART_THEFT_RE,
@@ -59,6 +63,12 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(BASEMENT_RE.match("Забрать в Подвалград"))
         self.assertTrue(BASEMENT_RE.match("В подвалград"))
 
+    def test_joke_keywords_work_inside_messages(self):
+        self.assertTrue(GNIDA_RE.search("Интересно, кто гнида сегодня?"))
+        self.assertTrue(HUILO_RE.search("А он точно хуйло какое-то"))
+        self.assertTrue(FEMBOY_RE.search("Все знают, что Дима фембой сегодня"))
+        self.assertTrue(DUCK_RE.search("Говорят, Утин член огромный"))
+
     def test_basement_management_phrases(self):
         self.assertTrue(BASEMENT_LIST_RE.match("/подвалград"))
         self.assertTrue(BASEMENT_RELEASE_RE.match("/отпустить из подвалграда @user"))
@@ -68,6 +78,8 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(ART_THEFT_RE.search("Я спизжу этот арт"))
         self.assertTrue(ART_THEFT_RE.search("Уже спиздил"))
         self.assertTrue(HEAVENLY_PUNISHMENT_RE.match("Это кара небесная, сосунок!"))
+        self.assertTrue(DUCK_SLAPS_RE.match("Давать леща 10 лет"))
+        self.assertTrue(SLEEP_RE.match("Усыпить"))
 
     def test_special_command_phrases(self):
         command = (

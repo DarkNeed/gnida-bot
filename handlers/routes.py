@@ -53,10 +53,15 @@ START_RE = re.compile(r"^/start(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RELEASE_RE = re.compile(r"^(?:/отпустить(?:@\w+)?|отпустить\s+раба)(?:\s|$)", re.IGNORECASE)
 CHALLENGE_RE = re.compile(r"^вызов[!?.\s]*$", re.IGNORECASE)
 TOP_RE = re.compile(r"^кому\s+делать\s+нехер[!?.\s]*$", re.IGNORECASE)
-GNIDA_RE = re.compile(r"^(?:гнида\s+чата|кто\s+гнида\s+чата)[!?.\s]*$", re.IGNORECASE)
-DUCK_RE = re.compile(r"^(?:утин\s+член|длина\s+члена\s+уточки)[!?.\s]*$", re.IGNORECASE)
-HUILO_RE = re.compile(r"^хуйло[!?.\s]*$", re.IGNORECASE)
-FEMBOY_RE = re.compile(r"^дима\s+фембой[!?.\s]*$", re.IGNORECASE)
+GNIDA_RE = re.compile(
+    r"(?<![а-яёa-z])(?:кто\s+гнида|гнида\s+чата)(?![а-яёa-z])", re.IGNORECASE
+)
+DUCK_RE = re.compile(
+    r"(?<![а-яёa-z])(?:утин\s+член|длина\s+члена\s+уточки)(?![а-яёa-z])",
+    re.IGNORECASE,
+)
+HUILO_RE = re.compile(r"(?<![а-яёa-z])хуйло(?![а-яёa-z])", re.IGNORECASE)
+FEMBOY_RE = re.compile(r"(?<![а-яёa-z])дима\s+фембой(?![а-яёa-z])", re.IGNORECASE)
 BASEMENT_RE = re.compile(
     r"^(?:в\s+подвалград|забрать\s+в\s+подвалград)[!?.\s]*$", re.IGNORECASE
 )
@@ -69,6 +74,8 @@ ART_THEFT_RE = re.compile(r"(?<![а-яёa-z])(спизжу|спиздил)(?![а
 HEAVENLY_PUNISHMENT_RE = re.compile(
     r"^это\s+кара\s+небесная,?\s+сосунок[!?.\s]*$", re.IGNORECASE
 )
+DUCK_SLAPS_RE = re.compile(r"^давать\s+леща\s+10\s+лет[!?.\s]*$", re.IGNORECASE)
+SLEEP_RE = re.compile(r"^усыпить[!?.\s]*$", re.IGNORECASE)
 LEGS_RE = re.compile(r"^скинь\s+ножки[!?.\s]*$", re.IGNORECASE)
 KARGASTAN_RE = re.compile(
     r"^пусть\s+звенят\s+позолоченные\s+кранчики\s+самоваров\s+8\s+народов\.\s*"
@@ -114,6 +121,10 @@ def is_mister_sleepy(user: User | None) -> bool:
 
 def is_cheto_neveru(user: User | None) -> bool:
     return bool(user and user.username and user.username.casefold() == "cheto_neveru")
+
+
+def is_utochka(user: User | None) -> bool:
+    return bool(user and user.username and user.username.casefold() == "utochka8")
 
 
 async def resolve_user_token(
@@ -546,6 +557,79 @@ def create_router(database: Database) -> Router:
         if message.chat.type in GROUP_TYPES and message.from_user:
             await database.complete_leg_requests(message.chat.id, message.from_user.id)
 
+    @router.message(F.text.regexp(DUCK_SLAPS_RE))
+    async def duck_slaps_for_ten_years(message: Message) -> None:
+        replied = message.reply_to_message
+        target = replied.from_user if replied and not replied.sender_chat else None
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not is_utochka(message.from_user)
+            or not target
+            or target.is_bot
+        ):
+            return
+        await database.upsert_user(
+            message.chat.id,
+            target.id,
+            target.username,
+            display_name(target),
+            touch=False,
+        )
+        if user_is_immune(target):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        await message.answer(
+            f"{mention(target.id, display_name(target))} будет получать утиных лещей "
+            "в течение 10 ЛЕТ.",
+            parse_mode="HTML",
+        )
+
+    @router.message(F.text.regexp(SLEEP_RE))
+    async def sleepy_mute(message: Message, bot: Bot) -> None:
+        replied = message.reply_to_message
+        target = replied.from_user if replied and not replied.sender_chat else None
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not is_mister_sleepy(message.from_user)
+            or not target
+            or target.is_bot
+        ):
+            return
+        await database.upsert_user(
+            message.chat.id,
+            target.id,
+            target.username,
+            display_name(target),
+            touch=False,
+        )
+        if user_is_immune(target):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        until = datetime.now(timezone.utc) + timedelta(hours=12)
+        try:
+            await bot.restrict_chat_member(
+                message.chat.id,
+                target.id,
+                permissions=ChatPermissions(can_send_messages=False),
+                until_date=until,
+                use_independent_chat_permissions=True,
+            )
+            await database.record_action(
+                message.chat.id,
+                target.id,
+                "mute",
+                "усыплён",
+                message.from_user.id,
+                duration_seconds=43200,
+                active_until=int(until.timestamp()),
+            )
+            await message.answer(
+                f"Сладких снов {mention(target.id, display_name(target))}.",
+                parse_mode="HTML",
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            await message.answer(f"Не получилось усыпить: {html.escape(str(error))}")
+
     @router.message(F.text.regexp(HEAVENLY_PUNISHMENT_RE))
     async def heavenly_punishment(message: Message, bot: Bot) -> None:
         replied = message.reply_to_message
@@ -683,9 +767,7 @@ def create_router(database: Database) -> Router:
         target = replied.from_user if replied and not replied.sender_chat else None
         if (
             message.chat.type not in GROUP_TYPES
-            or not sender
-            or not sender.username
-            or sender.username.casefold() != "utochka8"
+            or not is_utochka(sender)
             or not target
             or target.is_bot
         ):
@@ -1288,7 +1370,6 @@ def create_router(database: Database) -> Router:
             or not sender
             or not sender.username
             or sender.username.casefold() != "olmus23"
-            or not joke_available(message.chat.id, "metal_rascals")
         ):
             return
         try:
@@ -1336,7 +1417,7 @@ def create_router(database: Database) -> Router:
         )
         await message.answer(random.choice(responses))
 
-    @router.message(F.text.regexp(GNIDA_RE))
+    @router.message(F.text.regexp(GNIDA_RE, mode="search"))
     async def random_gnida(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES or not joke_available(message.chat.id, "gnida"):
             return
@@ -1349,17 +1430,17 @@ def create_router(database: Database) -> Router:
             parse_mode="HTML",
         )
 
-    @router.message(F.text.regexp(DUCK_RE))
+    @router.message(F.text.regexp(DUCK_RE, mode="search"))
     async def duck(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "duck"):
             await message.answer("40 см")
 
-    @router.message(F.text.regexp(HUILO_RE))
+    @router.message(F.text.regexp(HUILO_RE, mode="search"))
     async def huilo(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "huilo"):
             await message.answer("сам хуйло")
 
-    @router.message(F.text.regexp(FEMBOY_RE))
+    @router.message(F.text.regexp(FEMBOY_RE, mode="search"))
     async def femboy(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "femboy"):
             await message.answer("бинарный")
@@ -1378,8 +1459,6 @@ def create_router(database: Database) -> Router:
             return
         if user_is_immune(replied_user):
             await message.answer(IMMUNITY_TEXT)
-            return
-        if not joke_available(message.chat.id, "basement"):
             return
         await database.upsert_user(
             message.chat.id,
