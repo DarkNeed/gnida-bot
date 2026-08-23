@@ -188,8 +188,13 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(SILENCE_RE.search("МОЛЧАТЬ!!!!!!"))
         self.assertTrue(SILENCE_RE.search("ну всё, МОЛЧААААААААТЬ!!!!"))
         self.assertTrue(SILENCE_RE.search("МОЛЧАААААААААТЬ ТВАРЬ!!!!"))
+        self.assertTrue(SILENCE_RE.search("ЗАТКНИСЬ"))
+        self.assertTrue(SILENCE_RE.search("да всё, ЗАТКНИИИИИИСЬ!!!!!!"))
+        self.assertTrue(SILENCE_RE.search("ЗАААТТККНИИИССЬЬЬ!!!!"))
         self.assertFalse(SILENCE_RE.search("Молчать"))
         self.assertFalse(SILENCE_RE.search("молчааааать тварь"))
+        self.assertFalse(SILENCE_RE.search("Заткнись"))
+        self.assertFalse(SILENCE_RE.search("заткниииись"))
 
     def test_special_command_phrases(self):
         command = (

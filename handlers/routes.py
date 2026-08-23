@@ -78,7 +78,7 @@ HEAVENLY_PUNISHMENT_RE = re.compile(
 DUCK_SLAPS_RE = re.compile(r"^давать\s+леща\s+10\s+лет[!?.\s]*$", re.IGNORECASE)
 SLEEP_RE = re.compile(r"^усыпить[!?.\s]*$", re.IGNORECASE)
 SILENCE_RE = re.compile(
-    r"(?<![А-ЯЁ])МОЛЧА+ТЬ(?:\s+ТВАРЬ)?!*(?![А-ЯЁ])"
+    r"(?<![А-ЯЁ])(?:МОЛЧА+ТЬ(?:\s+ТВАРЬ)?|З+А+Т+К+Н+И+С+Ь+)!*(?![А-ЯЁ])"
 )
 LEGS_RE = re.compile(r"^скинь\s+ножки[!?.\s]*$", re.IGNORECASE)
 KARGASTAN_RE = re.compile(
@@ -624,7 +624,7 @@ def create_router(database: Database) -> Router:
             return
         if target.is_bot:
             if target.id == bot.id:
-                await message.answer(
+                await replied.reply(
                     "Гнида-бот будет получать утиных лещей в течении 10 лет, "
                     "ГНИДЫ СТОЛЬКО НЕ ЖИВУТ"
                 )
@@ -637,9 +637,9 @@ def create_router(database: Database) -> Router:
             touch=False,
         )
         if user_is_immune(target):
-            await message.answer(IMMUNITY_TEXT)
+            await replied.reply(IMMUNITY_TEXT)
             return
-        await message.answer(
+        await replied.reply(
             f"{mention(target.id, display_name(target))} будет получать утиных лещей "
             "в течение 10 ЛЕТ.",
             parse_mode="HTML",
