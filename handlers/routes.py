@@ -144,6 +144,18 @@ def basement_kick_allowed(member_status: str) -> bool:
     return member_status not in {"administrator", "creator", "left", "kicked"}
 
 
+def message_has_image(message: Message) -> bool:
+    """Treat photos, image files, stickers and animations as submitted images."""
+    is_image_document = bool(
+        message.document
+        and message.document.mime_type
+        and message.document.mime_type.startswith("image/")
+    )
+    return bool(
+        message.photo or message.sticker or message.animation or is_image_document
+    )
+
+
 async def resolve_user_token(
     message: Message, database: Database, token: str
 ) -> tuple[int, str] | None:
@@ -256,12 +268,7 @@ class TrackingMiddleware(BaseMiddleware):
             await self.database.upsert_user(
                 event.chat.id, user.id, user.username, display_name(user)
             )
-            is_image_document = bool(
-                event.document
-                and event.document.mime_type
-                and event.document.mime_type.startswith("image/")
-            )
-            if event.photo or is_image_document:
+            if message_has_image(event):
                 await self.database.complete_leg_requests(event.chat.id, user.id)
         return await handler(event, data)
 
@@ -301,6 +308,7 @@ async def resolve_target(
     message: Message,
     database: Database,
     payload: str,
+    allowed_bot_id: int | None = None,
 ) -> tuple[int, str, str] | None:
     """Return target id, stored name and remaining payload."""
     first, rest = split_first(payload)
@@ -324,7 +332,7 @@ async def resolve_target(
         return None
     if replied_message and replied_message.from_user:
         user = replied_message.from_user
-        if user.is_bot:
+        if user.is_bot and user.id != allowed_bot_id:
             await message.answer("Команду нельзя применить к боту.")
             return None
         await database.upsert_user(
@@ -370,7 +378,7 @@ async def challenge_text(database: Database, challenge) -> str:
 
 def create_router(database: Database) -> Router:
     router = Router(name="gnida-bot")
-    router.message.middleware(TrackingMiddleware(database))
+    router.message.outer_middleware(TrackingMiddleware(database))
     joke_cooldowns: dict[tuple[int, str], float] = {}
     leg_tasks: set[asyncio.Task[None]] = set()
     challenge_tasks: set[asyncio.Task[None]] = set()
@@ -407,14 +415,14 @@ def create_router(database: Database) -> Router:
                 "mute",
                 "не скинул ножки",
                 int(request["requester_id"]),
-                duration_seconds=180,
+                duration_seconds=600,
                 active_until=int(until.timestamp()),
             )
             await database.finish_leg_request(request_id, "muted")
             await bot.send_message(
                 chat_id,
                 f"{mention(target_id, name)} не скинул ножки и за это просидит "
-                "с кляпом 3 минуты.",
+                "с кляпом 10 минут.",
                 parse_mode="HTML",
             )
         except (TelegramBadRequest, TelegramForbiddenError) as error:
@@ -577,15 +585,21 @@ def create_router(database: Database) -> Router:
             )
 
     @router.message(text_or_caption_regexp(DUCK_SLAPS_RE))
-    async def duck_slaps_for_ten_years(message: Message) -> None:
+    async def duck_slaps_for_ten_years(message: Message, bot: Bot) -> None:
         replied = message.reply_to_message
         target = replied.from_user if replied and not replied.sender_chat else None
         if (
             message.chat.type not in GROUP_TYPES
             or not is_utochka(message.from_user)
             or not target
-            or target.is_bot
         ):
+            return
+        if target.is_bot:
+            if target.id == bot.id:
+                await message.answer(
+                    "Гнида-бот будет получать утиных лещей в течении 10 лет, "
+                    "ГНИДЫ СТОЛЬКО НЕ ЖИВУТ"
+                )
             return
         await database.upsert_user(
             message.chat.id,
@@ -701,7 +715,7 @@ def create_router(database: Database) -> Router:
             )
 
     @router.message(text_or_caption_regexp(BASEMENT_RELEASE_RE))
-    async def release_from_basement(message: Message) -> None:
+    async def release_from_basement(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not is_cheto_neveru(message.from_user):
             return
         text = message_content(message)
@@ -709,15 +723,22 @@ def create_router(database: Database) -> Router:
         if not match:
             return
         payload = text[match.end() :].strip()
-        target = await resolve_target(message, database, payload)
+        target = await resolve_target(
+            message, database, payload, allowed_bot_id=bot.id
+        )
         if not target:
             return
         target_id, target_name, _ = target
         if await database.remove_basement_member(message.chat.id, target_id):
-            await message.answer(
-                f"🚪 {mention(target_id, target_name)} выпущен из Подвалграда.",
-                parse_mode="HTML",
-            )
+            if target_id == bot.id:
+                await message.answer(
+                    "Вы выпустили гнида-бота из Подвалграда, карма очищена ✨"
+                )
+            else:
+                await message.answer(
+                    f"🚪 {mention(target_id, target_name)} выпущен из Подвалграда.",
+                    parse_mode="HTML",
+                )
         else:
             await message.answer("Этого участника нет в Подвалграде.")
 
@@ -744,7 +765,9 @@ def create_router(database: Database) -> Router:
         if not match:
             return
         payload = text[match.end() :].strip()
-        target = await resolve_target(message, database, payload)
+        target = await resolve_target(
+            message, database, payload, allowed_bot_id=bot.id
+        )
         if not target:
             return
         target_id, target_name, _ = target
@@ -753,6 +776,11 @@ def create_router(database: Database) -> Router:
             return
         if not await database.is_basement_member(message.chat.id, target_id):
             await message.answer("Этот участник не состоит в Подвалграде.")
+            return
+        if target_id == bot.id:
+            await message.answer(
+                "Властитель Подвалграда дал леща бедному Гнида-боту, за что..."
+            )
             return
         try:
             member = await bot.get_chat_member(message.chat.id, target_id)
@@ -806,7 +834,7 @@ def create_router(database: Database) -> Router:
         )
         schedule_leg_request(request_id, bot)
         await message.answer(
-            f"{mention(target.id, display_name(target))}, у тебя 3 минуты, чтобы скинуть картинку.",
+            f"{mention(target.id, display_name(target))}, у тя 3 мин, чтобы скинуть ножки, иначе мут.",
             parse_mode="HTML",
         )
 
@@ -1470,7 +1498,7 @@ def create_router(database: Database) -> Router:
             await message.answer("бинарный")
 
     @router.message(text_or_caption_regexp(BASEMENT_RE))
-    async def basement(message: Message) -> None:
+    async def basement(message: Message, bot: Bot) -> None:
         sender = message.from_user
         replied_user = message.reply_to_message.from_user if message.reply_to_message else None
         if (
@@ -1480,6 +1508,8 @@ def create_router(database: Database) -> Router:
             or sender.username.casefold() != "cheto_neveru"
             or not replied_user
         ):
+            return
+        if replied_user.is_bot and replied_user.id != bot.id:
             return
         if user_is_immune(replied_user):
             await message.answer(IMMUNITY_TEXT)
@@ -1494,11 +1524,16 @@ def create_router(database: Database) -> Router:
         await database.add_basement_member(
             message.chat.id, replied_user.id, sender.id
         )
-        await message.answer(
-            f"{mention(replied_user.id, display_name(replied_user))} забран в Подвалград, "
-            "продуктивной работы в шахтах.",
-            parse_mode="HTML",
-        )
+        if replied_user.id == bot.id:
+            await message.answer(
+                "Вы забрали бедного гнида-бота в Подвалград, вы чудовище 😢"
+            )
+        else:
+            await message.answer(
+                f"{mention(replied_user.id, display_name(replied_user))} забран в Подвалград, "
+                "продуктивной работы в шахтах.",
+                parse_mode="HTML",
+            )
 
     @router.message(text_or_caption_regexp(SAMOVAR_RE, mode="search"))
     async def samovar(message: Message) -> None:

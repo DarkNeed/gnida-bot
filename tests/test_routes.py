@@ -1,8 +1,9 @@
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from aiogram.types import User
+from aiogram.types import Chat, Message, PhotoSize, User
 
 from handlers.routes import (
     BASEMENT_RE,
@@ -29,9 +30,11 @@ from handlers.routes import (
     SLEEP_RE,
     STATS_RE,
     TRANSFER_RE,
+    TrackingMiddleware,
     ART_THEFT_RE,
     basement_kick_allowed,
     message_content,
+    message_has_image,
     resolve_target,
     select_safebooru_post,
     text_or_caption_regexp,
@@ -41,6 +44,47 @@ from handlers.routes import (
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_leg_request_accepts_any_image_message(self):
+        empty = {
+            "photo": None,
+            "document": None,
+            "sticker": None,
+            "animation": None,
+        }
+        self.assertTrue(
+            message_has_image(SimpleNamespace(**(empty | {"photo": [object()]})))
+        )
+        self.assertTrue(
+            message_has_image(
+                SimpleNamespace(
+                    **(
+                        empty
+                        | {
+                            "document": SimpleNamespace(mime_type="image/png"),
+                        }
+                    )
+                )
+            )
+        )
+        self.assertTrue(
+            message_has_image(SimpleNamespace(**(empty | {"sticker": object()})))
+        )
+        self.assertTrue(
+            message_has_image(SimpleNamespace(**(empty | {"animation": object()})))
+        )
+        self.assertFalse(
+            message_has_image(
+                SimpleNamespace(
+                    **(
+                        empty
+                        | {
+                            "document": SimpleNamespace(mime_type="video/mp4"),
+                        }
+                    )
+                )
+            )
+        )
+
     def test_basement_admins_can_be_slapped_but_never_kicked(self):
         self.assertFalse(basement_kick_allowed("administrator"))
         self.assertFalse(basement_kick_allowed("creator"))
@@ -153,6 +197,49 @@ class RoutePatternTests(unittest.TestCase):
 
 
 class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tracking_middleware_completes_request_for_plain_photo(self):
+        database = SimpleNamespace(
+            upsert_chat=AsyncMock(),
+            upsert_user=AsyncMock(),
+            complete_leg_requests=AsyncMock(return_value=1),
+        )
+        handler = AsyncMock(return_value="handled")
+        photo = Message(
+            message_id=1,
+            date=datetime.now(timezone.utc),
+            chat=Chat(id=-1001, type="supergroup", title="Тест"),
+            from_user=User(id=42, is_bot=False, first_name="Участник"),
+            photo=[
+                PhotoSize(
+                    file_id="photo-id",
+                    file_unique_id="unique-photo-id",
+                    width=100,
+                    height=100,
+                )
+            ],
+        )
+
+        result = await TrackingMiddleware(database)(handler, photo, {})
+
+        self.assertEqual(result, "handled")
+        database.complete_leg_requests.assert_awaited_once_with(-1001, 42)
+
+    async def test_own_bot_can_be_selected_when_explicitly_allowed(self):
+        replied_bot = User(id=777, is_bot=True, first_name="Гнида-бот")
+        message = SimpleNamespace(
+            chat=SimpleNamespace(id=-1001),
+            reply_to_message=SimpleNamespace(from_user=replied_bot, sender_chat=None),
+            answer=AsyncMock(),
+        )
+        database = SimpleNamespace(upsert_user=AsyncMock(), resolve_user=AsyncMock())
+
+        target = await resolve_target(
+            message, database, "", allowed_bot_id=replied_bot.id
+        )
+
+        self.assertEqual(target, (777, "Гнида-бот", ""))
+        database.upsert_user.assert_awaited_once()
+
     async def test_users_who_left_are_not_chat_participants(self):
         bot = SimpleNamespace(
             get_chat_member=AsyncMock(return_value=SimpleNamespace(status="left"))
