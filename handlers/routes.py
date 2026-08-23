@@ -400,7 +400,7 @@ def create_router(database: Database) -> Router:
             return
         user = await database.get_user(chat_id, target_id)
         name = user["display_name"] if user else str(target_id)
-        until = datetime.now(timezone.utc) + timedelta(minutes=10)
+        until = datetime.now(timezone.utc) + timedelta(minutes=3)
         try:
             await bot.restrict_chat_member(
                 chat_id,
@@ -415,14 +415,14 @@ def create_router(database: Database) -> Router:
                 "mute",
                 "не скинул ножки",
                 int(request["requester_id"]),
-                duration_seconds=600,
+                duration_seconds=180,
                 active_until=int(until.timestamp()),
             )
             await database.finish_leg_request(request_id, "muted")
             await bot.send_message(
                 chat_id,
                 f"{mention(target_id, name)} не скинул ножки и за это просидит "
-                "с кляпом 10 минут.",
+                "с кляпом 3 минуты.",
                 parse_mode="HTML",
             )
         except (TelegramBadRequest, TelegramForbiddenError) as error:
