@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from database import Database
+from database import FORCE_OWNER_COOLDOWN_SECONDS, Database, utc_timestamp
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -110,18 +110,27 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.database.list_slaves(1, 20), [])
         self.assertIsNone(await self.database.get_owner(1, 30))
 
-    async def test_forced_owner_challenge_is_monthly(self):
+    async def test_forced_owner_challenge_is_weekly(self):
         await self.database.force_enslave(1, 20, 10)
+        self.assertFalse(await self.database.can_force_owner(1, 20, 10))
+        now = utc_timestamp()
         self.database.connection.execute(
-            "UPDATE ownership SET acquired_at=0 WHERE chat_id=1 AND slave_id=20"
+            "UPDATE ownership SET acquired_at=? WHERE chat_id=1 AND slave_id=20",
+            (now - FORCE_OWNER_COOLDOWN_SECONDS,),
         )
         self.database.connection.commit()
         self.assertTrue(await self.database.can_force_owner(1, 20, 10))
         challenge_id = await self.database.create_challenge(1, 20, 10, forced=True)
         challenge = await self.database.get_challenge(challenge_id)
         self.assertEqual(challenge["forced"], 1)
-        self.assertEqual(challenge["deadline"] - challenge["created_at"], 86400)
+        self.assertEqual(challenge["deadline"] - challenge["created_at"], 10800)
         self.assertFalse(await self.database.can_force_owner(1, 20, 10))
+        self.database.connection.execute(
+            "UPDATE ownership SET last_forced_at=? WHERE chat_id=1 AND slave_id=20",
+            (now - FORCE_OWNER_COOLDOWN_SECONDS,),
+        )
+        self.database.connection.commit()
+        self.assertTrue(await self.database.can_force_owner(1, 20, 10))
 
     async def test_expired_challenge_is_claimed_once(self):
         challenge_id = await self.database.create_challenge(1, 10, 20)
@@ -147,6 +156,22 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         )
         challenge = await self.database.get_challenge(challenge_id)
         self.assertEqual(challenge["opponent_newcomer"], 1)
+        self.assertEqual(challenge["deadline"] - challenge["created_at"], 300)
+
+    async def test_old_active_challenge_deadline_is_shortened_on_restart(self):
+        challenge_id = await self.database.create_challenge(1, 10, 20)
+        challenge = await self.database.get_challenge(challenge_id)
+        self.database.connection.execute(
+            "UPDATE challenges SET deadline=? WHERE id=?",
+            (int(challenge["created_at"]) + 86400, challenge_id),
+        )
+        self.database.connection.commit()
+
+        await self.database.close()
+        await self.database.connect()
+
+        migrated = await self.database.get_challenge(challenge_id)
+        self.assertEqual(migrated["deadline"] - migrated["created_at"], 10800)
 
     async def test_counter_increments_persistently(self):
         self.assertEqual(await self.database.increment_counter(1, "stolen_art"), 1)

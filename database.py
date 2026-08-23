@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any
 
 
+CHALLENGE_DEADLINE_SECONDS = 3 * 60 * 60
+NEWCOMER_CHALLENGE_DEADLINE_SECONDS = 5 * 60
+FORCE_OWNER_COOLDOWN_SECONDS = 7 * 24 * 60 * 60
+
+
 def utc_timestamp() -> int:
     return int(datetime.now(timezone.utc).timestamp())
 
@@ -132,8 +137,14 @@ class Database:
         )
         self._ensure_column("challenges", "deadline", "INTEGER")
         self._connection.execute(
-            """UPDATE challenges SET deadline=created_at + 86400
-               WHERE deadline IS NULL"""
+            """UPDATE challenges
+               SET deadline=created_at + CASE
+                   WHEN opponent_newcomer=1 THEN ? ELSE ? END
+               WHERE deadline IS NULL OR status='active'""",
+            (
+                NEWCOMER_CHALLENGE_DEADLINE_SECONDS,
+                CHALLENGE_DEADLINE_SECONDS,
+            ),
         )
         # Apply the invariant introduced later: an enslaved user cannot own slaves.
         self._connection.execute(
@@ -368,7 +379,12 @@ class Database:
                     int(forced),
                     int(opponent_newcomer),
                     now,
-                    now + 86400,
+                    now
+                    + (
+                        NEWCOMER_CHALLENGE_DEADLINE_SECONDS
+                        if opponent_newcomer
+                        else CHALLENGE_DEADLINE_SECONDS
+                    ),
                 ),
             )
             if forced:
@@ -513,7 +529,6 @@ class Database:
             ).fetchone()
 
     async def can_force_owner(self, chat_id: int, slave_id: int, owner_id: int) -> bool:
-        month = 30 * 86400
         now = utc_timestamp()
         async with self._lock:
             row = self.connection.execute(
@@ -521,9 +536,11 @@ class Database:
                    WHERE chat_id=? AND slave_id=? AND owner_id=?""",
                 (chat_id, slave_id, owner_id),
             ).fetchone()
-            if not row or now < int(row["acquired_at"]) + month:
+            if not row or now < int(row["acquired_at"]) + FORCE_OWNER_COOLDOWN_SECONDS:
                 return False
-            return row["last_forced_at"] is None or now >= int(row["last_forced_at"]) + month
+            return row["last_forced_at"] is None or now >= (
+                int(row["last_forced_at"]) + FORCE_OWNER_COOLDOWN_SECONDS
+            )
 
     async def transfer_slave(
         self, chat_id: int, current_owner_id: int, slave_id: int, new_owner_id: int

@@ -25,7 +25,12 @@ from aiogram.types import (
     User,
 )
 
-from database import Database, utc_timestamp
+from database import (
+    CHALLENGE_DEADLINE_SECONDS,
+    NEWCOMER_CHALLENGE_DEADLINE_SECONDS,
+    Database,
+    utc_timestamp,
+)
 from parsing import (
     command_payload,
     format_duration,
@@ -39,7 +44,6 @@ from parsing import (
 GROUP_TYPES = {"group", "supergroup"}
 JOKE_COOLDOWN_SECONDS = 120
 DERMODEMOON_COOLDOWN_SECONDS = 86400
-CHALLENGE_DEADLINE_SECONDS = 86400
 IMMUNE_USERNAME = "kit_kitovich23"
 IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настолько сочные что ему плевать."
 MODERATION_RE = re.compile(r"^[!/](бан|мут|пред)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
@@ -406,14 +410,15 @@ async def challenge_text(database: Database, challenge) -> str:
     second_state = "✅" if challenge["opponent_choice"] else "⌛"
     forced_text = "\n🔒 Принудительный вызов: владелец не может отказаться." if challenge["forced"] else ""
     newcomer_text = (
-        "\n⏳ Если новичок не сделает ход за 24 часа, он автоматически станет рабом."
+        "\n⏳ Если новичок не сделает ход за 5 минут, он автоматически станет рабом."
         if challenge["opponent_newcomer"]
         else ""
     )
+    deadline_text = "5 минут" if challenge["opponent_newcomer"] else "3 часа"
     return (
         f"КНБ: {plain_name(challenger)} против {plain_name(opponent)}\n"
         f"{first_state} {plain_name(challenger)} · {second_state} {plain_name(opponent)}\n"
-        f"Выберите ход — соперник его не увидит. На ход даётся 24 часа."
+        f"Выберите ход — соперник его не увидит. На ход даётся {deadline_text}."
         f"{forced_text}{newcomer_text}"
     )
 
@@ -567,7 +572,7 @@ def create_router(database: Database) -> Router:
             result = await database.force_enslave(chat_id, opponent_id, challenger_id)
             if result == "enslaved":
                 text = (
-                    f"⌛ {plain_name(opponent)} не ответил на вызов за 24 часа и "
+                    f"⌛ {plain_name(opponent)} не ответил на вызов за 5 минут и "
                     f"становится рабом {plain_name(challenger)}."
                 )
             else:
@@ -577,10 +582,12 @@ def create_router(database: Database) -> Router:
                 )
             await edit_challenge(challenge, bot, text)
         else:
+            deadline_text = "5 минут" if challenge["opponent_newcomer"] else "3 часа"
             await edit_challenge(
                 challenge,
                 bot,
-                "⌛ За 24 часа бой не был завершён. Для обычных участников последствий нет.",
+                f"⌛ За {deadline_text} бой не был завершён. "
+                "Для обычных участников последствий нет.",
             )
 
     def schedule_challenge(challenge_id: int, bot: Bot) -> None:
