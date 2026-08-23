@@ -30,6 +30,7 @@ from handlers.routes import (
     STATS_RE,
     TRANSFER_RE,
     ART_THEFT_RE,
+    basement_kick_allowed,
     message_content,
     resolve_target,
     select_safebooru_post,
@@ -40,6 +41,11 @@ from handlers.routes import (
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_basement_admins_can_be_slapped_but_never_kicked(self):
+        self.assertFalse(basement_kick_allowed("administrator"))
+        self.assertFalse(basement_kick_allowed("creator"))
+        self.assertTrue(basement_kick_allowed("member"))
+
     def test_message_content_uses_text_or_media_caption(self):
         self.assertEqual(
             message_content(SimpleNamespace(text="обычное сообщение", caption=None)),

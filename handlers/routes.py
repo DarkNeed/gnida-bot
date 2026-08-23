@@ -139,6 +139,11 @@ def is_utochka(user: User | None) -> bool:
     return bool(user and user.username and user.username.casefold() == "utochka8")
 
 
+def basement_kick_allowed(member_status: str) -> bool:
+    """Only regular chat members may be randomly kicked by a basement slap."""
+    return member_status not in {"administrator", "creator", "left", "kicked"}
+
+
 async def resolve_user_token(
     message: Message, database: Database, token: str
 ) -> tuple[int, str] | None:
@@ -754,10 +759,7 @@ def create_router(database: Database) -> Router:
             status = getattr(member.status, "value", member.status)
         except (TelegramBadRequest, TelegramForbiddenError):
             status = "left"
-        if status in {"administrator", "creator"}:
-            await message.answer("Администраторам леща дать нельзя.")
-            return
-        if status not in {"left", "kicked"} and random.randrange(10) == 0:
+        if basement_kick_allowed(status) and random.randrange(10) == 0:
             try:
                 await bot.ban_chat_member(message.chat.id, target_id)
                 await bot.unban_chat_member(
