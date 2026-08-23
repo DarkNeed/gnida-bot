@@ -98,6 +98,18 @@ SAFEBOORU_API_URL = "https://safebooru.org/index.php"
 SAFEBOORU_TAGS = "murder_drones rating:safe"
 
 
+def message_content(message: Message) -> str:
+    """Return user-entered content for both plain and media messages."""
+    return message.text or message.caption or ""
+
+
+def text_or_caption_regexp(pattern: re.Pattern[str], *, mode: str | None = None):
+    """Build an aiogram filter that applies the same regexp to text and captions."""
+    if mode is None:
+        return F.text.regexp(pattern) | F.caption.regexp(pattern)
+    return F.text.regexp(pattern, mode=mode) | F.caption.regexp(pattern, mode=mode)
+
+
 def display_name(user: User) -> str:
     return user.full_name or user.username or str(user.id)
 
@@ -239,6 +251,13 @@ class TrackingMiddleware(BaseMiddleware):
             await self.database.upsert_user(
                 event.chat.id, user.id, user.username, display_name(user)
             )
+            is_image_document = bool(
+                event.document
+                and event.document.mime_type
+                and event.document.mime_type.startswith("image/")
+            )
+            if event.photo or is_image_document:
+                await self.database.complete_leg_requests(event.chat.id, user.id)
         return await handler(event, data)
 
 
@@ -528,7 +547,7 @@ def create_router(database: Database) -> Router:
         for task in tuple(challenge_tasks):
             task.cancel()
 
-    @router.message(F.text.regexp(START_RE))
+    @router.message(text_or_caption_regexp(START_RE))
     async def start(message: Message) -> None:
         if message.chat.type == "private":
             await message.answer(
@@ -552,12 +571,7 @@ def create_router(database: Database) -> Router:
                 touch=False,
             )
 
-    @router.message(F.photo | F.document.mime_type.startswith("image/"))
-    async def complete_leg_request(message: Message) -> None:
-        if message.chat.type in GROUP_TYPES and message.from_user:
-            await database.complete_leg_requests(message.chat.id, message.from_user.id)
-
-    @router.message(F.text.regexp(DUCK_SLAPS_RE))
+    @router.message(text_or_caption_regexp(DUCK_SLAPS_RE))
     async def duck_slaps_for_ten_years(message: Message) -> None:
         replied = message.reply_to_message
         target = replied.from_user if replied and not replied.sender_chat else None
@@ -584,7 +598,7 @@ def create_router(database: Database) -> Router:
             parse_mode="HTML",
         )
 
-    @router.message(F.text.regexp(SLEEP_RE))
+    @router.message(text_or_caption_regexp(SLEEP_RE))
     async def sleepy_mute(message: Message, bot: Bot) -> None:
         replied = message.reply_to_message
         target = replied.from_user if replied and not replied.sender_chat else None
@@ -630,7 +644,7 @@ def create_router(database: Database) -> Router:
         except (TelegramBadRequest, TelegramForbiddenError) as error:
             await message.answer(f"Не получилось усыпить: {html.escape(str(error))}")
 
-    @router.message(F.text.regexp(HEAVENLY_PUNISHMENT_RE))
+    @router.message(text_or_caption_regexp(HEAVENLY_PUNISHMENT_RE))
     async def heavenly_punishment(message: Message, bot: Bot) -> None:
         replied = message.reply_to_message
         target = replied.from_user if replied and not replied.sender_chat else None
@@ -681,14 +695,15 @@ def create_router(database: Database) -> Router:
                 f"Не получилось обрушить кару: {html.escape(str(error))}"
             )
 
-    @router.message(F.text.regexp(BASEMENT_RELEASE_RE))
+    @router.message(text_or_caption_regexp(BASEMENT_RELEASE_RE))
     async def release_from_basement(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES or not is_cheto_neveru(message.from_user):
             return
-        match = BASEMENT_RELEASE_RE.match(message.text or "")
+        text = message_content(message)
+        match = BASEMENT_RELEASE_RE.match(text)
         if not match:
             return
-        payload = (message.text or "")[match.end() :].strip()
+        payload = text[match.end() :].strip()
         target = await resolve_target(message, database, payload)
         if not target:
             return
@@ -701,7 +716,7 @@ def create_router(database: Database) -> Router:
         else:
             await message.answer("Этого участника нет в Подвалграде.")
 
-    @router.message(F.text.regexp(BASEMENT_LIST_RE))
+    @router.message(text_or_caption_regexp(BASEMENT_LIST_RE))
     async def basement_list(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES:
             return
@@ -715,14 +730,15 @@ def create_router(database: Database) -> Router:
             lines.append(f"{index}. {html.escape(nickname)}")
         await message.answer("\n".join(lines), parse_mode="HTML")
 
-    @router.message(F.text.regexp(SLAP_RE))
+    @router.message(text_or_caption_regexp(SLAP_RE))
     async def basement_slap(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not is_cheto_neveru(message.from_user):
             return
-        match = SLAP_RE.match(message.text or "")
+        text = message_content(message)
+        match = SLAP_RE.match(text)
         if not match:
             return
-        payload = (message.text or "")[match.end() :].strip()
+        payload = text[match.end() :].strip()
         target = await resolve_target(message, database, payload)
         if not target:
             return
@@ -760,7 +776,7 @@ def create_router(database: Database) -> Router:
             parse_mode="HTML",
         )
 
-    @router.message(F.text.regexp(LEGS_RE))
+    @router.message(text_or_caption_regexp(LEGS_RE))
     async def request_legs(message: Message, bot: Bot) -> None:
         sender = message.from_user
         replied = message.reply_to_message
@@ -792,7 +808,7 @@ def create_router(database: Database) -> Router:
             parse_mode="HTML",
         )
 
-    @router.message(F.text.regexp(KARGASTAN_RE))
+    @router.message(text_or_caption_regexp(KARGASTAN_RE))
     async def kargastan_ban(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
             return
@@ -821,15 +837,16 @@ def create_router(database: Database) -> Router:
                 f"Не получилось применить действие: {html.escape(str(error))}"
             )
 
-    @router.message(F.text.regexp(MODERATION_RE))
+    @router.message(text_or_caption_regexp(MODERATION_RE))
     async def moderation(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
             return
-        match = MODERATION_RE.match(message.text or "")
+        text = message_content(message)
+        match = MODERATION_RE.match(text)
         if not match or not message.from_user:
             return
         action = match.group(1).casefold()
-        target = await resolve_target(message, database, command_payload(message.text or ""))
+        target = await resolve_target(message, database, command_payload(text))
         if not target:
             return
         target_id, target_name, remainder = target
@@ -899,11 +916,11 @@ def create_router(database: Database) -> Router:
         except (TelegramBadRequest, TelegramForbiddenError) as error:
             await message.answer(f"Не получилось применить действие: {html.escape(str(error))}")
 
-    @router.message(F.text.regexp(STATS_RE))
+    @router.message(text_or_caption_regexp(STATS_RE))
     async def stats(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
             return
-        target = await resolve_target(message, database, command_payload(message.text or ""))
+        target = await resolve_target(message, database, command_payload(message_content(message)))
         if not target:
             return
         target_id, target_name, _ = target
@@ -939,15 +956,16 @@ def create_router(database: Database) -> Router:
             parse_mode="HTML",
         )
 
-    @router.message(F.text.regexp(RESTORE_RE))
+    @router.message(text_or_caption_regexp(RESTORE_RE))
     async def restore_member(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
             return
-        match = RESTORE_RE.match(message.text or "")
+        text = message_content(message)
+        match = RESTORE_RE.match(text)
         if not match:
             return
         action = match.group(1).casefold()
-        target = await resolve_target(message, database, command_payload(message.text or ""))
+        target = await resolve_target(message, database, command_payload(text))
         if not target:
             return
         target_id, target_name, _ = target
@@ -977,14 +995,15 @@ def create_router(database: Database) -> Router:
         except (TelegramBadRequest, TelegramForbiddenError) as error:
             await message.answer(f"Не получилось снять ограничение: {html.escape(str(error))}")
 
-    @router.message(F.text.regexp(CLEAR_RE))
+    @router.message(text_or_caption_regexp(CLEAR_RE))
     async def clear_reputation(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
             return
-        match = CLEAR_RE.match(message.text or "")
+        text = message_content(message)
+        match = CLEAR_RE.match(text)
         if not match:
             return
-        payload = (message.text or "")[match.end() :].strip()
+        payload = text[match.end() :].strip()
         target = await resolve_target(message, database, payload)
         if not target:
             return
@@ -995,11 +1014,11 @@ def create_router(database: Database) -> Router:
             parse_mode="HTML",
         )
 
-    @router.message(F.text.regexp(SLAVES_RE))
+    @router.message(text_or_caption_regexp(SLAVES_RE))
     async def slaves(message: Message, bot: Bot) -> None:
         if not message.from_user:
             return
-        payload = command_payload(message.text or "")
+        payload = command_payload(message_content(message))
         recipient_id = message.from_user.id
 
         if message.chat.type in GROUP_TYPES:
@@ -1066,11 +1085,11 @@ def create_router(database: Database) -> Router:
             if message.chat.type in GROUP_TYPES:
                 await message.answer("Сначала откройте личку с ботом и нажмите Start.")
 
-    @router.message(F.text.regexp(RELEASE_RE))
+    @router.message(text_or_caption_regexp(RELEASE_RE))
     async def release(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
             return
-        payload = RELEASE_RE.sub("", message.text or "", count=1).strip()
+        payload = RELEASE_RE.sub("", message_content(message), count=1).strip()
         target = await resolve_target(message, database, payload)
         if not target:
             return
@@ -1083,11 +1102,11 @@ def create_router(database: Database) -> Router:
         else:
             await message.answer("Этот участник не ваш раб.")
 
-    @router.message(F.text.regexp(TRANSFER_RE))
+    @router.message(text_or_caption_regexp(TRANSFER_RE))
     async def transfer_slave(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
             return
-        payload = command_payload(message.text or "")
+        payload = command_payload(message_content(message))
         replied = message.reply_to_message
         if replied and replied.sender_chat:
             await message.answer("Нельзя определить автора сообщения от имени канала.")
@@ -1141,7 +1160,7 @@ def create_router(database: Database) -> Router:
                 parse_mode="HTML",
             )
 
-    @router.message(F.text.regexp(CLEAR_SLAVES_RE))
+    @router.message(text_or_caption_regexp(CLEAR_SLAVES_RE))
     async def sleepy_clear_slaves(message: Message) -> None:
         replied = message.reply_to_message
         if (
@@ -1159,11 +1178,14 @@ def create_router(database: Database) -> Router:
             parse_mode="HTML",
         )
 
-    @router.message(F.text.regexp(MAKE_SLAVE_REPLY_RE) | F.text.regexp(MAKE_SLAVE_RE))
+    @router.message(
+        text_or_caption_regexp(MAKE_SLAVE_REPLY_RE)
+        | text_or_caption_regexp(MAKE_SLAVE_RE)
+    )
     async def sleepy_make_slave(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES or not is_mister_sleepy(message.from_user):
             return
-        text = message.text or ""
+        text = message_content(message)
         reply_match = MAKE_SLAVE_REPLY_RE.match(text)
         full_match = MAKE_SLAVE_RE.match(text)
         replied = message.reply_to_message
@@ -1209,7 +1231,7 @@ def create_router(database: Database) -> Router:
                 parse_mode="HTML",
             )
 
-    @router.message(F.text.regexp(CHALLENGE_RE))
+    @router.message(text_or_caption_regexp(CHALLENGE_RE))
     async def challenge(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
             return
@@ -1339,7 +1361,7 @@ def create_router(database: Database) -> Router:
             return
         await publish_played_result(challenge, bot)
 
-    @router.message(F.text.regexp(TOP_RE))
+    @router.message(text_or_caption_regexp(TOP_RE))
     async def top_owners(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES:
             return
@@ -1362,7 +1384,7 @@ def create_router(database: Database) -> Router:
         joke_cooldowns[key] = now
         return True
 
-    @router.message(F.text.regexp(METAL_RASCALS_RE))
+    @router.message(text_or_caption_regexp(METAL_RASCALS_RE))
     async def metal_rascals(message: Message) -> None:
         sender = message.from_user
         if (
@@ -1398,7 +1420,7 @@ def create_router(database: Database) -> Router:
             logging.getLogger(__name__).warning("Safebooru request failed: %s", error)
             await message.answer("Safebooru сейчас не отдал картинку. Попробуй позже.")
 
-    @router.message(F.text.regexp(ART_THEFT_RE, mode="search"))
+    @router.message(text_or_caption_regexp(ART_THEFT_RE, mode="search"))
     async def art_theft_counter(message: Message) -> None:
         sender = message.from_user
         if (
@@ -1417,7 +1439,7 @@ def create_router(database: Database) -> Router:
         )
         await message.answer(random.choice(responses))
 
-    @router.message(F.text.regexp(GNIDA_RE, mode="search"))
+    @router.message(text_or_caption_regexp(GNIDA_RE, mode="search"))
     async def random_gnida(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES or not joke_available(message.chat.id, "gnida"):
             return
@@ -1430,22 +1452,22 @@ def create_router(database: Database) -> Router:
             parse_mode="HTML",
         )
 
-    @router.message(F.text.regexp(DUCK_RE, mode="search"))
+    @router.message(text_or_caption_regexp(DUCK_RE, mode="search"))
     async def duck(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "duck"):
             await message.answer("40 см")
 
-    @router.message(F.text.regexp(HUILO_RE, mode="search"))
+    @router.message(text_or_caption_regexp(HUILO_RE, mode="search"))
     async def huilo(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "huilo"):
             await message.answer("сам хуйло")
 
-    @router.message(F.text.regexp(FEMBOY_RE, mode="search"))
+    @router.message(text_or_caption_regexp(FEMBOY_RE, mode="search"))
     async def femboy(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "femboy"):
             await message.answer("бинарный")
 
-    @router.message(F.text.regexp(BASEMENT_RE))
+    @router.message(text_or_caption_regexp(BASEMENT_RE))
     async def basement(message: Message) -> None:
         sender = message.from_user
         replied_user = message.reply_to_message.from_user if message.reply_to_message else None
@@ -1476,7 +1498,7 @@ def create_router(database: Database) -> Router:
             parse_mode="HTML",
         )
 
-    @router.message(F.text.regexp(SAMOVAR_RE, mode="search"))
+    @router.message(text_or_caption_regexp(SAMOVAR_RE, mode="search"))
     async def samovar(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "samovar"):
             await message.answer("Зовите Кита")

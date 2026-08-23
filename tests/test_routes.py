@@ -30,14 +30,42 @@ from handlers.routes import (
     STATS_RE,
     TRANSFER_RE,
     ART_THEFT_RE,
+    message_content,
     resolve_target,
     select_safebooru_post,
+    text_or_caption_regexp,
     is_chat_participant,
     user_is_immune,
 )
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_message_content_uses_text_or_media_caption(self):
+        self.assertEqual(
+            message_content(SimpleNamespace(text="обычное сообщение", caption=None)),
+            "обычное сообщение",
+        )
+        self.assertEqual(
+            message_content(SimpleNamespace(text=None, caption="подпись к видео")),
+            "подпись к видео",
+        )
+
+    def test_command_filter_matches_text_and_media_caption(self):
+        command_filter = text_or_caption_regexp(MODERATION_RE)
+        self.assertTrue(
+            command_filter.resolve(
+                SimpleNamespace(text="!мут @user 1 минута", caption=None)
+            )
+        )
+        self.assertTrue(
+            command_filter.resolve(
+                SimpleNamespace(text=None, caption="!мут @user 1 минута")
+            )
+        )
+        self.assertFalse(
+            command_filter.resolve(SimpleNamespace(text=None, caption="просто видео"))
+        )
+
     def test_joke_cooldown_is_two_minutes(self):
         self.assertEqual(JOKE_COOLDOWN_SECONDS, 120)
 
