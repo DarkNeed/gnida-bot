@@ -175,6 +175,20 @@ def dermodemoon_announcement_available(
     return True
 
 
+def silence_duration_seconds(text: str) -> int:
+    return sum(1 for _ in SILENCE_RE.finditer(text)) * 180
+
+
+def russian_minutes(amount: int) -> str:
+    if amount % 10 == 1 and amount % 100 != 11:
+        unit = "минуту"
+    elif 2 <= amount % 10 <= 4 and not 12 <= amount % 100 <= 14:
+        unit = "минуты"
+    else:
+        unit = "минут"
+    return f"{amount} {unit}"
+
+
 async def resolve_user_token(
     message: Message, database: Database, token: str
 ) -> tuple[int, str] | None:
@@ -647,6 +661,8 @@ def create_router(database: Database) -> Router:
 
     @router.message(text_or_caption_regexp(SILENCE_RE, mode="search"))
     async def dimon_silence(message: Message, bot: Bot) -> None:
+        duration_seconds = silence_duration_seconds(message_content(message))
+        duration_minutes = duration_seconds // 60
         replied = message.reply_to_message
         target = replied.from_user if replied and not replied.sender_chat else None
         if (
@@ -654,6 +670,7 @@ def create_router(database: Database) -> Router:
             or not is_dimon_gfg(message.from_user)
             or not target
             or target.is_bot
+            or not duration_seconds
         ):
             return
         await database.upsert_user(
@@ -672,7 +689,7 @@ def create_router(database: Database) -> Router:
             if status in {"administrator", "creator"}:
                 await message.answer("Узбагойся, это админ")
                 return
-            until = datetime.now(timezone.utc) + timedelta(minutes=3)
+            until = datetime.now(timezone.utc) + timedelta(seconds=duration_seconds)
             await bot.restrict_chat_member(
                 message.chat.id,
                 target.id,
@@ -686,12 +703,12 @@ def create_router(database: Database) -> Router:
                 "mute",
                 "задавлен авторитетом Димы_гфг",
                 message.from_user.id,
-                duration_seconds=180,
+                duration_seconds=duration_seconds,
                 active_until=int(until.timestamp()),
             )
             await message.answer(
                 f"Дима_гфг задавил авторитетом {mention(target.id, display_name(target))}, "
-                "он не сможет открыть рот в течении 3 минут",
+                f"он не сможет открыть рот в течении {russian_minutes(duration_minutes)}",
                 parse_mode="HTML",
             )
         except (TelegramBadRequest, TelegramForbiddenError) as error:

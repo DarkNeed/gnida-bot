@@ -38,6 +38,7 @@ from handlers.routes import (
     dermodemoon_announcement_available,
     message_content,
     message_has_image,
+    silence_duration_seconds,
     resolve_target,
     select_safebooru_post,
     text_or_caption_regexp,
@@ -195,6 +196,16 @@ class RoutePatternTests(unittest.TestCase):
         self.assertFalse(SILENCE_RE.search("молчааааать тварь"))
         self.assertFalse(SILENCE_RE.search("Заткнись"))
         self.assertFalse(SILENCE_RE.search("заткниииись"))
+
+    def test_each_silence_word_adds_three_minutes(self):
+        self.assertEqual(silence_duration_seconds("МОЛЧАТЬ"), 180)
+        self.assertEqual(silence_duration_seconds("МОЛЧААААТЬ!!!!!!"), 180)
+        self.assertEqual(silence_duration_seconds("МОЛЧАТЬ ЗАТКНИСЬ"), 360)
+        self.assertEqual(
+            silence_duration_seconds("ЗАТКНИИИИСЬ, МОЛЧАТЬ! ЗАТКНИСЬ!"),
+            540,
+        )
+        self.assertEqual(silence_duration_seconds("молчать Заткнись"), 0)
 
     def test_special_command_phrases(self):
         command = (
