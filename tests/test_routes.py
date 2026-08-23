@@ -26,6 +26,7 @@ from handlers.routes import (
     CLEAR_RE,
     RESTORE_RE,
     SAFEBOORU_TAGS,
+    SILENCE_RE,
     SLAP_RE,
     SLEEP_RE,
     STATS_RE,
@@ -158,6 +159,14 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(HEAVENLY_PUNISHMENT_RE.match("Это кара небесная, сосунок!"))
         self.assertTrue(DUCK_SLAPS_RE.match("Давать леща 10 лет"))
         self.assertTrue(SLEEP_RE.match("Усыпить"))
+
+    def test_dimon_silence_requires_caps_and_allows_stretched_phrase(self):
+        self.assertTrue(SILENCE_RE.search("МОЛЧАТЬ"))
+        self.assertTrue(SILENCE_RE.search("МОЛЧАТЬ!!!!!!"))
+        self.assertTrue(SILENCE_RE.search("ну всё, МОЛЧААААААААТЬ!!!!"))
+        self.assertTrue(SILENCE_RE.search("МОЛЧАААААААААТЬ ТВАРЬ!!!!"))
+        self.assertFalse(SILENCE_RE.search("Молчать"))
+        self.assertFalse(SILENCE_RE.search("молчааааать тварь"))
 
     def test_special_command_phrases(self):
         command = (

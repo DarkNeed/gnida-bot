@@ -76,6 +76,9 @@ HEAVENLY_PUNISHMENT_RE = re.compile(
 )
 DUCK_SLAPS_RE = re.compile(r"^давать\s+леща\s+10\s+лет[!?.\s]*$", re.IGNORECASE)
 SLEEP_RE = re.compile(r"^усыпить[!?.\s]*$", re.IGNORECASE)
+SILENCE_RE = re.compile(
+    r"(?<![А-ЯЁ])МОЛЧА+ТЬ(?:\s+ТВАРЬ)?!*(?![А-ЯЁ])"
+)
 LEGS_RE = re.compile(r"^скинь\s+ножки[!?.\s]*$", re.IGNORECASE)
 KARGASTAN_RE = re.compile(
     r"^пусть\s+звенят\s+позолоченные\s+кранчики\s+самоваров\s+8\s+народов\.\s*"
@@ -137,6 +140,10 @@ def is_cheto_neveru(user: User | None) -> bool:
 
 def is_utochka(user: User | None) -> bool:
     return bool(user and user.username and user.username.casefold() == "utochka8")
+
+
+def is_dimon_gfg(user: User | None) -> bool:
+    return bool(user and user.username and user.username.casefold() == "dimon_gfg")
 
 
 def basement_kick_allowed(member_status: str) -> bool:
@@ -616,6 +623,60 @@ def create_router(database: Database) -> Router:
             "в течение 10 ЛЕТ.",
             parse_mode="HTML",
         )
+
+    @router.message(text_or_caption_regexp(SILENCE_RE, mode="search"))
+    async def dimon_silence(message: Message, bot: Bot) -> None:
+        replied = message.reply_to_message
+        target = replied.from_user if replied and not replied.sender_chat else None
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not is_dimon_gfg(message.from_user)
+            or not target
+            or target.is_bot
+        ):
+            return
+        await database.upsert_user(
+            message.chat.id,
+            target.id,
+            target.username,
+            display_name(target),
+            touch=False,
+        )
+        if user_is_immune(target):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        try:
+            member = await bot.get_chat_member(message.chat.id, target.id)
+            status = getattr(member.status, "value", member.status)
+            if status in {"administrator", "creator"}:
+                await message.answer("Узбагойся, это админ")
+                return
+            until = datetime.now(timezone.utc) + timedelta(minutes=3)
+            await bot.restrict_chat_member(
+                message.chat.id,
+                target.id,
+                permissions=ChatPermissions(can_send_messages=False),
+                until_date=until,
+                use_independent_chat_permissions=True,
+            )
+            await database.record_action(
+                message.chat.id,
+                target.id,
+                "mute",
+                "задавлен авторитетом Димы_гфг",
+                message.from_user.id,
+                duration_seconds=180,
+                active_until=int(until.timestamp()),
+            )
+            await message.answer(
+                f"Дима_гфг задавил авторитетом {mention(target.id, display_name(target))}, "
+                "он не сможет открыть рот в течении 3 минут",
+                parse_mode="HTML",
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            await message.answer(
+                f"Не получилось заставить молчать: {html.escape(str(error))}"
+            )
 
     @router.message(text_or_caption_regexp(SLEEP_RE))
     async def sleepy_mute(message: Message, bot: Bot) -> None:
