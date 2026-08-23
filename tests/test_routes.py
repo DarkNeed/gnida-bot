@@ -11,6 +11,7 @@ from handlers.routes import (
     BASEMENT_RELEASE_RE,
     DUCK_RE,
     DUCK_SLAPS_RE,
+    DERMODEMOON_COOLDOWN_SECONDS,
     FEMBOY_RE,
     GNIDA_RE,
     HUILO_RE,
@@ -34,6 +35,7 @@ from handlers.routes import (
     TrackingMiddleware,
     ART_THEFT_RE,
     basement_kick_allowed,
+    dermodemoon_announcement_available,
     message_content,
     message_has_image,
     resolve_target,
@@ -119,6 +121,27 @@ class RoutePatternTests(unittest.TestCase):
 
     def test_joke_cooldown_is_two_minutes(self):
         self.assertEqual(JOKE_COOLDOWN_SECONDS, 120)
+
+    def test_dermodemoon_cooldown_is_one_day(self):
+        self.assertEqual(DERMODEMOON_COOLDOWN_SECONDS, 24 * 60 * 60)
+        cooldowns = {}
+        self.assertTrue(
+            dermodemoon_announcement_available(cooldowns, chat_id=-1001, now=100)
+        )
+        self.assertFalse(
+            dermodemoon_announcement_available(
+                cooldowns,
+                chat_id=-1001,
+                now=100 + DERMODEMOON_COOLDOWN_SECONDS - 1,
+            )
+        )
+        self.assertTrue(
+            dermodemoon_announcement_available(
+                cooldowns,
+                chat_id=-1001,
+                now=100 + DERMODEMOON_COOLDOWN_SECONDS,
+            )
+        )
 
     def test_moderation_accepts_bang_prefix(self):
         self.assertTrue(MODERATION_RE.match("!мут @user 1 минута причина"))

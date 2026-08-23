@@ -38,6 +38,7 @@ from parsing import (
 
 GROUP_TYPES = {"group", "supergroup"}
 JOKE_COOLDOWN_SECONDS = 120
+DERMODEMOON_COOLDOWN_SECONDS = 86400
 CHALLENGE_DEADLINE_SECONDS = 86400
 IMMUNE_USERNAME = "kit_kitovich23"
 IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настолько сочные что ему плевать."
@@ -163,6 +164,17 @@ def message_has_image(message: Message) -> bool:
     )
 
 
+def dermodemoon_announcement_available(
+    cooldowns: dict[int, float], chat_id: int, now: float | None = None
+) -> bool:
+    current = time.monotonic() if now is None else now
+    previous = cooldowns.get(chat_id)
+    if previous is not None and current - previous < DERMODEMOON_COOLDOWN_SECONDS:
+        return False
+    cooldowns[chat_id] = current
+    return True
+
+
 async def resolve_user_token(
     message: Message, database: Database, token: str
 ) -> tuple[int, str] | None:
@@ -260,6 +272,7 @@ def slave_report(sections: list[tuple[str, list]]) -> str:
 class TrackingMiddleware(BaseMiddleware):
     def __init__(self, database: Database) -> None:
         self.database = database
+        self.dermodemoon_cooldowns: dict[int, float] = {}
 
     async def __call__(
         self,
@@ -277,6 +290,14 @@ class TrackingMiddleware(BaseMiddleware):
             )
             if message_has_image(event):
                 await self.database.complete_leg_requests(event.chat.id, user.id)
+            if (
+                user.username
+                and user.username.casefold() == "dermodemoon"
+                and dermodemoon_announcement_available(
+                    self.dermodemoon_cooldowns, event.chat.id
+                )
+            ):
+                await event.answer("Дермодемон в чате, становитесь раком")
         return await handler(event, data)
 
 
