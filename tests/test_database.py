@@ -92,6 +92,46 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         result = await self.database.transfer_slave(1, 10, 30, 20)
         self.assertEqual(result, "recipient_is_slave")
 
+    async def test_pirojok_cannot_receive_slaves(self):
+        await self.database.upsert_user(
+            1, 40, "pirojoksostajem", "Пирожок с остаже́м"
+        )
+        outcome, _ = await self.database.transfer_after_loss(1, 20, 40)
+        self.assertEqual(outcome, "pirojok_cannot_own")
+        self.assertIsNone(await self.database.get_owner(1, 20))
+        self.assertEqual(
+            await self.database.force_enslave(1, 20, 40),
+            "pirojok_cannot_own",
+        )
+        await self.database.force_enslave(1, 30, 10)
+        self.assertEqual(
+            await self.database.transfer_slave(1, 10, 30, 40),
+            "pirojok_cannot_own",
+        )
+
+    async def test_jug_hiding_has_five_minute_state_and_one_hour_cooldown(self):
+        hidden_until = await self.database.start_jug_hiding(1, 20)
+        self.assertIsNotNone(hidden_until)
+        self.assertTrue(await self.database.is_jug_hidden(1, 20))
+        self.assertIsNone(await self.database.start_jug_hiding(1, 20))
+        pending = await self.database.pending_jug_hidings()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["cooldown_until"] - pending[0]["hidden_until"], 3600)
+
+        self.database.connection.execute(
+            "UPDATE jug_hiding SET hidden_until=0 WHERE chat_id=1 AND user_id=20"
+        )
+        self.database.connection.commit()
+        self.assertTrue(await self.database.finish_jug_hiding(1, 20))
+        self.assertFalse(await self.database.is_jug_hidden(1, 20))
+        self.assertIsNone(await self.database.start_jug_hiding(1, 20))
+
+        self.database.connection.execute(
+            "UPDATE jug_hiding SET cooldown_until=0 WHERE chat_id=1 AND user_id=20"
+        )
+        self.database.connection.commit()
+        self.assertIsNotNone(await self.database.start_jug_hiding(1, 20))
+
     async def test_beating_owner_frees_slave(self):
         await self.database.force_enslave(1, 20, 10)
         outcome, affected = await self.database.transfer_after_loss(1, 10, 20)

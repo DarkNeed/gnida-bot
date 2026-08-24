@@ -10,6 +10,9 @@ from typing import Any
 CHALLENGE_DEADLINE_SECONDS = 3 * 60 * 60
 NEWCOMER_CHALLENGE_DEADLINE_SECONDS = 5 * 60
 FORCE_OWNER_COOLDOWN_SECONDS = 7 * 24 * 60 * 60
+PIROJOK_USERNAME = "pirojoksostajem"
+JUG_HIDING_SECONDS = 5 * 60
+JUG_COOLDOWN_SECONDS = 60 * 60
 
 
 def utc_timestamp() -> int:
@@ -126,6 +129,18 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_basement_members_added
                 ON basement_members(chat_id, added_at);
+
+            CREATE TABLE IF NOT EXISTS jug_hiding (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                hidden_until INTEGER NOT NULL,
+                cooldown_until INTEGER NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (chat_id, user_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_jug_hiding_active
+                ON jug_hiding(active, hidden_until);
             """
         )
         self._ensure_column("ownership", "last_forced_at", "INTEGER")
@@ -481,6 +496,16 @@ class Database:
                     return "freed", winner_id
                 self.connection.commit()
                 return "no_reward", loser_id
+            winner = self.connection.execute(
+                "SELECT username FROM users WHERE chat_id=? AND user_id=?",
+                (chat_id, winner_id),
+            ).fetchone()
+            if (
+                winner
+                and winner["username"]
+                and winner["username"].casefold() == PIROJOK_USERNAME
+            ):
+                return "pirojok_cannot_own", loser_id
             loser_owner = self.connection.execute(
                 "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
                 (chat_id, loser_id),
@@ -557,6 +582,16 @@ class Database:
             ).fetchone()
             if not owned:
                 return "not_owned"
+            recipient = self.connection.execute(
+                "SELECT username FROM users WHERE chat_id=? AND user_id=?",
+                (chat_id, new_owner_id),
+            ).fetchone()
+            if (
+                recipient
+                and recipient["username"]
+                and recipient["username"].casefold() == PIROJOK_USERNAME
+            ):
+                return "pirojok_cannot_own"
             recipient_is_slave = self.connection.execute(
                 "SELECT 1 FROM ownership WHERE chat_id=? AND slave_id=?",
                 (chat_id, new_owner_id),
@@ -576,6 +611,16 @@ class Database:
         async with self._lock:
             if slave_id == owner_id:
                 return "self"
+            owner = self.connection.execute(
+                "SELECT username FROM users WHERE chat_id=? AND user_id=?",
+                (chat_id, owner_id),
+            ).fetchone()
+            if (
+                owner
+                and owner["username"]
+                and owner["username"].casefold() == PIROJOK_USERNAME
+            ):
+                return "pirojok_cannot_own"
             owner_is_slave = self.connection.execute(
                 "SELECT 1 FROM ownership WHERE chat_id=? AND slave_id=?",
                 (chat_id, owner_id),
@@ -607,6 +652,56 @@ class Database:
             )
             self.connection.commit()
             return cursor.rowcount
+
+    async def start_jug_hiding(self, chat_id: int, user_id: int) -> int | None:
+        now = utc_timestamp()
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT cooldown_until FROM jug_hiding WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            ).fetchone()
+            if row and int(row["cooldown_until"]) > now:
+                return None
+            hidden_until = now + JUG_HIDING_SECONDS
+            cooldown_until = hidden_until + JUG_COOLDOWN_SECONDS
+            self.connection.execute(
+                """INSERT INTO jug_hiding(
+                       chat_id, user_id, hidden_until, cooldown_until, active
+                   ) VALUES (?, ?, ?, ?, 1)
+                   ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                       hidden_until=excluded.hidden_until,
+                       cooldown_until=excluded.cooldown_until,
+                       active=1""",
+                (chat_id, user_id, hidden_until, cooldown_until),
+            )
+            self.connection.commit()
+            return hidden_until
+
+    async def is_jug_hidden(self, chat_id: int, user_id: int) -> bool:
+        now = utc_timestamp()
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT 1 FROM jug_hiding
+                   WHERE chat_id=? AND user_id=? AND active=1 AND hidden_until>?""",
+                (chat_id, user_id, now),
+            ).fetchone()
+            return row is not None
+
+    async def pending_jug_hidings(self) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM jug_hiding WHERE active=1 ORDER BY hidden_until"
+            ).fetchall()
+
+    async def finish_jug_hiding(self, chat_id: int, user_id: int) -> bool:
+        async with self._lock:
+            cursor = self.connection.execute(
+                """UPDATE jug_hiding SET active=0
+                   WHERE chat_id=? AND user_id=? AND active=1 AND hidden_until<=?""",
+                (chat_id, user_id, utc_timestamp()),
+            )
+            self.connection.commit()
+            return cursor.rowcount > 0
 
     async def increment_counter(self, chat_id: int, key: str) -> int:
         async with self._lock:

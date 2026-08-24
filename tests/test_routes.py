@@ -23,6 +23,9 @@ from handlers.routes import (
     MAKE_SLAVE_RE,
     MAKE_SLAVE_REPLY_RE,
     METAL_RASCALS_RE,
+    PIROJOK_BASEMENT_ESCAPE_RE,
+    PIROJOK_ESCAPE_RE,
+    PIROJOK_HIDE_RE,
     MODERATION_RE,
     CLEAR_RE,
     RESTORE_RE,
@@ -40,6 +43,7 @@ from handlers.routes import (
     message_has_image,
     silence_duration_seconds,
     resolve_target,
+    parse_safebooru_count,
     select_safebooru_post,
     text_or_caption_regexp,
     is_chat_participant,
@@ -224,6 +228,20 @@ class RoutePatternTests(unittest.TestCase):
     def test_metal_rascals_command(self):
         self.assertTrue(METAL_RASCALS_RE.match("Металлические поганцы"))
         self.assertEqual(SAFEBOORU_TAGS, "murder_drones rating:safe")
+
+    def test_pirojok_personal_commands(self):
+        self.assertTrue(PIROJOK_ESCAPE_RE.match("Съебаться"))
+        self.assertTrue(PIROJOK_HIDE_RE.match("Спрятаться!"))
+        self.assertTrue(
+            PIROJOK_BASEMENT_ESCAPE_RE.match("Съебаться с Подвалграда")
+        )
+
+    def test_safebooru_count_comes_from_real_result_set(self):
+        self.assertEqual(parse_safebooru_count('<posts count="317" offset="0"/>'), 317)
+        with self.assertRaises(ValueError):
+            parse_safebooru_count('<posts count="0" offset="0"/>')
+        with self.assertRaises(ValueError):
+            parse_safebooru_count("not xml")
 
     def test_safebooru_selector_keeps_only_safe_static_art(self):
         post = select_safebooru_post(

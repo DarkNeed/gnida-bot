@@ -6,6 +6,7 @@ import logging
 import random
 import re
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
@@ -28,6 +29,7 @@ from aiogram.types import (
 from database import (
     CHALLENGE_DEADLINE_SECONDS,
     NEWCOMER_CHALLENGE_DEADLINE_SECONDS,
+    PIROJOK_USERNAME,
     Database,
     utc_timestamp,
 )
@@ -101,6 +103,11 @@ MAKE_SLAVE_RE = re.compile(
     re.IGNORECASE,
 )
 METAL_RASCALS_RE = re.compile(r"^металлические\s+поганцы[!?.\s]*$", re.IGNORECASE)
+PIROJOK_ESCAPE_RE = re.compile(r"^съебаться[!?.\s]*$", re.IGNORECASE)
+PIROJOK_HIDE_RE = re.compile(r"^спрятаться[!?.\s]*$", re.IGNORECASE)
+PIROJOK_BASEMENT_ESCAPE_RE = re.compile(
+    r"^съебаться\s+с\s+подвалграда[!?.\s]*$", re.IGNORECASE
+)
 SAMOVAR_RE = re.compile(r"(?<![а-яёa-z])самовар(?![а-яёa-z])", re.IGNORECASE)
 SAFEBOORU_API_URL = "https://safebooru.org/index.php"
 SAFEBOORU_TAGS = "murder_drones rating:safe"
@@ -135,6 +142,15 @@ async def target_is_immune(database: Database, chat_id: int, user_id: int) -> bo
     return bool(row and row["username"] and row["username"].casefold() == IMMUNE_USERNAME)
 
 
+async def target_is_pirojok(database: Database, chat_id: int, user_id: int) -> bool:
+    row = await database.get_user(chat_id, user_id)
+    return bool(
+        row
+        and row["username"]
+        and row["username"].casefold() == PIROJOK_USERNAME
+    )
+
+
 def is_mister_sleepy(user: User | None) -> bool:
     return bool(user and user.username and user.username.casefold() == "mistersleeppy")
 
@@ -149,6 +165,12 @@ def is_utochka(user: User | None) -> bool:
 
 def is_dimon_gfg(user: User | None) -> bool:
     return bool(user and user.username and user.username.casefold() == "dimon_gfg")
+
+
+def is_pirojok(user: User | None) -> bool:
+    return bool(
+        user and user.username and user.username.casefold() == PIROJOK_USERNAME
+    )
 
 
 def basement_kick_allowed(member_status: str) -> bool:
@@ -238,11 +260,41 @@ def select_safebooru_post(payload) -> dict | None:
     return random.choice(candidates) if candidates else None
 
 
-async def fetch_random_safebooru_post() -> dict:
+def parse_safebooru_count(payload: str) -> int:
+    try:
+        root = ET.fromstring(payload)
+        count = int(root.attrib.get("count", "0"))
+    except (ET.ParseError, TypeError, ValueError) as error:
+        raise ValueError("Safebooru returned an invalid count response") from error
+    if count < 1:
+        raise ValueError("Safebooru returned no matching posts")
+    return count
+
+
+async def fetch_random_safebooru_post(
+    excluded_ids: set[int] | None = None,
+) -> dict:
     timeout = aiohttp.ClientTimeout(total=20)
     headers = {"User-Agent": "GnidaBot/1.0 (Telegram bot)"}
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-        for page in [random.randint(0, 1000), random.randint(0, 1000), 0]:
+        async with session.get(
+            SAFEBOORU_API_URL,
+            params={
+                "page": "dapi",
+                "s": "post",
+                "q": "index",
+                "limit": "1",
+                "pid": "0",
+                "tags": SAFEBOORU_TAGS,
+            },
+        ) as response:
+            response.raise_for_status()
+            total = parse_safebooru_count(await response.text())
+        excluded = set(excluded_ids or ())
+        if len(excluded) >= total:
+            excluded.clear()
+        for _ in range(25):
+            offset = random.randrange(total)
             async with session.get(
                 SAFEBOORU_API_URL,
                 params={
@@ -250,14 +302,15 @@ async def fetch_random_safebooru_post() -> dict:
                     "s": "post",
                     "q": "index",
                     "json": "1",
-                    "limit": "100",
-                    "pid": str(page),
+                    "limit": "1",
+                    "pid": str(offset),
                     "tags": SAFEBOORU_TAGS,
                 },
             ) as response:
                 response.raise_for_status()
                 post = select_safebooru_post(await response.json(content_type=None))
-                if post:
+                post_id = int(post["id"]) if post and post.get("id") else None
+                if post and post_id not in excluded:
                     return post
     raise ValueError("Safebooru returned no suitable posts")
 
@@ -429,6 +482,37 @@ def create_router(database: Database) -> Router:
     joke_cooldowns: dict[tuple[int, str], float] = {}
     leg_tasks: set[asyncio.Task[None]] = set()
     challenge_tasks: set[asyncio.Task[None]] = set()
+    jug_tasks: set[asyncio.Task[None]] = set()
+    recent_safebooru_ids: dict[int, list[int]] = {}
+
+    async def finish_jug_hiding(
+        chat_id: int, user_id: int, hidden_until: int, bot: Bot
+    ) -> None:
+        await asyncio.sleep(max(0, hidden_until - utc_timestamp()))
+        if not await database.finish_jug_hiding(chat_id, user_id):
+            return
+        user = await database.get_user(chat_id, user_id)
+        name = user["display_name"] if user else str(user_id)
+        try:
+            await bot.send_message(
+                chat_id,
+                f"{mention(user_id, name)} не смог больше держать дыхание, "
+                "нужен час чтобы набрать воздуха",
+                parse_mode="HTML",
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            logging.getLogger(__name__).warning(
+                "Could not announce jug cooldown for %s: %s", user_id, error
+            )
+
+    def schedule_jug_hiding(
+        chat_id: int, user_id: int, hidden_until: int, bot: Bot
+    ) -> None:
+        task = asyncio.create_task(
+            finish_jug_hiding(chat_id, user_id, hidden_until, bot)
+        )
+        jug_tasks.add(task)
+        task.add_done_callback(jug_tasks.discard)
 
     async def enforce_leg_request(request_id: int, bot: Bot) -> None:
         request = await database.get_leg_request(request_id)
@@ -507,6 +591,11 @@ def create_router(database: Database) -> Router:
         outcome, affected_id = await database.transfer_after_loss(
             chat_id, loser_id, winner_id
         )
+        if outcome == "pirojok_cannot_own":
+            await edit_challenge(
+                challenge, bot, "Этот кувшин слишком тесен для вас двоих"
+            )
+            return
         if outcome == "freed":
             consequence = f"{plain_name(winner)} побеждает владельца и становится свободным."
         elif outcome == "no_reward":
@@ -575,6 +664,8 @@ def create_router(database: Database) -> Router:
                     f"⌛ {plain_name(opponent)} не ответил на вызов за 5 минут и "
                     f"становится рабом {plain_name(challenger)}."
                 )
+            elif result == "pirojok_cannot_own":
+                text = "Этот кувшин слишком тесен для вас двоих."
             else:
                 text = (
                     "⌛ Новичок не ответил на вызов, но вызывающий сам является рабом "
@@ -601,12 +692,21 @@ def create_router(database: Database) -> Router:
             schedule_leg_request(int(request["id"]), bot)
         for challenge in await database.pending_challenges():
             schedule_challenge(int(challenge["id"]), bot)
+        for hiding in await database.pending_jug_hidings():
+            schedule_jug_hiding(
+                int(hiding["chat_id"]),
+                int(hiding["user_id"]),
+                int(hiding["hidden_until"]),
+                bot,
+            )
 
     @router.shutdown()
     async def stop_leg_timers() -> None:
         for task in tuple(leg_tasks):
             task.cancel()
         for task in tuple(challenge_tasks):
+            task.cancel()
+        for task in tuple(jug_tasks):
             task.cancel()
 
     @router.message(text_or_caption_regexp(START_RE))
@@ -862,6 +962,43 @@ def create_router(database: Database) -> Router:
             lines.append(f"{index}. {html.escape(nickname)}")
         await message.answer("\n".join(lines), parse_mode="HTML")
 
+    @router.message(text_or_caption_regexp(PIROJOK_BASEMENT_ESCAPE_RE))
+    async def pirojok_basement_escape(message: Message) -> None:
+        if message.chat.type in GROUP_TYPES and is_pirojok(message.from_user):
+            await message.answer("Съебаться из Подвалграда невозможно 💀")
+
+    @router.message(text_or_caption_regexp(PIROJOK_ESCAPE_RE))
+    async def pirojok_escape(message: Message) -> None:
+        sender = message.from_user
+        if message.chat.type not in GROUP_TYPES or not is_pirojok(sender):
+            return
+        owner = await database.get_owner(message.chat.id, sender.id)
+        if not owner:
+            return
+        owner_id = int(owner["owner_id"])
+        if not await database.release_slave(message.chat.id, owner_id, sender.id):
+            return
+        owner_name = owner["display_name"] or owner["username"] or str(owner_id)
+        await message.answer(
+            f"{mention(sender.id, display_name(sender))} укатился из рабства "
+            f"{mention(owner_id, owner_name)}",
+            parse_mode="HTML",
+        )
+
+    @router.message(text_or_caption_regexp(PIROJOK_HIDE_RE))
+    async def pirojok_hide(message: Message, bot: Bot) -> None:
+        sender = message.from_user
+        if message.chat.type not in GROUP_TYPES or not is_pirojok(sender):
+            return
+        hidden_until = await database.start_jug_hiding(message.chat.id, sender.id)
+        if hidden_until is None:
+            return
+        schedule_jug_hiding(message.chat.id, sender.id, hidden_until, bot)
+        await message.answer(
+            f"{mention(sender.id, display_name(sender))} залез в кувшин",
+            parse_mode="HTML",
+        )
+
     @router.message(text_or_caption_regexp(SLAP_RE))
     async def basement_slap(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not is_cheto_neveru(message.from_user):
@@ -882,6 +1019,16 @@ def create_router(database: Database) -> Router:
             return
         if not await database.is_basement_member(message.chat.id, target_id):
             await message.answer("Этот участник не состоит в Подвалграде.")
+            return
+        if (
+            await target_is_pirojok(database, message.chat.id, target_id)
+            and await database.is_jug_hidden(message.chat.id, target_id)
+        ):
+            await message.answer(
+                f"{mention(target_id, target_name)} спрятался в кувшине, "
+                "вам его не достать",
+                parse_mode="HTML",
+            )
             return
         if target_id == bot.id:
             await message.answer(
@@ -1289,6 +1436,8 @@ def create_router(database: Database) -> Router:
             await message.answer("Нельзя передать человека самому себе.")
         elif result == "same_owner":
             await message.answer("Этот участник уже принадлежит вам.")
+        elif result == "pirojok_cannot_own":
+            await message.answer("Этот кувшин слишком тесен для вас двоих")
         else:
             await message.answer(
                 f"🤝 {mention(slave_id, slave_name)} передан владельцу "
@@ -1360,6 +1509,8 @@ def create_router(database: Database) -> Router:
             await message.answer("Нельзя сделать участника рабом самого себя.")
         elif result == "owner_is_slave":
             await message.answer("Раб не может владеть другими рабами.")
+        elif result == "pirojok_cannot_own":
+            await message.answer("Этот кувшин слишком тесен для вас двоих")
         else:
             await message.answer(
                 f"⛓ {mention(slave_id, slave_name)} теперь раб "
@@ -1531,8 +1682,12 @@ def create_router(database: Database) -> Router:
         ):
             return
         try:
-            post = await fetch_random_safebooru_post()
+            recent_ids = recent_safebooru_ids.setdefault(message.chat.id, [])
+            post = await fetch_random_safebooru_post(set(recent_ids))
             post_id = post.get("id")
+            if post_id:
+                recent_ids.append(int(post_id))
+                del recent_ids[:-10]
             caption = "Металлические поганцы"
             if post_id:
                 caption += (
