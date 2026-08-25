@@ -230,11 +230,6 @@ def is_pirojok(user: User | None) -> bool:
     )
 
 
-def basement_kick_allowed(member_status: str) -> bool:
-    """Only regular chat members may be randomly kicked by a basement slap."""
-    return member_status not in {"administrator", "creator", "left", "kicked"}
-
-
 def message_has_image(message: Message) -> bool:
     """Treat photos, image files, stickers and animations as submitted images."""
     is_image_document = bool(
@@ -1342,25 +1337,6 @@ def create_router(
                 "Властитель Подвалграда дал леща бедному Гнида-боту, за что..."
             )
             return
-        try:
-            member = await bot.get_chat_member(message.chat.id, target_id)
-            status = getattr(member.status, "value", member.status)
-        except (TelegramBadRequest, TelegramForbiddenError):
-            status = "left"
-        if basement_kick_allowed(status) and random.randrange(10) == 0:
-            try:
-                await bot.ban_chat_member(message.chat.id, target_id)
-                await bot.unban_chat_member(
-                    message.chat.id, target_id, only_if_banned=True
-                )
-                await message.answer(
-                    f"Лещ @cheto_neveru был слишком мощным и "
-                    f"{mention(target_id, target_name)} вылетел из чата.",
-                    parse_mode="HTML",
-                )
-                return
-            except (TelegramBadRequest, TelegramForbiddenError) as error:
-                logging.getLogger(__name__).warning("Basement kick failed: %s", error)
         await message.answer(
             f"Властитель Подвалграда дал леща {mention(target_id, target_name)}, работай раб.",
             parse_mode="HTML",

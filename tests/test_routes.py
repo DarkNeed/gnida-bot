@@ -49,7 +49,6 @@ from handlers.routes import (
     TRANSFER_RE,
     TrackingMiddleware,
     ART_THEFT_RE,
-    basement_kick_allowed,
     checkers_keyboard,
     create_router,
     dermodemoon_announcement_available,
@@ -187,11 +186,6 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(message_has_relayable_media(sticker))
         self.assertFalse(media_accepts_caption(sticker))
         self.assertFalse(message_has_relayable_media(empty))
-
-    def test_basement_admins_can_be_slapped_but_never_kicked(self):
-        self.assertFalse(basement_kick_allowed("administrator"))
-        self.assertFalse(basement_kick_allowed("creator"))
-        self.assertTrue(basement_kick_allowed("member"))
 
     def test_message_content_uses_text_or_media_caption(self):
         self.assertEqual(
