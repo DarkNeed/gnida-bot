@@ -62,6 +62,7 @@ CLEAR_RE = re.compile(
 STATS_RE = re.compile(r"^[!/](стат|стата)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 SLAVES_RE = re.compile(r"^/рабы(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 START_RE = re.compile(r"^/start(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+CHAT_RE = re.compile(r"^/чат(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RELEASE_RE = re.compile(r"^(?:/отпустить(?:@\w+)?|отпустить\s+раба)(?:\s|$)", re.IGNORECASE)
 CHALLENGE_RE = re.compile(
     r"^вызов(?:\s+(кнб|бл[еэ]кджек))?[!?.\s]*$", re.IGNORECASE
@@ -556,7 +557,9 @@ async def blackjack_text(database: Database, challenge, game) -> str:
     )
 
 
-def create_router(database: Database) -> Router:
+def create_router(
+    database: Database, *, kargassia_chat_id: int | None = None
+) -> Router:
     router = Router(name="gnida-bot")
     router.message.outer_middleware(TrackingMiddleware(database))
     joke_cooldowns: dict[tuple[int, str], float] = {}
@@ -1053,6 +1056,25 @@ def create_router(database: Database) -> Router:
     async def pirojok_basement_escape(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and is_pirojok(message.from_user):
             await message.answer("Съебаться из Подвалграда невозможно 💀")
+
+    @router.message(text_or_caption_regexp(CHAT_RE))
+    async def sleepy_chat(message: Message, bot: Bot) -> None:
+        if not is_mister_sleepy(message.from_user):
+            return
+        payload = command_payload(message_content(message))
+        if not payload:
+            await message.answer("Напиши текст после /чат.")
+            return
+        if kargassia_chat_id is None:
+            await message.answer("Не задан KARGASSIA_CHAT_ID.")
+            return
+        try:
+            await bot.send_message(kargassia_chat_id, payload)
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            await message.answer(
+                f"Не получилось отправить сообщение в Каргассию: "
+                f"{html.escape(str(error))}"
+            )
 
     @router.message(text_or_caption_regexp(PIROJOK_ESCAPE_RE))
     async def pirojok_escape(message: Message) -> None:

@@ -17,10 +17,20 @@ async def main() -> None:
     if not token:
         raise RuntimeError("BOT_TOKEN is missing in .env")
 
+    raw_kargassia_chat_id = getenv("KARGASSIA_CHAT_ID", "").strip()
+    try:
+        kargassia_chat_id = (
+            int(raw_kargassia_chat_id) if raw_kargassia_chat_id else None
+        )
+    except ValueError as error:
+        raise RuntimeError("KARGASSIA_CHAT_ID must be a numeric Telegram chat ID") from error
+
     database = Database(getenv("DATABASE_PATH", "data/gnida_bot.sqlite3"))
     await database.connect()
     dispatcher = Dispatcher()
-    dispatcher.include_router(create_router(database))
+    dispatcher.include_router(
+        create_router(database, kargassia_chat_id=kargassia_chat_id)
+    )
     bot = Bot(token=token)
 
     logging.info("GnidaBot is starting")

@@ -4,11 +4,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from aiogram.types import Chat, Message, PhotoSize, User
+from parsing import command_payload
 
 from handlers.routes import (
     BASEMENT_RE,
     BASEMENT_LIST_RE,
     BASEMENT_RELEASE_RE,
+    CHAT_RE,
     CHALLENGE_RE,
     DUCK_RE,
     DUCK_SLAPS_RE,
@@ -56,6 +58,11 @@ from handlers.routes import (
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_sleepy_chat_command_accepts_text_on_next_line(self):
+        command = "/чат@GnidaBot\nДай пять"
+        self.assertTrue(CHAT_RE.match(command))
+        self.assertEqual(command_payload(command), "Дай пять")
+
     def test_sleepy_is_protected_from_cheto_and_kit_attacks(self):
         sleepy = "MisterSleeppy"
         cheto = User(id=1, is_bot=False, first_name="Cheto", username="cheto_neveru")
