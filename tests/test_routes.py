@@ -9,6 +9,7 @@ from handlers.routes import (
     BASEMENT_RE,
     BASEMENT_LIST_RE,
     BASEMENT_RELEASE_RE,
+    CHALLENGE_RE,
     DUCK_RE,
     DUCK_SLAPS_RE,
     DERMODEMOON_COOLDOWN_SECONDS,
@@ -52,6 +53,15 @@ from handlers.routes import (
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_challenge_can_select_blackjack_or_rps(self):
+        self.assertIsNone(CHALLENGE_RE.match("Вызов").group(1))
+        self.assertEqual(CHALLENGE_RE.match("Вызов кнб").group(1).casefold(), "кнб")
+        self.assertIn(
+            CHALLENGE_RE.match("Вызов блекджек!").group(1).casefold(),
+            {"блекджек", "блэкджек"},
+        )
+        self.assertTrue(CHALLENGE_RE.match("Вызов блэкджек"))
+
     def test_leg_request_accepts_any_image_message(self):
         empty = {
             "photo": None,

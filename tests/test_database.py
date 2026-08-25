@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -73,6 +74,29 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.database.choose(challenge_id, 999, "rock"))
         row = await self.database.choose(challenge_id, 10, "rock")
         self.assertEqual(row["challenger_choice"], "rock")
+
+    async def test_blackjack_challenge_is_persistent_and_finishes(self):
+        challenge_id = await self.database.create_challenge(
+            1, 10, 20, game_type="blackjack"
+        )
+        challenge = await self.database.get_challenge(challenge_id)
+        game = await self.database.get_blackjack_game(challenge_id)
+        self.assertEqual(challenge["game_type"], "blackjack")
+        self.assertEqual(len(json.loads(game["deck"])), 48)
+
+        self.database.connection.execute(
+            """UPDATE blackjack_games SET
+                   challenger_hand=?, opponent_hand=?, turn_user_id=10
+               WHERE challenge_id=?""",
+            (json.dumps(["K♠", "Q♥"]), json.dumps(["10♣", "8♦"]), challenge_id),
+        )
+        self.database.connection.commit()
+        first = await self.database.blackjack_action(challenge_id, 10, "stand")
+        self.assertEqual(first["status"], "updated")
+        result = await self.database.blackjack_action(challenge_id, 20, "stand")
+        self.assertEqual(result["status"], "finished")
+        self.assertEqual(result["winner_id"], 10)
+        self.assertEqual((await self.database.get_challenge(challenge_id))["status"], "finished")
 
     async def test_leg_request_can_be_completed_before_deadline(self):
         request_id = await self.database.create_leg_request(1, 20, 10, 4102444800)

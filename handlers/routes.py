@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import logging
 import random
 import re
@@ -26,6 +27,7 @@ from aiogram.types import (
     User,
 )
 
+from blackjack import full_hand, hand_total, visible_hand
 from database import (
     CHALLENGE_DEADLINE_SECONDS,
     NEWCOMER_CHALLENGE_DEADLINE_SECONDS,
@@ -58,7 +60,9 @@ STATS_RE = re.compile(r"^[!/](стат|стата)(?:@\w+)?(?:\s|$)", re.IGNOREC
 SLAVES_RE = re.compile(r"^/рабы(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 START_RE = re.compile(r"^/start(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RELEASE_RE = re.compile(r"^(?:/отпустить(?:@\w+)?|отпустить\s+раба)(?:\s|$)", re.IGNORECASE)
-CHALLENGE_RE = re.compile(r"^вызов[!?.\s]*$", re.IGNORECASE)
+CHALLENGE_RE = re.compile(
+    r"^вызов(?:\s+(кнб|бл[еэ]кджек))?[!?.\s]*$", re.IGNORECASE
+)
 TOP_RE = re.compile(r"^кому\s+делать\s+нехер[!?.\s]*$", re.IGNORECASE)
 GNIDA_RE = re.compile(
     r"(?<![а-яёa-z])(?:кто\s+гнида|гнида\s+чата)(?![а-яёa-z])", re.IGNORECASE
@@ -456,6 +460,20 @@ def challenge_keyboard(challenge_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def blackjack_keyboard(challenge_id: int) -> InlineKeyboardMarkup:
+    prefix = f"bj:{challenge_id}:"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👁 Мои карты", callback_data=prefix + "view")],
+            [
+                InlineKeyboardButton(text="➕ Ещё", callback_data=prefix + "hit"),
+                InlineKeyboardButton(text="✋ Хватит", callback_data=prefix + "stand"),
+            ],
+            [InlineKeyboardButton(text="Отказаться", callback_data=prefix + "refuse")],
+        ]
+    )
+
+
 async def challenge_text(database: Database, challenge) -> str:
     challenger = await database.get_user(challenge["chat_id"], challenge["challenger_id"])
     opponent = await database.get_user(challenge["chat_id"], challenge["opponent_id"])
@@ -472,6 +490,40 @@ async def challenge_text(database: Database, challenge) -> str:
         f"КНБ: {plain_name(challenger)} против {plain_name(opponent)}\n"
         f"{first_state} {plain_name(challenger)} · {second_state} {plain_name(opponent)}\n"
         f"Выберите ход — соперник его не увидит. На ход даётся {deadline_text}."
+        f"{forced_text}{newcomer_text}"
+    )
+
+
+async def blackjack_text(database: Database, challenge, game) -> str:
+    challenger = await database.get_user(challenge["chat_id"], challenge["challenger_id"])
+    opponent = await database.get_user(challenge["chat_id"], challenge["opponent_id"])
+    challenger_hand = json.loads(game["challenger_hand"])
+    opponent_hand = json.loads(game["opponent_hand"])
+    turn_id = int(game["turn_user_id"])
+
+    def state(user_id: int, stood: bool) -> str:
+        if stood:
+            return "✋ остановился"
+        return "🎯 ходит" if user_id == turn_id else "⏳ ждёт"
+
+    forced_text = (
+        "\n🔒 Принудительный вызов: владелец не может отказаться."
+        if challenge["forced"]
+        else ""
+    )
+    newcomer_text = (
+        "\n⏳ Новичку даётся 5 минут на первый ход."
+        if challenge["opponent_newcomer"]
+        else ""
+    )
+    deadline_text = "5 минут" if challenge["opponent_newcomer"] else "3 часа"
+    return (
+        f"🎰 Мини-блэкджек: {plain_name(challenger)} против {plain_name(opponent)}\n\n"
+        f"{plain_name(challenger)}: {visible_hand(challenger_hand)} · "
+        f"{state(int(challenge['challenger_id']), bool(game['challenger_stood']))}\n"
+        f"{plain_name(opponent)}: {visible_hand(opponent_hand)} · "
+        f"{state(int(challenge['opponent_id']), bool(game['opponent_stood']))}\n\n"
+        f"Свою скрытую карту можно посмотреть кнопкой. На игру даётся {deadline_text}."
         f"{forced_text}{newcomer_text}"
     )
 
@@ -591,15 +643,12 @@ def create_router(database: Database) -> Router:
         outcome, affected_id = await database.transfer_after_loss(
             chat_id, loser_id, winner_id
         )
-        if outcome == "pirojok_cannot_own":
-            await edit_challenge(
-                challenge, bot, "Этот кувшин слишком тесен для вас двоих"
-            )
-            return
         if outcome == "freed":
             consequence = f"{plain_name(winner)} побеждает владельца и становится свободным."
         elif outcome == "no_reward":
             consequence = f"{plain_name(winner)} пока раб и не может получить собственного раба."
+        elif outcome == "pirojok_cannot_own":
+            consequence = "Этот кувшин слишком тесен для вас двоих."
         elif outcome == "kept":
             consequence = f"{plain_name(loser)} остаётся рабом победителя."
         elif outcome == "transferred":
@@ -648,9 +697,14 @@ def create_router(database: Database) -> Router:
             challenge = await database.claim_expired_challenge(challenge_id)
             if not challenge:
                 return
-        first_moved = bool(challenge["challenger_choice"])
-        second_moved = bool(challenge["opponent_choice"])
-        if first_moved and second_moved:
+        if challenge["game_type"] == "blackjack":
+            blackjack = await database.get_blackjack_game(challenge_id)
+            first_moved = bool(blackjack and blackjack["challenger_acted"])
+            second_moved = bool(blackjack and blackjack["opponent_acted"])
+        else:
+            first_moved = bool(challenge["challenger_choice"])
+            second_moved = bool(challenge["opponent_choice"])
+        if challenge["game_type"] == "rps" and first_moved and second_moved:
             await publish_played_result(challenge, bot)
         elif challenge["opponent_newcomer"] and not second_moved:
             chat_id = int(challenge["chat_id"])
@@ -1522,6 +1576,14 @@ def create_router(database: Database) -> Router:
     async def challenge(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
             return
+        match = CHALLENGE_RE.match(message_content(message))
+        requested_game = match.group(1).casefold() if match and match.group(1) else None
+        if requested_game == "кнб":
+            game_type = "rps"
+        elif requested_game in {"блекджек", "блэкджек"}:
+            game_type = "blackjack"
+        else:
+            game_type = random.choice(("rps", "blackjack"))
         if (
             message.sender_chat
             or not message.reply_to_message
@@ -1569,14 +1631,22 @@ def create_router(database: Database) -> Router:
             opponent.id,
             forced=forced,
             opponent_newcomer=opponent_newcomer,
+            game_type=game_type,
         )
         if challenge_id is None:
             await message.answer("У одного из участников уже есть активный вызов.")
             return
         row = await database.get_challenge(challenge_id)
+        if game_type == "blackjack":
+            blackjack = await database.get_blackjack_game(challenge_id)
+            body = await blackjack_text(database, row, blackjack)
+            keyboard = blackjack_keyboard(challenge_id)
+        else:
+            body = await challenge_text(database, row)
+            keyboard = challenge_keyboard(challenge_id)
         sent = await message.answer(
-            await challenge_text(database, row),
-            reply_markup=challenge_keyboard(challenge_id),
+            body,
+            reply_markup=keyboard,
             parse_mode="HTML",
         )
         await database.set_challenge_message(challenge_id, sent.message_id)
@@ -1593,7 +1663,11 @@ def create_router(database: Database) -> Router:
             await callback.answer("Некорректный вызов.", show_alert=True)
             return
         challenge = await database.get_challenge(challenge_id)
-        if not challenge or challenge["status"] != "active":
+        if (
+            not challenge
+            or challenge["status"] != "active"
+            or challenge["game_type"] != "rps"
+        ):
             await callback.answer("Этот вызов уже завершён.", show_alert=True)
             return
         if await target_is_immune(
@@ -1647,6 +1721,126 @@ def create_router(database: Database) -> Router:
         if not await database.finish_challenge(challenge_id):
             return
         await publish_played_result(challenge, bot)
+
+    @router.callback_query(F.data.startswith("bj:"))
+    async def blackjack_callback(callback: CallbackQuery, bot: Bot) -> None:
+        if not callback.data or not callback.message:
+            return
+        try:
+            _, raw_id, action = callback.data.split(":", 2)
+            challenge_id = int(raw_id)
+        except (ValueError, TypeError):
+            await callback.answer("Некорректный вызов.", show_alert=True)
+            return
+        challenge = await database.get_challenge(challenge_id)
+        if (
+            not challenge
+            or challenge["status"] != "active"
+            or challenge["game_type"] != "blackjack"
+        ):
+            await callback.answer("Этот вызов уже завершён.", show_alert=True)
+            return
+        if await target_is_immune(
+            database, int(challenge["chat_id"]), int(challenge["opponent_id"])
+        ):
+            if await database.finish_challenge(challenge_id, "immune"):
+                await callback.message.edit_text(IMMUNITY_TEXT)
+            await callback.answer()
+            return
+        participant_ids = {
+            int(challenge["challenger_id"]),
+            int(challenge["opponent_id"]),
+        }
+        if callback.from_user.id not in participant_ids:
+            await callback.answer("Это не ваш поединок.", show_alert=True)
+            return
+        if utc_timestamp() >= int(challenge["deadline"]):
+            await callback.answer("Время на ход уже истекло.", show_alert=True)
+            return
+        if action == "refuse":
+            is_opponent = callback.from_user.id == challenge["opponent_id"]
+            if is_opponent and challenge["forced"]:
+                await callback.answer(
+                    "Это принудительный вызов — владелец не может отказаться.",
+                    show_alert=True,
+                )
+                return
+            if is_opponent and await database.is_vulnerable(
+                challenge["chat_id"], callback.from_user.id
+            ):
+                await callback.answer(
+                    "Первые 5 минут после входа отказаться нельзя.", show_alert=True
+                )
+                return
+            if await database.finish_challenge(challenge_id, "refused"):
+                await callback.message.edit_text(
+                    f"🚫 {html.escape(display_name(callback.from_user))} "
+                    "отказался от вызова.",
+                    parse_mode="HTML",
+                )
+            await callback.answer()
+            return
+        game = await database.get_blackjack_game(challenge_id)
+        if not game:
+            await callback.answer("Партия не найдена.", show_alert=True)
+            return
+        if action == "view":
+            column = (
+                "challenger_hand"
+                if callback.from_user.id == challenge["challenger_id"]
+                else "opponent_hand"
+            )
+            cards = json.loads(game[column])
+            await callback.answer(
+                f"Твои карты: {full_hand(cards)}\nСумма: {hand_total(cards)}",
+                show_alert=True,
+            )
+            return
+        result = await database.blackjack_action(
+            challenge_id, callback.from_user.id, action
+        )
+        if result["status"] == "not_turn":
+            await callback.answer("Сейчас ход соперника.", show_alert=True)
+            return
+        if result["status"] in {"inactive", "invalid", "stood"}:
+            await callback.answer("Этот ход уже недоступен.", show_alert=True)
+            return
+        if result["status"] == "not_participant":
+            await callback.answer("Это не ваш поединок.", show_alert=True)
+            return
+        await callback.answer("Карта выдана" if action == "hit" else "Остановился")
+        if result["status"] == "updated":
+            updated_challenge = await database.get_challenge(challenge_id)
+            updated_game = await database.get_blackjack_game(challenge_id)
+            await callback.message.edit_text(
+                await blackjack_text(database, updated_challenge, updated_game),
+                reply_markup=blackjack_keyboard(challenge_id),
+                parse_mode="HTML",
+            )
+            return
+        challenger = await database.get_user(
+            int(challenge["chat_id"]), int(challenge["challenger_id"])
+        )
+        opponent = await database.get_user(
+            int(challenge["chat_id"]), int(challenge["opponent_id"])
+        )
+        challenger_hand = result["challenger_hand"]
+        opponent_hand = result["opponent_hand"]
+        heading = (
+            "БЛЕК ДЖЕК!!!\n"
+            f"{plain_name(challenger)}: {full_hand(challenger_hand)} = "
+            f"{hand_total(challenger_hand)}\n"
+            f"{plain_name(opponent)}: {full_hand(opponent_hand)} = "
+            f"{hand_total(opponent_hand)}\n"
+            f"Итог: {html.escape(str(result['reason']))}."
+        )
+        await publish_game_win(
+            challenge,
+            bot,
+            int(result["winner_id"]),
+            int(result["loser_id"]),
+            heading,
+        )
 
     @router.message(text_or_caption_regexp(TOP_RE))
     async def top_owners(message: Message) -> None:

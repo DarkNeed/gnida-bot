@@ -35,6 +35,8 @@ _UNITS = {
     "день": 86400,
     "дня": 86400,
     "дней": 86400,
+    "сутки": 86400,
+    "суток": 86400,
     "w": 604800,
     "week": 604800,
     "н": 604800,
@@ -70,6 +72,8 @@ def parse_duration_prefix(value: str) -> tuple[Duration | None, str]:
     compact = parse_duration(first)
     if compact:
         return compact, remainder
+    if first.casefold() == "сутки":
+        return parse_duration("1 сутки"), remainder
     if first.isdigit():
         unit, tail = split_first(remainder)
         spaced = parse_duration(f"{first} {unit}") if unit else None

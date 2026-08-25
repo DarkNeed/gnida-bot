@@ -4,6 +4,17 @@ from parsing import command_payload, format_duration, parse_duration, parse_dura
 
 
 class DurationTests(unittest.TestCase):
+    def test_russian_day_aliases(self):
+        duration, reason = parse_duration_prefix("сутки причина")
+        self.assertEqual(duration.seconds, 86400)
+        self.assertEqual(reason, "причина")
+        duration, reason = parse_duration_prefix("1 сутки причина")
+        self.assertEqual(duration.seconds, 86400)
+        self.assertEqual(reason, "причина")
+        duration, reason = parse_duration_prefix("2 суток причина")
+        self.assertEqual(duration.seconds, 172800)
+        self.assertEqual(reason, "причина")
+
     def test_english_hour(self):
         self.assertEqual(parse_duration("1h").seconds, 3600)
 

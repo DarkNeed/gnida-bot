@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import random
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from blackjack import compare_stood_hands, hand_total, shuffled_deck
 
 
 CHALLENGE_DEADLINE_SECONDS = 3 * 60 * 60
@@ -99,6 +103,18 @@ class Database:
                 ON challenges(chat_id, challenger_id, opponent_id)
                 WHERE status = 'active';
 
+            CREATE TABLE IF NOT EXISTS blackjack_games (
+                challenge_id INTEGER PRIMARY KEY,
+                deck TEXT NOT NULL,
+                challenger_hand TEXT NOT NULL,
+                opponent_hand TEXT NOT NULL,
+                challenger_stood INTEGER NOT NULL DEFAULT 0,
+                opponent_stood INTEGER NOT NULL DEFAULT 0,
+                challenger_acted INTEGER NOT NULL DEFAULT 0,
+                opponent_acted INTEGER NOT NULL DEFAULT 0,
+                turn_user_id INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS leg_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER NOT NULL,
@@ -151,6 +167,9 @@ class Database:
             "challenges", "opponent_newcomer", "INTEGER NOT NULL DEFAULT 0"
         )
         self._ensure_column("challenges", "deadline", "INTEGER")
+        self._ensure_column(
+            "challenges", "game_type", "TEXT NOT NULL DEFAULT 'rps'"
+        )
         self._connection.execute(
             """UPDATE challenges
                SET deadline=created_at + CASE
@@ -372,7 +391,10 @@ class Database:
         *,
         forced: bool = False,
         opponent_newcomer: bool = False,
+        game_type: str = "rps",
     ) -> int | None:
+        if game_type not in {"rps", "blackjack"}:
+            raise ValueError("Unknown challenge game type")
         async with self._lock:
             existing = self.connection.execute(
                 """SELECT id FROM challenges WHERE chat_id=? AND status='active'
@@ -385,14 +407,15 @@ class Database:
             cursor = self.connection.execute(
                 """INSERT INTO challenges(
                        chat_id, challenger_id, opponent_id, forced,
-                       opponent_newcomer, created_at, deadline
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       opponent_newcomer, game_type, created_at, deadline
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     chat_id,
                     challenger_id,
                     opponent_id,
                     int(forced),
                     int(opponent_newcomer),
+                    game_type,
                     now,
                     now
                     + (
@@ -402,6 +425,24 @@ class Database:
                     ),
                 ),
             )
+            challenge_id = int(cursor.lastrowid)
+            if game_type == "blackjack":
+                deck = shuffled_deck()
+                challenger_hand = [deck.pop(), deck.pop()]
+                opponent_hand = [deck.pop(), deck.pop()]
+                self.connection.execute(
+                    """INSERT INTO blackjack_games(
+                           challenge_id, deck, challenger_hand, opponent_hand,
+                           turn_user_id
+                       ) VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        challenge_id,
+                        json.dumps(deck),
+                        json.dumps(challenger_hand),
+                        json.dumps(opponent_hand),
+                        random.choice((challenger_id, opponent_id)),
+                    ),
+                )
             if forced:
                 self.connection.execute(
                     """UPDATE ownership SET last_forced_at=?
@@ -409,7 +450,7 @@ class Database:
                     (now, chat_id, challenger_id, opponent_id),
                 )
             self.connection.commit()
-            return int(cursor.lastrowid)
+            return challenge_id
 
     async def set_challenge_message(self, challenge_id: int, message_id: int) -> None:
         async with self._lock:
@@ -423,6 +464,135 @@ class Database:
             return self.connection.execute(
                 "SELECT * FROM challenges WHERE id=?", (challenge_id,)
             ).fetchone()
+
+    async def get_blackjack_game(self, challenge_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM blackjack_games WHERE challenge_id=?", (challenge_id,)
+            ).fetchone()
+
+    async def blackjack_action(
+        self, challenge_id: int, user_id: int, action: str
+    ) -> dict[str, Any]:
+        if action not in {"hit", "stand"}:
+            return {"status": "invalid"}
+        async with self._lock:
+            challenge = self.connection.execute(
+                "SELECT * FROM challenges WHERE id=?", (challenge_id,)
+            ).fetchone()
+            game = self.connection.execute(
+                "SELECT * FROM blackjack_games WHERE challenge_id=?", (challenge_id,)
+            ).fetchone()
+            if (
+                not challenge
+                or challenge["status"] != "active"
+                or challenge["game_type"] != "blackjack"
+                or not game
+            ):
+                return {"status": "inactive"}
+            challenger_id = int(challenge["challenger_id"])
+            opponent_id = int(challenge["opponent_id"])
+            if user_id not in {challenger_id, opponent_id}:
+                return {"status": "not_participant"}
+            if user_id != int(game["turn_user_id"]):
+                return {"status": "not_turn"}
+
+            deck = json.loads(game["deck"])
+            challenger_hand = json.loads(game["challenger_hand"])
+            opponent_hand = json.loads(game["opponent_hand"])
+            challenger_stood = bool(game["challenger_stood"])
+            opponent_stood = bool(game["opponent_stood"])
+            challenger_acted = bool(game["challenger_acted"])
+            opponent_acted = bool(game["opponent_acted"])
+            is_challenger = user_id == challenger_id
+            hand = challenger_hand if is_challenger else opponent_hand
+            other_id = opponent_id if is_challenger else challenger_id
+            if (is_challenger and challenger_stood) or (
+                not is_challenger and opponent_stood
+            ):
+                return {"status": "stood"}
+
+            if is_challenger:
+                challenger_acted = True
+            else:
+                opponent_acted = True
+            if action == "hit":
+                if not deck:
+                    return {"status": "invalid"}
+                hand.append(deck.pop())
+                total = hand_total(hand)
+                if total > 21:
+                    winner_id, loser_id = other_id, user_id
+                    reason = f"перебор — {total}"
+                    finished = True
+                else:
+                    if total == 21:
+                        if is_challenger:
+                            challenger_stood = True
+                        else:
+                            opponent_stood = True
+                    finished = False
+                    winner_id = loser_id = 0
+                    reason = ""
+            else:
+                if is_challenger:
+                    challenger_stood = True
+                else:
+                    opponent_stood = True
+                finished = False
+                winner_id = loser_id = 0
+                reason = ""
+
+            if not finished and challenger_stood and opponent_stood:
+                winner_index, reason = compare_stood_hands(
+                    challenger_hand, opponent_hand, deck
+                )
+                winner_id = challenger_id if winner_index == 0 else opponent_id
+                loser_id = opponent_id if winner_index == 0 else challenger_id
+                finished = True
+
+            if finished:
+                next_turn = user_id
+            elif is_challenger:
+                next_turn = user_id if opponent_stood else opponent_id
+            else:
+                next_turn = user_id if challenger_stood else challenger_id
+
+            self.connection.execute(
+                """UPDATE blackjack_games SET
+                       deck=?, challenger_hand=?, opponent_hand=?,
+                       challenger_stood=?, opponent_stood=?,
+                       challenger_acted=?, opponent_acted=?, turn_user_id=?
+                   WHERE challenge_id=?""",
+                (
+                    json.dumps(deck),
+                    json.dumps(challenger_hand),
+                    json.dumps(opponent_hand),
+                    int(challenger_stood),
+                    int(opponent_stood),
+                    int(challenger_acted),
+                    int(opponent_acted),
+                    next_turn,
+                    challenge_id,
+                ),
+            )
+            if finished:
+                self.connection.execute(
+                    "UPDATE challenges SET status='finished' WHERE id=?",
+                    (challenge_id,),
+                )
+            self.connection.commit()
+            return {
+                "status": "finished" if finished else "updated",
+                "winner_id": winner_id,
+                "loser_id": loser_id,
+                "reason": reason,
+                "challenger_hand": challenger_hand,
+                "opponent_hand": opponent_hand,
+                "challenger_stood": challenger_stood,
+                "opponent_stood": opponent_stood,
+                "turn_user_id": next_turn,
+            }
 
     async def pending_challenges(self) -> list[sqlite3.Row]:
         async with self._lock:
