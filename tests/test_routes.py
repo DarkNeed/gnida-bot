@@ -1,11 +1,15 @@
 import json
+import asyncio
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from pathlib import Path
 
 from aiogram.types import Chat, Message, PhotoSize, User
 from checkers import initial_board
+from database import Database
 from parsing import command_payload
 
 from handlers.routes import (
@@ -47,7 +51,9 @@ from handlers.routes import (
     ART_THEFT_RE,
     basement_kick_allowed,
     checkers_keyboard,
+    create_router,
     dermodemoon_announcement_available,
+    inline_game_types,
     media_accepts_caption,
     message_content,
     message_has_image,
@@ -64,6 +70,23 @@ from handlers.routes import (
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_inline_game_search_and_handlers(self):
+        self.assertEqual(inline_game_types("шашки"), ["checkers"])
+        self.assertEqual(inline_game_types("блэкджек"), ["blackjack"])
+        self.assertEqual(
+            inline_game_types("play"),
+            ["random", "rps", "blackjack", "checkers"],
+        )
+        router = create_router(SimpleNamespace(), kargassia_chat_id=-1001)
+        inline_handlers = {
+            handler.callback.__name__ for handler in router.inline_query.handlers
+        }
+        callback_handlers = {
+            handler.callback.__name__ for handler in router.callback_query.handlers
+        }
+        self.assertIn("inline_challenge_query", inline_handlers)
+        self.assertIn("accept_inline_challenge", callback_handlers)
+
     def test_pisya_joke_command(self):
         self.assertTrue(PISYA_RE.match("пися"))
         self.assertTrue(PISYA_RE.match("ПИСЯ!!!"))
@@ -335,6 +358,93 @@ class RoutePatternTests(unittest.TestCase):
 
 
 class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_inline_offer_can_be_accepted_into_persistent_rps_game(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "inline.sqlite3")
+            await database.connect()
+            router = create_router(database, kargassia_chat_id=-1001)
+            handler = next(
+                item.callback
+                for item in router.callback_query.handlers
+                if item.callback.__name__ == "accept_inline_challenge"
+            )
+            challenger = User(
+                id=10, is_bot=False, first_name="Первый", username="first"
+            )
+            opponent = User(
+                id=20, is_bot=False, first_name="Второй", username="second"
+            )
+
+            async def chat_member(_chat_id, user_id):
+                user = challenger if user_id == challenger.id else opponent
+                return SimpleNamespace(status="member", user=user)
+
+            bot = SimpleNamespace(
+                get_chat_member=AsyncMock(side_effect=chat_member),
+                edit_message_text=AsyncMock(),
+            )
+            callback = SimpleNamespace(
+                data="ia:10:rps",
+                inline_message_id="inline-message-1",
+                from_user=opponent,
+                answer=AsyncMock(),
+            )
+            tasks_before = set(asyncio.all_tasks())
+
+            try:
+                await handler(callback, bot)
+                challenge = database.connection.execute(
+                    "SELECT * FROM challenges WHERE status='active'"
+                ).fetchone()
+                self.assertIsNotNone(challenge)
+                self.assertEqual(challenge["challenger_id"], 10)
+                self.assertEqual(challenge["opponent_id"], 20)
+                self.assertEqual(challenge["inline_message_id"], "inline-message-1")
+                self.assertEqual(
+                    bot.edit_message_text.await_args.kwargs["inline_message_id"],
+                    "inline-message-1",
+                )
+                callback.answer.assert_awaited_with("Вызов принят")
+            finally:
+                spawned = [
+                    task
+                    for task in asyncio.all_tasks()
+                    if task not in tasks_before and task is not asyncio.current_task()
+                ]
+                for task in spawned:
+                    task.cancel()
+                await asyncio.gather(*spawned, return_exceptions=True)
+                await database.close()
+
+    async def test_inline_query_builds_four_personal_game_cards(self):
+        router = create_router(SimpleNamespace(), kargassia_chat_id=None)
+        handler = next(
+            item.callback
+            for item in router.inline_query.handlers
+            if item.callback.__name__ == "inline_challenge_query"
+        )
+        query = SimpleNamespace(
+            query="play",
+            from_user=User(
+                id=10,
+                is_bot=False,
+                first_name="Игрок",
+                username="player",
+            ),
+            answer=AsyncMock(),
+        )
+
+        await handler(query)
+
+        results = query.answer.await_args.args[0]
+        self.assertEqual(len(results), 4)
+        self.assertEqual(
+            results[-1].reply_markup.inline_keyboard[0][0].callback_data,
+            "ia:10:checkers",
+        )
+        self.assertEqual(query.answer.await_args.kwargs["cache_time"], 0)
+        self.assertTrue(query.answer.await_args.kwargs["is_personal"])
+
     async def test_tracking_middleware_completes_request_for_plain_photo(self):
         database = SimpleNamespace(
             upsert_chat=AsyncMock(),

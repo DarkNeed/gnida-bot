@@ -121,6 +121,12 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persisted["move_count"], 1)
         self.assertTrue(persisted["opponent_acted"])
 
+    async def test_challenge_can_store_inline_message_id(self):
+        challenge_id = await self.database.create_challenge(1, 10, 20)
+        await self.database.set_challenge_inline_message(challenge_id, "inline-123")
+        challenge = await self.database.get_challenge(challenge_id)
+        self.assertEqual(challenge["inline_message_id"], "inline-123")
+
     async def test_leg_request_can_be_completed_before_deadline(self):
         request_id = await self.database.create_leg_request(1, 20, 10, 4102444800)
         self.assertEqual(len(await self.database.pending_leg_requests()), 1)
@@ -273,6 +279,25 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(members[0]["username"], "loser")
         self.assertTrue(await self.database.remove_basement_member(1, 20))
         self.assertFalse(await self.database.is_basement_member(1, 20))
+
+    async def test_pirojok_basement_escape_has_persistent_hour_cooldown(self):
+        await self.database.add_basement_member(1, 20, 10)
+        result, cooldown_until = await self.database.escape_basement_with_cooldown(1, 20)
+        self.assertEqual(result, "escaped")
+        self.assertFalse(await self.database.is_basement_member(1, 20))
+
+        await self.database.add_basement_member(1, 20, 10)
+        result, repeated_until = await self.database.escape_basement_with_cooldown(1, 20)
+        self.assertEqual(result, "cooldown")
+        self.assertEqual(repeated_until, cooldown_until)
+        self.assertTrue(await self.database.is_basement_member(1, 20))
+
+        self.database.connection.execute(
+            "UPDATE basement_escape_cooldowns SET cooldown_until=0 WHERE chat_id=1 AND user_id=20"
+        )
+        self.database.connection.commit()
+        result, _ = await self.database.escape_basement_with_cooldown(1, 20)
+        self.assertEqual(result, "escaped")
 
 
 if __name__ == "__main__":

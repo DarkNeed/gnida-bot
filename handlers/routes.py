@@ -19,8 +19,11 @@ from aiogram.types import (
     ChatMemberAdministrator,
     ChatMemberOwner,
     ChatPermissions,
+    InlineQuery,
+    InlineQueryResultArticle,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputTextMessageContent,
     Message,
     TelegramObject,
     URLInputFile,
@@ -121,6 +124,25 @@ SAMOVAR_RE = re.compile(r"(?<![а-яёa-z])самовар(?![а-яёa-z])", re.I
 PISYA_RE = re.compile(r"^пися[!?.\s]*$", re.IGNORECASE)
 SAFEBOORU_API_URL = "https://safebooru.org/index.php"
 SAFEBOORU_TAGS = "murder_drones rating:safe"
+INLINE_GAME_OPTIONS = {
+    "random": ("Случайный вызов", "🎲"),
+    "rps": ("Камень, ножницы, бумага", "🪨"),
+    "blackjack": ("Мини-блэкджек", "🎰"),
+    "checkers": ("Шашки", "⚫"),
+}
+
+
+def inline_game_types(query: str) -> list[str]:
+    normalized = query.casefold().strip()
+    if "кнб" in normalized or "камень" in normalized:
+        return ["rps"]
+    if "блек" in normalized or "блэк" in normalized:
+        return ["blackjack"]
+    if "шаш" in normalized:
+        return ["checkers"]
+    if "случ" in normalized or "рандом" in normalized:
+        return ["random"]
+    return ["random", "rps", "blackjack", "checkers"]
 
 
 def message_content(message: Message) -> str:
@@ -764,20 +786,37 @@ def create_router(
         leg_tasks.add(task)
         task.add_done_callback(leg_tasks.discard)
 
-    async def edit_challenge(challenge, bot: Bot, text: str) -> None:
-        if not challenge["message_id"]:
-            return
+    async def edit_challenge(
+        challenge,
+        bot: Bot,
+        text: str,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> bool:
+        inline_message_id = challenge["inline_message_id"]
+        if not inline_message_id and not challenge["message_id"]:
+            return False
         try:
-            await bot.edit_message_text(
-                text,
-                chat_id=int(challenge["chat_id"]),
-                message_id=int(challenge["message_id"]),
-                parse_mode="HTML",
-            )
+            if inline_message_id:
+                await bot.edit_message_text(
+                    text,
+                    inline_message_id=str(inline_message_id),
+                    reply_markup=reply_markup,
+                    parse_mode="HTML",
+                )
+            else:
+                await bot.edit_message_text(
+                    text,
+                    chat_id=int(challenge["chat_id"]),
+                    message_id=int(challenge["message_id"]),
+                    reply_markup=reply_markup,
+                    parse_mode="HTML",
+                )
+            return True
         except (TelegramBadRequest, TelegramForbiddenError) as error:
             logging.getLogger(__name__).warning(
                 "Could not edit challenge %s: %s", challenge["id"], error
             )
+            return False
 
     async def publish_game_win(
         challenge, bot: Bot, winner_id: int, loser_id: int, heading: str
@@ -1174,8 +1213,19 @@ def create_router(
 
     @router.message(text_or_caption_regexp(PIROJOK_BASEMENT_ESCAPE_RE))
     async def pirojok_basement_escape(message: Message) -> None:
-        if message.chat.type in GROUP_TYPES and is_pirojok(message.from_user):
-            await message.answer("Съебаться из Подвалграда невозможно 💀")
+        sender = message.from_user
+        if message.chat.type not in GROUP_TYPES or not is_pirojok(sender):
+            return
+        result, _ = await database.escape_basement_with_cooldown(
+            message.chat.id, sender.id
+        )
+        if result != "escaped":
+            return
+        await message.answer(
+            f"{mention(sender.id, display_name(sender))} укатился из Подвалграда, "
+            "но я уверен скоро туда вернётся",
+            parse_mode="HTML",
+        )
 
     @router.message(text_or_caption_regexp(CHAT_RE))
     async def sleepy_chat(message: Message, bot: Bot) -> None:
@@ -1790,6 +1840,174 @@ def create_router(
                 parse_mode="HTML",
             )
 
+    @router.inline_query()
+    async def inline_challenge_query(inline_query: InlineQuery) -> None:
+        if kargassia_chat_id is not None:
+            await database.upsert_user(
+                kargassia_chat_id,
+                inline_query.from_user.id,
+                inline_query.from_user.username,
+                display_name(inline_query.from_user),
+                touch=False,
+            )
+        creator_name = display_name(inline_query.from_user)
+        results: list[InlineQueryResultArticle] = []
+        for game_type in inline_game_types(inline_query.query):
+            title, icon = INLINE_GAME_OPTIONS[game_type]
+            game_label = (
+                "случайную мини-игру" if game_type == "random" else title
+            )
+            results.append(
+                InlineQueryResultArticle(
+                    id=f"{inline_query.from_user.id}:{game_type}",
+                    title=title,
+                    description="Отправить вызов в текущий чат",
+                    input_message_content=InputTextMessageContent(
+                        message_text=(
+                            f"{icon} {creator_name} предлагает сыграть в {game_label}.\n"
+                            "Соперник, нажми «Принять вызов»."
+                        )
+                    ),
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [
+                                InlineKeyboardButton(
+                                    text="Принять вызов",
+                                    callback_data=(
+                                        f"ia:{inline_query.from_user.id}:{game_type}"
+                                    ),
+                                )
+                            ]
+                        ]
+                    ),
+                )
+            )
+        await inline_query.answer(results, cache_time=0, is_personal=True)
+
+    @router.callback_query(F.data.startswith("ia:"))
+    async def accept_inline_challenge(callback: CallbackQuery, bot: Bot) -> None:
+        if not callback.data or not callback.inline_message_id:
+            await callback.answer("Этот вызов нужно отправить через inline-режим.")
+            return
+        try:
+            _, raw_challenger_id, requested_game = callback.data.split(":", 2)
+            challenger_id = int(raw_challenger_id)
+        except (TypeError, ValueError):
+            await callback.answer("Некорректный вызов.", show_alert=True)
+            return
+        if requested_game not in INLINE_GAME_OPTIONS:
+            await callback.answer("Неизвестная игра.", show_alert=True)
+            return
+        if callback.from_user.id == challenger_id:
+            await callback.answer("Нельзя принять собственный вызов.", show_alert=True)
+            return
+        if kargassia_chat_id is None:
+            await callback.answer(
+                "Не задан KARGASSIA_CHAT_ID.", show_alert=True
+            )
+            return
+        challenger_present, opponent_present = await asyncio.gather(
+            is_chat_participant(bot, kargassia_chat_id, challenger_id),
+            is_chat_participant(bot, kargassia_chat_id, callback.from_user.id),
+        )
+        if not challenger_present or not opponent_present:
+            await callback.answer(
+                "Оба игрока должны состоять в Каргассии.", show_alert=True
+            )
+            return
+        try:
+            challenger_member = await bot.get_chat_member(
+                kargassia_chat_id, challenger_id
+            )
+            challenger_user = challenger_member.user
+        except (TelegramBadRequest, TelegramForbiddenError):
+            await callback.answer(
+                "Не удалось проверить создателя вызова.", show_alert=True
+            )
+            return
+        opponent = callback.from_user
+        await asyncio.gather(
+            database.upsert_user(
+                kargassia_chat_id,
+                challenger_user.id,
+                challenger_user.username,
+                display_name(challenger_user),
+                touch=False,
+            ),
+            database.upsert_user(
+                kargassia_chat_id,
+                opponent.id,
+                opponent.username,
+                display_name(opponent),
+                touch=False,
+            ),
+        )
+        if sleepy_attack_is_blocked(challenger_user, opponent.username):
+            await callback.answer(SLEEPY_PROTECTION_TEXT, show_alert=True)
+            return
+        if user_is_immune(opponent):
+            await callback.answer(IMMUNITY_TEXT, show_alert=True)
+            return
+        owner = await database.get_owner(kargassia_chat_id, challenger_id)
+        if owner and int(owner["owner_id"]) != opponent.id:
+            owner_name = owner["display_name"] or owner["username"] or str(owner["owner_id"])
+            await callback.answer(
+                f"Рабы могут вызывать только владельца: {owner_name}.",
+                show_alert=True,
+            )
+            return
+        forced = bool(
+            owner
+            and int(owner["owner_id"]) == opponent.id
+            and await database.can_force_owner(
+                kargassia_chat_id, challenger_id, opponent.id
+            )
+        )
+        opponent_newcomer = await database.is_vulnerable(
+            kargassia_chat_id, opponent.id
+        )
+        game_type = (
+            random.choice(("rps", "blackjack", "checkers"))
+            if requested_game == "random"
+            else requested_game
+        )
+        challenge_id = await database.create_challenge(
+            kargassia_chat_id,
+            challenger_id,
+            opponent.id,
+            forced=forced,
+            opponent_newcomer=opponent_newcomer,
+            game_type=game_type,
+        )
+        if challenge_id is None:
+            await callback.answer(
+                "У одного из игроков уже есть активный вызов.", show_alert=True
+            )
+            return
+        await database.set_challenge_inline_message(
+            challenge_id, callback.inline_message_id
+        )
+        challenge = await database.get_challenge(challenge_id)
+        if game_type == "blackjack":
+            game = await database.get_blackjack_game(challenge_id)
+            text = await blackjack_text(database, challenge, game)
+            keyboard = blackjack_keyboard(challenge_id)
+        elif game_type == "checkers":
+            game = await database.get_checkers_game(challenge_id)
+            text = await checkers_text(database, challenge, game)
+            keyboard = checkers_keyboard(challenge_id, challenge, game)
+        else:
+            text = await challenge_text(database, challenge)
+            keyboard = challenge_keyboard(challenge_id)
+        if not await edit_challenge(challenge, bot, text, keyboard):
+            await database.finish_challenge(challenge_id, "failed")
+            await callback.answer(
+                "Не удалось открыть игру в этом сообщении.", show_alert=True
+            )
+            return
+        schedule_challenge(challenge_id, bot)
+        await callback.answer("Вызов принят")
+
     @router.message(text_or_caption_regexp(CHALLENGE_RE))
     async def challenge(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
@@ -1881,7 +2099,7 @@ def create_router(
 
     @router.callback_query(F.data.startswith("rps:"))
     async def rps_callback(callback: CallbackQuery, bot: Bot) -> None:
-        if not callback.data or not callback.message:
+        if not callback.data:
             return
         try:
             _, raw_id, choice = callback.data.split(":", 2)
@@ -1901,7 +2119,7 @@ def create_router(
             database, int(challenge["chat_id"]), int(challenge["opponent_id"])
         ):
             if await database.finish_challenge(challenge_id, "immune"):
-                await callback.message.edit_text(IMMUNITY_TEXT)
+                await edit_challenge(challenge, bot, IMMUNITY_TEXT)
             await callback.answer()
             return
         if callback.from_user.id not in (challenge["challenger_id"], challenge["opponent_id"]):
@@ -1924,9 +2142,10 @@ def create_router(
                 await callback.answer("Первые 5 минут после входа отказаться нельзя.", show_alert=True)
                 return
             if await database.finish_challenge(challenge_id, "refused"):
-                await callback.message.edit_text(
+                await edit_challenge(
+                    challenge,
+                    bot,
                     f"🚫 {html.escape(display_name(callback.from_user))} отказался от вызова.",
-                    parse_mode="HTML",
                 )
             await callback.answer()
             return
@@ -1939,10 +2158,11 @@ def create_router(
             return
         await callback.answer("Ход принят")
         if not challenge["challenger_choice"] or not challenge["opponent_choice"]:
-            await callback.message.edit_text(
+            await edit_challenge(
+                challenge,
+                bot,
                 await challenge_text(database, challenge),
                 reply_markup=challenge_keyboard(challenge_id),
-                parse_mode="HTML",
             )
             return
         if not await database.finish_challenge(challenge_id):
@@ -1951,7 +2171,7 @@ def create_router(
 
     @router.callback_query(F.data.startswith("bj:"))
     async def blackjack_callback(callback: CallbackQuery, bot: Bot) -> None:
-        if not callback.data or not callback.message:
+        if not callback.data:
             return
         try:
             _, raw_id, action = callback.data.split(":", 2)
@@ -1971,7 +2191,7 @@ def create_router(
             database, int(challenge["chat_id"]), int(challenge["opponent_id"])
         ):
             if await database.finish_challenge(challenge_id, "immune"):
-                await callback.message.edit_text(IMMUNITY_TEXT)
+                await edit_challenge(challenge, bot, IMMUNITY_TEXT)
             await callback.answer()
             return
         participant_ids = {
@@ -2000,10 +2220,11 @@ def create_router(
                 )
                 return
             if await database.finish_challenge(challenge_id, "refused"):
-                await callback.message.edit_text(
+                await edit_challenge(
+                    challenge,
+                    bot,
                     f"🚫 {html.escape(display_name(callback.from_user))} "
                     "отказался от вызова.",
-                    parse_mode="HTML",
                 )
             await callback.answer()
             return
@@ -2039,10 +2260,11 @@ def create_router(
         if result["status"] == "updated":
             updated_challenge = await database.get_challenge(challenge_id)
             updated_game = await database.get_blackjack_game(challenge_id)
-            await callback.message.edit_text(
+            await edit_challenge(
+                updated_challenge,
+                bot,
                 await blackjack_text(database, updated_challenge, updated_game),
                 reply_markup=blackjack_keyboard(challenge_id),
-                parse_mode="HTML",
             )
             return
         challenger = await database.get_user(
@@ -2071,7 +2293,7 @@ def create_router(
 
     @router.callback_query(F.data.startswith("ck:"))
     async def checkers_callback(callback: CallbackQuery, bot: Bot) -> None:
-        if not callback.data or not callback.message:
+        if not callback.data:
             return
         try:
             _, raw_id, action = callback.data.split(":", 2)
@@ -2091,7 +2313,7 @@ def create_router(
             database, int(challenge["chat_id"]), int(challenge["opponent_id"])
         ):
             if await database.finish_challenge(challenge_id, "immune"):
-                await callback.message.edit_text(IMMUNITY_TEXT)
+                await edit_challenge(challenge, bot, IMMUNITY_TEXT)
             await callback.answer()
             return
         participant_ids = {
@@ -2130,10 +2352,11 @@ def create_router(
                 )
                 return
             if await database.finish_challenge(challenge_id, "refused"):
-                await callback.message.edit_text(
+                await edit_challenge(
+                    challenge,
+                    bot,
                     f"🚫 {html.escape(display_name(callback.from_user))} "
                     "отказался от вызова.",
-                    parse_mode="HTML",
                 )
             await callback.answer()
             return
@@ -2195,12 +2418,13 @@ def create_router(
         else:
             answer = "Ход выполнен"
         await callback.answer(answer)
-        await callback.message.edit_text(
+        await edit_challenge(
+            updated_challenge,
+            bot,
             await checkers_text(database, updated_challenge, updated_game),
             reply_markup=checkers_keyboard(
                 challenge_id, updated_challenge, updated_game
             ),
-            parse_mode="HTML",
         )
 
     @router.message(text_or_caption_regexp(TOP_RE))

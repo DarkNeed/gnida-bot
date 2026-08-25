@@ -24,6 +24,7 @@ FORCE_OWNER_COOLDOWN_SECONDS = 7 * 24 * 60 * 60
 PIROJOK_USERNAME = "pirojoksostajem"
 JUG_HIDING_SECONDS = 5 * 60
 JUG_COOLDOWN_SECONDS = 60 * 60
+BASEMENT_ESCAPE_COOLDOWN_SECONDS = 60 * 60
 
 
 def utc_timestamp() -> int:
@@ -175,6 +176,13 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_jug_hiding_active
                 ON jug_hiding(active, hidden_until);
+
+            CREATE TABLE IF NOT EXISTS basement_escape_cooldowns (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                cooldown_until INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, user_id)
+            );
             """
         )
         self._ensure_column("ownership", "last_forced_at", "INTEGER")
@@ -188,6 +196,7 @@ class Database:
         self._ensure_column(
             "challenges", "game_type", "TEXT NOT NULL DEFAULT 'rps'"
         )
+        self._ensure_column("challenges", "inline_message_id", "TEXT")
         self._connection.execute(
             """UPDATE challenges
                SET deadline=created_at + CASE
@@ -485,6 +494,16 @@ class Database:
         async with self._lock:
             self.connection.execute(
                 "UPDATE challenges SET message_id=? WHERE id=?", (message_id, challenge_id)
+            )
+            self.connection.commit()
+
+    async def set_challenge_inline_message(
+        self, challenge_id: int, inline_message_id: str
+    ) -> None:
+        async with self._lock:
+            self.connection.execute(
+                "UPDATE challenges SET inline_message_id=? WHERE id=?",
+                (inline_message_id, challenge_id),
             )
             self.connection.commit()
 
@@ -1063,6 +1082,40 @@ class Database:
             )
             self.connection.commit()
             return cursor.rowcount > 0
+
+    async def escape_basement_with_cooldown(
+        self, chat_id: int, user_id: int
+    ) -> tuple[str, int | None]:
+        now = utc_timestamp()
+        async with self._lock:
+            member = self.connection.execute(
+                "SELECT 1 FROM basement_members WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            ).fetchone()
+            if member is None:
+                return "not_member", None
+            cooldown = self.connection.execute(
+                """SELECT cooldown_until FROM basement_escape_cooldowns
+                   WHERE chat_id=? AND user_id=?""",
+                (chat_id, user_id),
+            ).fetchone()
+            if cooldown and int(cooldown["cooldown_until"]) > now:
+                return "cooldown", int(cooldown["cooldown_until"])
+            cooldown_until = now + BASEMENT_ESCAPE_COOLDOWN_SECONDS
+            self.connection.execute(
+                "DELETE FROM basement_members WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            )
+            self.connection.execute(
+                """INSERT INTO basement_escape_cooldowns(
+                       chat_id, user_id, cooldown_until
+                   ) VALUES (?, ?, ?)
+                   ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                       cooldown_until=excluded.cooldown_until""",
+                (chat_id, user_id, cooldown_until),
+            )
+            self.connection.commit()
+            return "escaped", cooldown_until
 
     async def is_basement_member(self, chat_id: int, user_id: int) -> bool:
         async with self._lock:
