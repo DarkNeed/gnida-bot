@@ -9,6 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from blackjack import compare_stood_hands, hand_total, shuffled_deck
+from checkers import (
+    BLACK,
+    WHITE,
+    apply_move as apply_checkers_move,
+    initial_board as initial_checkers_board,
+    legal_moves as legal_checkers_moves,
+)
 
 
 CHALLENGE_DEADLINE_SECONDS = 3 * 60 * 60
@@ -113,6 +120,17 @@ class Database:
                 challenger_acted INTEGER NOT NULL DEFAULT 0,
                 opponent_acted INTEGER NOT NULL DEFAULT 0,
                 turn_user_id INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS checkers_games (
+                challenge_id INTEGER PRIMARY KEY,
+                board TEXT NOT NULL,
+                turn_user_id INTEGER NOT NULL,
+                selected_square INTEGER,
+                chain_square INTEGER,
+                challenger_acted INTEGER NOT NULL DEFAULT 0,
+                opponent_acted INTEGER NOT NULL DEFAULT 0,
+                move_count INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS leg_requests (
@@ -393,7 +411,7 @@ class Database:
         opponent_newcomer: bool = False,
         game_type: str = "rps",
     ) -> int | None:
-        if game_type not in {"rps", "blackjack"}:
+        if game_type not in {"rps", "blackjack", "checkers"}:
             raise ValueError("Unknown challenge game type")
         async with self._lock:
             existing = self.connection.execute(
@@ -443,6 +461,17 @@ class Database:
                         random.choice((challenger_id, opponent_id)),
                     ),
                 )
+            elif game_type == "checkers":
+                self.connection.execute(
+                    """INSERT INTO checkers_games(
+                           challenge_id, board, turn_user_id
+                       ) VALUES (?, ?, ?)""",
+                    (
+                        challenge_id,
+                        json.dumps(initial_checkers_board()),
+                        opponent_id,
+                    ),
+                )
             if forced:
                 self.connection.execute(
                     """UPDATE ownership SET last_forced_at=?
@@ -470,6 +499,132 @@ class Database:
             return self.connection.execute(
                 "SELECT * FROM blackjack_games WHERE challenge_id=?", (challenge_id,)
             ).fetchone()
+
+    async def get_checkers_game(self, challenge_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM checkers_games WHERE challenge_id=?", (challenge_id,)
+            ).fetchone()
+
+    async def checkers_click(
+        self, challenge_id: int, user_id: int, square: int
+    ) -> dict[str, Any]:
+        if square < 0 or square >= 64:
+            return {"status": "invalid"}
+        async with self._lock:
+            challenge = self.connection.execute(
+                "SELECT * FROM challenges WHERE id=?", (challenge_id,)
+            ).fetchone()
+            game = self.connection.execute(
+                "SELECT * FROM checkers_games WHERE challenge_id=?", (challenge_id,)
+            ).fetchone()
+            if (
+                not challenge
+                or challenge["status"] != "active"
+                or challenge["game_type"] != "checkers"
+                or not game
+            ):
+                return {"status": "inactive"}
+
+            challenger_id = int(challenge["challenger_id"])
+            opponent_id = int(challenge["opponent_id"])
+            if user_id not in {challenger_id, opponent_id}:
+                return {"status": "not_participant"}
+            if user_id != int(game["turn_user_id"]):
+                return {"status": "not_turn"}
+
+            board = json.loads(game["board"])
+            if not isinstance(board, list) or len(board) != 64:
+                return {"status": "invalid"}
+            color = BLACK if user_id == challenger_id else WHITE
+            selected = (
+                int(game["selected_square"])
+                if game["selected_square"] is not None
+                else None
+            )
+            chain_square = (
+                int(game["chain_square"])
+                if game["chain_square"] is not None
+                else None
+            )
+            moves = legal_checkers_moves(board, color, forced_from=chain_square)
+
+            if chain_square is None and square == selected:
+                self.connection.execute(
+                    "UPDATE checkers_games SET selected_square=NULL WHERE challenge_id=?",
+                    (challenge_id,),
+                )
+                self.connection.commit()
+                return {"status": "selected", "selected_square": None}
+            if square in moves:
+                self.connection.execute(
+                    "UPDATE checkers_games SET selected_square=? WHERE challenge_id=?",
+                    (square, challenge_id),
+                )
+                self.connection.commit()
+                return {"status": "selected", "selected_square": square}
+            if selected is None:
+                return {"status": "invalid"}
+            allowed_destinations = {
+                move.destination for move in moves.get(selected, [])
+            }
+            if square not in allowed_destinations:
+                return {"status": "invalid"}
+
+            move_result = apply_checkers_move(board, color, selected, square)
+            if move_result is None:
+                return {"status": "invalid"}
+            challenger_acted = bool(game["challenger_acted"])
+            opponent_acted = bool(game["opponent_acted"])
+            if user_id == challenger_id:
+                challenger_acted = True
+            else:
+                opponent_acted = True
+            if move_result.continuation:
+                next_turn = user_id
+                selected_square = chain_square = square
+            else:
+                next_turn = opponent_id if user_id == challenger_id else challenger_id
+                selected_square = chain_square = None
+
+            self.connection.execute(
+                """UPDATE checkers_games SET
+                       board=?, turn_user_id=?, selected_square=?, chain_square=?,
+                       challenger_acted=?, opponent_acted=?, move_count=move_count + 1
+                   WHERE challenge_id=?""",
+                (
+                    json.dumps(move_result.board),
+                    next_turn,
+                    selected_square,
+                    chain_square,
+                    int(challenger_acted),
+                    int(opponent_acted),
+                    challenge_id,
+                ),
+            )
+            winner_id = loser_id = 0
+            if move_result.winner:
+                winner_id = challenger_id if move_result.winner == BLACK else opponent_id
+                loser_id = opponent_id if winner_id == challenger_id else challenger_id
+                self.connection.execute(
+                    "UPDATE challenges SET status='finished' WHERE id=?",
+                    (challenge_id,),
+                )
+            else:
+                self.connection.execute(
+                    "UPDATE challenges SET deadline=? WHERE id=?",
+                    (utc_timestamp() + CHALLENGE_DEADLINE_SECONDS, challenge_id),
+                )
+            self.connection.commit()
+            return {
+                "status": "finished" if move_result.winner else "moved",
+                "board": move_result.board,
+                "continuation": move_result.continuation,
+                "winner_id": winner_id,
+                "loser_id": loser_id,
+                "reason": move_result.reason,
+                "turn_user_id": next_turn,
+            }
 
     async def blackjack_action(
         self, challenge_id: int, user_id: int, action: str

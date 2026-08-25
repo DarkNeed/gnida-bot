@@ -1,9 +1,11 @@
+import json
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from aiogram.types import Chat, Message, PhotoSize, User
+from checkers import initial_board
 from parsing import command_payload
 
 from handlers.routes import (
@@ -30,6 +32,7 @@ from handlers.routes import (
     PIROJOK_BASEMENT_ESCAPE_RE,
     PIROJOK_ESCAPE_RE,
     PIROJOK_HIDE_RE,
+    PISYA_RE,
     MODERATION_RE,
     CLEAR_RE,
     RESTORE_RE,
@@ -43,9 +46,12 @@ from handlers.routes import (
     TrackingMiddleware,
     ART_THEFT_RE,
     basement_kick_allowed,
+    checkers_keyboard,
     dermodemoon_announcement_available,
+    media_accepts_caption,
     message_content,
     message_has_image,
+    message_has_relayable_media,
     silence_duration_seconds,
     resolve_target,
     parse_safebooru_count,
@@ -58,6 +64,11 @@ from handlers.routes import (
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_pisya_joke_command(self):
+        self.assertTrue(PISYA_RE.match("пися"))
+        self.assertTrue(PISYA_RE.match("ПИСЯ!!!"))
+        self.assertFalse(PISYA_RE.match("пися где-то в тексте"))
+
     def test_sleepy_chat_command_accepts_text_on_next_line(self):
         command = "/чат@GnidaBot\nДай пять"
         self.assertTrue(CHAT_RE.match(command))
@@ -77,7 +88,7 @@ class RoutePatternTests(unittest.TestCase):
     def test_heavenly_punishment_lasts_one_hundred_hours(self):
         self.assertEqual(HEAVENLY_PUNISHMENT_HOURS, 100)
 
-    def test_challenge_can_select_blackjack_or_rps(self):
+    def test_challenge_can_select_existing_games(self):
         self.assertIsNone(CHALLENGE_RE.match("Вызов").group(1))
         self.assertEqual(CHALLENGE_RE.match("Вызов кнб").group(1).casefold(), "кнб")
         self.assertIn(
@@ -85,6 +96,23 @@ class RoutePatternTests(unittest.TestCase):
             {"блекджек", "блэкджек"},
         )
         self.assertTrue(CHALLENGE_RE.match("Вызов блэкджек"))
+        self.assertEqual(
+            CHALLENGE_RE.match("Вызов шашки").group(1).casefold(), "шашки"
+        )
+
+    def test_checkers_keyboard_has_board_and_controls(self):
+        challenge = {"challenger_id": 10, "opponent_id": 20}
+        game = {
+            "board": json.dumps(initial_board()),
+            "turn_user_id": 20,
+            "selected_square": None,
+            "chain_square": None,
+        }
+        keyboard = checkers_keyboard(7, challenge, game)
+        self.assertEqual(len(keyboard.inline_keyboard), 9)
+        self.assertTrue(all(len(row) == 8 for row in keyboard.inline_keyboard[:8]))
+        self.assertEqual(keyboard.inline_keyboard[0][0].callback_data, "ck:7:noop")
+        self.assertEqual(keyboard.inline_keyboard[0][1].callback_data, "ck:7:1")
 
     def test_leg_request_accepts_any_image_message(self):
         empty = {
@@ -126,6 +154,16 @@ class RoutePatternTests(unittest.TestCase):
                 )
             )
         )
+
+    def test_chat_relay_recognizes_media_and_caption_support(self):
+        photo = SimpleNamespace(photo=[object()])
+        sticker = SimpleNamespace(sticker=object())
+        empty = SimpleNamespace()
+        self.assertTrue(message_has_relayable_media(photo))
+        self.assertTrue(media_accepts_caption(photo))
+        self.assertTrue(message_has_relayable_media(sticker))
+        self.assertFalse(media_accepts_caption(sticker))
+        self.assertFalse(message_has_relayable_media(empty))
 
     def test_basement_admins_can_be_slapped_but_never_kicked(self):
         self.assertFalse(basement_kick_allowed("administrator"))

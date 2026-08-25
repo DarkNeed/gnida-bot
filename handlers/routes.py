@@ -28,6 +28,7 @@ from aiogram.types import (
 )
 
 from blackjack import full_hand, hand_total, visible_hand
+from checkers import BLACK, WHITE, EMPTY, legal_moves as legal_checkers_moves
 from database import (
     CHALLENGE_DEADLINE_SECONDS,
     NEWCOMER_CHALLENGE_DEADLINE_SECONDS,
@@ -65,7 +66,7 @@ START_RE = re.compile(r"^/start(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 CHAT_RE = re.compile(r"^/чат(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RELEASE_RE = re.compile(r"^(?:/отпустить(?:@\w+)?|отпустить\s+раба)(?:\s|$)", re.IGNORECASE)
 CHALLENGE_RE = re.compile(
-    r"^вызов(?:\s+(кнб|бл[еэ]кджек))?[!?.\s]*$", re.IGNORECASE
+    r"^вызов(?:\s+(кнб|бл[еэ]кджек|шашки))?[!?.\s]*$", re.IGNORECASE
 )
 TOP_RE = re.compile(r"^кому\s+делать\s+нехер[!?.\s]*$", re.IGNORECASE)
 GNIDA_RE = re.compile(
@@ -117,6 +118,7 @@ PIROJOK_BASEMENT_ESCAPE_RE = re.compile(
     r"^съебаться\s+с\s+подвалграда[!?.\s]*$", re.IGNORECASE
 )
 SAMOVAR_RE = re.compile(r"(?<![а-яёa-z])самовар(?![а-яёa-z])", re.IGNORECASE)
+PISYA_RE = re.compile(r"^пися[!?.\s]*$", re.IGNORECASE)
 SAFEBOORU_API_URL = "https://safebooru.org/index.php"
 SAFEBOORU_TAGS = "murder_drones rating:safe"
 
@@ -220,6 +222,29 @@ def message_has_image(message: Message) -> bool:
     )
     return bool(
         message.photo or message.sticker or message.animation or is_image_document
+    )
+
+
+def message_has_relayable_media(message: Message) -> bool:
+    return any(
+        getattr(message, field, None)
+        for field in (
+            "animation",
+            "audio",
+            "document",
+            "photo",
+            "sticker",
+            "video",
+            "video_note",
+            "voice",
+        )
+    )
+
+
+def media_accepts_caption(message: Message) -> bool:
+    return any(
+        getattr(message, field, None)
+        for field in ("animation", "audio", "document", "photo", "video", "voice")
     )
 
 
@@ -503,6 +528,65 @@ def blackjack_keyboard(challenge_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def checkers_keyboard(challenge_id: int, challenge, game) -> InlineKeyboardMarkup:
+    board = json.loads(game["board"])
+    turn_user_id = int(game["turn_user_id"])
+    color = (
+        BLACK
+        if turn_user_id == int(challenge["challenger_id"])
+        else WHITE
+    )
+    selected = (
+        int(game["selected_square"])
+        if game["selected_square"] is not None
+        else None
+    )
+    chain_square = (
+        int(game["chain_square"])
+        if game["chain_square"] is not None
+        else None
+    )
+    moves = legal_checkers_moves(board, color, forced_from=chain_square)
+    destinations = {
+        move.destination for move in moves.get(selected, [])
+    } if selected is not None else set()
+    symbols = {"b": "⚫", "w": "⚪", "B": "♛", "W": "♕"}
+    rows: list[list[InlineKeyboardButton]] = []
+    for row in range(8):
+        buttons: list[InlineKeyboardButton] = []
+        for column in range(8):
+            square = row * 8 + column
+            if square == selected:
+                label = "🔘"
+            elif square in destinations:
+                label = "✦"
+            elif board[square] != EMPTY:
+                label = symbols[board[square]]
+            elif (row + column) % 2:
+                label = "·"
+            else:
+                label = "\u00a0"
+            callback_action = str(square) if (row + column) % 2 else "noop"
+            buttons.append(
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"ck:{challenge_id}:{callback_action}",
+                )
+            )
+        rows.append(buttons)
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="Отказаться", callback_data=f"ck:{challenge_id}:refuse"
+            ),
+            InlineKeyboardButton(
+                text="🏳 Сдаться", callback_data=f"ck:{challenge_id}:resign"
+            ),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def challenge_text(database: Database, challenge) -> str:
     challenger = await database.get_user(challenge["chat_id"], challenge["challenger_id"])
     opponent = await database.get_user(challenge["chat_id"], challenge["opponent_id"])
@@ -554,6 +638,36 @@ async def blackjack_text(database: Database, challenge, game) -> str:
         f"{state(int(challenge['opponent_id']), bool(game['opponent_stood']))}\n\n"
         f"Свою скрытую карту можно посмотреть кнопкой. На игру даётся {deadline_text}."
         f"{forced_text}{newcomer_text}"
+    )
+
+
+async def checkers_text(database: Database, challenge, game) -> str:
+    challenger = await database.get_user(challenge["chat_id"], challenge["challenger_id"])
+    opponent = await database.get_user(challenge["chat_id"], challenge["opponent_id"])
+    turn_id = int(game["turn_user_id"])
+    turn = challenger if turn_id == int(challenge["challenger_id"]) else opponent
+    turn_symbol = "⚫" if turn_id == int(challenge["challenger_id"]) else "⚪"
+    forced_text = (
+        "\n🔒 Принудительный вызов: владелец не может отказаться."
+        if challenge["forced"]
+        else ""
+    )
+    newcomer_text = (
+        "\n⏳ Новичку даётся 5 минут на первый ход."
+        if challenge["opponent_newcomer"] and not game["opponent_acted"]
+        else ""
+    )
+    chain_text = (
+        "\n⚔️ Нужно продолжить взятие выбранной шашкой."
+        if game["chain_square"] is not None
+        else ""
+    )
+    return (
+        "Шашки\n\n"
+        f"Играют: {plain_name(challenger)} ⚫ · {plain_name(opponent)} ⚪\n"
+        f"Ходит: {plain_name(turn)} {turn_symbol}\n"
+        "На ход даётся 3 часа."
+        f"{chain_text}{forced_text}{newcomer_text}"
     )
 
 
@@ -720,18 +834,24 @@ def create_router(
         )
 
     async def enforce_challenge_deadline(challenge_id: int, bot: Bot) -> None:
-        challenge = await database.get_challenge(challenge_id)
-        if not challenge or challenge["status"] not in {"active", "deadline"}:
-            return
-        if challenge["status"] == "active":
+        while True:
+            challenge = await database.get_challenge(challenge_id)
+            if not challenge or challenge["status"] not in {"active", "deadline"}:
+                return
+            if challenge["status"] == "deadline":
+                break
             await asyncio.sleep(max(0, int(challenge["deadline"]) - utc_timestamp()))
             challenge = await database.claim_expired_challenge(challenge_id)
-            if not challenge:
-                return
+            if challenge:
+                break
         if challenge["game_type"] == "blackjack":
             blackjack = await database.get_blackjack_game(challenge_id)
             first_moved = bool(blackjack and blackjack["challenger_acted"])
             second_moved = bool(blackjack and blackjack["opponent_acted"])
+        elif challenge["game_type"] == "checkers":
+            checkers = await database.get_checkers_game(challenge_id)
+            first_moved = bool(checkers and checkers["challenger_acted"])
+            second_moved = bool(checkers and checkers["opponent_acted"])
         else:
             first_moved = bool(challenge["challenger_choice"])
             second_moved = bool(challenge["opponent_choice"])
@@ -1062,14 +1182,37 @@ def create_router(
         if not is_mister_sleepy(message.from_user):
             return
         payload = command_payload(message_content(message))
-        if not payload:
-            await message.answer("Напиши текст после /чат.")
-            return
         if kargassia_chat_id is None:
             await message.answer("Не задан KARGASSIA_CHAT_ID.")
             return
+        source_message: Message | None = None
+        replace_caption = False
+        if message.caption is not None and message_has_relayable_media(message):
+            source_message = message
+            replace_caption = True
+        elif (
+            message.reply_to_message
+            and message_has_relayable_media(message.reply_to_message)
+        ):
+            source_message = message.reply_to_message
+            replace_caption = bool(payload and media_accepts_caption(source_message))
+        if not payload and source_message is None:
+            await message.answer("Напиши текст после /чат или приложи медиа.")
+            return
         try:
-            await bot.send_message(kargassia_chat_id, payload)
+            if source_message is not None:
+                copy_arguments = {
+                    "chat_id": kargassia_chat_id,
+                    "from_chat_id": source_message.chat.id,
+                    "message_id": source_message.message_id,
+                }
+                if replace_caption:
+                    copy_arguments["caption"] = payload
+                await bot.copy_message(**copy_arguments)
+                if payload and not replace_caption:
+                    await bot.send_message(kargassia_chat_id, payload)
+            else:
+                await bot.send_message(kargassia_chat_id, payload)
         except (TelegramBadRequest, TelegramForbiddenError) as error:
             await message.answer(
                 f"Не получилось отправить сообщение в Каргассию: "
@@ -1657,8 +1800,10 @@ def create_router(
             game_type = "rps"
         elif requested_game in {"блекджек", "блэкджек"}:
             game_type = "blackjack"
+        elif requested_game == "шашки":
+            game_type = "checkers"
         else:
-            game_type = random.choice(("rps", "blackjack"))
+            game_type = random.choice(("rps", "blackjack", "checkers"))
         if (
             message.sender_chat
             or not message.reply_to_message
@@ -1719,6 +1864,10 @@ def create_router(
             blackjack = await database.get_blackjack_game(challenge_id)
             body = await blackjack_text(database, row, blackjack)
             keyboard = blackjack_keyboard(challenge_id)
+        elif game_type == "checkers":
+            checkers = await database.get_checkers_game(challenge_id)
+            body = await checkers_text(database, row, checkers)
+            keyboard = checkers_keyboard(challenge_id, row, checkers)
         else:
             body = await challenge_text(database, row)
             keyboard = challenge_keyboard(challenge_id)
@@ -1920,6 +2069,140 @@ def create_router(
             heading,
         )
 
+    @router.callback_query(F.data.startswith("ck:"))
+    async def checkers_callback(callback: CallbackQuery, bot: Bot) -> None:
+        if not callback.data or not callback.message:
+            return
+        try:
+            _, raw_id, action = callback.data.split(":", 2)
+            challenge_id = int(raw_id)
+        except (ValueError, TypeError):
+            await callback.answer("Некорректный вызов.", show_alert=True)
+            return
+        challenge = await database.get_challenge(challenge_id)
+        if (
+            not challenge
+            or challenge["status"] != "active"
+            or challenge["game_type"] != "checkers"
+        ):
+            await callback.answer("Эта партия уже завершена.", show_alert=True)
+            return
+        if await target_is_immune(
+            database, int(challenge["chat_id"]), int(challenge["opponent_id"])
+        ):
+            if await database.finish_challenge(challenge_id, "immune"):
+                await callback.message.edit_text(IMMUNITY_TEXT)
+            await callback.answer()
+            return
+        participant_ids = {
+            int(challenge["challenger_id"]),
+            int(challenge["opponent_id"]),
+        }
+        if callback.from_user.id not in participant_ids:
+            await callback.answer("Это не ваша партия.", show_alert=True)
+            return
+        if utc_timestamp() >= int(challenge["deadline"]):
+            await callback.answer("Время на ход уже истекло.", show_alert=True)
+            return
+        game = await database.get_checkers_game(challenge_id)
+        if not game:
+            await callback.answer("Партия не найдена.", show_alert=True)
+            return
+
+        if action == "refuse":
+            if int(game["move_count"]) > 0:
+                await callback.answer(
+                    "После первого хода можно только сдаться.", show_alert=True
+                )
+                return
+            is_opponent = callback.from_user.id == challenge["opponent_id"]
+            if is_opponent and challenge["forced"]:
+                await callback.answer(
+                    "Это принудительный вызов — владелец не может отказаться.",
+                    show_alert=True,
+                )
+                return
+            if is_opponent and await database.is_vulnerable(
+                challenge["chat_id"], callback.from_user.id
+            ):
+                await callback.answer(
+                    "Первые 5 минут после входа отказаться нельзя.", show_alert=True
+                )
+                return
+            if await database.finish_challenge(challenge_id, "refused"):
+                await callback.message.edit_text(
+                    f"🚫 {html.escape(display_name(callback.from_user))} "
+                    "отказался от вызова.",
+                    parse_mode="HTML",
+                )
+            await callback.answer()
+            return
+
+        if action == "resign":
+            if not await database.finish_challenge(challenge_id):
+                await callback.answer("Партия уже завершена.", show_alert=True)
+                return
+            loser_id = callback.from_user.id
+            winner_id = next(user_id for user_id in participant_ids if user_id != loser_id)
+            await callback.answer("Вы сдались")
+            await publish_game_win(
+                challenge,
+                bot,
+                winner_id,
+                loser_id,
+                f"🏳 {html.escape(display_name(callback.from_user))} сдался в шашках.",
+            )
+            return
+
+        if action == "noop":
+            await callback.answer()
+            return
+
+        try:
+            square = int(action)
+        except ValueError:
+            await callback.answer("Неизвестный ход.", show_alert=True)
+            return
+        result = await database.checkers_click(
+            challenge_id, callback.from_user.id, square
+        )
+        if result["status"] == "not_turn":
+            await callback.answer("Сейчас ход соперника.", show_alert=True)
+            return
+        if result["status"] == "not_participant":
+            await callback.answer("Это не ваша партия.", show_alert=True)
+            return
+        if result["status"] in {"inactive", "invalid"}:
+            await callback.answer("Эта клетка сейчас недоступна.", show_alert=True)
+            return
+        if result["status"] == "finished":
+            await callback.answer("Партия завершена")
+            await publish_game_win(
+                challenge,
+                bot,
+                int(result["winner_id"]),
+                int(result["loser_id"]),
+                f"ШАШКИ!!!\nИтог: {html.escape(str(result['reason']))}.",
+            )
+            return
+
+        updated_challenge = await database.get_challenge(challenge_id)
+        updated_game = await database.get_checkers_game(challenge_id)
+        if result["status"] == "selected":
+            answer = "Шашка выбрана" if result["selected_square"] is not None else "Выбор снят"
+        elif result.get("continuation"):
+            answer = "Продолжайте взятие"
+        else:
+            answer = "Ход выполнен"
+        await callback.answer(answer)
+        await callback.message.edit_text(
+            await checkers_text(database, updated_challenge, updated_game),
+            reply_markup=checkers_keyboard(
+                challenge_id, updated_challenge, updated_game
+            ),
+            parse_mode="HTML",
+        )
+
     @router.message(text_or_caption_regexp(TOP_RE))
     async def top_owners(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES:
@@ -2075,5 +2358,10 @@ def create_router(
     async def samovar(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "samovar"):
             await message.answer("Зовите Кита")
+
+    @router.message(text_or_caption_regexp(PISYA_RE))
+    async def pisya(message: Message) -> None:
+        if message.chat.type in GROUP_TYPES:
+            await message.answer("попа")
 
     return router

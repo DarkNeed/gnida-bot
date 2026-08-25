@@ -98,6 +98,29 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["winner_id"], 10)
         self.assertEqual((await self.database.get_challenge(challenge_id))["status"], "finished")
 
+    async def test_checkers_challenge_is_persistent_and_moves(self):
+        challenge_id = await self.database.create_challenge(
+            1, 10, 20, opponent_newcomer=True, game_type="checkers"
+        )
+        challenge = await self.database.get_challenge(challenge_id)
+        game = await self.database.get_checkers_game(challenge_id)
+        board = json.loads(game["board"])
+        self.assertEqual(challenge["game_type"], "checkers")
+        self.assertEqual(board.count("b"), 12)
+        self.assertEqual(board.count("w"), 12)
+        self.assertEqual(game["turn_user_id"], 20)
+
+        selected = await self.database.checkers_click(challenge_id, 20, 40)
+        self.assertEqual(selected["status"], "selected")
+        moved = await self.database.checkers_click(challenge_id, 20, 33)
+        self.assertEqual(moved["status"], "moved")
+        self.assertEqual(moved["turn_user_id"], 10)
+        extended = await self.database.get_challenge(challenge_id)
+        self.assertGreater(extended["deadline"] - extended["created_at"], 300)
+        persisted = await self.database.get_checkers_game(challenge_id)
+        self.assertEqual(persisted["move_count"], 1)
+        self.assertTrue(persisted["opponent_acted"])
+
     async def test_leg_request_can_be_completed_before_deadline(self):
         request_id = await self.database.create_leg_request(1, 20, 10, 4102444800)
         self.assertEqual(len(await self.database.pending_leg_requests()), 1)
