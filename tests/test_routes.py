@@ -17,6 +17,7 @@ from handlers.routes import (
     GNIDA_RE,
     HUILO_RE,
     HEAVENLY_PUNISHMENT_RE,
+    HEAVENLY_PUNISHMENT_HOURS,
     IMMUNITY_TEXT,
     KARGASTAN_RE,
     LEGS_RE,
@@ -53,6 +54,9 @@ from handlers.routes import (
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_heavenly_punishment_lasts_one_hundred_hours(self):
+        self.assertEqual(HEAVENLY_PUNISHMENT_HOURS, 100)
+
     def test_challenge_can_select_blackjack_or_rps(self):
         self.assertIsNone(CHALLENGE_RE.match("Вызов").group(1))
         self.assertEqual(CHALLENGE_RE.match("Вызов кнб").group(1).casefold(), "кнб")

@@ -48,6 +48,7 @@ from parsing import (
 GROUP_TYPES = {"group", "supergroup"}
 JOKE_COOLDOWN_SECONDS = 120
 DERMODEMOON_COOLDOWN_SECONDS = 86400
+HEAVENLY_PUNISHMENT_HOURS = 100
 IMMUNE_USERNAME = "kit_kitovich23"
 IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настолько сочные что ему плевать."
 MODERATION_RE = re.compile(r"^[!/](бан|мут|пред)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
@@ -946,7 +947,9 @@ def create_router(database: Database) -> Router:
         if user_is_immune(target):
             await message.answer(IMMUNITY_TEXT)
             return
-        until = datetime.now(timezone.utc) + timedelta(hours=10)
+        until = datetime.now(timezone.utc) + timedelta(
+            hours=HEAVENLY_PUNISHMENT_HOURS
+        )
         try:
             await bot.restrict_chat_member(
                 message.chat.id,
@@ -961,12 +964,12 @@ def create_router(database: Database) -> Router:
                 "mute",
                 "кара небесная",
                 message.from_user.id,
-                duration_seconds=36000,
+                duration_seconds=HEAVENLY_PUNISHMENT_HOURS * 60 * 60,
                 active_until=int(until.timestamp()),
             )
             await message.answer(
                 f"На {mention(target.id, display_name(target))} обрушена кара небесная, "
-                "он умолкнет на 10 часов.",
+                f"он умолкнет на {HEAVENLY_PUNISHMENT_HOURS} часов.",
                 parse_mode="HTML",
             )
         except (TelegramBadRequest, TelegramForbiddenError) as error:
