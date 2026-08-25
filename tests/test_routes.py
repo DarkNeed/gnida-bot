@@ -32,6 +32,7 @@ from handlers.routes import (
     CLEAR_RE,
     RESTORE_RE,
     SAFEBOORU_TAGS,
+    SLEEPY_PROTECTION_TEXT,
     SILENCE_RE,
     SLAP_RE,
     SLEEP_RE,
@@ -47,6 +48,7 @@ from handlers.routes import (
     resolve_target,
     parse_safebooru_count,
     select_safebooru_post,
+    sleepy_attack_is_blocked,
     text_or_caption_regexp,
     is_chat_participant,
     user_is_immune,
@@ -54,6 +56,17 @@ from handlers.routes import (
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_sleepy_is_protected_from_cheto_and_kit_attacks(self):
+        sleepy = "MisterSleeppy"
+        cheto = User(id=1, is_bot=False, first_name="Cheto", username="cheto_neveru")
+        kit = User(id=2, is_bot=False, first_name="Kit", username="Kit_kitovich23")
+        stranger = User(id=3, is_bot=False, first_name="Other", username="someone")
+
+        self.assertTrue(sleepy_attack_is_blocked(cheto, sleepy))
+        self.assertTrue(sleepy_attack_is_blocked(kit, sleepy))
+        self.assertFalse(sleepy_attack_is_blocked(stranger, sleepy))
+        self.assertEqual(SLEEPY_PROTECTION_TEXT, "Не трожь отца!")
+
     def test_heavenly_punishment_lasts_one_hundred_hours(self):
         self.assertEqual(HEAVENLY_PUNISHMENT_HOURS, 100)
 

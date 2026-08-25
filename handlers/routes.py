@@ -51,6 +51,8 @@ DERMODEMOON_COOLDOWN_SECONDS = 86400
 HEAVENLY_PUNISHMENT_HOURS = 100
 IMMUNE_USERNAME = "kit_kitovich23"
 IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настолько сочные что ему плевать."
+SLEEPY_BLOCKED_ATTACKERS = {"cheto_neveru", "kit_kitovich23"}
+SLEEPY_PROTECTION_TEXT = "Не трожь отца!"
 MODERATION_RE = re.compile(r"^[!/](бан|мут|пред)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RESTORE_RE = re.compile(r"^[!/](разбан|размут)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 CLEAR_RE = re.compile(
@@ -158,6 +160,31 @@ async def target_is_pirojok(database: Database, chat_id: int, user_id: int) -> b
 
 def is_mister_sleepy(user: User | None) -> bool:
     return bool(user and user.username and user.username.casefold() == "mistersleeppy")
+
+
+def sleepy_attack_is_blocked(
+    attacker: User | None, target_username: str | None
+) -> bool:
+    return bool(
+        attacker
+        and attacker.username
+        and attacker.username.casefold() in SLEEPY_BLOCKED_ATTACKERS
+        and target_username
+        and target_username.casefold() == "mistersleeppy"
+    )
+
+
+async def stored_sleepy_attack_is_blocked(
+    database: Database, chat_id: int, attacker: User | None, target_id: int
+) -> bool:
+    if not attacker or not attacker.username:
+        return False
+    if attacker.username.casefold() not in SLEEPY_BLOCKED_ATTACKERS:
+        return False
+    target = await database.get_user(chat_id, target_id)
+    return sleepy_attack_is_blocked(
+        attacker, target["username"] if target else None
+    )
 
 
 def is_cheto_neveru(user: User | None) -> bool:
@@ -944,6 +971,9 @@ def create_router(database: Database) -> Router:
             display_name(target),
             touch=False,
         )
+        if sleepy_attack_is_blocked(message.from_user, target.username):
+            await message.answer(SLEEPY_PROTECTION_TEXT)
+            return
         if user_is_immune(target):
             await message.answer(IMMUNITY_TEXT)
             return
@@ -1071,6 +1101,11 @@ def create_router(database: Database) -> Router:
         if not target:
             return
         target_id, target_name, _ = target
+        if await stored_sleepy_attack_is_blocked(
+            database, message.chat.id, message.from_user, target_id
+        ):
+            await message.answer(SLEEPY_PROTECTION_TEXT)
+            return
         if await target_is_immune(database, message.chat.id, target_id):
             await message.answer(IMMUNITY_TEXT)
             return
@@ -1156,6 +1191,11 @@ def create_router(database: Database) -> Router:
         if not target or not message.from_user:
             return
         target_id, target_name, _ = target
+        if await stored_sleepy_attack_is_blocked(
+            database, message.chat.id, message.from_user, target_id
+        ):
+            await message.answer(SLEEPY_PROTECTION_TEXT)
+            return
         if await target_is_immune(database, message.chat.id, target_id):
             await message.answer(IMMUNITY_TEXT)
             return
@@ -1190,6 +1230,11 @@ def create_router(database: Database) -> Router:
         if not target:
             return
         target_id, target_name, remainder = target
+        if await stored_sleepy_attack_is_blocked(
+            database, message.chat.id, message.from_user, target_id
+        ):
+            await message.answer(SLEEPY_PROTECTION_TEXT)
+            return
         if await target_is_immune(database, message.chat.id, target_id):
             await message.answer(IMMUNITY_TEXT)
             return
@@ -1479,6 +1524,11 @@ def create_router(database: Database) -> Router:
         if not recipient:
             return
         recipient_id, recipient_name = recipient
+        if await stored_sleepy_attack_is_blocked(
+            database, message.chat.id, message.from_user, slave_id
+        ):
+            await message.answer(SLEEPY_PROTECTION_TEXT)
+            return
         if await target_is_immune(database, message.chat.id, slave_id):
             await message.answer(IMMUNITY_TEXT)
             return
@@ -1598,6 +1648,9 @@ def create_router(database: Database) -> Router:
         opponent = message.reply_to_message.from_user
         if opponent.is_bot or opponent.id == message.from_user.id:
             await message.answer("Нужен другой живой соперник.")
+            return
+        if sleepy_attack_is_blocked(message.from_user, opponent.username):
+            await message.answer(SLEEPY_PROTECTION_TEXT)
             return
         if user_is_immune(opponent):
             await message.answer(IMMUNITY_TEXT)
@@ -1968,6 +2021,9 @@ def create_router(database: Database) -> Router:
         ):
             return
         if replied_user.is_bot and replied_user.id != bot.id:
+            return
+        if sleepy_attack_is_blocked(sender, replied_user.username):
+            await message.answer(SLEEPY_PROTECTION_TEXT)
             return
         if user_is_immune(replied_user):
             await message.answer(IMMUNITY_TEXT)
