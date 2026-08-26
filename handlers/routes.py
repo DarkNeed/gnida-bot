@@ -73,10 +73,7 @@ CHALLENGE_RE = re.compile(
     r"^вызов(?:\s+(кнб|бл[еэ]кджек|шашки))?[!?.\s]*$", re.IGNORECASE
 )
 GAME_RE = re.compile(
-    r"^игра(?:\s+(кнб|бл[еэ]кджек|шашки))?[!?.\s]*$", re.IGNORECASE
-)
-PLAY_RE = re.compile(
-    r"^(вызов|игра)(?:\s+(кнб|бл[еэ]кджек|шашки))?[!?.\s]*$", re.IGNORECASE
+    r"^игра\s+(кнб|бл[еэ]кджек|шашки|рандом)[!?.\s]*$", re.IGNORECASE
 )
 TOP_RE = re.compile(r"^кому\s+делать\s+нехер[!?.\s]*$", re.IGNORECASE)
 GNIDA_RE = re.compile(
@@ -2065,13 +2062,17 @@ def create_router(
         schedule_challenge(challenge_id, bot)
         await callback.answer("Вызов принят")
 
-    @router.message(text_or_caption_regexp(PLAY_RE))
+    @router.message(
+        text_or_caption_regexp(CHALLENGE_RE) | text_or_caption_regexp(GAME_RE)
+    )
     async def challenge(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
             return
-        match = PLAY_RE.match(message_content(message))
-        friendly = bool(match and match.group(1).casefold() == "игра")
-        requested_game = match.group(2).casefold() if match and match.group(2) else None
+        content = message_content(message)
+        game_match = GAME_RE.match(content)
+        match = game_match or CHALLENGE_RE.match(content)
+        friendly = game_match is not None
+        requested_game = match.group(1).casefold() if match and match.group(1) else None
         if requested_game == "кнб":
             game_type = "rps"
         elif requested_game in {"блекджек", "блэкджек"}:

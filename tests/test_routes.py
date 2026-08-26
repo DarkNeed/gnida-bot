@@ -37,7 +37,6 @@ from handlers.routes import (
     PIROJOK_BASEMENT_ESCAPE_RE,
     PIROJOK_ESCAPE_RE,
     PIROJOK_HIDE_RE,
-    PLAY_RE,
     PISKA_MUTE_RE,
     PISKA_MUTE_SECONDS,
     PISYA_RE,
@@ -127,11 +126,11 @@ class RoutePatternTests(unittest.TestCase):
         )
 
     def test_friendly_game_can_select_existing_games(self):
-        self.assertIsNone(GAME_RE.match("Игра").group(1))
         self.assertEqual(GAME_RE.match("Игра кнб").group(1).casefold(), "кнб")
         self.assertTrue(GAME_RE.match("ИГРА блэкджек!!!"))
         self.assertTrue(GAME_RE.match("игра шашки"))
-        self.assertEqual(PLAY_RE.match("Игра кнб").group(1).casefold(), "игра")
+        self.assertEqual(GAME_RE.match("Игра рандом").group(1).casefold(), "рандом")
+        self.assertFalse(GAME_RE.match("Игра"))
         self.assertFalse(GAME_RE.match("Вызов кнб"))
 
     def test_checkers_keyboard_has_board_and_controls(self):
