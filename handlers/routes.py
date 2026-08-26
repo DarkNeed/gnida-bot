@@ -13,7 +13,7 @@ from typing import Awaitable, Callable
 
 import aiohttp
 from aiogram import BaseMiddleware, Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import (
     CallbackQuery,
     ChatMemberAdministrator,
@@ -51,9 +51,13 @@ from parsing import (
 
 GROUP_TYPES = {"group", "supergroup"}
 JOKE_COOLDOWN_SECONDS = 120
-DERMODEMOON_COOLDOWN_SECONDS = 86400
 HEAVENLY_PUNISHMENT_HOURS = 100
 PISKA_MUTE_SECONDS = 24 * 60 * 60
+MOSCOW_TZ = timezone(timedelta(hours=3), name="MSK")
+DAILY_GROUP_MESSAGES = (
+    (0, 0, "Спокойной ночи гниды"),
+    (10, 0, "Утречка гниды"),
+)
 IMMUNE_USERNAME = "kit_kitovich23"
 IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настолько сочные что ему плевать."
 SLEEPY_BLOCKED_ATTACKERS = {"cheto_neveru", "kit_kitovich23"}
@@ -148,6 +152,24 @@ def inline_game_types(query: str) -> list[str]:
     if "случ" in normalized or "рандом" in normalized:
         return ["random"]
     return ["random", "rps", "blackjack", "checkers"]
+
+
+def next_daily_group_message(
+    now: datetime | None = None,
+) -> tuple[datetime, str]:
+    current = now.astimezone(MOSCOW_TZ) if now else datetime.now(MOSCOW_TZ)
+    candidates: list[tuple[datetime, str]] = []
+    for hour, minute, text in DAILY_GROUP_MESSAGES:
+        scheduled = current.replace(
+            hour=hour,
+            minute=minute,
+            second=0,
+            microsecond=0,
+        )
+        if scheduled < current:
+            scheduled += timedelta(days=1)
+        candidates.append((scheduled, text))
+    return min(candidates, key=lambda item: item[0])
 
 
 def message_content(message: Message) -> str:
@@ -268,17 +290,6 @@ def media_accepts_caption(message: Message) -> bool:
         getattr(message, field, None)
         for field in ("animation", "audio", "document", "photo", "video", "voice")
     )
-
-
-def dermodemoon_announcement_available(
-    cooldowns: dict[int, float], chat_id: int, now: float | None = None
-) -> bool:
-    current = time.monotonic() if now is None else now
-    previous = cooldowns.get(chat_id)
-    if previous is not None and current - previous < DERMODEMOON_COOLDOWN_SECONDS:
-        return False
-    cooldowns[chat_id] = current
-    return True
 
 
 def silence_duration_seconds(text: str) -> int:
@@ -423,7 +434,6 @@ def slave_report(sections: list[tuple[str, list]]) -> str:
 class TrackingMiddleware(BaseMiddleware):
     def __init__(self, database: Database) -> None:
         self.database = database
-        self.dermodemoon_cooldowns: dict[int, float] = {}
 
     async def __call__(
         self,
@@ -441,14 +451,6 @@ class TrackingMiddleware(BaseMiddleware):
             )
             if message_has_image(event):
                 await self.database.complete_leg_requests(event.chat.id, user.id)
-            if (
-                user.username
-                and user.username.casefold() == "dermodemoon"
-                and dermodemoon_announcement_available(
-                    self.dermodemoon_cooldowns, event.chat.id
-                )
-            ):
-                await event.answer("Дермодемон в чате, становитесь раком")
         return await handler(event, data)
 
 
@@ -717,7 +719,21 @@ def create_router(
     leg_tasks: set[asyncio.Task[None]] = set()
     challenge_tasks: set[asyncio.Task[None]] = set()
     jug_tasks: set[asyncio.Task[None]] = set()
+    daily_message_tasks: set[asyncio.Task[None]] = set()
     recent_safebooru_ids: dict[int, list[int]] = {}
+
+    async def send_daily_group_messages(bot: Bot) -> None:
+        assert kargassia_chat_id is not None
+        while True:
+            scheduled, text = next_daily_group_message()
+            delay = max(0.0, (scheduled - datetime.now(MOSCOW_TZ)).total_seconds())
+            await asyncio.sleep(delay)
+            try:
+                await bot.send_message(kargassia_chat_id, text)
+            except TelegramAPIError as error:
+                logging.getLogger(__name__).warning(
+                    "Could not send scheduled group message: %s", error
+                )
 
     async def finish_jug_hiding(
         chat_id: int, user_id: int, hidden_until: int, bot: Bot
@@ -966,6 +982,10 @@ def create_router(
                 int(hiding["hidden_until"]),
                 bot,
             )
+        if kargassia_chat_id is not None:
+            task = asyncio.create_task(send_daily_group_messages(bot))
+            daily_message_tasks.add(task)
+            task.add_done_callback(daily_message_tasks.discard)
 
     @router.shutdown()
     async def stop_leg_timers() -> None:
@@ -974,6 +994,8 @@ def create_router(
         for task in tuple(challenge_tasks):
             task.cancel()
         for task in tuple(jug_tasks):
+            task.cancel()
+        for task in tuple(daily_message_tasks):
             task.cancel()
 
     @router.message(text_or_caption_regexp(START_RE))

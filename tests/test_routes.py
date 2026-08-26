@@ -2,7 +2,7 @@ import json
 import asyncio
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from pathlib import Path
@@ -20,7 +20,6 @@ from handlers.routes import (
     CHALLENGE_RE,
     DUCK_RE,
     DUCK_SLAPS_RE,
-    DERMODEMOON_COOLDOWN_SECONDS,
     FEMBOY_RE,
     GAME_RE,
     GNIDA_RE,
@@ -34,6 +33,7 @@ from handlers.routes import (
     MAKE_SLAVE_RE,
     MAKE_SLAVE_REPLY_RE,
     METAL_RASCALS_RE,
+    MOSCOW_TZ,
     PIROJOK_BASEMENT_ESCAPE_RE,
     PIROJOK_ESCAPE_RE,
     PIROJOK_HIDE_RE,
@@ -54,12 +54,12 @@ from handlers.routes import (
     ART_THEFT_RE,
     checkers_keyboard,
     create_router,
-    dermodemoon_announcement_available,
     inline_game_types,
     media_accepts_caption,
     message_content,
     message_has_image,
     message_has_relayable_media,
+    next_daily_group_message,
     silence_duration_seconds,
     resolve_target,
     parse_safebooru_count,
@@ -227,26 +227,20 @@ class RoutePatternTests(unittest.TestCase):
     def test_joke_cooldown_is_two_minutes(self):
         self.assertEqual(JOKE_COOLDOWN_SECONDS, 120)
 
-    def test_dermodemoon_cooldown_is_one_day(self):
-        self.assertEqual(DERMODEMOON_COOLDOWN_SECONDS, 24 * 60 * 60)
-        cooldowns = {}
-        self.assertTrue(
-            dermodemoon_announcement_available(cooldowns, chat_id=-1001, now=100)
+    def test_daily_group_messages_follow_moscow_time(self):
+        morning_time, morning_text = next_daily_group_message(
+            datetime(2026, 8, 26, 9, 30, tzinfo=MOSCOW_TZ)
         )
-        self.assertFalse(
-            dermodemoon_announcement_available(
-                cooldowns,
-                chat_id=-1001,
-                now=100 + DERMODEMOON_COOLDOWN_SECONDS - 1,
-            )
+        self.assertEqual((morning_time.hour, morning_time.minute), (10, 0))
+        self.assertEqual(morning_text, "Утречка гниды")
+
+        night_time, night_text = next_daily_group_message(
+            datetime(2026, 8, 26, 10, 1, tzinfo=MOSCOW_TZ)
         )
-        self.assertTrue(
-            dermodemoon_announcement_available(
-                cooldowns,
-                chat_id=-1001,
-                now=100 + DERMODEMOON_COOLDOWN_SECONDS,
-            )
-        )
+        self.assertEqual((night_time.hour, night_time.minute), (0, 0))
+        self.assertEqual(night_time.day, 27)
+        self.assertEqual(night_text, "Спокойной ночи гниды")
+        self.assertEqual(night_time.utcoffset(), timedelta(hours=3))
 
     def test_moderation_accepts_bang_prefix(self):
         self.assertTrue(MODERATION_RE.match("!мут @user 1 минута причина"))
@@ -554,7 +548,7 @@ class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(query.answer.await_args.kwargs["cache_time"], 0)
         self.assertTrue(query.answer.await_args.kwargs["is_personal"])
 
-    async def test_tracking_middleware_completes_request_for_plain_photo(self):
+    async def test_tracking_middleware_silently_tracks_dermodemoon_photo(self):
         database = SimpleNamespace(
             upsert_chat=AsyncMock(),
             upsert_user=AsyncMock(),
@@ -565,7 +559,12 @@ class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
             message_id=1,
             date=datetime.now(timezone.utc),
             chat=Chat(id=-1001, type="supergroup", title="Тест"),
-            from_user=User(id=42, is_bot=False, first_name="Участник"),
+            from_user=User(
+                id=42,
+                is_bot=False,
+                first_name="Участник",
+                username="DerModemoon",
+            ),
             photo=[
                 PhotoSize(
                     file_id="photo-id",
