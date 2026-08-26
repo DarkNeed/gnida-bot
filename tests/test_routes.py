@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from pathlib import Path
 
-from aiogram.types import Chat, Message, PhotoSize, User
+from aiogram.types import Chat, ChatMemberOwner, Message, PhotoSize, User
 from checkers import initial_board
 from database import Database
 from parsing import command_payload
@@ -22,6 +22,7 @@ from handlers.routes import (
     DUCK_SLAPS_RE,
     DERMODEMOON_COOLDOWN_SECONDS,
     FEMBOY_RE,
+    GAME_RE,
     GNIDA_RE,
     HUILO_RE,
     HEAVENLY_PUNISHMENT_RE,
@@ -36,6 +37,9 @@ from handlers.routes import (
     PIROJOK_BASEMENT_ESCAPE_RE,
     PIROJOK_ESCAPE_RE,
     PIROJOK_HIDE_RE,
+    PLAY_RE,
+    PISKA_MUTE_RE,
+    PISKA_MUTE_SECONDS,
     PISYA_RE,
     MODERATION_RE,
     CLEAR_RE,
@@ -121,6 +125,14 @@ class RoutePatternTests(unittest.TestCase):
         self.assertEqual(
             CHALLENGE_RE.match("Вызов шашки").group(1).casefold(), "шашки"
         )
+
+    def test_friendly_game_can_select_existing_games(self):
+        self.assertIsNone(GAME_RE.match("Игра").group(1))
+        self.assertEqual(GAME_RE.match("Игра кнб").group(1).casefold(), "кнб")
+        self.assertTrue(GAME_RE.match("ИГРА блэкджек!!!"))
+        self.assertTrue(GAME_RE.match("игра шашки"))
+        self.assertEqual(PLAY_RE.match("Игра кнб").group(1).casefold(), "игра")
+        self.assertFalse(GAME_RE.match("Вызов кнб"))
 
     def test_checkers_keyboard_has_board_and_controls(self):
         challenge = {"challenger_id": 10, "opponent_id": 20}
@@ -242,6 +254,14 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(MODERATION_RE.match("!бан @user причина"))
         self.assertTrue(MODERATION_RE.match("!пред @user причина"))
 
+    def test_piska_mute_command_is_case_insensitive_and_allows_exclamations(self):
+        self.assertTrue(PISKA_MUTE_RE.match("!Писька в рот"))
+        self.assertTrue(PISKA_MUTE_RE.match("!пИсьКа В РоТ!!!!!"))
+        self.assertTrue(PISKA_MUTE_RE.match("!!! ПИСЬКА В РОТ!!!"))
+        self.assertFalse(PISKA_MUTE_RE.match("Писька в рот"))
+        self.assertFalse(PISKA_MUTE_RE.match("!Писька в рот кому-нибудь"))
+        self.assertEqual(PISKA_MUTE_SECONDS, 24 * 60 * 60)
+
     def test_stats_accepts_both_names_and_prefixes(self):
         self.assertTrue(STATS_RE.match("!стата @user"))
         self.assertTrue(STATS_RE.match("/стат @user"))
@@ -352,6 +372,102 @@ class RoutePatternTests(unittest.TestCase):
 
 
 class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_friendly_rps_does_not_transfer_losers_slave(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "friendly.sqlite3")
+            await database.connect()
+            await database.upsert_chat(1, "Тестовый чат")
+            challenger = User(
+                id=10, is_bot=False, first_name="Победитель", username="winner"
+            )
+            opponent = User(
+                id=20, is_bot=False, first_name="Проигравший", username="loser"
+            )
+            await database.upsert_user(1, 10, challenger.username, challenger.full_name)
+            await database.upsert_user(1, 20, opponent.username, opponent.full_name)
+            await database.upsert_user(1, 30, "slave", "Раб")
+            await database.force_enslave(1, 30, 20)
+            challenge_id = await database.create_challenge(
+                1, 10, 20, game_type="rps", friendly=True
+            )
+            await database.set_challenge_message(challenge_id, 100)
+            router = create_router(database, kargassia_chat_id=None)
+            handler = next(
+                item.callback
+                for item in router.callback_query.handlers
+                if item.callback.__name__ == "rps_callback"
+            )
+            bot = SimpleNamespace(edit_message_text=AsyncMock())
+            winner_click = SimpleNamespace(
+                data=f"rps:{challenge_id}:rock",
+                from_user=challenger,
+                answer=AsyncMock(),
+            )
+            loser_click = SimpleNamespace(
+                data=f"rps:{challenge_id}:scissors",
+                from_user=opponent,
+                answer=AsyncMock(),
+            )
+
+            try:
+                await handler(winner_click, bot)
+                await handler(loser_click, bot)
+
+                owner = await database.get_owner(1, 30)
+                self.assertEqual(owner["owner_id"], 20)
+                final_text = bot.edit_message_text.await_args.args[0]
+                self.assertIn("Дружеская игра — рабство не изменилось", final_text)
+            finally:
+                await database.close()
+
+    async def test_piska_command_mutes_replied_user_for_one_day(self):
+        database = SimpleNamespace(
+            upsert_user=AsyncMock(),
+            record_action=AsyncMock(),
+        )
+        router = create_router(database, kargassia_chat_id=None)
+        handler = next(
+            item.callback
+            for item in router.message.handlers
+            if item.callback.__name__ == "piska_mute"
+        )
+        admin = User(id=10, is_bot=False, first_name="Админ", username="admin")
+        target = User(id=20, is_bot=False, first_name="Участник", username="member")
+        bot = SimpleNamespace(
+            get_chat_member=AsyncMock(
+                return_value=ChatMemberOwner(
+                    status="creator",
+                    user=admin,
+                    is_anonymous=False,
+                )
+            ),
+            restrict_chat_member=AsyncMock(),
+        )
+        message = SimpleNamespace(
+            text="!ПиСьКа в РоТ!!!",
+            caption=None,
+            chat=SimpleNamespace(id=-1001, type="supergroup"),
+            from_user=admin,
+            reply_to_message=SimpleNamespace(from_user=target, sender_chat=None),
+            answer=AsyncMock(),
+        )
+
+        before = datetime.now(timezone.utc).timestamp()
+        await handler(message, bot)
+        after = datetime.now(timezone.utc).timestamp()
+
+        bot.restrict_chat_member.assert_awaited_once()
+        mute_until = bot.restrict_chat_member.await_args.kwargs["until_date"].timestamp()
+        self.assertGreaterEqual(mute_until, before + PISKA_MUTE_SECONDS)
+        self.assertLessEqual(mute_until, after + PISKA_MUTE_SECONDS)
+        database.record_action.assert_awaited_once()
+        self.assertEqual(database.record_action.await_args.args[2], "mute")
+        self.assertEqual(
+            database.record_action.await_args.kwargs["duration_seconds"],
+            PISKA_MUTE_SECONDS,
+        )
+        self.assertIn("понадобятся сутки 🤭", message.answer.await_args.args[0])
+
     async def test_inline_offer_can_be_accepted_into_persistent_rps_game(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "inline.sqlite3")

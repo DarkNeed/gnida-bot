@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from database import FORCE_OWNER_COOLDOWN_SECONDS, Database, utc_timestamp
+from database import (
+    CHALLENGE_DEADLINE_SECONDS,
+    FORCE_OWNER_COOLDOWN_SECONDS,
+    Database,
+    utc_timestamp,
+)
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -97,6 +102,25 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "finished")
         self.assertEqual(result["winner_id"], 10)
         self.assertEqual((await self.database.get_challenge(challenge_id))["status"], "finished")
+
+    async def test_friendly_game_cannot_be_forced_or_target_newcomers(self):
+        challenge_id = await self.database.create_challenge(
+            1,
+            10,
+            20,
+            forced=True,
+            opponent_newcomer=True,
+            game_type="blackjack",
+            friendly=True,
+        )
+        challenge = await self.database.get_challenge(challenge_id)
+        self.assertEqual(challenge["friendly"], 1)
+        self.assertEqual(challenge["forced"], 0)
+        self.assertEqual(challenge["opponent_newcomer"], 0)
+        self.assertEqual(
+            challenge["deadline"] - challenge["created_at"],
+            CHALLENGE_DEADLINE_SECONDS,
+        )
 
     async def test_checkers_challenge_is_persistent_and_moves(self):
         challenge_id = await self.database.create_challenge(

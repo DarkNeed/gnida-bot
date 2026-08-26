@@ -53,6 +53,7 @@ GROUP_TYPES = {"group", "supergroup"}
 JOKE_COOLDOWN_SECONDS = 120
 DERMODEMOON_COOLDOWN_SECONDS = 86400
 HEAVENLY_PUNISHMENT_HOURS = 100
+PISKA_MUTE_SECONDS = 24 * 60 * 60
 IMMUNE_USERNAME = "kit_kitovich23"
 IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настолько сочные что ему плевать."
 SLEEPY_BLOCKED_ATTACKERS = {"cheto_neveru", "kit_kitovich23"}
@@ -70,6 +71,12 @@ CHAT_RE = re.compile(r"^/чат(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RELEASE_RE = re.compile(r"^(?:/отпустить(?:@\w+)?|отпустить\s+раба)(?:\s|$)", re.IGNORECASE)
 CHALLENGE_RE = re.compile(
     r"^вызов(?:\s+(кнб|бл[еэ]кджек|шашки))?[!?.\s]*$", re.IGNORECASE
+)
+GAME_RE = re.compile(
+    r"^игра(?:\s+(кнб|бл[еэ]кджек|шашки))?[!?.\s]*$", re.IGNORECASE
+)
+PLAY_RE = re.compile(
+    r"^(вызов|игра)(?:\s+(кнб|бл[еэ]кджек|шашки))?[!?.\s]*$", re.IGNORECASE
 )
 TOP_RE = re.compile(r"^кому\s+делать\s+нехер[!?.\s]*$", re.IGNORECASE)
 GNIDA_RE = re.compile(
@@ -98,6 +105,7 @@ SLEEP_RE = re.compile(r"^усыпить[!?.\s]*$", re.IGNORECASE)
 SILENCE_RE = re.compile(
     r"(?<![А-ЯЁ])(?:МОЛЧА+ТЬ(?:\s+ТВАРЬ)?|З+А+Т+К+Н+И+С+Ь+)!*(?![А-ЯЁ])"
 )
+PISKA_MUTE_RE = re.compile(r"^!+\s*писька\s+в\s+рот!*\s*$", re.IGNORECASE)
 LEGS_RE = re.compile(r"^скинь\s+ножки[!?.\s]*$", re.IGNORECASE)
 KARGASTAN_RE = re.compile(
     r"^пусть\s+звенят\s+позолоченные\s+кранчики\s+самоваров\s+8\s+народов\.\s*"
@@ -616,11 +624,16 @@ async def challenge_text(database: Database, challenge) -> str:
         else ""
     )
     deadline_text = "5 минут" if challenge["opponent_newcomer"] else "3 часа"
+    friendly_text = (
+        "\n🎮 Дружеская игра: результат не влияет на рабство."
+        if challenge["friendly"]
+        else ""
+    )
     return (
         f"КНБ: {plain_name(challenger)} против {plain_name(opponent)}\n"
         f"{first_state} {plain_name(challenger)} · {second_state} {plain_name(opponent)}\n"
         f"Выберите ход — соперник его не увидит. На ход даётся {deadline_text}."
-        f"{forced_text}{newcomer_text}"
+        f"{forced_text}{newcomer_text}{friendly_text}"
     )
 
 
@@ -647,6 +660,11 @@ async def blackjack_text(database: Database, challenge, game) -> str:
         else ""
     )
     deadline_text = "5 минут" if challenge["opponent_newcomer"] else "3 часа"
+    friendly_text = (
+        "\n🎮 Дружеская игра: результат не влияет на рабство."
+        if challenge["friendly"]
+        else ""
+    )
     return (
         f"🎰 Мини-блэкджек: {plain_name(challenger)} против {plain_name(opponent)}\n\n"
         f"{plain_name(challenger)}: {visible_hand(challenger_hand)} · "
@@ -654,7 +672,7 @@ async def blackjack_text(database: Database, challenge, game) -> str:
         f"{plain_name(opponent)}: {visible_hand(opponent_hand)} · "
         f"{state(int(challenge['opponent_id']), bool(game['opponent_stood']))}\n\n"
         f"Свою скрытую карту можно посмотреть кнопкой. На игру даётся {deadline_text}."
-        f"{forced_text}{newcomer_text}"
+        f"{forced_text}{newcomer_text}{friendly_text}"
     )
 
 
@@ -679,12 +697,17 @@ async def checkers_text(database: Database, challenge, game) -> str:
         if game["chain_square"] is not None
         else ""
     )
+    friendly_text = (
+        "\n🎮 Дружеская игра: результат не влияет на рабство."
+        if challenge["friendly"]
+        else ""
+    )
     return (
         "Шашки\n\n"
         f"Играют: {plain_name(challenger)} ⚫ · {plain_name(opponent)} ⚪\n"
         f"Ходит: {plain_name(turn)} {turn_symbol}\n"
         "На ход даётся 3 часа."
-        f"{chain_text}{forced_text}{newcomer_text}"
+        f"{chain_text}{forced_text}{newcomer_text}{friendly_text}"
     )
 
 
@@ -819,6 +842,14 @@ def create_router(
         chat_id = int(challenge["chat_id"])
         winner = await database.get_user(chat_id, winner_id)
         loser = await database.get_user(chat_id, loser_id)
+        if challenge["friendly"]:
+            await edit_challenge(
+                challenge,
+                bot,
+                f"{heading}\n🏆 Победил {plain_name(winner)}. "
+                "Дружеская игра — рабство не изменилось.",
+            )
+            return
         outcome, affected_id = await database.transfer_after_loss(
             chat_id, loser_id, winner_id
         )
@@ -1408,6 +1439,56 @@ def create_router(
                 f"Не получилось применить действие: {html.escape(str(error))}"
             )
 
+    @router.message(text_or_caption_regexp(PISKA_MUTE_RE))
+    async def piska_mute(message: Message, bot: Bot) -> None:
+        if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
+            return
+        replied = message.reply_to_message
+        target = replied.from_user if replied and not replied.sender_chat else None
+        if not target or target.is_bot or not message.from_user:
+            return
+        await database.upsert_user(
+            message.chat.id,
+            target.id,
+            target.username,
+            display_name(target),
+            touch=False,
+        )
+        if sleepy_attack_is_blocked(message.from_user, target.username):
+            await message.answer(SLEEPY_PROTECTION_TEXT)
+            return
+        if user_is_immune(target):
+            await message.answer(IMMUNITY_TEXT)
+            return
+
+        until = datetime.now(timezone.utc) + timedelta(seconds=PISKA_MUTE_SECONDS)
+        try:
+            await bot.restrict_chat_member(
+                message.chat.id,
+                target.id,
+                permissions=ChatPermissions(can_send_messages=False),
+                until_date=until,
+                use_independent_chat_permissions=True,
+            )
+            await database.record_action(
+                message.chat.id,
+                target.id,
+                "mute",
+                "засунули письку в рот",
+                message.from_user.id,
+                duration_seconds=PISKA_MUTE_SECONDS,
+                active_until=int(until.timestamp()),
+            )
+            await message.answer(
+                f"{mention(target.id, display_name(target))} засунули письку в рот, "
+                "чтобы прийти в себя ему понадобятся сутки 🤭",
+                parse_mode="HTML",
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            await message.answer(
+                f"Не получилось применить действие: {html.escape(str(error))}"
+            )
+
     @router.message(text_or_caption_regexp(MODERATION_RE))
     async def moderation(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
@@ -1984,12 +2065,13 @@ def create_router(
         schedule_challenge(challenge_id, bot)
         await callback.answer("Вызов принят")
 
-    @router.message(text_or_caption_regexp(CHALLENGE_RE))
+    @router.message(text_or_caption_regexp(PLAY_RE))
     async def challenge(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
             return
-        match = CHALLENGE_RE.match(message_content(message))
-        requested_game = match.group(1).casefold() if match and match.group(1) else None
+        match = PLAY_RE.match(message_content(message))
+        friendly = bool(match and match.group(1).casefold() == "игра")
+        requested_game = match.group(2).casefold() if match and match.group(2) else None
         if requested_game == "кнб":
             game_type = "rps"
         elif requested_game in {"блекджек", "блэкджек"}:
@@ -2004,13 +2086,16 @@ def create_router(
             or message.reply_to_message.sender_chat
             or not message.reply_to_message.from_user
         ):
-            await message.answer("Отправьте «Вызов» в ответ на сообщение соперника.")
+            command_name = "Игру" if friendly else "Вызов"
+            await message.answer(
+                f"Отправьте «{command_name}» в ответ на сообщение соперника."
+            )
             return
         opponent = message.reply_to_message.from_user
         if opponent.is_bot or opponent.id == message.from_user.id:
             await message.answer("Нужен другой живой соперник.")
             return
-        if sleepy_attack_is_blocked(message.from_user, opponent.username):
+        if not friendly and sleepy_attack_is_blocked(message.from_user, opponent.username):
             await message.answer(SLEEPY_PROTECTION_TEXT)
             return
         if user_is_immune(opponent):
@@ -2027,7 +2112,7 @@ def create_router(
             message.chat.id, opponent.id, opponent.username, display_name(opponent), touch=False
         )
         owner = await database.get_owner(message.chat.id, message.from_user.id)
-        if owner and int(owner["owner_id"]) != opponent.id:
+        if not friendly and owner and int(owner["owner_id"]) != opponent.id:
             owner_name = owner["display_name"] or owner["username"] or str(owner["owner_id"])
             await message.answer(
                 f"Рабы могут вызывать на бой только своего владельца: {html.escape(owner_name)}.",
@@ -2035,13 +2120,16 @@ def create_router(
             )
             return
         forced = bool(
-            owner
+            not friendly
+            and owner
             and int(owner["owner_id"]) == opponent.id
             and await database.can_force_owner(
                 message.chat.id, message.from_user.id, opponent.id
             )
         )
-        opponent_newcomer = await database.is_vulnerable(message.chat.id, opponent.id)
+        opponent_newcomer = bool(
+            not friendly and await database.is_vulnerable(message.chat.id, opponent.id)
+        )
         challenge_id = await database.create_challenge(
             message.chat.id,
             message.from_user.id,
@@ -2049,6 +2137,7 @@ def create_router(
             forced=forced,
             opponent_newcomer=opponent_newcomer,
             game_type=game_type,
+            friendly=friendly,
         )
         if challenge_id is None:
             await message.answer("У одного из участников уже есть активный вызов.")

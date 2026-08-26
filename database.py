@@ -196,6 +196,9 @@ class Database:
         self._ensure_column(
             "challenges", "game_type", "TEXT NOT NULL DEFAULT 'rps'"
         )
+        self._ensure_column(
+            "challenges", "friendly", "INTEGER NOT NULL DEFAULT 0"
+        )
         self._ensure_column("challenges", "inline_message_id", "TEXT")
         self._connection.execute(
             """UPDATE challenges
@@ -419,9 +422,13 @@ class Database:
         forced: bool = False,
         opponent_newcomer: bool = False,
         game_type: str = "rps",
+        friendly: bool = False,
     ) -> int | None:
         if game_type not in {"rps", "blackjack", "checkers"}:
             raise ValueError("Unknown challenge game type")
+        if friendly:
+            forced = False
+            opponent_newcomer = False
         async with self._lock:
             existing = self.connection.execute(
                 """SELECT id FROM challenges WHERE chat_id=? AND status='active'
@@ -434,8 +441,8 @@ class Database:
             cursor = self.connection.execute(
                 """INSERT INTO challenges(
                        chat_id, challenger_id, opponent_id, forced,
-                       opponent_newcomer, game_type, created_at, deadline
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                       opponent_newcomer, game_type, friendly, created_at, deadline
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     chat_id,
                     challenger_id,
@@ -443,6 +450,7 @@ class Database:
                     int(forced),
                     int(opponent_newcomer),
                     game_type,
+                    int(friendly),
                     now,
                     now
                     + (
