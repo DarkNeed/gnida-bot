@@ -41,7 +41,8 @@ async def main() -> None:
                 else f"https://{hosted_domain}"
             )
     webapp_host = getenv("WEBAPP_HOST", "0.0.0.0").strip()
-    webapp_port = optional_int_env("WEBAPP_PORT") or optional_int_env("PORT") or 8080
+    # Bothost owns PORT: its reverse proxy must use exactly that value.
+    webapp_port = optional_int_env("PORT") or optional_int_env("WEBAPP_PORT") or 8080
 
     database = Database(getenv("DATABASE_PATH", "data/gnida_bot.sqlite3"))
     await database.connect()
