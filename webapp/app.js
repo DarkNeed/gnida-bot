@@ -3,7 +3,10 @@ tg?.ready();
 tg?.expand();
 
 const params = new URLSearchParams(location.search);
-const token = params.get('battle');
+const wastelandToken = params.get('wasteland');
+const token = params.get('battle') || wastelandToken;
+const isWasteland = Boolean(wastelandToken);
+const apiRoot = isWasteland ? '/api/wasteland' : '/api/battle';
 const root = document.getElementById('app');
 let payload = null;
 let selectedSkill = null;
@@ -50,7 +53,8 @@ function controls() {
   const sides = battle.controller_sides || [];
   if (!controlledSide || !sides.includes(controlledSide)) controlledSide = sides[0] || null;
   const side = controlledSide;
-  const owner = battle.owner_sides.length > 0;
+  // Зелья — предмет владельца в PvP. В пустоши пока только базовый бой без предметов.
+  const owner = !isWasteland && battle.owner_sides.length > 0;
   if (!side) {
     return `<section class="panel"><div class="notice">Вы наблюдаете за боем.</div>${owner ? '<button class="item" id="potion">🧪 Использовать Зелье</button>' : ''}</section>`;
   }
@@ -72,13 +76,29 @@ function controls() {
 function render() {
   if (!payload?.battle) return;
   const battle = payload.battle;
-  if (battle.status !== 'active' || !battle.state) {
+  if (!battle.state) {
+    root.innerHTML = '<div class="notice">Загрузка состояния…</div>';
+    return;
+  }
+  if (isWasteland && battle.status === 'victory') {
+    const own = 'a';
+    const reward = battle.state.wasteland?.reward_xp || 0;
+    root.innerHTML = `<div class="arena"><header class="headline"><h1>🏜 Пустошь · этаж ${battle.floor}</h1><p>Оборванец побеждён. Получено: ${reward} XP.</p></header>${fighterCard('b',true)}${fighterCard(own)}<section class="panel"><button class="submit" id="next-floor">Идти на следующий этаж</button></section><section class="panel log">${battleLog()}</section></div>`;
+    document.getElementById('next-floor')?.addEventListener('click', nextFloor);
+    return;
+  }
+  if (isWasteland && battle.status === 'defeated') {
+    root.innerHTML = `<div class="notice">🏜 Поход завершён на этаже ${battle.floor}. Штрафов пока нет — можно начать новый поход через /menu.</div>`;
+    return;
+  }
+  if (battle.status !== 'active') {
     root.innerHTML = `<div class="notice">${battle.status === 'finished' ? 'Битва завершена.' : 'Битва ещё не началась.'}</div>`;
     return;
   }
   const own = battle.controller_side || battle.owner_sides[0] || 'a';
   const enemy = own === 'a' ? 'b' : 'a';
-  root.innerHTML = `<div class="arena"><header class="headline"><h1>Битва рабов #${battle.id}</h1><p>Ход ${battle.state.turn}</p></header>${fighterCard(enemy,true)}${fighterCard(own)}${controls()}<section class="panel log">${battleLog()}</section></div>`;
+  const heading = isWasteland ? `🏜 Пустошь · этаж ${battle.floor}` : `Битва рабов #${battle.id}`;
+  root.innerHTML = `<div class="arena"><header class="headline"><h1>${heading}</h1><p>Ход ${battle.state.turn}</p></header>${fighterCard(enemy,true)}${fighterCard(own)}${controls()}<section class="panel log">${battleLog()}</section></div>`;
   document.querySelectorAll('.skill').forEach(button => button.addEventListener('click', () => { selectedSkill = button.dataset.skill; render(); }));
   document.querySelectorAll('[data-side]').forEach(button => button.addEventListener('click', () => { controlledSide = button.dataset.side; selectedSkill = null; render(); }));
   document.getElementById('submit')?.addEventListener('click', submitAction);
@@ -87,7 +107,7 @@ function render() {
 
 async function load() {
   if (!token) { root.innerHTML = '<div class="error">Не указан ID битвы.</div>'; return; }
-  try { payload = await request(`/api/battle/${encodeURIComponent(token)}`); render(); }
+  try { payload = await request(`${apiRoot}/${encodeURIComponent(token)}`); render(); }
   catch (error) { root.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`; }
 }
 
@@ -98,7 +118,7 @@ async function submitAction() {
     const skill = payload.skills[selectedSkill];
     const attack = document.querySelector('input[name="attack"]:checked')?.value || 'left';
     const dodge = document.querySelector('input[name="dodge"]:checked')?.value || 'left';
-    const result = await request(`/api/battle/${encodeURIComponent(token)}/action`, {method:'POST',body:JSON.stringify({side:controlledSide,skill_id:selectedSkill,attack_direction:skill?.hostile ? attack : null,dodge_direction:dodge})});
+    const result = await request(`${apiRoot}/${encodeURIComponent(token)}/action`, {method:'POST',body:JSON.stringify({side:controlledSide,skill_id:selectedSkill,attack_direction:skill?.hostile ? attack : null,dodge_direction:dodge})});
     tg?.HapticFeedback?.notificationOccurred(result.status === 'finished' ? 'success' : 'warning');
     await load();
   } catch (error) { tg?.showAlert?.(error.message); button.disabled = false; }
@@ -106,6 +126,11 @@ async function submitAction() {
 
 async function usePotion() {
   try { const result = await request(`/api/battle/${encodeURIComponent(token)}/potion`, {method:'POST',body:JSON.stringify({side:controlledSide})}); tg?.showAlert?.(`Восстановлено HP: ${result.healed}`); await load(); }
+  catch (error) { tg?.showAlert?.(error.message); }
+}
+
+async function nextFloor() {
+  try { await request(`${apiRoot}/${encodeURIComponent(token)}/next`, {method:'POST',body:'{}'}); await load(); }
   catch (error) { tg?.showAlert?.(error.message); }
 }
 
