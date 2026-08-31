@@ -133,6 +133,7 @@ FIGHTER_GRANT_RE = re.compile(
     r"^/выдать\s+боевое\s+(класс|навык)\s+(\S+)(?:\s|$)", re.IGNORECASE
 )
 FIGHTER_SKILLS_RE = re.compile(r"^/навыки(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+MENU_RE = re.compile(r"^/(?:меню|кабинет|menu)(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
 FIGHTER_PROFILE_RE = re.compile(r"^[!/]боец(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 OWNER_PROFILE_RE = re.compile(r"^[!/]владелец(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
 CLASS_CHOICE_RE = re.compile(r"^[!/]класс(?:@\w+)?(?:\s|$)", re.IGNORECASE)
@@ -803,7 +804,7 @@ def create_router(
             "⚔️ <b>Вызов на битву рабов</b>\n"
             f"{plain_name(first_owner)} выставляет {plain_name(first)} — {first_mode}\n"
             f"{plain_name(second_owner)} {owner_state} выставляет {plain_name(second)} — {second_mode}\n"
-            "Контроль доступен владельцу 2-го уровня и снижает все характеристики на 20%."
+            "Владелец может включить контроль сразу; он снижает все характеристики на 20%."
         )
 
     def slave_battle_keyboard(battle) -> InlineKeyboardMarkup | None:
@@ -812,29 +813,69 @@ def create_router(
         battle_id = int(battle["id"])
         return InlineKeyboardMarkup(
             inline_keyboard=[
+                [InlineKeyboardButton(text="Владельцу: принять", callback_data=f"sbo:{battle_id}:accept")],
                 [
-                    InlineKeyboardButton(
-                        text="Владельцу: принять", callback_data=f"sbo:{battle_id}:accept"
-                    ),
+                    InlineKeyboardButton(text="🎮 Контроль первого", callback_data=f"sbo:{battle_id}:control:a"),
+                    InlineKeyboardButton(text="🎮 Контроль второго", callback_data=f"sbo:{battle_id}:control:b"),
                 ],
                 [
-                    InlineKeyboardButton(
-                        text="🎮 Контроль первого", callback_data=f"sbo:{battle_id}:control:a"
-                    ),
-                    InlineKeyboardButton(
-                        text="🎮 Контроль второго", callback_data=f"sbo:{battle_id}:control:b"
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="Рабу: согласиться", callback_data=f"sbs:{battle_id}:accept"
-                    ),
-                    InlineKeyboardButton(
-                        text="Отказаться", callback_data=f"sbr:{battle_id}"
-                    ),
+                    InlineKeyboardButton(text="Рабу: сражаться самому", callback_data=f"sbs:{battle_id}:accept"),
+                    InlineKeyboardButton(text="Отказаться", callback_data=f"sbr:{battle_id}"),
                 ],
             ]
         )
+
+    def private_battle_lobby_keyboard(
+        battle, recipient_id: int
+    ) -> InlineKeyboardMarkup | None:
+        if battle["status"] != "pending":
+            return None
+        battle_id = int(battle["id"])
+        rows: list[list[InlineKeyboardButton]] = []
+        if recipient_id == int(battle["challenger_owner_id"]):
+            rows.append([InlineKeyboardButton(text="🎮 Контроль своего раба", callback_data=f"sbo:{battle_id}:control:a")])
+        if recipient_id == int(battle["defender_owner_id"]):
+            rows.append([InlineKeyboardButton(text="✅ Принять вызов", callback_data=f"sbo:{battle_id}:accept")])
+            rows.append([InlineKeyboardButton(text="🎮 Контроль своего раба", callback_data=f"sbo:{battle_id}:control:b")])
+        if recipient_id in {int(battle["challenger_slave_id"]), int(battle["defender_slave_id"])}:
+            rows.append([InlineKeyboardButton(text="⚔️ Сражаться самому", callback_data=f"sbs:{battle_id}:accept")])
+            rows.append([InlineKeyboardButton(text="🚫 Отказаться", callback_data=f"sbr:{battle_id}")])
+        return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+    async def send_private_battle_lobby(battle, bot: Bot) -> int:
+        recipients = {
+            int(battle["challenger_owner_id"]),
+            int(battle["defender_owner_id"]),
+            int(battle["challenger_slave_id"]),
+            int(battle["defender_slave_id"]),
+        }
+        sent = 0
+        for recipient_id in recipients:
+            try:
+                await bot.send_message(
+                    recipient_id,
+                    f"⚔️ Битва рабов #{battle['id']}\nВыберите действие. Контроль доступен сразу и заменяет согласие раба.",
+                    reply_markup=private_battle_lobby_keyboard(battle, recipient_id),
+                )
+                sent += 1
+            except (TelegramBadRequest, TelegramForbiddenError):
+                continue
+        return sent
+
+    async def owner_slave_picker(
+        chat_id: int, owner_id: int, callback_prefix: str
+    ) -> InlineKeyboardMarkup | None:
+        slaves = await database.list_slaves(chat_id, owner_id)
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    text=f"⚔️ {plain_name(row)}",
+                    callback_data=f"{callback_prefix}:{row['user_id']}",
+                )
+            ]
+            for row in slaves
+        ]
+        return InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
 
     async def send_slave_battle_links(battle, bot: Bot) -> None:
         if not webapp_url:
@@ -1185,8 +1226,154 @@ def create_router(
             await message.answer(
                 "Я работаю в группах: модерирую чат, веду статистику и провожу КНБ. "
                 "Добавьте меня в чат и выдайте право блокировать участников.\n\n"
-                "Здесь можно запросить /рабы, а администратору — /рабы @username."
+                "Здесь можно запросить /рабы, а администратору — /рабы @username.\n"
+                "Для боёв и прокачки откройте /меню."
             )
+
+    async def private_cabinet(
+        user_id: int, chat_id: int
+    ) -> tuple[str, InlineKeyboardMarkup]:
+        own_slaves = await database.list_slaves(chat_id, user_id)
+        is_slave = await database.get_owner(chat_id, user_id)
+        rows: list[list[InlineKeyboardButton]] = []
+        if own_slaves:
+            rows.extend(
+                [
+                    [InlineKeyboardButton(text="👑 Профиль владельца", callback_data="bmenu:owner")],
+                    [InlineKeyboardButton(text=f"⛓ Мои рабы ({len(own_slaves)})", callback_data="bmenu:slaves")],
+                    [InlineKeyboardButton(text="🏜 Пустошь", callback_data="bmenu:wasteland")],
+                ]
+            )
+        if is_slave:
+            rows.extend(
+                [
+                    [InlineKeyboardButton(text="⚔️ Мой боец", callback_data="bmenu:fighter")],
+                    [InlineKeyboardButton(text="🧠 Мои навыки", callback_data="bmenu:skills")],
+                    [InlineKeyboardButton(text="🎭 Выбрать класс", callback_data="bmenu:class")],
+                ]
+            )
+        rows.append([InlineKeyboardButton(text="ℹ️ Как начать битву", callback_data="bmenu:help")])
+        if not own_slaves and not is_slave:
+            text = "📋 <b>Личный кабинет</b>\nУ вас пока нет роли владельца или раба."
+        else:
+            roles = []
+            if own_slaves:
+                roles.append(f"владелец · рабов: {len(own_slaves)}")
+            if is_slave:
+                roles.append("боец-раб")
+            text = "📋 <b>Личный кабинет</b>\n" + " · ".join(roles)
+        return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+    @router.message(text_or_caption_regexp(MENU_RE))
+    async def private_menu(message: Message) -> None:
+        if message.chat.type != "private" or not message.from_user:
+            await message.answer("Личный кабинет доступен в личке с ботом.")
+            return
+        if kargassia_chat_id is None:
+            await message.answer("Для кабинета не задан KARGASSIA_CHAT_ID.")
+            return
+        text, keyboard = await private_cabinet(message.from_user.id, kargassia_chat_id)
+        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+    @router.callback_query(F.data.startswith("bmenu:"))
+    async def private_menu_actions(callback: CallbackQuery) -> None:
+        if not callback.from_user or not callback.message or kargassia_chat_id is None:
+            return
+        user_id = callback.from_user.id
+        action = callback.data.split(":", 1)[1] if callback.data else ""
+        if action == "home":
+            text, keyboard = await private_cabinet(user_id, kargassia_chat_id)
+        elif action == "slaves":
+            slaves = await database.list_slaves(kargassia_chat_id, user_id)
+            text = "⛓ <b>Мои рабы</b>\n" + (
+                "\n".join(f"• {html.escape(plain_name(row))}" for row in slaves)
+                if slaves else "Пока никого."
+            )
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Назад", callback_data="bmenu:home")]])
+        elif action == "owner":
+            profile = await database.get_owner_profile(kargassia_chat_id, user_id)
+            level, progress, needed = level_progress(int(profile["xp"]))
+            material = (
+                f"{profile['raw_material']}/{profile['material_capacity']}"
+                if profile["material_capacity"] else "откроется на 5-м уровне"
+            )
+            text = (
+                "👑 <b>Владелец</b>\n"
+                f"Уровень {level} · XP {progress}/{needed}\n"
+                f"Рабы: {profile['slave_count']}/{profile['slave_capacity']}\n"
+                f"Сырьё: {material}\n"
+                f"Зелья: {profile['healing_potions']} · конфеты: {profile['candies']}"
+            )
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Назад", callback_data="bmenu:home")]])
+        elif action == "fighter":
+            profile = await database.get_slave_profile(kargassia_chat_id, user_id)
+            classes, skills = await database.get_fighter_catalog()
+            level, progress, needed = level_progress(int(profile["xp"]))
+            fighter_class = classes.get(str(profile["class_id"]))
+            chosen = [skills[item].name for item in json.loads(profile["loadout"]) if item in skills]
+            text = (
+                "⚔️ <b>Мой боец</b>\n"
+                f"Класс: {html.escape(fighter_class.name if fighter_class else str(profile['class_id']))}\n"
+                f"Уровень {level} · XP {progress}/{needed}\n"
+                f"Навыки: {html.escape(', '.join(chosen) or 'нет')}"
+            )
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Назад", callback_data="bmenu:home")]])
+        elif action == "skills":
+            profile = await database.get_slave_profile(kargassia_chat_id, user_id)
+            classes, skills = await database.get_fighter_catalog()
+            level = int(profile["level"])
+            available = [
+                skill.name for skill in skills.values()
+                if skill.class_id in {"ragamuffin", profile["class_id"]} and skill.unlock_level <= level
+            ]
+            text = "🧠 <b>Навыки</b>\nДоступно: " + html.escape(", ".join(available) or "пока нет") + "\n\nВ группе: <code>/навыки id1,id2</code>"
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Назад", callback_data="bmenu:home")]])
+        elif action == "class":
+            text = "🎭 <b>Класс</b>\nНа 5-м уровне в группе напишите: <code>/класс Милашка</code>, <code>/класс Качок</code> или <code>/класс Задрот</code>."
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Назад", callback_data="bmenu:home")]])
+        elif action == "wasteland":
+            slaves = await database.list_slaves(kargassia_chat_id, user_id)
+            text = "🏜 <b>Пустошь</b>\nВыберите раба. На каждом следующем этаже Оборванец становится сильнее."
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=f"⚔️ {plain_name(row)}", callback_data=f"wsel:{kargassia_chat_id}:{row['user_id']}")]
+                    for row in slaves
+                ] + [[InlineKeyboardButton(text="← Назад", callback_data="bmenu:home")]]
+            )
+        else:
+            text = "ℹ️ <b>Битва</b>\nВладелец отвечает <code>/битва</code> на сообщение другого владельца. Оба выбирают рабов прямо в группе. Рабы могут принять бой сами, либо владельцы включают контроль."
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Назад", callback_data="bmenu:home")]])
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("wsel:"))
+    async def start_wasteland_from_menu(callback: CallbackQuery) -> None:
+        if not callback.data or not callback.from_user or not webapp_url:
+            return
+        try:
+            _, raw_chat_id, raw_slave_id = callback.data.split(":")
+            chat_id, slave_id = int(raw_chat_id), int(raw_slave_id)
+        except ValueError:
+            await callback.answer("Некорректный выбор.", show_alert=True)
+            return
+        status, run = await database.start_wasteland_run(
+            chat_id, callback.from_user.id, slave_id
+        )
+        messages = {
+            "not_owned": "Этот раб больше не принадлежит вам.",
+            "class_required": "Раб достиг 5-го уровня и должен выбрать класс.",
+        }
+        if not run:
+            await callback.answer(messages.get(status, "Не удалось начать поход."), show_alert=True)
+            return
+        url = f"{webapp_url.rstrip('/')}?wasteland={run['token']}"
+        await callback.message.edit_text(
+            f"🏜 <b>Пустошь · этаж {run['floor']}</b>\n"
+            "Оборванец уже ждёт. Управляйте рабом без штрафа контроля.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Открыть бой", web_app=WebAppInfo(url=url))], [InlineKeyboardButton(text="← В меню", callback_data="bmenu:home")]]),
+            parse_mode="HTML",
+        )
+        await callback.answer("Поход открыт." if status == "created" else "Продолжаем текущий поход.")
 
     @router.message(F.new_chat_members)
     async def new_members(message: Message) -> None:
@@ -2071,87 +2258,111 @@ def create_router(
         text = message_content(message)
         match = SLAVE_BATTLE_RE.match(text)
         payload = text[match.end() :].strip() if match else ""
-        actor_owner = await database.get_owner(message.chat.id, message.from_user.id)
-        initiated_by_slave = actor_owner is not None
-
-        if initiated_by_slave:
-            target_token, extra = split_first(payload)
-            if not target_token or extra:
-                await message.answer("Формат для раба: /битва @другой_раб")
-                return
-            challenger_slave_id = message.from_user.id
-            challenger_owner_id = int(actor_owner["owner_id"])
-            defender = await resolve_user_token(message, database, target_token)
-            if not defender:
-                return
-            defender_slave_id, _ = defender
-            defender_owner = await database.get_owner(message.chat.id, defender_slave_id)
-            if not defender_owner or int(defender_owner["owner_id"]) != challenger_owner_id:
-                await message.answer("Рабы могут сами вызывать только рабов своего владельца.")
-                return
-        else:
-            replied = message.reply_to_message
-            if replied and replied.sender_chat:
-                await message.answer("Не удалось определить автора сообщения.")
-                return
-            if replied and replied.from_user:
-                own_token, extra = split_first(payload)
-                if not own_token or extra:
-                    await message.answer(
-                        "Ответьте на сообщение вражеского раба: /битва @мой_раб"
-                    )
-                    return
-                own = await resolve_user_token(message, database, own_token)
-                if not own:
-                    return
-                challenger_slave_id, _ = own
-                defender_slave_id = replied.from_user.id
-                await database.upsert_user(
-                    message.chat.id,
-                    replied.from_user.id,
-                    replied.from_user.username,
-                    display_name(replied.from_user),
-                    touch=False,
-                )
-            else:
-                own_token, remainder = split_first(payload)
-                enemy_token, extra = split_first(remainder)
-                if not own_token or not enemy_token or extra:
-                    await message.answer("Формат: /битва @мой_раб @вражеский_раб")
-                    return
-                own = await resolve_user_token(message, database, own_token)
-                enemy = await resolve_user_token(message, database, enemy_token)
-                if not own or not enemy:
-                    return
-                challenger_slave_id, _ = own
-                defender_slave_id, _ = enemy
-            challenger_owner_id = message.from_user.id
-
-        result, battle_id = await database.create_slave_battle(
+        replied = message.reply_to_message
+        if payload or not replied or replied.sender_chat or not replied.from_user:
+            await message.answer("Ответьте командой /битва на сообщение владельца, которому хотите бросить вызов.")
+            return
+        if await database.get_owner(message.chat.id, message.from_user.id):
+            await message.answer("Вызов на битву отправляет только владелец.")
+            return
+        challenger_keyboard = await owner_slave_picker(
             message.chat.id,
-            challenger_owner_id,
-            challenger_slave_id,
-            defender_slave_id,
-            initiated_by_slave=initiated_by_slave,
+            message.from_user.id,
+            f"sba:{message.chat.id}:{replied.from_user.id}",
+        )
+        defender_keyboard = await owner_slave_picker(
+            message.chat.id,
+            replied.from_user.id,
+            "unused",
+        )
+        if not challenger_keyboard:
+            await message.answer("У вас нет рабов, которых можно выставить на бой.")
+            return
+        if not defender_keyboard:
+            await message.answer("У второго владельца нет рабов для битвы.")
+            return
+        await database.upsert_user(
+            message.chat.id,
+            replied.from_user.id,
+            replied.from_user.username,
+            display_name(replied.from_user),
+            touch=False,
+        )
+        await message.answer(
+            f"⚔️ {mention(message.from_user.id, display_name(message.from_user))}, выберите своего раба:",
+            reply_markup=challenger_keyboard,
+            parse_mode="HTML",
+        )
+
+    @router.callback_query(F.data.startswith("sba:") | F.data.startswith("sbb:"))
+    async def pick_slave_for_battle(callback: CallbackQuery, bot: Bot) -> None:
+        if not callback.data or not callback.from_user:
+            return
+        parts = callback.data.split(":")
+        if parts[0] == "sba":
+            try:
+                _, raw_chat_id, raw_defender_owner_id, raw_challenger_slave_id = parts
+                chat_id, defender_owner_id, challenger_slave_id = map(
+                    int, (raw_chat_id, raw_defender_owner_id, raw_challenger_slave_id)
+                )
+            except ValueError:
+                await callback.answer("Некорректный выбор.", show_alert=True)
+                return
+            ownership = await database.get_owner(chat_id, challenger_slave_id)
+            if not ownership or int(ownership["owner_id"]) != callback.from_user.id:
+                await callback.answer("Можно выбрать только своего раба.", show_alert=True)
+                return
+            keyboard = await owner_slave_picker(
+                chat_id,
+                defender_owner_id,
+                f"sbb:{chat_id}:{callback.from_user.id}:{challenger_slave_id}",
+            )
+            if not keyboard:
+                await callback.answer("У второго владельца больше нет подходящих рабов.", show_alert=True)
+                return
+            target_owner = await database.get_user(chat_id, defender_owner_id)
+            await callback.message.edit_text(
+                f"⚔️ {plain_name(target_owner)}, выберите своего раба:",
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+            await callback.answer("Раб выбран.")
+            return
+        try:
+            _, raw_chat_id, raw_challenger_owner_id, raw_challenger_slave_id, raw_defender_slave_id = parts
+            chat_id, challenger_owner_id, challenger_slave_id, defender_slave_id = map(
+                int,
+                (raw_chat_id, raw_challenger_owner_id, raw_challenger_slave_id, raw_defender_slave_id),
+            )
+        except ValueError:
+            await callback.answer("Некорректный выбор.", show_alert=True)
+            return
+        ownership = await database.get_owner(chat_id, defender_slave_id)
+        if not ownership or int(ownership["owner_id"]) != callback.from_user.id:
+            await callback.answer("Можно выбрать только своего раба.", show_alert=True)
+            return
+        result, battle_id = await database.create_slave_battle(
+            chat_id, challenger_owner_id, challenger_slave_id, defender_slave_id
         )
         errors = {
-            "challenger_not_owned": "Первый выбранный участник не принадлежит вызывающему.",
-            "defender_not_slave": "Второй участник не состоит в рабстве.",
+            "challenger_not_owned": "Этот раб больше не принадлежит вам.",
+            "defender_not_slave": "Противник больше не состоит в рабстве.",
             "same_slave": "Раб не может сражаться сам с собой.",
             "busy": "Один из рабов уже участвует в другой битве.",
             "class_required": "Один из рабов достиг 5-го уровня и сначала должен выбрать класс.",
         }
         if result != "created" or battle_id is None:
-            await message.answer(errors.get(result, "Не удалось создать битву."))
+            await callback.answer(errors.get(result, "Не удалось создать битву."), show_alert=True)
             return
         battle = await database.get_slave_battle(battle_id)
-        sent = await message.answer(
+        await callback.message.edit_text(
             await slave_battle_text(battle),
             reply_markup=slave_battle_keyboard(battle),
             parse_mode="HTML",
         )
-        await database.set_slave_battle_message(battle_id, sent.message_id)
+        await database.set_slave_battle_message(battle_id, callback.message.message_id)
         schedule_slave_battle(battle_id, bot)
+        await callback.answer("Вызов создан.")
 
     @router.callback_query(
         F.data.startswith("sbo:")
@@ -2201,7 +2412,7 @@ def create_router(
             await callback.answer("Эта кнопка не для вас.", show_alert=True)
             return
         if result == "low_level":
-            await callback.answer("Контроль открывается на 2-м уровне владельца.", show_alert=True)
+            await callback.answer("Контроль доступен с 1-го уровня владельца.", show_alert=True)
             return
         if result == "inactive":
             await callback.answer("Этот вызов уже закрыт.", show_alert=True)

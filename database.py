@@ -50,6 +50,8 @@ OWNER_RECORD_XP = 2
 FULL_XP_PAIR_BATTLES_PER_DAY = 3
 SLAVE_BATTLE_DEADLINE_SECONDS = 24 * 60 * 60
 SLAVE_BATTLE_TURN_SECONDS = 3 * 60 * 60
+WASTELAND_BASE_XP = 5
+WASTELAND_FLOOR_XP = 2
 
 
 def utc_timestamp() -> int:
@@ -173,6 +175,23 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_slave_battles_status
                 ON slave_battles(chat_id, status, deadline);
+
+            CREATE TABLE IF NOT EXISTS wasteland_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token TEXT NOT NULL UNIQUE,
+                chat_id INTEGER NOT NULL,
+                owner_id INTEGER NOT NULL,
+                slave_id INTEGER NOT NULL,
+                floor INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active',
+                state_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                finished_at INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_wasteland_runs_active
+                ON wasteland_runs(chat_id, owner_id, slave_id, status);
 
             CREATE TABLE IF NOT EXISTS slave_battle_actions (
                 battle_id INTEGER NOT NULL,
@@ -1650,10 +1669,7 @@ class Database:
                 column = "defender_control"
             else:
                 return "forbidden"
-            profile = self._ensure_owner_profile_locked(int(battle["chat_id"]), owner_id)
-            if enabled and int(profile["level"]) < 2:
-                self.connection.commit()
-                return "low_level"
+            self._ensure_owner_profile_locked(int(battle["chat_id"]), owner_id)
             self.connection.execute(
                 f"UPDATE slave_battles SET {column}=? WHERE id=?",
                 (int(enabled), battle_id),
@@ -1870,6 +1886,181 @@ class Database:
             )
             self.connection.commit()
             return {"status": "used", "healed": healed, "state": state}
+
+    def _wasteland_state_locked(
+        self, chat_id: int, owner_id: int, slave_id: int, floor: int
+    ) -> tuple[str, dict[str, Any] | None]:
+        ownership = self.connection.execute(
+            "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
+            (chat_id, slave_id),
+        ).fetchone()
+        if not ownership or int(ownership["owner_id"]) != owner_id:
+            return "not_owned", None
+        profile = self._ensure_slave_profile_locked(chat_id, slave_id)
+        if int(profile["level"]) >= CLASS_SELECTION_LEVEL and profile["class_id"] == "ragamuffin":
+            return "class_required", None
+        classes, skills = self._fighter_catalog_locked()
+        granted_skills = self._granted_content_locked(chat_id, slave_id, "skill")
+        enemy_level = max(1, int(profile["level"]) + floor - 1)
+        state = create_battle_state(
+            {
+                "slave_id": slave_id,
+                "owner_id": owner_id,
+                "controlled": False,
+                "class_id": profile["class_id"],
+                "level": profile["level"],
+                "loadout": json.loads(profile["loadout"]),
+                "granted_skills": granted_skills,
+            },
+            {
+                "slave_id": 0,
+                "owner_id": 0,
+                "controlled": False,
+                "class_id": "ragamuffin",
+                "level": enemy_level,
+            },
+            classes=classes,
+            skills=skills,
+        )
+        # The owner leads PvE without the -20% coercion penalty.
+        state["sides"]["a"]["controller_id"] = owner_id
+        state["wasteland"] = {"floor": floor, "enemy_level": enemy_level}
+        return "ready", state
+
+    def _wasteland_ai_action_locked(
+        self, state: dict[str, Any], skills: dict[str, Any]
+    ) -> dict[str, Any]:
+        fighter = state["sides"]["b"]
+        available = [
+            skills[skill_id]
+            for skill_id in fighter["loadout"]
+            if skill_id in skills
+            and fighter["resource"] >= skills[skill_id].cost
+            and not fighter["cooldowns"].get(skill_id, 0)
+        ]
+        skill = random.choice(available)
+        return {
+            "skill_id": skill.skill_id,
+            "attack_direction": random.choice(["left", "right"]) if skill.hostile else None,
+            "dodge_direction": random.choice(["left", "right"]),
+        }
+
+    async def start_wasteland_run(
+        self, chat_id: int, owner_id: int, slave_id: int
+    ) -> tuple[str, sqlite3.Row | None]:
+        async with self._lock:
+            existing = self.connection.execute(
+                """SELECT * FROM wasteland_runs WHERE chat_id=? AND owner_id=? AND slave_id=?
+                   AND status IN ('active', 'victory') ORDER BY id DESC LIMIT 1""",
+                (chat_id, owner_id, slave_id),
+            ).fetchone()
+            if existing:
+                return "existing", existing
+            state_status, state = self._wasteland_state_locked(chat_id, owner_id, slave_id, 1)
+            if not state:
+                self.connection.commit()
+                return state_status, None
+            now = utc_timestamp()
+            cursor = self.connection.execute(
+                """INSERT INTO wasteland_runs(
+                       token, chat_id, owner_id, slave_id, floor, status, state_json, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, 1, 'active', ?, ?, ?)""",
+                (secrets.token_urlsafe(18), chat_id, owner_id, slave_id, json.dumps(state), now, now),
+            )
+            self.connection.commit()
+            return "created", self.connection.execute(
+                "SELECT * FROM wasteland_runs WHERE id=?", (cursor.lastrowid,)
+            ).fetchone()
+
+    async def get_wasteland_run(
+        self, run_id: int | None = None, token: str | None = None
+    ) -> sqlite3.Row | None:
+        if run_id is None and token is None:
+            return None
+        async with self._lock:
+            if run_id is not None:
+                return self.connection.execute(
+                    "SELECT * FROM wasteland_runs WHERE id=?", (run_id,)
+                ).fetchone()
+            return self.connection.execute(
+                "SELECT * FROM wasteland_runs WHERE token=?", (token,)
+            ).fetchone()
+
+    async def submit_wasteland_action(
+        self, run_id: int, owner_id: int, action: dict[str, Any]
+    ) -> dict[str, Any]:
+        async with self._lock:
+            run = self.connection.execute(
+                "SELECT * FROM wasteland_runs WHERE id=?", (run_id,)
+            ).fetchone()
+            if not run or run["status"] != "active":
+                return {"status": "inactive"}
+            if int(run["owner_id"]) != owner_id:
+                return {"status": "forbidden"}
+            state = json.loads(run["state_json"])
+            _classes, skills = self._fighter_catalog_locked()
+            try:
+                error = validate_action(state, "a", action, skills)
+            except (KeyError, TypeError, ValueError):
+                error = "Некорректное действие."
+            if error:
+                return {"status": "invalid", "error": error}
+            try:
+                state = resolve_turn(
+                    state,
+                    {"a": action, "b": self._wasteland_ai_action_locked(state, skills)},
+                    skills=skills,
+                )
+            except ValueError as error:
+                return {"status": "invalid", "error": str(error)}
+            now = utc_timestamp()
+            if state["finished"]:
+                if state["winner"] == "a":
+                    reward = WASTELAND_BASE_XP + int(run["floor"]) * WASTELAND_FLOOR_XP
+                    self._grant_profile_xp_locked(
+                        "slave_profiles", int(run["chat_id"]), int(run["slave_id"]), reward
+                    )
+                    status = "victory"
+                else:
+                    reward = 0
+                    status = "defeated"
+                state.setdefault("wasteland", {})["reward_xp"] = reward
+                self.connection.execute(
+                    """UPDATE wasteland_runs SET status=?, state_json=?, updated_at=?,
+                           finished_at=? WHERE id=?""",
+                    (status, json.dumps(state), now, now, run_id),
+                )
+                self.connection.commit()
+                return {"status": status, "state": state, "reward_xp": reward}
+            self.connection.execute(
+                "UPDATE wasteland_runs SET state_json=?, updated_at=? WHERE id=?",
+                (json.dumps(state), now, run_id),
+            )
+            self.connection.commit()
+            return {"status": "resolved", "state": state}
+
+    async def advance_wasteland_run(self, run_id: int, owner_id: int) -> dict[str, Any]:
+        async with self._lock:
+            run = self.connection.execute(
+                "SELECT * FROM wasteland_runs WHERE id=?", (run_id,)
+            ).fetchone()
+            if not run or int(run["owner_id"]) != owner_id:
+                return {"status": "forbidden"}
+            if run["status"] != "victory":
+                return {"status": "inactive"}
+            next_floor = int(run["floor"]) + 1
+            state_status, state = self._wasteland_state_locked(
+                int(run["chat_id"]), owner_id, int(run["slave_id"]), next_floor
+            )
+            if not state:
+                return {"status": state_status}
+            self.connection.execute(
+                """UPDATE wasteland_runs SET floor=?, status='active', state_json=?,
+                       updated_at=?, finished_at=NULL WHERE id=?""",
+                (next_floor, json.dumps(state), utc_timestamp(), run_id),
+            )
+            self.connection.commit()
+            return {"status": "active", "state": state, "floor": next_floor}
 
     async def transfer_after_loss(self, chat_id: int, loser_id: int, winner_id: int) -> tuple[str, int]:
         """Apply slavery consequences while preserving the no-slave-owners rule."""

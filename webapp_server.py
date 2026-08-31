@@ -43,6 +43,32 @@ def _json_response(payload: dict[str, Any], status: int = 200) -> web.Response:
     return web.json_response(payload, status=status, dumps=lambda value: json.dumps(value, ensure_ascii=False))
 
 
+async def group_battle_status_text(database: Database, battle) -> str:
+    """Compact public spectator view; combat controls remain authenticated in Mini App."""
+    state = json.loads(battle["state_json"] or "{}")
+    chat_id = int(battle["chat_id"])
+    first = await database.get_user(chat_id, int(battle["challenger_slave_id"]))
+    second = await database.get_user(chat_id, int(battle["defender_slave_id"]))
+    first_name = html.escape(first["display_name"] if first else str(battle["challenger_slave_id"]))
+    second_name = html.escape(second["display_name"] if second else str(battle["defender_slave_id"]))
+    if battle["status"] == "finished":
+        winner = state.get("winner")
+        outcome = "Ничья." if winner == "draw" else f"Победил {first_name if winner == 'a' else second_name}."
+        return f"🏁 <b>Битва рабов завершена</b>\n{first_name} против {second_name}\n{outcome}"
+    sides = state.get("sides", {})
+    if not sides:
+        return f"⚔️ <b>Битва рабов</b>\n{first_name} против {second_name}"
+    first_fighter, second_fighter = sides["a"], sides["b"]
+    log = state.get("log", [])
+    last_events = " · ".join(log[-1].get("events", [])) if log else "Ожидание первого хода."
+    return (
+        "⚔️ <b>Битва рабов</b>\n"
+        f"{first_name}: {round(first_fighter['hp'])}/{round(first_fighter['stats']['max_hp'])} HP\n"
+        f"{second_name}: {round(second_fighter['hp'])}/{round(second_fighter['stats']['max_hp'])} HP\n"
+        f"Ход {state['turn']} · {html.escape(last_events)}"
+    )
+
+
 def create_webapp(
     database: Database,
     bot: Bot,
@@ -135,6 +161,44 @@ def create_webapp(
             200,
         )
 
+    async def wasteland_payload(token: str, user_id: int) -> tuple[dict[str, Any] | None, int]:
+        run = await database.get_wasteland_run(token=token)
+        if not run:
+            return {"error": "Поход не найден."}, 404
+        if user_id not in {int(run["owner_id"]), int(run["slave_id"])} and user_id != superadmin_id:
+            return {"error": "У вас нет доступа к этому походу."}, 403
+        chat_id = int(run["chat_id"])
+        fighter = await database.get_user(chat_id, int(run["slave_id"]))
+        state = json.loads(run["state_json"])
+        fighter_classes, fighter_skills = await database.get_fighter_catalog()
+        return (
+            {
+                "battle": {
+                    "id": int(run["id"]),
+                    "token": str(run["token"]),
+                    "status": str(run["status"]),
+                    "mode": "wasteland",
+                    "floor": int(run["floor"]),
+                    "state": state,
+                    "fighters": {
+                        "a": {"id": int(run["slave_id"]), "name": fighter["display_name"] if fighter else str(run["slave_id"])},
+                        "b": {"id": 0, "name": f"Оборванец · этаж {run['floor']}"},
+                    },
+                    "controller_sides": ["a"] if user_id == int(run["owner_id"]) else [],
+                    "owner_sides": ["a"] if user_id == int(run["owner_id"]) else [],
+                },
+                "skills": {
+                    skill_id: {"id": skill.skill_id, "name": skill.name, "cost": skill.cost, "cooldown": skill.cooldown, "hostile": skill.hostile, "accuracy": skill.accuracy, "power": skill.power}
+                    for skill_id, skill in fighter_skills.items()
+                },
+                "classes": {
+                    class_id: {"name": fighter_class.name, "resource_name": fighter_class.resource_name}
+                    for class_id, fighter_class in fighter_classes.items()
+                },
+            },
+            200,
+        )
+
     async def index(_request: web.Request) -> web.FileResponse:
         return web.FileResponse(STATIC_DIR / "index.html")
 
@@ -160,21 +224,12 @@ def create_webapp(
             return _json_response(result, 403)
         if result["status"] == "invalid":
             return _json_response(result, 400)
-        if result["status"] == "finished":
+        if result["status"] in {"resolved", "finished"}:
             finished = await database.get_slave_battle(int(battle["id"]))
             if finished and finished["message_id"]:
-                state_data = result["state"]
-                winner_side = state_data.get("winner")
-                if winner_side == "draw":
-                    outcome = "Ничья."
-                else:
-                    winner_id = int(state_data["sides"][winner_side]["slave_id"])
-                    winner = await database.get_user(int(battle["chat_id"]), winner_id)
-                    name = winner["display_name"] if winner else str(winner_id)
-                    outcome = f"Победил {html.escape(name)}."
                 try:
                     await bot.edit_message_text(
-                        f"🏁 <b>Битва рабов завершена</b>\n{outcome}",
+                        await group_battle_status_text(database, finished),
                         chat_id=int(finished["chat_id"]),
                         message_id=int(finished["message_id"]),
                         parse_mode="HTML",
@@ -182,6 +237,39 @@ def create_webapp(
                 except TelegramAPIError:
                     pass
         return _json_response(result)
+
+    async def wasteland_state(request: web.Request) -> web.Response:
+        payload, status = await wasteland_payload(
+            request.match_info["token"], int(request["telegram_user"]["id"])
+        )
+        return _json_response(payload or {"error": "Ошибка."}, status)
+
+    async def wasteland_action(request: web.Request) -> web.Response:
+        run = await database.get_wasteland_run(token=request.match_info["token"])
+        if not run:
+            return _json_response({"error": "Поход не найден."}, 404)
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, TypeError):
+            return _json_response({"error": "Некорректный запрос."}, 400)
+        result = await database.submit_wasteland_action(
+            int(run["id"]), int(request["telegram_user"]["id"]), body
+        )
+        if result["status"] in {"forbidden", "inactive"}:
+            return _json_response(result, 403)
+        if result["status"] == "invalid":
+            return _json_response(result, 400)
+        return _json_response(result)
+
+    async def wasteland_next(request: web.Request) -> web.Response:
+        run = await database.get_wasteland_run(token=request.match_info["token"])
+        if not run:
+            return _json_response({"error": "Поход не найден."}, 404)
+        result = await database.advance_wasteland_run(
+            int(run["id"]), int(request["telegram_user"]["id"])
+        )
+        status = 200 if result["status"] == "active" else 400
+        return _json_response(result, status)
 
     async def potion(request: web.Request) -> web.Response:
         battle = await database.get_slave_battle(token=request.match_info["token"])
@@ -201,5 +289,8 @@ def create_webapp(
     app.router.add_get("/api/battle/{token}", state)
     app.router.add_post("/api/battle/{token}/action", action)
     app.router.add_post("/api/battle/{token}/potion", potion)
+    app.router.add_get("/api/wasteland/{token}", wasteland_state)
+    app.router.add_post("/api/wasteland/{token}/action", wasteland_action)
+    app.router.add_post("/api/wasteland/{token}/next", wasteland_next)
     app.router.add_static("/static/", STATIC_DIR, show_index=False)
     return app

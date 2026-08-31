@@ -74,8 +74,7 @@ class SlaveBattleDatabaseTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn(completed["status"], {"resolved", "finished"})
 
-    async def test_owner_control_unblocks_slave_consent_from_level_two(self):
-        await self.database.grant_owner_xp(1, 10, 10)
+    async def test_owner_control_unblocks_slave_consent_from_level_one(self):
         status, battle_id = await self.database.create_slave_battle(1, 10, 20, 30)
         self.assertEqual(status, "created")
         self.assertEqual(await self.database.set_slave_battle_control(battle_id, 10, side="a"), "pending")
@@ -130,6 +129,41 @@ class SlaveBattleDatabaseTests(unittest.IsolatedAsyncioTestCase):
         )
         await self.database.grant_slave_xp(1, 20, 72)
         self.assertEqual(await self.database.choose_slave_class(1, 20, "фембой"), "femboy")
+
+    async def test_wasteland_starts_without_control_penalty_and_scales_by_floor(self):
+        status, run = await self.database.start_wasteland_run(1, 10, 20)
+        self.assertEqual(status, "created")
+        self.assertIsNotNone(run)
+        state = json.loads(run["state_json"])
+        self.assertEqual(state["sides"]["a"]["controller_id"], 10)
+        self.assertFalse(state["sides"]["a"]["controlled"])
+        self.assertEqual(state["wasteland"]["enemy_level"], 1)
+
+        self.database.connection.execute(
+            "UPDATE wasteland_runs SET status='victory' WHERE id=?", (run["id"],)
+        )
+        self.database.connection.commit()
+        advanced = await self.database.advance_wasteland_run(int(run["id"]), 10)
+        self.assertEqual(advanced["status"], "active")
+        self.assertEqual(advanced["floor"], 2)
+        self.assertEqual(advanced["state"]["wasteland"]["enemy_level"], 2)
+
+    async def test_wasteland_victory_grants_floor_experience(self):
+        _status, run = await self.database.start_wasteland_run(1, 10, 20)
+        state = json.loads(run["state_json"])
+        state["sides"]["b"]["hp"] = 0
+        self.database.connection.execute(
+            "UPDATE wasteland_runs SET state_json=? WHERE id=?", (json.dumps(state), run["id"])
+        )
+        self.database.connection.commit()
+        result = await self.database.submit_wasteland_action(
+            int(run["id"]), 10,
+            {"skill_id": "bum_punch", "attack_direction": "left", "dodge_direction": "left"},
+        )
+        self.assertEqual(result["status"], "victory")
+        self.assertEqual(result["reward_xp"], 7)
+        profile = await self.database.get_slave_profile(1, 20)
+        self.assertEqual(profile["xp"], 7)
 
 
 class WebAppAuthTests(unittest.TestCase):
