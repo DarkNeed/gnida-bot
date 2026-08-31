@@ -5,10 +5,22 @@ import logging
 from os import getenv
 
 from aiogram import Bot, Dispatcher
+from aiohttp import web
 from dotenv import load_dotenv
 
 from database import Database
 from handlers.routes import create_router
+from webapp_server import create_webapp
+
+
+def optional_int_env(name: str) -> int | None:
+    raw_value = getenv(name, "").strip()
+    if not raw_value:
+        return None
+    try:
+        return int(raw_value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a numeric value") from error
 
 
 async def main() -> None:
@@ -17,21 +29,40 @@ async def main() -> None:
     if not token:
         raise RuntimeError("BOT_TOKEN is missing in .env")
 
-    raw_kargassia_chat_id = getenv("KARGASSIA_CHAT_ID", "").strip()
-    try:
-        kargassia_chat_id = (
-            int(raw_kargassia_chat_id) if raw_kargassia_chat_id else None
-        )
-    except ValueError as error:
-        raise RuntimeError("KARGASSIA_CHAT_ID must be a numeric Telegram chat ID") from error
+    kargassia_chat_id = optional_int_env("KARGASSIA_CHAT_ID")
+    superadmin_id = optional_int_env("SUPERADMIN_ID")
+    webapp_url = getenv("WEBAPP_URL", "").strip() or None
+    if not webapp_url:
+        hosted_domain = getenv("DOMAIN", "").strip()
+        if hosted_domain:
+            webapp_url = (
+                hosted_domain
+                if hosted_domain.startswith(("https://", "http://"))
+                else f"https://{hosted_domain}"
+            )
+    webapp_host = getenv("WEBAPP_HOST", "0.0.0.0").strip()
+    webapp_port = optional_int_env("WEBAPP_PORT") or optional_int_env("PORT") or 8080
 
     database = Database(getenv("DATABASE_PATH", "data/gnida_bot.sqlite3"))
     await database.connect()
+    bot = Bot(token=token)
     dispatcher = Dispatcher()
     dispatcher.include_router(
-        create_router(database, kargassia_chat_id=kargassia_chat_id)
+        create_router(
+            database,
+            kargassia_chat_id=kargassia_chat_id,
+            webapp_url=webapp_url,
+            superadmin_id=superadmin_id,
+        )
     )
-    bot = Bot(token=token)
+    runner: web.AppRunner | None = None
+    if webapp_url:
+        runner = web.AppRunner(
+            create_webapp(database, bot, token, superadmin_id=superadmin_id)
+        )
+        await runner.setup()
+        await web.TCPSite(runner, webapp_host, webapp_port).start()
+        logging.info("Slave arena is listening on %s:%s", webapp_host, webapp_port)
 
     logging.info("GnidaBot is starting")
     try:
@@ -41,6 +72,8 @@ async def main() -> None:
             close_bot_session=False,
         )
     finally:
+        if runner:
+            await runner.cleanup()
         await database.close()
         await bot.session.close()
 
