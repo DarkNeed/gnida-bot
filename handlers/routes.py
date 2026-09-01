@@ -1849,13 +1849,44 @@ def create_router(
 
     @router.message(text_or_caption_regexp(SLAVE_PRIORITY_RE))
     async def set_slave_priority(message: Message) -> None:
-        if message.chat.type not in GROUP_TYPES or not message.from_user:
+        if not message.from_user:
             return
         text = message_content(message)
         match = SLAVE_PRIORITY_RE.match(text)
         if not match:
             return
         enabled = match.group(1).casefold() == "приоритет"
+        if message.chat.type == "private":
+            token, extra = split_first(text[match.end() :].strip())
+            if not token or extra:
+                await message.answer("В личке: /приоритет @раб или /снять приоритет @раб.")
+                return
+            candidates = await database.resolve_users_globally(token)
+            updated = 0
+            unchanged = 0
+            for candidate in candidates:
+                chat_id = int(candidate["chat_id"])
+                slave_id = int(candidate["user_id"])
+                ownership = await database.get_owner(chat_id, slave_id)
+                if not ownership or int(ownership["owner_id"]) != message.from_user.id:
+                    continue
+                result = await database.set_slave_priority(
+                    chat_id, message.from_user.id, slave_id, enabled
+                )
+                if result == "updated":
+                    updated += 1
+                elif result == "unchanged":
+                    unchanged += 1
+            if updated:
+                state = "выставлен" if enabled else "снят"
+                await message.answer(f"Приоритет {state} в чатах: {updated}.")
+            elif unchanged:
+                await message.answer("Приоритет уже установлен." if enabled else "Приоритет уже снят.")
+            else:
+                await message.answer("Этот участник не ваш раб или бот ещё не видел его в чате.")
+            return
+        if message.chat.type not in GROUP_TYPES:
+            return
         target = await resolve_target(message, database, text[match.end() :].strip())
         if not target:
             return
