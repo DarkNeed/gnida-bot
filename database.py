@@ -835,6 +835,16 @@ class Database:
             self.connection.commit()
             return cursor.rowcount > 0
 
+    async def mark_challenge_unavailable(self, challenge_id: int) -> None:
+        """Stop resuming a challenge whose Telegram message is no longer available."""
+        async with self._lock:
+            self.connection.execute(
+                """UPDATE challenges SET status='unavailable'
+                   WHERE id=? AND status IN ('active', 'deadline')""",
+                (challenge_id,),
+            )
+            self.connection.commit()
+
     async def transfer_after_loss(self, chat_id: int, loser_id: int, winner_id: int) -> tuple[str, int]:
         """Apply slavery consequences while preserving the no-slave-owners rule."""
         async with self._lock:
@@ -1170,6 +1180,33 @@ class Database:
                    WHERE o.owner_id=? ORDER BY o.chat_id, o.acquired_at DESC""",
                 (owner_id,),
             ).fetchall()
+
+    async def list_owners_globally(self, slave_id: int) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT o.*, c.title AS chat_title, u.username, u.display_name
+                   FROM ownership o
+                   LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.owner_id
+                   LEFT JOIN chats c ON c.chat_id=o.chat_id
+                   WHERE o.slave_id=? ORDER BY o.chat_id, o.acquired_at DESC""",
+                (slave_id,),
+            ).fetchall()
+
+    async def game_stats_for_user(self, user_id: int) -> sqlite3.Row:
+        """Return a compact cross-chat summary of a user's recorded mini-games."""
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active,
+                       SUM(CASE WHEN status='finished' THEN 1 ELSE 0 END) AS finished,
+                       SUM(CASE WHEN game_type='rps' THEN 1 ELSE 0 END) AS rps,
+                       SUM(CASE WHEN game_type='blackjack' THEN 1 ELSE 0 END) AS blackjack,
+                       SUM(CASE WHEN game_type='checkers' THEN 1 ELSE 0 END) AS checkers
+                   FROM challenges
+                   WHERE challenger_id=? OR opponent_id=?""",
+                (user_id, user_id),
+            ).fetchone()
 
     async def set_slave_priority(
         self, chat_id: int, owner_id: int, slave_id: int, enabled: bool

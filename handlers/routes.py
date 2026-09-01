@@ -13,7 +13,12 @@ from typing import Awaitable, Callable
 
 import aiohttp
 from aiogram import BaseMiddleware, Bot, F, Router
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramRetryAfter,
+)
 from aiogram.types import (
     CallbackQuery,
     ChatMemberAdministrator,
@@ -70,6 +75,7 @@ CLEAR_RE = re.compile(
 )
 STATS_RE = re.compile(r"^[!/](стат|стата)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 SLAVES_RE = re.compile(r"^/рабы(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+SLAVE_MENU_RE = re.compile(r"^/(?:меню|menu)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 START_RE = re.compile(r"^/start(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 CHAT_RE = re.compile(r"^/чат(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RELEASE_RE = re.compile(r"^(?:/отпустить(?:@\w+)?|отпустить\s+раба)(?:\s|$)", re.IGNORECASE)
@@ -725,6 +731,113 @@ def create_router(
     jug_tasks: set[asyncio.Task[None]] = set()
     daily_message_tasks: set[asyncio.Task[None]] = set()
     recent_safebooru_ids: dict[int, list[int]] = {}
+    challenge_edit_lock = asyncio.Lock()
+    last_challenge_edit_at = 0.0
+
+    def slave_menu_keyboard() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="👥 Мои рабы", callback_data="sm:slaves"),
+                    InlineKeyboardButton(text="⭐ Приоритет", callback_data="sm:priority"),
+                ],
+                [
+                    InlineKeyboardButton(text="🎮 Статистика игр", callback_data="sm:games"),
+                    InlineKeyboardButton(text="📖 Гайд", callback_data="sm:guide"),
+                ],
+            ]
+        )
+
+    def slave_menu_back_keyboard() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="← Меню", callback_data="sm:home")]]
+        )
+
+    async def slave_menu_home(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        slaves, owners = await asyncio.gather(
+            database.list_slaves_globally(user_id),
+            database.list_owners_globally(user_id),
+        )
+        if slaves and owners:
+            status = "раб и рабовладелец"
+        elif slaves:
+            status = "рабовладелец"
+        elif owners:
+            status = "раб"
+        else:
+            status = "свободен"
+        owner_lines = "\n".join(
+            f"• @{html.escape(row['username']) if row['username'] else html.escape(row['display_name'] or str(row['owner_id']))}"
+            f" · {html.escape(row['chat_title'] or 'неизвестный чат')}"
+            for row in owners[:5]
+        )
+        owner_text = f"\nВладельцы:\n{owner_lines}" if owner_lines else ""
+        return (
+            "<b>Рабовладение</b>\n"
+            f"Статус: <b>{status}</b>\n"
+            f"Твоих рабов: {len(slaves)}{owner_text}\n\n"
+            "Выбери раздел.",
+            slave_menu_keyboard(),
+        )
+
+    async def slave_menu_slaves(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        rows = await database.list_slaves_globally(user_id)
+        grouped: dict[int, tuple[str, list]] = {}
+        for row in rows:
+            chat_id = int(row["ownership_chat_id"])
+            title = row["chat_title"] or f"Чат {chat_id}"
+            grouped.setdefault(chat_id, (title, []))[1].append(row)
+        return (
+            "<b>Твои рабы</b>\n" + slave_report(list(grouped.values())),
+            slave_menu_back_keyboard(),
+        )
+
+    async def slave_menu_priority(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        rows = await database.list_slaves_globally(user_id)
+        if not rows:
+            return "<b>Приоритет рабов</b>\nРабов нет.", slave_menu_back_keyboard()
+        buttons: list[list[InlineKeyboardButton]] = []
+        for row in rows:
+            label = "★ " if row["transfer_priority"] else "☆ "
+            label += (
+                "@" + row["username"]
+                if row["username"]
+                else row["display_name"] or str(row["user_id"])
+            )
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=label[:60],
+                        callback_data=f"sm:p:{row['ownership_chat_id']}:{row['user_id']}",
+                    )
+                ]
+            )
+        buttons.append([InlineKeyboardButton(text="← Меню", callback_data="sm:home")])
+        return (
+            "<b>Приоритет рабов</b>\n"
+            "★ — передаётся последним при проигрыше. Нажми на раба, чтобы включить или снять приоритет.",
+            InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+
+    async def slave_menu_games(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        stats = await database.game_stats_for_user(user_id)
+        return (
+            "<b>Статистика мини-игр</b>\n"
+            f"Всего: {stats['total'] or 0} · завершено: {stats['finished'] or 0} · активно: {stats['active'] or 0}\n"
+            f"КНБ: {stats['rps'] or 0} · блэкджек: {stats['blackjack'] or 0} · шашки: {stats['checkers'] or 0}",
+            slave_menu_back_keyboard(),
+        )
+
+    def slave_menu_guide() -> tuple[str, InlineKeyboardMarkup]:
+        return (
+            "<b>Краткий гайд по рабству</b>\n"
+            "• «Вызов» ответом на сообщение запускает игру с последствиями; «Игра …» — без рабства.\n"
+            "• Проигравший без рабов становится рабом победителя. Если у проигравшего есть рабы, передаётся один из них.\n"
+            "• ⭐ Приоритетный раб передаётся последним. Это не делает его неуязвимым.\n"
+            "• Раб не может иметь рабов и может вызывать только своего владельца. Победа над владельцем освобождает раба.\n"
+            "• /рабы в личке показывает список, а /приоритет @юзер меняет приоритет текстовой командой.",
+            slave_menu_back_keyboard(),
+        )
 
     async def send_daily_group_messages(bot: Bot) -> None:
         assert kargassia_chat_id is not None
@@ -827,29 +940,66 @@ def create_router(
         text: str,
         reply_markup: InlineKeyboardMarkup | None = None,
     ) -> bool:
+        nonlocal last_challenge_edit_at
         inline_message_id = challenge["inline_message_id"]
         if not inline_message_id and not challenge["message_id"]:
             return False
-        try:
-            if inline_message_id:
-                await bot.edit_message_text(
-                    text,
-                    inline_message_id=str(inline_message_id),
-                    reply_markup=reply_markup,
-                    parse_mode="HTML",
-                )
-            else:
-                await bot.edit_message_text(
-                    text,
-                    chat_id=int(challenge["chat_id"]),
-                    message_id=int(challenge["message_id"]),
-                    reply_markup=reply_markup,
-                    parse_mode="HTML",
-                )
-            return True
-        except (TelegramBadRequest, TelegramForbiddenError) as error:
+        # Several expired challenges can be resumed immediately after a restart.
+        # Telegram limits editMessageText aggressively in a single group, so serialize
+        # these edits and obey the retry interval returned by the API.
+        async with challenge_edit_lock:
+            pause = 0.3 - (time.monotonic() - last_challenge_edit_at)
+            if pause > 0:
+                await asyncio.sleep(pause)
+            for attempt in range(3):
+                try:
+                    if inline_message_id:
+                        await bot.edit_message_text(
+                            text,
+                            inline_message_id=str(inline_message_id),
+                            reply_markup=reply_markup,
+                            parse_mode="HTML",
+                        )
+                    else:
+                        await bot.edit_message_text(
+                            text,
+                            chat_id=int(challenge["chat_id"]),
+                            message_id=int(challenge["message_id"]),
+                            reply_markup=reply_markup,
+                            parse_mode="HTML",
+                        )
+                    last_challenge_edit_at = time.monotonic()
+                    return True
+                except TelegramRetryAfter as error:
+                    last_challenge_edit_at = time.monotonic()
+                    delay = max(1, int(error.retry_after))
+                    logging.getLogger(__name__).warning(
+                        "Challenge %s hit Telegram flood control; retrying in %s s.",
+                        challenge["id"],
+                        delay,
+                    )
+                    if attempt < 2:
+                        await asyncio.sleep(delay)
+                        continue
+                except TelegramBadRequest as error:
+                    detail = str(error).casefold()
+                    if "message is not modified" in detail:
+                        return True
+                    if "message to edit not found" in detail:
+                        await database.mark_challenge_unavailable(int(challenge["id"]))
+                    logging.getLogger(__name__).warning(
+                        "Could not edit challenge %s: %s", challenge["id"], error
+                    )
+                    return False
+                except TelegramForbiddenError as error:
+                    await database.mark_challenge_unavailable(int(challenge["id"]))
+                    logging.getLogger(__name__).warning(
+                        "Could not edit challenge %s: %s", challenge["id"], error
+                    )
+                    return False
             logging.getLogger(__name__).warning(
-                "Could not edit challenge %s: %s", challenge["id"], error
+                "Could not edit challenge %s after Telegram retry attempts.",
+                challenge["id"],
             )
             return False
 
@@ -971,7 +1121,19 @@ def create_router(
     def schedule_challenge(challenge_id: int, bot: Bot) -> None:
         task = asyncio.create_task(enforce_challenge_deadline(challenge_id, bot))
         challenge_tasks.add(task)
-        task.add_done_callback(challenge_tasks.discard)
+
+        def finish_task(completed: asyncio.Task[None]) -> None:
+            challenge_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            try:
+                completed.result()
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Challenge deadline task %s failed.", challenge_id
+                )
+
+        task.add_done_callback(finish_task)
 
     @router.startup()
     async def resume_leg_requests(bot: Bot) -> None:
@@ -1008,8 +1170,69 @@ def create_router(
             await message.answer(
                 "Я работаю в группах: модерирую чат, веду статистику и провожу КНБ. "
                 "Добавьте меня в чат и выдайте право блокировать участников.\n\n"
-                "Здесь можно запросить /рабы, а администратору — /рабы @username."
+                "Здесь можно запросить /рабы, а администратору — /рабы @username.\n"
+                "Для меню рабовладения: /меню или /menu."
             )
+
+    @router.message(text_or_caption_regexp(SLAVE_MENU_RE))
+    async def slave_menu(message: Message) -> None:
+        if message.chat.type != "private" or not message.from_user:
+            return
+        body, keyboard = await slave_menu_home(message.from_user.id)
+        await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+
+    @router.callback_query(F.data.startswith("sm:"))
+    async def slave_menu_callback(callback: CallbackQuery) -> None:
+        if (
+            not callback.from_user
+            or not callback.message
+            or callback.message.chat.type != "private"
+            or not callback.data
+        ):
+            await callback.answer()
+            return
+
+        action = callback.data[3:]
+        user_id = callback.from_user.id
+        notice: str | None = None
+        if action == "home":
+            body, keyboard = await slave_menu_home(user_id)
+        elif action == "slaves":
+            body, keyboard = await slave_menu_slaves(user_id)
+        elif action == "priority":
+            body, keyboard = await slave_menu_priority(user_id)
+        elif action == "games":
+            body, keyboard = await slave_menu_games(user_id)
+        elif action == "guide":
+            body, keyboard = slave_menu_guide()
+        elif action.startswith("p:"):
+            try:
+                _, raw_chat_id, raw_slave_id = action.split(":", 2)
+                chat_id, slave_id = int(raw_chat_id), int(raw_slave_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            owner = await database.get_owner(chat_id, slave_id)
+            if not owner or int(owner["owner_id"]) != user_id:
+                await callback.answer("Этот участник больше не ваш раб.", show_alert=True)
+                return
+            enabled = not bool(owner["transfer_priority"])
+            result = await database.set_slave_priority(chat_id, user_id, slave_id, enabled)
+            if result == "updated":
+                notice = "Приоритет включён." if enabled else "Приоритет снят."
+            else:
+                notice = "Список уже изменился, обновлён."
+            body, keyboard = await slave_menu_priority(user_id)
+        else:
+            await callback.answer("Неизвестный раздел.", show_alert=True)
+            return
+
+        try:
+            await callback.message.edit_text(body, reply_markup=keyboard, parse_mode="HTML")
+        except TelegramBadRequest as error:
+            if "message is not modified" not in str(error).casefold():
+                await callback.message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+        await callback.answer(notice or "")
 
     @router.message(F.new_chat_members)
     async def new_members(message: Message) -> None:

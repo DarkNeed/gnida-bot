@@ -83,6 +83,15 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]["chat_title"], "Тестовый чат")
         self.assertEqual(rows[0]["username"], "loser")
 
+    async def test_profile_queries_return_ownership_and_game_statistics(self):
+        await self.database.force_enslave(1, 20, 10)
+        owners = await self.database.list_owners_globally(20)
+        self.assertEqual(owners[0]["owner_id"], 10)
+
+        await self.database.create_challenge(1, 10, 20, game_type="rps")
+        stats = await self.database.game_stats_for_user(10)
+        self.assertEqual((stats["total"], stats["active"], stats["rps"]), (1, 1, 1))
+
     async def test_global_user_lookup(self):
         rows = await self.database.resolve_users_globally("@LOSER")
         self.assertEqual(rows[0]["user_id"], 20)

@@ -47,6 +47,7 @@ from handlers.routes import (
     SLEEPY_PROTECTION_TEXT,
     SILENCE_RE,
     SLAP_RE,
+    SLAVE_MENU_RE,
     SLEEP_RE,
     SLAVE_PRIORITY_RE,
     STATS_RE,
@@ -99,6 +100,11 @@ class RoutePatternTests(unittest.TestCase):
         command = "/чат@GnidaBot\nДай пять"
         self.assertTrue(CHAT_RE.match(command))
         self.assertEqual(command_payload(command), "Дай пять")
+
+    def test_slave_menu_accepts_russian_and_latin_commands(self):
+        self.assertTrue(SLAVE_MENU_RE.match("/меню"))
+        self.assertTrue(SLAVE_MENU_RE.match("/menu@GnidaBot"))
+        self.assertFalse(SLAVE_MENU_RE.match("/men"))
 
     def test_sleepy_is_protected_from_cheto_and_kit_attacks(self):
         sleepy = "MisterSleeppy"
