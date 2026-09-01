@@ -44,11 +44,11 @@ from handlers.routes import (
     CLEAR_RE,
     RESTORE_RE,
     SAFEBOORU_TAGS,
-    SLAVE_PRIORITY_RE,
     SLEEPY_PROTECTION_TEXT,
     SILENCE_RE,
     SLAP_RE,
     SLEEP_RE,
+    SLAVE_PRIORITY_RE,
     STATS_RE,
     TRANSFER_RE,
     TrackingMiddleware,
@@ -325,10 +325,10 @@ class RoutePatternTests(unittest.TestCase):
 
     def test_slave_management_commands(self):
         self.assertTrue(TRANSFER_RE.match("/передать @slave @owner"))
-        self.assertTrue(MAKE_SLAVE_RE.match("/сделать @user1 рабом @user2"))
-        self.assertTrue(MAKE_SLAVE_REPLY_RE.match("/сделать рабом @owner"))
         self.assertTrue(SLAVE_PRIORITY_RE.match("/приоритет @slave"))
         self.assertTrue(SLAVE_PRIORITY_RE.match("!снять приоритет @slave"))
+        self.assertTrue(MAKE_SLAVE_RE.match("/сделать @user1 рабом @user2"))
+        self.assertTrue(MAKE_SLAVE_REPLY_RE.match("/сделать рабом @owner"))
 
     def test_metal_rascals_command(self):
         self.assertTrue(METAL_RASCALS_RE.match("Металлические поганцы"))

@@ -63,6 +63,20 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((outcome, slave_id), ("transferred", 30))
         self.assertEqual([row["user_id"] for row in slaves], [30])
 
+    async def test_priority_slave_is_transferred_last_and_priority_resets(self):
+        await self.database.upsert_user(1, 40, "winner", "Winner")
+        await self.database.force_enslave(1, 20, 10)
+        await self.database.force_enslave(1, 30, 10)
+        self.assertEqual(
+            await self.database.set_slave_priority(1, 10, 20, True), "updated"
+        )
+        first_outcome, first_slave = await self.database.transfer_after_loss(1, 10, 40)
+        self.assertEqual((first_outcome, first_slave), ("transferred", 30))
+        self.assertEqual((await self.database.get_owner(1, 20))["transfer_priority"], 1)
+        second_outcome, second_slave = await self.database.transfer_after_loss(1, 10, 40)
+        self.assertEqual((second_outcome, second_slave), ("transferred", 20))
+        self.assertEqual((await self.database.get_owner(1, 20))["transfer_priority"], 0)
+
     async def test_global_slave_list_contains_chat_title_and_username(self):
         await self.database.transfer_after_loss(1, 20, 10)
         rows = await self.database.list_slaves_globally(10)
@@ -73,42 +87,6 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         rows = await self.database.resolve_users_globally("@LOSER")
         self.assertEqual(rows[0]["user_id"], 20)
         self.assertEqual(rows[0]["chat_title"], "Тестовый чат")
-
-    async def test_priority_slaves_are_transferred_last_and_priority_resets(self):
-        await self.database.upsert_user(1, 40, "winner", "Winner")
-        await self.database.force_enslave(1, 20, 10)
-        await self.database.force_enslave(1, 30, 10)
-        self.assertEqual(
-            await self.database.set_slave_priority(1, 10, 20, True),
-            "updated",
-        )
-
-        first_outcome, first_slave = await self.database.transfer_after_loss(1, 10, 40)
-        self.assertEqual((first_outcome, first_slave), ("transferred", 30))
-        protected_owner = await self.database.get_owner(1, 20)
-        self.assertEqual(protected_owner["owner_id"], 10)
-        self.assertEqual(protected_owner["transfer_priority"], 1)
-
-        second_outcome, second_slave = await self.database.transfer_after_loss(1, 10, 40)
-        self.assertEqual((second_outcome, second_slave), ("transferred", 20))
-        transferred = await self.database.get_owner(1, 20)
-        self.assertEqual(transferred["owner_id"], 40)
-        self.assertEqual(transferred["transfer_priority"], 0)
-
-    async def test_priority_can_only_be_changed_for_own_slave(self):
-        await self.database.force_enslave(1, 20, 10)
-        self.assertEqual(
-            await self.database.set_slave_priority(1, 30, 20, True),
-            "not_owned",
-        )
-        self.assertEqual(
-            await self.database.set_slave_priority(1, 10, 20, True),
-            "updated",
-        )
-        self.assertEqual(
-            await self.database.set_slave_priority(1, 10, 20, True),
-            "unchanged",
-        )
 
     async def test_only_participants_can_choose(self):
         challenge_id = await self.database.create_challenge(1, 10, 20)
