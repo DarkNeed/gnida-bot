@@ -125,6 +125,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "finished")
         self.assertEqual(result["winner_id"], 10)
         self.assertEqual((await self.database.get_challenge(challenge_id))["status"], "finished")
+        stats = await self.database.game_stats_for_user(10)
+        self.assertEqual((stats["wins"], stats["losses"], stats["draws"]), (1, 0, 0))
 
     async def test_friendly_game_cannot_be_forced_or_target_newcomers(self):
         challenge_id = await self.database.create_challenge(

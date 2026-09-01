@@ -204,6 +204,10 @@ class Database:
             "challenges", "friendly", "INTEGER NOT NULL DEFAULT 0"
         )
         self._ensure_column("challenges", "inline_message_id", "TEXT")
+        self._ensure_column("challenges", "winner_id", "INTEGER")
+        self._ensure_column(
+            "challenges", "result_recorded", "INTEGER NOT NULL DEFAULT 0"
+        )
         self._connection.execute(
             """UPDATE challenges
                SET deadline=created_at + CASE
@@ -638,8 +642,10 @@ class Database:
                 winner_id = challenger_id if move_result.winner == BLACK else opponent_id
                 loser_id = opponent_id if winner_id == challenger_id else challenger_id
                 self.connection.execute(
-                    "UPDATE challenges SET status='finished' WHERE id=?",
-                    (challenge_id,),
+                    """UPDATE challenges
+                       SET status='finished', winner_id=?, result_recorded=1
+                       WHERE id=?""",
+                    (winner_id, challenge_id),
                 )
             else:
                 self.connection.execute(
@@ -764,8 +770,10 @@ class Database:
             )
             if finished:
                 self.connection.execute(
-                    "UPDATE challenges SET status='finished' WHERE id=?",
-                    (challenge_id,),
+                    """UPDATE challenges
+                       SET status='finished', winner_id=?, result_recorded=1
+                       WHERE id=?""",
+                    (winner_id, challenge_id),
                 )
             self.connection.commit()
             return {
@@ -842,6 +850,20 @@ class Database:
                 """UPDATE challenges SET status='unavailable'
                    WHERE id=? AND status IN ('active', 'deadline')""",
                 (challenge_id,),
+            )
+            self.connection.commit()
+
+    async def record_challenge_result(
+        self, challenge_id: int, winner_id: int | None
+    ) -> None:
+        """Persist a result after an RPS game (including a draw)."""
+        async with self._lock:
+            self.connection.execute(
+                """UPDATE challenges
+                   SET winner_id=?, result_recorded=1,
+                       status=CASE WHEN status='deadline' THEN 'finished' ELSE status END
+                   WHERE id=? AND status IN ('finished', 'deadline')""",
+                (winner_id, challenge_id),
             )
             self.connection.commit()
 
@@ -1200,12 +1222,16 @@ class Database:
                        COUNT(*) AS total,
                        SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active,
                        SUM(CASE WHEN status='finished' THEN 1 ELSE 0 END) AS finished,
+                       SUM(CASE WHEN result_recorded=1 AND winner_id=? THEN 1 ELSE 0 END) AS wins,
+                       SUM(CASE WHEN result_recorded=1 AND winner_id IS NOT NULL
+                                AND winner_id<>? THEN 1 ELSE 0 END) AS losses,
+                       SUM(CASE WHEN result_recorded=1 AND winner_id IS NULL THEN 1 ELSE 0 END) AS draws,
                        SUM(CASE WHEN game_type='rps' THEN 1 ELSE 0 END) AS rps,
                        SUM(CASE WHEN game_type='blackjack' THEN 1 ELSE 0 END) AS blackjack,
                        SUM(CASE WHEN game_type='checkers' THEN 1 ELSE 0 END) AS checkers
                    FROM challenges
                    WHERE challenger_id=? OR opponent_id=?""",
-                (user_id, user_id),
+                (user_id, user_id, user_id, user_id),
             ).fetchone()
 
     async def set_slave_priority(

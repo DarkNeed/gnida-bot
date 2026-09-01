@@ -824,6 +824,7 @@ def create_router(
         return (
             "<b>Статистика мини-игр</b>\n"
             f"Всего: {stats['total'] or 0} · завершено: {stats['finished'] or 0} · активно: {stats['active'] or 0}\n"
+            f"Победы: {stats['wins'] or 0} · поражения: {stats['losses'] or 0} · ничьи: {stats['draws'] or 0}\n"
             f"КНБ: {stats['rps'] or 0} · блэкджек: {stats['blackjack'] or 0} · шашки: {stats['checkers'] or 0}",
             slave_menu_back_keyboard(),
         )
@@ -1044,6 +1045,7 @@ def create_router(
         second = challenge["opponent_choice"]
         icons = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
         if first == second:
+            await database.record_challenge_result(int(challenge["id"]), None)
             await edit_challenge(
                 challenge,
                 bot,
@@ -1061,6 +1063,7 @@ def create_router(
         loser_id = int(
             challenge["opponent_id"] if first_wins else challenge["challenger_id"]
         )
+        await database.record_challenge_result(int(challenge["id"]), winner_id)
         await publish_game_win(
             challenge, bot, winner_id, loser_id, f"{icons[first]} — {icons[second]}"
         )
