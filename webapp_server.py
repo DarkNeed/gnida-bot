@@ -202,6 +202,13 @@ def create_webapp(
     async def index(_request: web.Request) -> web.FileResponse:
         return web.FileResponse(STATIC_DIR / "index.html")
 
+    async def battle_client(_request: web.Request) -> web.Response:
+        """Serve browser code without a .js filename so hosting autodetection stays on Python."""
+        return web.Response(
+            body=(STATIC_DIR / "battle-client").read_bytes(),
+            content_type="application/javascript",
+        )
+
     async def state(request: web.Request) -> web.Response:
         payload, status = await battle_payload(
             request.match_info["token"], int(request["telegram_user"]["id"])
@@ -286,6 +293,7 @@ def create_webapp(
         return _json_response(result, status)
 
     app.router.add_get("/", index)
+    app.router.add_get("/static/battle-client", battle_client)
     app.router.add_get("/api/battle/{token}", state)
     app.router.add_post("/api/battle/{token}/action", action)
     app.router.add_post("/api/battle/{token}/potion", potion)
