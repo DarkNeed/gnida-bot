@@ -27,11 +27,13 @@ from slave_battle import (
     fighter_class_from_dict,
     level_from_total_xp,
     normalize_loadout,
+    resolve_skill_action,
     resolve_turn,
     skill_from_dict,
     unlocked_skill_ids,
     use_healing_potion,
     validate_action,
+    validate_skill_action,
 )
 
 
@@ -1770,6 +1772,79 @@ class Database:
             if not battle or battle["status"] != "active" or not battle["state_json"]:
                 return {"status": "inactive"}
             state = json.loads(battle["state_json"])
+            if state.get("flow") == "sequential":
+                active_side = str(state.get("active_side", "a"))
+                phase = str(state.get("phase", "skill"))
+                fighter = state["sides"].get(active_side)
+                if not fighter or int(fighter["controller_id"]) != actor_id:
+                    return {"status": "forbidden"}
+                _classes, skills = self._fighter_catalog_locked()
+                if phase == "skill":
+                    declared = {
+                        "skill_id": action.get("skill_id"),
+                        "attack_direction": action.get("attack_direction"),
+                    }
+                    try:
+                        validation_error = validate_skill_action(state, active_side, declared, skills)
+                    except (KeyError, TypeError, ValueError):
+                        validation_error = "Некорректное действие."
+                    if validation_error:
+                        return {"status": "invalid", "error": validation_error}
+                    skill = skills[str(declared["skill_id"])]
+                    other_side = "b" if active_side == "a" else "a"
+                    if skill.hostile:
+                        state["pending_action"] = {"side": active_side, **declared}
+                        state["phase"] = "dodge"
+                        state["active_side"] = other_side
+                        self.connection.execute(
+                            "UPDATE slave_battles SET state_json=?, deadline=? WHERE id=?",
+                            (json.dumps(state), utc_timestamp() + SLAVE_BATTLE_TURN_SECONDS, battle_id),
+                        )
+                        self.connection.commit()
+                        return {"status": "awaiting_dodge", "state": state}
+                    try:
+                        state = resolve_skill_action(state, active_side, declared, skills=skills)
+                    except ValueError as error:
+                        return {"status": "invalid", "error": str(error)}
+                    state["active_side"] = other_side
+                    state["phase"] = "skill"
+                    state["pending_action"] = None
+                elif phase == "dodge":
+                    dodge_direction = action.get("dodge_direction")
+                    pending = state.get("pending_action") or {}
+                    attacker = str(pending.get("side", ""))
+                    if dodge_direction not in {"left", "right"} or attacker not in {"a", "b"}:
+                        return {"status": "invalid", "error": "Выберите направление уклонения."}
+                    try:
+                        state = resolve_skill_action(
+                            state, attacker, pending, str(dodge_direction), skills=skills
+                        )
+                    except ValueError as error:
+                        return {"status": "invalid", "error": str(error)}
+                    state["active_side"] = active_side
+                    state["phase"] = "skill"
+                    state["pending_action"] = None
+                else:
+                    return {"status": "invalid", "error": "Неизвестная фаза боя."}
+
+                if state["finished"]:
+                    winner_side = state.get("winner")
+                    winner_id = None if winner_side == "draw" else int(state["sides"][winner_side]["slave_id"])
+                    self.connection.execute(
+                        """UPDATE slave_battles SET status='finished', state_json=?,
+                           winner_slave_id=?, finished_at=?, deadline=? WHERE id=?""",
+                        (json.dumps(state), winner_id, utc_timestamp(), utc_timestamp(), battle_id),
+                    )
+                    self._reward_finished_slave_battle_locked(battle, state)
+                    status = "finished"
+                else:
+                    self.connection.execute(
+                        "UPDATE slave_battles SET state_json=?, deadline=? WHERE id=?",
+                        (json.dumps(state), utc_timestamp() + SLAVE_BATTLE_TURN_SECONDS, battle_id),
+                    )
+                    status = "resolved"
+                self.connection.commit()
+                return {"status": status, "state": state}
             allowed_sides = [
                 side_name
                 for side_name, fighter in state["sides"].items()
@@ -1999,45 +2074,80 @@ class Database:
                 return {"status": "forbidden"}
             state = json.loads(run["state_json"])
             _classes, skills = self._fighter_catalog_locked()
-            try:
-                error = validate_action(state, "a", action, skills)
-            except (KeyError, TypeError, ValueError):
-                error = "Некорректное действие."
-            if error:
-                return {"status": "invalid", "error": error}
-            try:
-                state = resolve_turn(
-                    state,
-                    {"a": action, "b": self._wasteland_ai_action_locked(state, skills)},
-                    skills=skills,
-                )
-            except ValueError as error:
-                return {"status": "invalid", "error": str(error)}
-            now = utc_timestamp()
-            if state["finished"]:
-                if state["winner"] == "a":
-                    reward = WASTELAND_BASE_XP + int(run["floor"]) * WASTELAND_FLOOR_XP
-                    self._grant_profile_xp_locked(
-                        "slave_profiles", int(run["chat_id"]), int(run["slave_id"]), reward
+            def save_state() -> dict[str, Any]:
+                now = utc_timestamp()
+                if state["finished"]:
+                    if state["winner"] == "a":
+                        reward = WASTELAND_BASE_XP + int(run["floor"]) * WASTELAND_FLOOR_XP
+                        self._grant_profile_xp_locked(
+                            "slave_profiles", int(run["chat_id"]), int(run["slave_id"]), reward
+                        )
+                        status = "victory"
+                    else:
+                        reward = 0
+                        status = "defeated"
+                    state.setdefault("wasteland", {})["reward_xp"] = reward
+                    self.connection.execute(
+                        """UPDATE wasteland_runs SET status=?, state_json=?, updated_at=?,
+                               finished_at=? WHERE id=?""",
+                        (status, json.dumps(state), now, now, run_id),
                     )
-                    status = "victory"
-                else:
-                    reward = 0
-                    status = "defeated"
-                state.setdefault("wasteland", {})["reward_xp"] = reward
+                    self.connection.commit()
+                    return {"status": status, "state": state, "reward_xp": reward}
                 self.connection.execute(
-                    """UPDATE wasteland_runs SET status=?, state_json=?, updated_at=?,
-                           finished_at=? WHERE id=?""",
-                    (status, json.dumps(state), now, now, run_id),
+                    "UPDATE wasteland_runs SET state_json=?, updated_at=? WHERE id=?",
+                    (json.dumps(state), now, run_id),
                 )
                 self.connection.commit()
-                return {"status": status, "state": state, "reward_xp": reward}
-            self.connection.execute(
-                "UPDATE wasteland_runs SET state_json=?, updated_at=? WHERE id=?",
-                (json.dumps(state), now, run_id),
-            )
-            self.connection.commit()
-            return {"status": "resolved", "state": state}
+                return {"status": "awaiting_dodge" if state.get("phase") == "dodge" else "resolved", "state": state}
+
+            if state.get("flow") != "sequential":
+                return {"status": "invalid", "error": "Перезапустите поход через меню."}
+            phase = str(state.get("phase", "skill"))
+            try:
+                if phase == "skill":
+                    declared = {
+                        "skill_id": action.get("skill_id"),
+                        "attack_direction": action.get("attack_direction"),
+                    }
+                    error = validate_skill_action(state, "a", declared, skills)
+                    if error:
+                        return {"status": "invalid", "error": error}
+                    player_skill = skills[str(declared["skill_id"])]
+                    state = resolve_skill_action(
+                        state,
+                        "a",
+                        declared,
+                        random.choice(["left", "right"]) if player_skill.hostile else None,
+                        skills=skills,
+                    )
+                    if not state["finished"]:
+                        ai_action = self._wasteland_ai_action_locked(state, skills)
+                        ai_skill = skills[str(ai_action["skill_id"])]
+                        if ai_skill.hostile:
+                            state["pending_action"] = {"side": "b", **ai_action}
+                            state["phase"] = "dodge"
+                            state["active_side"] = "a"
+                        else:
+                            state = resolve_skill_action(state, "b", ai_action, skills=skills)
+                            state["phase"] = "skill"
+                            state["active_side"] = "a"
+                elif phase == "dodge":
+                    dodge_direction = action.get("dodge_direction")
+                    pending = state.get("pending_action") or {}
+                    if dodge_direction not in {"left", "right"} or pending.get("side") != "b":
+                        return {"status": "invalid", "error": "Выберите направление уклонения."}
+                    state = resolve_skill_action(
+                        state, "b", pending, str(dodge_direction), skills=skills
+                    )
+                    state["pending_action"] = None
+                    state["phase"] = "skill"
+                    state["active_side"] = "a"
+                else:
+                    return {"status": "invalid", "error": "Неизвестная фаза боя."}
+            except (KeyError, TypeError, ValueError) as error:
+                return {"status": "invalid", "error": str(error) or "Некорректное действие."}
+            return save_state()
 
     async def advance_wasteland_run(self, run_id: int, owner_id: int) -> dict[str, Any]:
         async with self._lock:

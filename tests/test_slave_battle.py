@@ -68,7 +68,9 @@ class SlaveBattleDatabaseTests(unittest.IsolatedAsyncioTestCase):
         waiting = await self.database.submit_slave_battle_action(
             battle_id, 20, {"skill_id": "bum_punch", "attack_direction": "left", "dodge_direction": "left"}
         )
-        self.assertEqual(waiting["status"], "waiting")
+        self.assertEqual(waiting["status"], "awaiting_dodge")
+        self.assertEqual(waiting["state"]["phase"], "dodge")
+        self.assertEqual(waiting["state"]["active_side"], "b")
         completed = await self.database.submit_slave_battle_action(
             battle_id, 30, {"skill_id": "bum_punch", "attack_direction": "right", "dodge_direction": "right"}
         )
@@ -97,7 +99,7 @@ class SlaveBattleDatabaseTests(unittest.IsolatedAsyncioTestCase):
         first = await self.database.submit_slave_battle_action(
             battle_id, 10, {"side": "a", "skill_id": "bum_punch", "attack_direction": "left", "dodge_direction": "left"}
         )
-        self.assertEqual(first["status"], "waiting")
+        self.assertEqual(first["status"], "awaiting_dodge")
         second = await self.database.submit_slave_battle_action(
             battle_id, 10, {"side": "b", "skill_id": "bum_punch", "attack_direction": "right", "dodge_direction": "right"}
         )
@@ -164,6 +166,16 @@ class SlaveBattleDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reward_xp"], 7)
         profile = await self.database.get_slave_profile(1, 20)
         self.assertEqual(profile["xp"], 7)
+
+    async def test_wasteland_asks_for_dodge_after_the_ai_declares_a_move(self):
+        _status, run = await self.database.start_wasteland_run(1, 10, 20)
+        result = await self.database.submit_wasteland_action(
+            int(run["id"]), 10,
+            {"skill_id": "bum_punch", "attack_direction": "left"},
+        )
+        self.assertEqual(result["status"], "awaiting_dodge")
+        self.assertEqual(result["state"]["phase"], "dodge")
+        self.assertEqual(result["state"]["pending_action"]["side"], "b")
 
 
 class WebAppAuthTests(unittest.TestCase):

@@ -546,7 +546,19 @@ def create_battle_state(
             "cooldowns": {},
             "potion_used": False,
         }
-    return {"turn": 1, "sides": sides, "log": [], "winner": None, "finished": False}
+    return {
+        "turn": 1,
+        "sides": sides,
+        "log": [],
+        "winner": None,
+        "finished": False,
+        # New battles use a Pokémon-like sequence: one fighter picks a move,
+        # then the opponent chooses where to dodge that move.
+        "flow": "sequential",
+        "phase": "skill",
+        "active_side": "a",
+        "pending_action": None,
+    }
 
 
 def _effect_sum(fighter: dict[str, Any], kind: str) -> float:
@@ -644,6 +656,109 @@ def validate_action(
     if skill.hostile and action.get("attack_direction") not in {"left", "right"}:
         return "Выберите направление атаки."
     return None
+
+
+def validate_skill_action(
+    state: dict[str, Any],
+    side: str,
+    action: dict[str, Any],
+    skills: dict[str, Skill] | None = None,
+) -> str | None:
+    """Validate a move before the defender chooses its dodge direction."""
+    catalog = skills or BUILTIN_SKILLS
+    fighter = state["sides"].get(side)
+    if not fighter or state.get("finished"):
+        return "Бой уже завершён."
+    skill_id = str(action.get("skill_id", ""))
+    if skill_id not in fighter["loadout"] or skill_id not in catalog:
+        return "Этот навык не экипирован."
+    skill = catalog[skill_id]
+    if fighter["resource"] < skill.cost:
+        return f"Недостаточно ресурса для навыка «{skill.name}»."
+    if int(fighter["cooldowns"].get(skill_id, 0)) > 0:
+        return f"Навык «{skill.name}» ещё перезаряжается."
+    if skill.hostile and action.get("attack_direction") not in {"left", "right"}:
+        return "Выберите направление атаки."
+    return None
+
+
+def resolve_skill_action(
+    state: dict[str, Any],
+    side: str,
+    action: dict[str, Any],
+    dodge_direction: str | None = None,
+    rng: random.Random | None = None,
+    skills: dict[str, Skill] | None = None,
+) -> dict[str, Any]:
+    """Resolve one declared move and leave the next move to the other fighter."""
+    catalog = skills or BUILTIN_SKILLS
+    rng = rng or random.Random()
+    error = validate_skill_action(state, side, action, catalog)
+    if error:
+        raise ValueError(error)
+    other_side = "b" if side == "a" else "a"
+    fighter = state["sides"][side]
+    target = state["sides"][other_side]
+    skill = catalog[str(action["skill_id"])]
+    if skill.hostile and dodge_direction not in {"left", "right"}:
+        raise ValueError("Выберите направление уклонения.")
+
+    event: str
+    pending_effects: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    if fighter["hp"] <= 0:
+        event = f"{side}: не может действовать"
+    elif "stun" in fighter["effects"]:
+        event = f"{side}: пропускает действие из-за ошеломления"
+    else:
+        fighter["resource"] = max(0, fighter["resource"] - skill.cost)
+        if skill.cooldown:
+            fighter["cooldowns"][skill.skill_id] = skill.cooldown + 1
+        hit = True
+        if skill.hostile:
+            hit_chance = _skill_hit_chance(
+                skill, fighter, target, str(action["attack_direction"]), str(dodge_direction)
+            )
+            hit = rng.random() * 100 < hit_chance
+        if not hit:
+            event = f"{side}: {skill.name} — промах"
+        else:
+            dealt = 0
+            if skill.damage_type:
+                dealt = _damage(skill, fighter, target, rng)
+                target["hp"] = max(0, target["hp"] - dealt)
+            for configured in skill.effects:
+                recipient = fighter if configured.get("target") == "self" else target
+                if rng.random() > float(configured.get("chance", 1)):
+                    continue
+                kind = str(configured["kind"])
+                if kind == "resource":
+                    recipient["resource"] = min(
+                        recipient["stats"]["resource_max"],
+                        max(0, recipient["resource"] + float(configured["value"])),
+                    )
+                elif kind == "stun":
+                    if "stun_immunity" not in recipient["effects"]:
+                        pending_effects.append((recipient, {**configured, "turns": 1}))
+                        pending_effects.append((recipient, {"id": "stun_immunity", "kind": "immunity", "value": 1, "turns": 3}))
+                elif int(configured.get("turns", 0)) > 0:
+                    pending_effects.append((recipient, dict(configured)))
+            event = f"{side}: {skill.name}" + (f", урон {dealt}" if dealt else "")
+
+    _tick_existing_effects(state)
+    for recipient, configured in pending_effects:
+        recipient["effects"][str(configured["id"])] = configured
+    for item in state["sides"].values():
+        item["resource"] = min(item["stats"]["resource_max"], item["resource"] + item["stats"]["resource_regen"])
+    state["log"] = (state.get("log", []) + [{"turn": state["turn"], "events": [event]}])[-12:]
+    alive = [item for item in ("a", "b") if state["sides"][item]["hp"] > 0]
+    if len(alive) == 1:
+        state["winner"] = alive[0]
+        state["finished"] = True
+    elif not alive:
+        state["winner"] = "draw"
+        state["finished"] = True
+    state["turn"] += 1
+    return state
 
 
 def resolve_turn(

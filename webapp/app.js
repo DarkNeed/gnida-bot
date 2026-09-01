@@ -1,6 +1,8 @@
 const tg = window.Telegram?.WebApp;
 tg?.ready();
 tg?.expand();
+tg?.setHeaderColor?.('#101827');
+setTimeout(() => tg?.requestFullscreen?.(), 120);
 
 const params = new URLSearchParams(location.search);
 const wastelandToken = params.get('wasteland');
@@ -10,14 +12,11 @@ const apiRoot = isWasteland ? '/api/wasteland' : '/api/battle';
 const root = document.getElementById('app');
 let payload = null;
 let selectedSkill = null;
-let controlledSide = null;
+let flash = '';
+let flashTimer = null;
 
-const headers = () => ({
-  'Content-Type': 'application/json',
-  'X-Telegram-Init-Data': tg?.initData || ''
-});
-
-const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const headers = () => ({'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg?.initData || ''});
+const escapeHtml = value => String(value ?? '').replace(/[&<'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const pct = (value, max) => Math.max(0, Math.min(100, max ? value / max * 100 : 0));
 
 async function request(path, options = {}) {
@@ -27,112 +26,81 @@ async function request(path, options = {}) {
   return data;
 }
 
-function fighterCard(side, enemy = false) {
+function ownSide(battle) {
+  const active = battle.state?.active_side;
+  if ((battle.controller_sides || []).includes(active)) return active;
+  return battle.controller_sides?.[0] || battle.owner_sides?.[0] || 'a';
+}
+
+function fighterCard(side, position) {
   const battle = payload.battle;
   const fighter = battle.state.sides[side];
   const user = battle.fighters[side];
-  const cls = payload.classes[fighter.class_id] || {name:fighter.class_id,resource_name:'Выносливость'};
-  const effects = Object.values(fighter.effects || {}).map(e => `${e.id} (${e.turns})`).join(' · ');
-  return `<section class="fighter ${enemy ? 'enemy' : ''}">
-    <div class="fighter-head"><div class="avatar">🧍</div><div><h2>${escapeHtml(user.name)}</h2><div class="class-name">${escapeHtml(cls.name)} · ур. ${fighter.level}${fighter.controlled ? ' · контроль −20%' : ''}</div></div></div>
-    <div class="bar hp"><span style="width:${pct(fighter.hp,fighter.stats.max_hp)}%"></span></div>
-    <div class="bar-label"><span>HP</span><span>${Math.round(fighter.hp)} / ${Math.round(fighter.stats.max_hp)}</span></div>
-    <div class="bar mana"><span style="width:${pct(fighter.resource,fighter.stats.resource_max)}%"></span></div>
-    <div class="bar-label"><span>${escapeHtml(cls.resource_name)}</span><span>${Math.round(fighter.resource)} / ${Math.round(fighter.stats.resource_max)}</span></div>
-    <div class="effects">${escapeHtml(effects)}</div>
-  </section>`;
+  const cls = payload.classes[fighter.class_id] || {name:fighter.class_id, resource_name:'Выносливость'};
+  const effects = Object.values(fighter.effects || {}).map(effect => `${effect.id} (${effect.turns})`).join(' · ');
+  return `<section class="combatant ${position}"><div class="sprite ${position === 'enemy' ? 'enemy-sprite' : ''}"><span>${position === 'enemy' ? '👤' : '🧍'}</span></div><div class="status-card"><div class="status-title"><strong>${escapeHtml(user.name)}</strong><b>Lv.${fighter.level}</b></div><div class="class-name">${escapeHtml(cls.name)}${fighter.controlled ? ' · контроль −20%' : ''}</div><div class="hp-line"><span>HP</span><div class="meter hp"><i style="width:${pct(fighter.hp, fighter.stats.max_hp)}%"></i></div><em>${Math.round(fighter.hp)}/${Math.round(fighter.stats.max_hp)}</em></div><div class="hp-line resource"><span>${escapeHtml(cls.resource_name)}</span><div class="meter resource-meter"><i style="width:${pct(fighter.resource, fighter.stats.resource_max)}%"></i></div><em>${Math.round(fighter.resource)}</em></div><div class="effects">${escapeHtml(effects)}</div></div></section>`;
 }
 
-function battleLog() {
-  const entries = (payload.battle.state.log || []).slice().reverse();
-  return entries.map(entry => `<div><b>Ход ${entry.turn}:</b> ${entry.events.map(escapeHtml).join(' · ')}</div>`).join('') || '<div>Бой только начался.</div>';
+function recentLog() {
+  const entries = (payload.battle.state.log || []).slice(-4).reverse();
+  return entries.map(entry => `<div><b>Ход ${entry.turn}</b> ${entry.events.map(escapeHtml).join(' · ')}</div>`).join('') || '<div>Ожидание первого действия.</div>';
 }
 
-function controls() {
+function actionPanel() {
   const battle = payload.battle;
-  const sides = battle.controller_sides || [];
-  if (!controlledSide || !sides.includes(controlledSide)) controlledSide = sides[0] || null;
-  const side = controlledSide;
-  // Зелья — предмет владельца в PvP. В пустоши пока только базовый бой без предметов.
-  const owner = !isWasteland && battle.owner_sides.length > 0;
-  if (!side) {
-    return `<section class="panel"><div class="notice">Вы наблюдаете за боем.</div>${owner ? '<button class="item" id="potion">🧪 Использовать Зелье</button>' : ''}</section>`;
+  const state = battle.state;
+  const active = state.active_side;
+  const controlled = (battle.controller_sides || []).includes(active);
+  const fighter = state.sides[active];
+  const who = escapeHtml(battle.fighters[active].name);
+  if (state.phase === 'dodge') {
+    const pending = state.pending_action || {};
+    const skill = payload.skills[pending.skill_id];
+    const text = skill ? `${escapeHtml(battle.fighters[pending.side]?.name || 'Противник')} использует «${escapeHtml(skill.name)}»!` : 'Противник атакует!';
+    if (!controlled) return `<section class="command-box"><p>${text}</p><small>Ожидание уклонения соперника…</small></section>`;
+    return `<section class="command-box"><p>${text}</p><b>Куда уклоняться?</b><div class="direction-row"><button data-dodge="left">◀ Влево</button><button data-dodge="right">Вправо ▶</button></div></section>`;
   }
-  const fighter = battle.state.sides[side];
+  if (!controlled) return `<section class="command-box"><p>Ходит ${who}.</p><small>Ожидание выбора навыка…</small></section>`;
   const skills = fighter.loadout.map(id => payload.skills[id]).filter(Boolean);
-  if (!selectedSkill || !skills.some(skill => skill.id === selectedSkill)) selectedSkill = skills[0]?.id;
-  const sidePicker = sides.length > 1 ? `<div class="side-picker">${sides.map(item => `<button class="item ${item === side ? '' : 'secondary'}" data-side="${item}">Ход за ${escapeHtml(battle.fighters[item].name)}</button>`).join('')}</div>` : '';
-  return `<section class="panel">${sidePicker}
-    <div class="skills">${skills.map(skill => `<button class="skill ${selectedSkill === skill.id ? '' : 'secondary'}" data-skill="${skill.id}" ${fighter.cooldowns[skill.id] || fighter.resource < skill.cost ? 'disabled' : ''}>${escapeHtml(skill.name)}<br><small>${skill.cost} ресурса${fighter.cooldowns[skill.id] ? ` · КД ${fighter.cooldowns[skill.id]}` : ''}</small></button>`).join('')}</div>
-    <div class="directions">
-      <div class="direction-box"><strong>Атака</strong><label><input type="radio" name="attack" value="left" checked> слева</label><label><input type="radio" name="attack" value="right"> справа</label></div>
-      <div class="direction-box"><strong>Уклонение</strong><label><input type="radio" name="dodge" value="left" checked> от левого</label><label><input type="radio" name="dodge" value="right"> от правого</label></div>
-    </div>
-    <button class="submit" id="submit">Подтвердить действие</button>
-    ${owner ? '<button class="item" id="potion">🧪 Использовать Зелье</button>' : ''}
-  </section>`;
+  if (!selectedSkill || !skills.some(skill => skill.id === selectedSkill)) selectedSkill = null;
+  if (selectedSkill) {
+    const skill = payload.skills[selectedSkill];
+    if (!skill.hostile) return `<section class="command-box"><p>Использовать «${escapeHtml(skill.name)}»?</p><div class="direction-row"><button id="use-support">Использовать</button><button class="secondary" id="cancel-skill">Назад</button></div></section>`;
+    return `<section class="command-box"><p>«${escapeHtml(skill.name)}» — откуда бьём?</p><div class="direction-row"><button data-attack="left">◀ Слева</button><button data-attack="right">Справа ▶</button></div><button class="back" id="cancel-skill">← К навыкам</button></section>`;
+  }
+  return `<section class="command-box"><p>Что сделает ${who}?</p><div class="skill-grid">${skills.map(skill => `<button class="skill" data-skill="${skill.id}" ${fighter.cooldowns[skill.id] || fighter.resource < skill.cost ? 'disabled' : ''}><strong>${escapeHtml(skill.name)}</strong><small>${skill.cost} ресурса${fighter.cooldowns[skill.id] ? ` · КД ${fighter.cooldowns[skill.id]}` : ''}</small></button>`).join('')}</div></section>`;
 }
 
 function render() {
   if (!payload?.battle) return;
   const battle = payload.battle;
-  if (!battle.state) {
-    root.innerHTML = '<div class="notice">Загрузка состояния…</div>';
-    return;
-  }
+  if (!battle.state) { root.innerHTML = '<div class="notice">Загрузка боя…</div>'; return; }
   if (isWasteland && battle.status === 'victory') {
-    const own = 'a';
     const reward = battle.state.wasteland?.reward_xp || 0;
-    root.innerHTML = `<div class="arena"><header class="headline"><h1>🏜 Пустошь · этаж ${battle.floor}</h1><p>Оборванец побеждён. Получено: ${reward} XP.</p></header>${fighterCard('b',true)}${fighterCard(own)}<section class="panel"><button class="submit" id="next-floor">Идти на следующий этаж</button></section><section class="panel log">${battleLog()}</section></div>`;
+    root.innerHTML = `<div class="notice">🏜 Этаж ${battle.floor} пройден. Получено ${reward} XP.<button id="next-floor">Идти дальше</button></div>`;
     document.getElementById('next-floor')?.addEventListener('click', nextFloor);
     return;
   }
-  if (isWasteland && battle.status === 'defeated') {
-    root.innerHTML = `<div class="notice">🏜 Поход завершён на этаже ${battle.floor}. Штрафов пока нет — можно начать новый поход через /menu.</div>`;
-    return;
-  }
-  if (battle.status !== 'active') {
-    root.innerHTML = `<div class="notice">${battle.status === 'finished' ? 'Битва завершена.' : 'Битва ещё не началась.'}</div>`;
-    return;
-  }
-  const own = battle.controller_side || battle.owner_sides[0] || 'a';
+  if (isWasteland && battle.status === 'defeated') { root.innerHTML = `<div class="notice">🏜 Поход завершён на этаже ${battle.floor}. Штрафов нет — новый поход доступен в /menu.</div>`; return; }
+  if (battle.status !== 'active') { root.innerHTML = `<div class="notice">${battle.status === 'finished' ? 'Битва завершена.' : 'Битва ещё не началась.'}</div>`; return; }
+  const own = ownSide(battle);
   const enemy = own === 'a' ? 'b' : 'a';
-  const heading = isWasteland ? `🏜 Пустошь · этаж ${battle.floor}` : `Битва рабов #${battle.id}`;
-  root.innerHTML = `<div class="arena"><header class="headline"><h1>${heading}</h1><p>Ход ${battle.state.turn}</p></header>${fighterCard(enemy,true)}${fighterCard(own)}${controls()}<section class="panel log">${battleLog()}</section></div>`;
-  document.querySelectorAll('.skill').forEach(button => button.addEventListener('click', () => { selectedSkill = button.dataset.skill; render(); }));
-  document.querySelectorAll('[data-side]').forEach(button => button.addEventListener('click', () => { controlledSide = button.dataset.side; selectedSkill = null; render(); }));
-  document.getElementById('submit')?.addEventListener('click', submitAction);
+  const title = isWasteland ? `🏜 Пустошь · этаж ${battle.floor}` : '⚔️ Битва рабов';
+  const potion = !isWasteland && battle.owner_sides?.length ? '<button class="potion" id="potion">🧪 Использовать зелье</button>' : '';
+  root.innerHTML = `<div class="arena"><header><div><h1>${title}</h1><small>Ход ${battle.state.turn}</small></div>${tg?.requestFullscreen ? '<button class="fullscreen" id="fullscreen" title="Развернуть">⛶</button>' : ''}</header><section class="battlefield">${fighterCard(enemy, 'enemy')}${fighterCard(own, 'ally')}</section>${flash ? `<div class="battle-flash">${escapeHtml(flash)}</div>` : ''}${actionPanel()}${potion}<section class="battle-log">${recentLog()}</section></div>`;
+  document.getElementById('fullscreen')?.addEventListener('click', () => tg?.requestFullscreen?.());
+  document.querySelectorAll('[data-skill]').forEach(button => button.addEventListener('click', () => { selectedSkill = button.dataset.skill; render(); }));
+  document.querySelectorAll('[data-attack]').forEach(button => button.addEventListener('click', () => submitAction({skill_id:selectedSkill, attack_direction:button.dataset.attack})));
+  document.querySelectorAll('[data-dodge]').forEach(button => button.addEventListener('click', () => submitAction({dodge_direction:button.dataset.dodge})));
+  document.getElementById('use-support')?.addEventListener('click', () => submitAction({skill_id:selectedSkill}));
+  document.getElementById('cancel-skill')?.addEventListener('click', () => { selectedSkill = null; render(); });
   document.getElementById('potion')?.addEventListener('click', usePotion);
 }
 
-async function load() {
-  if (!token) { root.innerHTML = '<div class="error">Не указан ID битвы.</div>'; return; }
-  try { payload = await request(`${apiRoot}/${encodeURIComponent(token)}`); render(); }
-  catch (error) { root.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`; }
-}
-
-async function submitAction() {
-  const button = document.getElementById('submit');
-  button.disabled = true;
-  try {
-    const skill = payload.skills[selectedSkill];
-    const attack = document.querySelector('input[name="attack"]:checked')?.value || 'left';
-    const dodge = document.querySelector('input[name="dodge"]:checked')?.value || 'left';
-    const result = await request(`${apiRoot}/${encodeURIComponent(token)}/action`, {method:'POST',body:JSON.stringify({side:controlledSide,skill_id:selectedSkill,attack_direction:skill?.hostile ? attack : null,dodge_direction:dodge})});
-    tg?.HapticFeedback?.notificationOccurred(result.status === 'finished' ? 'success' : 'warning');
-    await load();
-  } catch (error) { tg?.showAlert?.(error.message); button.disabled = false; }
-}
-
-async function usePotion() {
-  try { const result = await request(`/api/battle/${encodeURIComponent(token)}/potion`, {method:'POST',body:JSON.stringify({side:controlledSide})}); tg?.showAlert?.(`Восстановлено HP: ${result.healed}`); await load(); }
-  catch (error) { tg?.showAlert?.(error.message); }
-}
-
-async function nextFloor() {
-  try { await request(`${apiRoot}/${encodeURIComponent(token)}/next`, {method:'POST',body:'{}'}); await load(); }
-  catch (error) { tg?.showAlert?.(error.message); }
-}
-
+function showFlash(value) { flash = value; clearTimeout(flashTimer); flashTimer = setTimeout(() => { flash = ''; render(); }, 1800); }
+async function load() { if (!token) { root.innerHTML = '<div class="error">Не указан ID битвы.</div>'; return; } try { payload = await request(`${apiRoot}/${encodeURIComponent(token)}`); render(); } catch (error) { root.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`; } }
+async function submitAction(action) { try { const result = await request(`${apiRoot}/${encodeURIComponent(token)}/action`, {method:'POST', body:JSON.stringify(action)}); selectedSkill = null; if (result.state?.log?.length) showFlash(result.state.log.at(-1).events.join(' · ')); tg?.HapticFeedback?.impactOccurred?.('medium'); await load(); } catch (error) { tg?.showAlert?.(error.message); } }
+async function usePotion() { try { const result = await request(`/api/battle/${encodeURIComponent(token)}/potion`, {method:'POST', body:JSON.stringify({side:ownSide(payload.battle)})}); showFlash(`Восстановлено ${result.healed} HP`); await load(); } catch (error) { tg?.showAlert?.(error.message); } }
+async function nextFloor() { try { await request(`${apiRoot}/${encodeURIComponent(token)}/next`, {method:'POST', body:'{}'}); await load(); } catch (error) { tg?.showAlert?.(error.message); } }
 load();
 setInterval(load, 2500);
