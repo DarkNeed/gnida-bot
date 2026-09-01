@@ -1,3 +1,4 @@
+// Client code only: served by Python from webapp_server.py.
 const tg = window.Telegram?.WebApp;
 tg?.ready();
 tg?.expand();
