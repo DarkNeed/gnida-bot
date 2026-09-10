@@ -2204,7 +2204,10 @@ def create_router(
             if not slave:
                 return
             slave_id, slave_name = slave
-        recipient = await resolve_user_token(message, database, recipient_token)
+        if recipient_token.casefold() in {"мне", "себе"}:
+            recipient = (message.from_user.id, display_name(message.from_user))
+        else:
+            recipient = await resolve_user_token(message, database, recipient_token)
         if not recipient:
             return
         recipient_id, recipient_name = recipient

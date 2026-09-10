@@ -978,8 +978,6 @@ class Database:
         async with self._lock:
             if slave_id == new_owner_id:
                 return "self"
-            if current_owner_id == new_owner_id:
-                return "same_owner"
             owned = self.connection.execute(
                 """SELECT 1 FROM ownership
                    WHERE chat_id=? AND slave_id=? AND owner_id=?""",
@@ -987,6 +985,8 @@ class Database:
             ).fetchone()
             if not owned:
                 return "not_owned"
+            if current_owner_id == new_owner_id:
+                return "same_owner"
             recipient = self.connection.execute(
                 "SELECT username FROM users WHERE chat_id=? AND user_id=?",
                 (chat_id, new_owner_id),

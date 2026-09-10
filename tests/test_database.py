@@ -213,6 +213,11 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         result = await self.database.transfer_slave(1, 10, 30, 20)
         self.assertEqual(result, "recipient_is_slave")
 
+    async def test_cannot_transfer_someone_elses_slave_to_yourself(self):
+        await self.database.force_enslave(1, 30, 20)
+        result = await self.database.transfer_slave(1, 10, 30, 10)
+        self.assertEqual(result, "not_owned")
+
     async def test_pirojok_cannot_receive_slaves(self):
         await self.database.upsert_user(
             1, 40, "pirojoksostajem", "Пирожок с остаже́м"
