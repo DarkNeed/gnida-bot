@@ -3178,8 +3178,12 @@ def create_router(
         if not joke_available(message.chat.id, "gnida_meow_audio"):
             return
         try:
-            await message.answer_voice(FSInputFile(MEOW_AUDIO_PATH))
-        except (FileNotFoundError, TelegramBadRequest, TelegramForbiddenError) as error:
+            # The supplied OGG contains Vorbis, not Opus. Telegram accepts it as an
+            # ordinary audio track but rejects it as a voice message.
+            await message.answer_audio(
+                FSInputFile(MEOW_AUDIO_PATH), title="Мяу", performer="Гнида-бот"
+            )
+        except (FileNotFoundError, TelegramAPIError) as error:
             logging.getLogger(__name__).warning("Could not send meow audio: %s", error)
 
     @router.message(text_or_caption_regexp(BASEMENT_RE))
