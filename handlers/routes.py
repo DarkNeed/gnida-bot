@@ -60,7 +60,19 @@ HEAVENLY_PUNISHMENT_HOURS = 100
 PISKA_MUTE_SECONDS = 24 * 60 * 60
 CAPTCHA_TIMEOUT_SECONDS = 30
 CAPTCHA_MAX_ATTEMPTS = 3
-CAPTCHA_EMOJIS = ("🐸", "🍉", "🚲", "🦊", "🎲", "🌵", "🪁", "🍩", "🦖", "🎈")
+CAPTCHA_EMOJI_NAMES = {
+    "🐸": "лягушку",
+    "🍉": "арбуз",
+    "🚲": "велосипед",
+    "🦊": "лису",
+    "🎲": "кубик",
+    "🌵": "кактус",
+    "🪁": "воздушного змея",
+    "🍩": "пончик",
+    "🦖": "динозавра",
+    "🎈": "воздушный шар",
+}
+CAPTCHA_EMOJIS = tuple(CAPTCHA_EMOJI_NAMES)
 MOSCOW_TZ = timezone(timedelta(hours=3), name="MSK")
 DAILY_GROUP_MESSAGES = (
     (0, 0, "Спокойной ночи гниды"),
@@ -736,6 +748,7 @@ def create_router(
     daily_message_tasks: set[asyncio.Task[None]] = set()
     recent_safebooru_ids: dict[int, list[int]] = {}
     challenge_edit_lock = asyncio.Lock()
+    checkers_render_lock = asyncio.Lock()
     last_challenge_edit_at = 0.0
 
     def slave_menu_keyboard() -> InlineKeyboardMarkup:
@@ -1078,6 +1091,30 @@ def create_router(
             )
             return False
 
+    async def render_checkers(challenge_id: int, bot: Bot) -> bool:
+        """Render only the newest persisted checker position.
+
+        Callbacks can arrive almost simultaneously. Rendering from a snapshot taken
+        before another callback finishes can otherwise put an old turn back on screen.
+        """
+        async with checkers_render_lock:
+            challenge = await database.get_challenge(challenge_id)
+            if (
+                not challenge
+                or challenge["status"] != "active"
+                or challenge["game_type"] != "checkers"
+            ):
+                return False
+            game = await database.get_checkers_game(challenge_id)
+            if not game:
+                return False
+            return await edit_challenge(
+                challenge,
+                bot,
+                await checkers_text(database, challenge, game),
+                reply_markup=checkers_keyboard(challenge_id, challenge, game),
+            )
+
     async def publish_game_win(
         challenge, bot: Bot, winner_id: int, loser_id: int, heading: str
     ) -> None:
@@ -1349,7 +1386,7 @@ def create_router(
                     utc_timestamp() + CAPTCHA_TIMEOUT_SECONDS,
                 )
                 sent = await message.answer(
-                    f"Проверка: нажми на {correct_emoji}",
+                    f"Проверка: нажми на {CAPTCHA_EMOJI_NAMES[correct_emoji]}",
                     reply_markup=captcha_keyboard(captcha_id, correct_emoji),
                 )
                 await database.set_captcha_message(captcha_id, sent.message_id)
@@ -2912,6 +2949,7 @@ def create_router(
                 return
             loser_id = callback.from_user.id
             winner_id = next(user_id for user_id in participant_ids if user_id != loser_id)
+            await database.record_challenge_result(challenge_id, winner_id)
             await callback.answer("Вы сдались")
             await publish_game_win(
                 challenge,
@@ -2954,8 +2992,6 @@ def create_router(
             )
             return
 
-        updated_challenge = await database.get_challenge(challenge_id)
-        updated_game = await database.get_checkers_game(challenge_id)
         if result["status"] == "selected":
             answer = "Шашка выбрана" if result["selected_square"] is not None else "Выбор снят"
         elif result.get("continuation"):
@@ -2963,14 +2999,7 @@ def create_router(
         else:
             answer = "Ход выполнен"
         await callback.answer(answer)
-        await edit_challenge(
-            updated_challenge,
-            bot,
-            await checkers_text(database, updated_challenge, updated_game),
-            reply_markup=checkers_keyboard(
-                challenge_id, updated_challenge, updated_game
-            ),
-        )
+        await render_checkers(challenge_id, bot)
 
     @router.message(text_or_caption_regexp(TOP_RE))
     async def top_owners(message: Message) -> None:

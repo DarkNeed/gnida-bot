@@ -128,6 +128,15 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         stats = await self.database.game_stats_for_user(10)
         self.assertEqual((stats["wins"], stats["losses"], stats["draws"]), (1, 0, 0))
 
+    async def test_recorded_resignation_counts_as_a_loss_and_win(self):
+        challenge_id = await self.database.create_challenge(1, 10, 20)
+        self.assertTrue(await self.database.finish_challenge(challenge_id))
+        await self.database.record_challenge_result(challenge_id, 20)
+        challenger_stats = await self.database.game_stats_for_user(10)
+        opponent_stats = await self.database.game_stats_for_user(20)
+        self.assertEqual((challenger_stats["wins"], challenger_stats["losses"]), (0, 1))
+        self.assertEqual((opponent_stats["wins"], opponent_stats["losses"]), (1, 0))
+
     async def test_friendly_game_cannot_be_forced_or_target_newcomers(self):
         challenge_id = await self.database.create_challenge(
             1,
