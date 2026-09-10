@@ -154,6 +154,7 @@ class Database:
                 user_id INTEGER NOT NULL,
                 correct_emoji TEXT NOT NULL,
                 message_id INTEGER,
+                join_message_id INTEGER,
                 attempts INTEGER NOT NULL DEFAULT 0,
                 deadline INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
@@ -205,6 +206,7 @@ class Database:
         self._ensure_column(
             "ownership", "transfer_priority", "INTEGER NOT NULL DEFAULT 0"
         )
+        self._ensure_column("captchas", "join_message_id", "INTEGER")
         self._ensure_column(
             "challenges", "forced", "INTEGER NOT NULL DEFAULT 0"
         )
@@ -1416,6 +1418,16 @@ class Database:
         async with self._lock:
             self.connection.execute(
                 "UPDATE captchas SET message_id=? WHERE id=?", (message_id, captcha_id)
+            )
+            self.connection.commit()
+
+    async def set_captcha_join_message(
+        self, captcha_id: int, message_id: int
+    ) -> None:
+        async with self._lock:
+            self.connection.execute(
+                "UPDATE captchas SET join_message_id=? WHERE id=?",
+                (message_id, captcha_id),
             )
             self.connection.commit()
 

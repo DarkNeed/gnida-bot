@@ -866,6 +866,19 @@ def create_router(
                 "Could not delete captcha %s: %s", captcha["id"], error
             )
 
+    async def delete_join_message(captcha, bot: Bot) -> None:
+        """Remove Telegram's service message only when the captcha was not passed."""
+        if not captcha["join_message_id"]:
+            return
+        try:
+            await bot.delete_message(
+                int(captcha["chat_id"]), int(captcha["join_message_id"])
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            logging.getLogger(__name__).warning(
+                "Could not delete join message for captcha %s: %s", captcha["id"], error
+            )
+
     async def remove_captcha_user(captcha, bot: Bot, reason: str) -> None:
         chat_id = int(captcha["chat_id"])
         user_id = int(captcha["user_id"])
@@ -879,6 +892,7 @@ def create_router(
                 "Could not remove captcha user %s: %s", user_id, error
             )
         await delete_captcha_message(captcha, bot)
+        await delete_join_message(captcha, bot)
 
     async def enforce_captcha(captcha_id: int, bot: Bot) -> None:
         captcha = await database.get_captcha(captcha_id)
@@ -1516,6 +1530,7 @@ def create_router(
                     correct_emoji,
                     utc_timestamp() + CAPTCHA_TIMEOUT_SECONDS,
                 )
+                await database.set_captcha_join_message(captcha_id, message.message_id)
                 sent = await message.answer(
                     f"Проверка: нажми на {CAPTCHA_EMOJI_NAMES[correct_emoji]}",
                     reply_markup=captcha_keyboard(captcha_id, correct_emoji),

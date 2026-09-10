@@ -199,6 +199,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_captcha_tracks_attempts_and_can_be_completed(self):
         captcha_id = await self.database.create_captcha(1, 20, "🐸", 4102444800)
+        await self.database.set_captcha_join_message(captcha_id, 123)
+        self.assertEqual((await self.database.get_captcha(captcha_id))["join_message_id"], 123)
         self.assertEqual(len(await self.database.pending_captchas()), 1)
         self.assertEqual(
             await self.database.submit_captcha(captcha_id, 20, "🍉", 3),
