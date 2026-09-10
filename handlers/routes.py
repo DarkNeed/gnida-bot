@@ -9,6 +9,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import aiohttp
@@ -24,6 +25,7 @@ from aiogram.types import (
     ChatMemberAdministrator,
     ChatMemberOwner,
     ChatPermissions,
+    FSInputFile,
     InlineQuery,
     InlineQueryResultArticle,
     InlineKeyboardButton,
@@ -155,6 +157,24 @@ PIROJOK_BASEMENT_ESCAPE_RE = re.compile(
 )
 SAMOVAR_RE = re.compile(r"(?<![а-яёa-z])самовар(?![а-яёa-z])", re.IGNORECASE)
 PISYA_RE = re.compile(r"^пися[!?.\s]*$", re.IGNORECASE)
+GNIDA_REPLY_INSULT_RE = re.compile(
+    r"^(?:ты\s+гнида|гнида\s+бот(?:у)?\s*[-—:]?\s*ты\s+гнида)[!?.\s]*$",
+    re.IGNORECASE,
+)
+GNIDA_DIRECT_INSULT_RE = re.compile(
+    r"^гнида\s+бот\s+гнида[!?.\s]*$", re.IGNORECASE
+)
+GNIDA_REPLY_MEOW_RE = re.compile(
+    r"^(?:гнида\s+бот(?:у)?\s*[-—:]?\s*)?мяукни[!?.\s]*$",
+    re.IGNORECASE,
+)
+GNIDA_DIRECT_MEOW_RE = re.compile(
+    r"^гнида(?:\s+бот)?\s*[-—:]?\s*(?:мяукни|мяукай)[!?.\s]*$",
+    re.IGNORECASE,
+)
+MEDIA_DIR = Path(__file__).resolve().parents[1] / "media"
+GNIDA_VIDEO_PATH = MEDIA_DIR / "Gnida.mp4"
+MEOW_AUDIO_PATH = MEDIA_DIR / "Meow.ogg"
 SAFEBOORU_API_URL = "https://safebooru.org/index.php"
 SAFEBOORU_TAGS = "murder_drones rating:safe"
 INLINE_GAME_OPTIONS = {
@@ -214,6 +234,11 @@ def display_name(user: User) -> str:
 
 def mention(user_id: int, name: str) -> str:
     return f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
+
+
+def is_reply_to_bot(message: Message, bot: Bot) -> bool:
+    replied = message.reply_to_message
+    return bool(replied and replied.from_user and replied.from_user.id == bot.id)
 
 
 def user_is_immune(user: User) -> bool:
@@ -3110,6 +3135,52 @@ def create_router(
     async def femboy(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "femboy"):
             await message.answer("бинарный")
+
+    @router.message(
+        text_or_caption_regexp(GNIDA_REPLY_INSULT_RE)
+        | text_or_caption_regexp(GNIDA_DIRECT_INSULT_RE)
+    )
+    async def gnida_insult_video(message: Message, bot: Bot) -> None:
+        content = message_content(message)
+        if message.chat.type not in GROUP_TYPES:
+            return
+        if not (
+            GNIDA_DIRECT_INSULT_RE.match(content)
+            or (
+                is_reply_to_bot(message, bot)
+                and GNIDA_REPLY_INSULT_RE.match(content)
+            )
+        ):
+            return
+        if not joke_available(message.chat.id, "gnida_insult_video"):
+            return
+        try:
+            await message.answer_video(FSInputFile(GNIDA_VIDEO_PATH))
+        except (FileNotFoundError, TelegramBadRequest, TelegramForbiddenError) as error:
+            logging.getLogger(__name__).warning("Could not send Gnida video: %s", error)
+
+    @router.message(
+        text_or_caption_regexp(GNIDA_REPLY_MEOW_RE)
+        | text_or_caption_regexp(GNIDA_DIRECT_MEOW_RE)
+    )
+    async def gnida_meow_audio(message: Message, bot: Bot) -> None:
+        content = message_content(message)
+        if message.chat.type not in GROUP_TYPES:
+            return
+        if not (
+            GNIDA_DIRECT_MEOW_RE.match(content)
+            or (
+                is_reply_to_bot(message, bot)
+                and GNIDA_REPLY_MEOW_RE.match(content)
+            )
+        ):
+            return
+        if not joke_available(message.chat.id, "gnida_meow_audio"):
+            return
+        try:
+            await message.answer_voice(FSInputFile(MEOW_AUDIO_PATH))
+        except (FileNotFoundError, TelegramBadRequest, TelegramForbiddenError) as error:
+            logging.getLogger(__name__).warning("Could not send meow audio: %s", error)
 
     @router.message(text_or_caption_regexp(BASEMENT_RE))
     async def basement(message: Message, bot: Bot) -> None:

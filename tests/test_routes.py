@@ -23,6 +23,10 @@ from handlers.routes import (
     FEMBOY_RE,
     GAME_RE,
     GNIDA_RE,
+    GNIDA_DIRECT_INSULT_RE,
+    GNIDA_DIRECT_MEOW_RE,
+    GNIDA_REPLY_INSULT_RE,
+    GNIDA_REPLY_MEOW_RE,
     HUILO_RE,
     HEAVENLY_PUNISHMENT_RE,
     HEAVENLY_PUNISHMENT_HOURS,
@@ -278,6 +282,15 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(FEMBOY_RE.match("Дима фембой"))
         self.assertTrue(BASEMENT_RE.match("Забрать в Подвалград"))
         self.assertTrue(BASEMENT_RE.match("В подвалград"))
+
+    def test_gnida_media_triggers_require_a_reply_or_direct_address(self):
+        self.assertTrue(GNIDA_REPLY_INSULT_RE.match("ты гнида"))
+        self.assertTrue(GNIDA_REPLY_INSULT_RE.match("Гнида боту — ты гнида"))
+        self.assertTrue(GNIDA_DIRECT_INSULT_RE.match("Гнида бот гнида"))
+        self.assertTrue(GNIDA_REPLY_MEOW_RE.match("мяукни"))
+        self.assertTrue(GNIDA_DIRECT_MEOW_RE.match("Гнида мяукни"))
+        self.assertTrue(GNIDA_DIRECT_MEOW_RE.match("Гнида бот мяукай"))
+        self.assertFalse(GNIDA_DIRECT_MEOW_RE.match("мяукни"))
 
     def test_joke_keywords_work_inside_messages(self):
         self.assertTrue(GNIDA_RE.search("Интересно, кто гнида сегодня?"))
