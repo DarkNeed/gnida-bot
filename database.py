@@ -446,6 +446,7 @@ class Database:
         opponent_newcomer: bool = False,
         game_type: str = "rps",
         friendly: bool = False,
+        awaiting_acceptance: bool = False,
     ) -> int | None:
         if game_type not in {"rps", "blackjack", "checkers"}:
             raise ValueError("Unknown challenge game type")
@@ -454,7 +455,8 @@ class Database:
             opponent_newcomer = False
         async with self._lock:
             existing = self.connection.execute(
-                """SELECT id FROM challenges WHERE chat_id=? AND status='active'
+                """SELECT id FROM challenges WHERE chat_id=?
+                   AND status IN ('pending', 'active')
                    AND (challenger_id IN (?, ?) OR opponent_id IN (?, ?))""",
                 (chat_id, challenger_id, opponent_id, challenger_id, opponent_id),
             ).fetchone()
@@ -464,8 +466,8 @@ class Database:
             cursor = self.connection.execute(
                 """INSERT INTO challenges(
                        chat_id, challenger_id, opponent_id, forced,
-                       opponent_newcomer, game_type, friendly, created_at, deadline
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       opponent_newcomer, game_type, friendly, status, created_at, deadline
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     chat_id,
                     challenger_id,
@@ -474,6 +476,7 @@ class Database:
                     int(opponent_newcomer),
                     game_type,
                     int(friendly),
+                    "pending" if awaiting_acceptance else "active",
                     now,
                     now
                     + (
@@ -520,6 +523,30 @@ class Database:
                 )
             self.connection.commit()
             return challenge_id
+
+    async def accept_challenge(
+        self, challenge_id: int, opponent_id: int
+    ) -> sqlite3.Row | None:
+        """Activate a pending challenge when its invited opponent accepts it."""
+        async with self._lock:
+            accepted_at = utc_timestamp()
+            cursor = self.connection.execute(
+                """UPDATE challenges SET status='active', created_at=?, deadline=?
+                   WHERE id=? AND opponent_id=? AND status='pending'""",
+                (
+                    accepted_at,
+                    accepted_at + CHALLENGE_DEADLINE_SECONDS,
+                    challenge_id,
+                    opponent_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                self.connection.commit()
+                return None
+            self.connection.commit()
+            return self.connection.execute(
+                "SELECT * FROM challenges WHERE id=?", (challenge_id,)
+            ).fetchone()
 
     async def set_challenge_message(self, challenge_id: int, message_id: int) -> None:
         async with self._lock:
@@ -807,7 +834,8 @@ class Database:
         async with self._lock:
             return self.connection.execute(
                 """SELECT * FROM challenges
-                   WHERE status IN ('active', 'deadline') ORDER BY deadline"""
+                   WHERE status IN ('pending', 'active', 'deadline', 'pending_deadline')
+                   ORDER BY deadline"""
             ).fetchall()
 
     async def claim_expired_challenge(self, challenge_id: int) -> sqlite3.Row | None:
@@ -815,14 +843,17 @@ class Database:
         async with self._lock:
             row = self.connection.execute(
                 """SELECT * FROM challenges
-                   WHERE id=? AND status='active' AND deadline <= ?""",
+                   WHERE id=? AND status IN ('pending', 'active') AND deadline <= ?""",
                 (challenge_id, now),
             ).fetchone()
             if row is None:
                 return None
             self.connection.execute(
-                "UPDATE challenges SET status='deadline' WHERE id=?",
-                (challenge_id,),
+                "UPDATE challenges SET status=? WHERE id=?",
+                (
+                    "pending_deadline" if row["status"] == "pending" else "deadline",
+                    challenge_id,
+                ),
             )
             self.connection.commit()
             return row
@@ -852,7 +883,8 @@ class Database:
     async def finish_challenge(self, challenge_id: int, status: str = "finished") -> bool:
         async with self._lock:
             cursor = self.connection.execute(
-                "UPDATE challenges SET status=? WHERE id=? AND status='active'",
+                """UPDATE challenges SET status=? WHERE id=?
+                   AND status IN ('pending', 'active')""",
                 (status, challenge_id),
             )
             self.connection.commit()
@@ -863,7 +895,7 @@ class Database:
         async with self._lock:
             self.connection.execute(
                 """UPDATE challenges SET status='unavailable'
-                   WHERE id=? AND status IN ('active', 'deadline')""",
+                   WHERE id=? AND status IN ('pending', 'active', 'deadline', 'pending_deadline')""",
                 (challenge_id,),
             )
             self.connection.commit()

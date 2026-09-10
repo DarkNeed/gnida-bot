@@ -325,6 +325,23 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         await self.database.finish_challenge(first)
         self.assertIsNotNone(await self.database.create_challenge(1, 10, 30))
 
+    async def test_pending_challenge_requires_the_invited_opponent_to_accept(self):
+        challenge_id = await self.database.create_challenge(
+            1, 10, 20, awaiting_acceptance=True, opponent_newcomer=True
+        )
+        challenge = await self.database.get_challenge(challenge_id)
+        self.assertEqual(challenge["status"], "pending")
+        self.assertEqual(challenge["deadline"] - challenge["created_at"], 300)
+        self.assertIsNone(await self.database.create_challenge(1, 10, 30))
+        self.assertIsNone(await self.database.accept_challenge(challenge_id, 10))
+
+        accepted = await self.database.accept_challenge(challenge_id, 20)
+        self.assertEqual(accepted["status"], "active")
+        self.assertGreaterEqual(
+            accepted["deadline"] - accepted["created_at"],
+            CHALLENGE_DEADLINE_SECONDS,
+        )
+
     async def test_challenge_remembers_newcomer_status(self):
         challenge_id = await self.database.create_challenge(
             1, 10, 20, opponent_newcomer=True

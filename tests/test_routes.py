@@ -58,6 +58,7 @@ from handlers.routes import (
     TRANSFER_RE,
     TrackingMiddleware,
     ART_THEFT_RE,
+    challenge_offer_keyboard,
     checkers_keyboard,
     create_router,
     inline_game_types,
@@ -157,6 +158,13 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(all(len(row) == 8 for row in keyboard.inline_keyboard[:8]))
         self.assertEqual(keyboard.inline_keyboard[0][0].callback_data, "ck:7:noop")
         self.assertEqual(keyboard.inline_keyboard[0][1].callback_data, "ck:7:1")
+
+    def test_challenge_offer_has_accept_and_decline_buttons(self):
+        keyboard = challenge_offer_keyboard(7, "bj")
+        self.assertEqual(
+            [button.callback_data for button in keyboard.inline_keyboard[0]],
+            ["bj:7:accept", "bj:7:refuse"],
+        )
 
     def test_leg_request_accepts_any_image_message(self):
         empty = {
