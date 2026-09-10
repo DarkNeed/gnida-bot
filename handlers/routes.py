@@ -58,6 +58,9 @@ GROUP_TYPES = {"group", "supergroup"}
 JOKE_COOLDOWN_SECONDS = 120
 HEAVENLY_PUNISHMENT_HOURS = 100
 PISKA_MUTE_SECONDS = 24 * 60 * 60
+CAPTCHA_TIMEOUT_SECONDS = 30
+CAPTCHA_MAX_ATTEMPTS = 3
+CAPTCHA_EMOJIS = ("🐸", "🍉", "🚲", "🦊", "🎲", "🌵", "🪁", "🍩", "🦖", "🎈")
 MOSCOW_TZ = timezone(timedelta(hours=3), name="MSK")
 DAILY_GROUP_MESSAGES = (
     (0, 0, "Спокойной ночи гниды"),
@@ -729,6 +732,7 @@ def create_router(
     leg_tasks: set[asyncio.Task[None]] = set()
     challenge_tasks: set[asyncio.Task[None]] = set()
     jug_tasks: set[asyncio.Task[None]] = set()
+    captcha_tasks: set[asyncio.Task[None]] = set()
     daily_message_tasks: set[asyncio.Task[None]] = set()
     recent_safebooru_ids: dict[int, list[int]] = {}
     challenge_edit_lock = asyncio.Lock()
@@ -747,6 +751,76 @@ def create_router(
                 ],
             ]
         )
+
+    def captcha_keyboard(captcha_id: int, correct_emoji: str) -> InlineKeyboardMarkup:
+        choices = [correct_emoji] + random.sample(
+            [emoji for emoji in CAPTCHA_EMOJIS if emoji != correct_emoji], 3
+        )
+        random.shuffle(choices)
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=emoji, callback_data=f"cp:{captcha_id}:{emoji}"
+                    )
+                    for emoji in choices
+                ]
+            ]
+        )
+
+    async def restore_default_permissions(bot: Bot, chat_id: int, user_id: int) -> None:
+        chat = await bot.get_chat(chat_id)
+        permissions = chat.permissions or ChatPermissions(
+            **{field: True for field in ChatPermissions.model_fields}
+        )
+        await bot.restrict_chat_member(
+            chat_id,
+            user_id,
+            permissions=permissions,
+            use_independent_chat_permissions=True,
+        )
+
+    async def delete_captcha_message(captcha, bot: Bot) -> None:
+        if not captcha["message_id"]:
+            return
+        try:
+            await bot.delete_message(
+                int(captcha["chat_id"]), int(captcha["message_id"])
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            logging.getLogger(__name__).warning(
+                "Could not delete captcha %s: %s", captcha["id"], error
+            )
+
+    async def remove_captcha_user(captcha, bot: Bot, reason: str) -> None:
+        chat_id = int(captcha["chat_id"])
+        user_id = int(captcha["user_id"])
+        try:
+            await bot.ban_chat_member(chat_id, user_id, revoke_messages=False)
+            await bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+            await database.finish_captcha(int(captcha["id"]), reason)
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            await database.finish_captcha(int(captcha["id"]), "failed")
+            logging.getLogger(__name__).warning(
+                "Could not remove captcha user %s: %s", user_id, error
+            )
+        await delete_captcha_message(captcha, bot)
+
+    async def enforce_captcha(captcha_id: int, bot: Bot) -> None:
+        captcha = await database.get_captcha(captcha_id)
+        if not captcha or captcha["status"] not in {"pending", "enforcing"}:
+            return
+        if captcha["status"] == "pending":
+            await asyncio.sleep(max(0, int(captcha["deadline"]) - utc_timestamp()))
+            captcha = await database.claim_expired_captcha(captcha_id)
+            if not captcha:
+                return
+        await remove_captcha_user(captcha, bot, "expired")
+
+    def schedule_captcha(captcha_id: int, bot: Bot) -> None:
+        task = asyncio.create_task(enforce_captcha(captcha_id, bot))
+        captcha_tasks.add(task)
+        task.add_done_callback(captcha_tasks.discard)
 
     def slave_menu_back_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
@@ -1142,6 +1216,8 @@ def create_router(
     async def resume_leg_requests(bot: Bot) -> None:
         for request in await database.pending_leg_requests():
             schedule_leg_request(int(request["id"]), bot)
+        for captcha in await database.pending_captchas():
+            schedule_captcha(int(captcha["id"]), bot)
         for challenge in await database.pending_challenges():
             schedule_challenge(int(challenge["id"]), bot)
         for hiding in await database.pending_jug_hidings():
@@ -1163,6 +1239,8 @@ def create_router(
         for task in tuple(challenge_tasks):
             task.cancel()
         for task in tuple(jug_tasks):
+            task.cancel()
+        for task in tuple(captcha_tasks):
             task.cancel()
         for task in tuple(daily_message_tasks):
             task.cancel()
@@ -1238,7 +1316,9 @@ def create_router(
         await callback.answer(notice or "")
 
     @router.message(F.new_chat_members)
-    async def new_members(message: Message) -> None:
+    async def new_members(message: Message, bot: Bot) -> None:
+        if message.chat.type not in GROUP_TYPES:
+            return
         vulnerable_until = utc_timestamp() + 300
         for user in message.new_chat_members:
             if user.is_bot:
@@ -1251,6 +1331,89 @@ def create_router(
                 vulnerable_until=vulnerable_until,
                 touch=False,
             )
+            try:
+                member = await bot.get_chat_member(message.chat.id, user.id)
+                if isinstance(member, (ChatMemberAdministrator, ChatMemberOwner)):
+                    continue
+                await bot.restrict_chat_member(
+                    message.chat.id,
+                    user.id,
+                    permissions=ChatPermissions(can_send_messages=False),
+                    use_independent_chat_permissions=True,
+                )
+                correct_emoji = random.choice(CAPTCHA_EMOJIS)
+                captcha_id = await database.create_captcha(
+                    message.chat.id,
+                    user.id,
+                    correct_emoji,
+                    utc_timestamp() + CAPTCHA_TIMEOUT_SECONDS,
+                )
+                sent = await message.answer(
+                    f"Проверка: нажми на {correct_emoji}",
+                    reply_markup=captcha_keyboard(captcha_id, correct_emoji),
+                )
+                await database.set_captcha_message(captcha_id, sent.message_id)
+                schedule_captcha(captcha_id, bot)
+            except TelegramAPIError as error:
+                logging.getLogger(__name__).warning(
+                    "Could not create captcha for %s: %s", user.id, error
+                )
+                try:
+                    await restore_default_permissions(bot, message.chat.id, user.id)
+                except TelegramAPIError:
+                    pass
+
+    @router.callback_query(F.data.startswith("cp:"))
+    async def captcha_answer(callback: CallbackQuery, bot: Bot) -> None:
+        if not callback.data or not callback.message:
+            await callback.answer()
+            return
+        try:
+            _, raw_captcha_id, emoji = callback.data.split(":", 2)
+            captcha_id = int(raw_captcha_id)
+        except (TypeError, ValueError):
+            await callback.answer("Капча повреждена.", show_alert=True)
+            return
+        captcha = await database.get_captcha(captcha_id)
+        if not captcha or int(captcha["chat_id"]) != callback.message.chat.id:
+            await callback.answer("Капча уже неактивна.", show_alert=True)
+            return
+        result, remaining = await database.submit_captcha(
+            captcha_id, callback.from_user.id, emoji, CAPTCHA_MAX_ATTEMPTS
+        )
+        if result == "not_owner":
+            await callback.answer("Это не твоя капча.", show_alert=True)
+            return
+        if result == "retry":
+            await callback.answer(f"Неверно. Осталось попыток: {remaining}.", show_alert=True)
+            return
+        if result == "passed":
+            try:
+                await restore_default_permissions(
+                    bot, int(captcha["chat_id"]), callback.from_user.id
+                )
+            except TelegramAPIError as error:
+                logging.getLogger(__name__).warning(
+                    "Could not lift captcha restriction for %s: %s",
+                    callback.from_user.id,
+                    error,
+                )
+                await callback.answer("Не удалось снять ограничение, попробуй позже.", show_alert=True)
+                return
+            await delete_captcha_message(captcha, bot)
+            await callback.answer("✅ Проверка пройдена")
+            return
+        if result == "failed":
+            await callback.answer("Попытки закончились.", show_alert=True)
+            await remove_captcha_user(captcha, bot, "failed")
+            return
+        if result == "expired":
+            claimed = await database.claim_expired_captcha(captcha_id)
+            if claimed:
+                await remove_captcha_user(claimed, bot, "expired")
+            await callback.answer("Время вышло.", show_alert=True)
+            return
+        await callback.answer("Капча уже неактивна.", show_alert=True)
 
     @router.message(text_or_caption_regexp(DUCK_SLAPS_RE))
     async def duck_slaps_for_ten_years(message: Message, bot: Bot) -> None:

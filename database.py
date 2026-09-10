@@ -148,6 +148,21 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_leg_requests_pending
                 ON leg_requests(status, deadline);
 
+            CREATE TABLE IF NOT EXISTS captchas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                correct_emoji TEXT NOT NULL,
+                message_id INTEGER,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                deadline INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_captchas_pending
+                ON captchas(status, deadline);
+
             CREATE TABLE IF NOT EXISTS counters (
                 chat_id INTEGER NOT NULL,
                 counter_key TEXT NOT NULL,
@@ -1344,5 +1359,100 @@ class Database:
             self.connection.execute(
                 "UPDATE leg_requests SET status=? WHERE id=?",
                 (status, request_id),
+            )
+            self.connection.commit()
+
+    async def create_captcha(
+        self, chat_id: int, user_id: int, correct_emoji: str, deadline: int
+    ) -> int:
+        async with self._lock:
+            self.connection.execute(
+                """UPDATE captchas SET status='replaced'
+                   WHERE chat_id=? AND user_id=? AND status='pending'""",
+                (chat_id, user_id),
+            )
+            cursor = self.connection.execute(
+                """INSERT INTO captchas(
+                       chat_id, user_id, correct_emoji, deadline, created_at
+                   ) VALUES (?, ?, ?, ?, ?)""",
+                (chat_id, user_id, correct_emoji, deadline, utc_timestamp()),
+            )
+            self.connection.commit()
+            return int(cursor.lastrowid)
+
+    async def set_captcha_message(self, captcha_id: int, message_id: int) -> None:
+        async with self._lock:
+            self.connection.execute(
+                "UPDATE captchas SET message_id=? WHERE id=?", (message_id, captcha_id)
+            )
+            self.connection.commit()
+
+    async def get_captcha(self, captcha_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM captchas WHERE id=?", (captcha_id,)
+            ).fetchone()
+
+    async def pending_captchas(self) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT * FROM captchas
+                   WHERE status IN ('pending', 'enforcing') ORDER BY deadline"""
+            ).fetchall()
+
+    async def claim_expired_captcha(self, captcha_id: int) -> sqlite3.Row | None:
+        now = utc_timestamp()
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT * FROM captchas
+                   WHERE id=? AND status='pending' AND deadline <= ?""",
+                (captcha_id, now),
+            ).fetchone()
+            if row is None:
+                return None
+            self.connection.execute(
+                "UPDATE captchas SET status='enforcing' WHERE id=?", (captcha_id,)
+            )
+            self.connection.commit()
+            return row
+
+    async def submit_captcha(
+        self, captcha_id: int, user_id: int, emoji: str, max_attempts: int
+    ) -> tuple[str, int]:
+        """Return passed, retry, failed, expired, inactive, or not_owner."""
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT * FROM captchas WHERE id=?", (captcha_id,)
+            ).fetchone()
+            if row is None or row["status"] != "pending":
+                return "inactive", 0
+            if int(row["user_id"]) != user_id:
+                return "not_owner", 0
+            if int(row["deadline"]) < utc_timestamp():
+                return "expired", 0
+            if emoji == row["correct_emoji"]:
+                self.connection.execute(
+                    "UPDATE captchas SET status='passed' WHERE id=?", (captcha_id,)
+                )
+                self.connection.commit()
+                return "passed", max_attempts - int(row["attempts"])
+            attempts = int(row["attempts"]) + 1
+            if attempts >= max_attempts:
+                status = "failed"
+                remaining = 0
+            else:
+                status = "pending"
+                remaining = max_attempts - attempts
+            self.connection.execute(
+                "UPDATE captchas SET attempts=?, status=? WHERE id=?",
+                (attempts, status, captcha_id),
+            )
+            self.connection.commit()
+            return ("failed" if status == "failed" else "retry"), remaining
+
+    async def finish_captcha(self, captcha_id: int, status: str) -> None:
+        async with self._lock:
+            self.connection.execute(
+                "UPDATE captchas SET status=? WHERE id=?", (status, captcha_id)
             )
             self.connection.commit()

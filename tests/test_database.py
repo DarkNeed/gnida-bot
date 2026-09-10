@@ -188,6 +188,25 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(claimed["target_id"], 20)
         self.assertIsNone(await self.database.claim_expired_leg_request(request_id))
 
+    async def test_captcha_tracks_attempts_and_can_be_completed(self):
+        captcha_id = await self.database.create_captcha(1, 20, "🐸", 4102444800)
+        self.assertEqual(len(await self.database.pending_captchas()), 1)
+        self.assertEqual(
+            await self.database.submit_captcha(captcha_id, 20, "🍉", 3),
+            ("retry", 2),
+        )
+        self.assertEqual(
+            await self.database.submit_captcha(captcha_id, 20, "🐸", 3),
+            ("passed", 2),
+        )
+        self.assertEqual((await self.database.get_captcha(captcha_id))["status"], "passed")
+
+    async def test_expired_captcha_is_claimed_once(self):
+        captcha_id = await self.database.create_captcha(1, 20, "🐸", 0)
+        claimed = await self.database.claim_expired_captcha(captcha_id)
+        self.assertEqual(claimed["user_id"], 20)
+        self.assertIsNone(await self.database.claim_expired_captcha(captcha_id))
+
     async def test_slave_cannot_receive_another_slave(self):
         await self.database.force_enslave(1, 20, 10)
         await self.database.force_enslave(1, 30, 10)
