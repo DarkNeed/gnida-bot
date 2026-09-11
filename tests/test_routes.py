@@ -166,6 +166,7 @@ class RoutePatternTests(unittest.TestCase):
             [button.callback_data for button in keyboard.inline_keyboard[0]],
             ["bj:7:accept", "bj:7:refuse"],
         )
+        self.assertEqual(keyboard.inline_keyboard[1][0].callback_data, "bj:7:cancel")
 
     def test_leg_request_accepts_any_image_message(self):
         empty = {

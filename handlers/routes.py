@@ -600,7 +600,12 @@ def challenge_offer_keyboard(challenge_id: int, prefix: str) -> InlineKeyboardMa
                 InlineKeyboardButton(
                     text="🚫 Отклонить", callback_data=callback_prefix + "refuse"
                 ),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="↩ Отменить вызов", callback_data=callback_prefix + "cancel"
+                )
+            ],
         ]
     )
 
@@ -1227,6 +1232,23 @@ def create_router(
                 f"🚫 {html.escape(display_name(callback.from_user))} отказался от вызова.",
             )
         await callback.answer()
+        return True
+
+    async def cancel_pending_challenge(challenge, callback: CallbackQuery, bot: Bot) -> bool:
+        if callback.from_user.id != int(challenge["challenger_id"]):
+            await callback.answer("Отменить вызов может только его автор.", show_alert=True)
+            return False
+        if not await database.cancel_challenge_offer(
+            int(challenge["id"]), callback.from_user.id
+        ):
+            await callback.answer("Этот вызов уже недоступен.", show_alert=True)
+            return False
+        await edit_challenge(
+            challenge,
+            bot,
+            f"↩ {html.escape(display_name(callback.from_user))} отменил вызов.",
+        )
+        await callback.answer("Вызов отменён")
         return True
 
     async def render_checkers(challenge_id: int, bot: Bot) -> bool:
@@ -2847,6 +2869,8 @@ def create_router(
                 await accept_pending_challenge(challenge, callback, bot)
             elif choice == "refuse":
                 await refuse_pending_challenge(challenge, callback, bot)
+            elif choice == "cancel":
+                await cancel_pending_challenge(challenge, callback, bot)
             else:
                 await callback.answer("Сначала примите вызов.", show_alert=True)
             return
@@ -2931,6 +2955,8 @@ def create_router(
                 await accept_pending_challenge(challenge, callback, bot)
             elif action == "refuse":
                 await refuse_pending_challenge(challenge, callback, bot)
+            elif action == "cancel":
+                await cancel_pending_challenge(challenge, callback, bot)
             else:
                 await callback.answer("Сначала примите вызов.", show_alert=True)
             return
@@ -3061,6 +3087,8 @@ def create_router(
                 await accept_pending_challenge(challenge, callback, bot)
             elif action == "refuse":
                 await refuse_pending_challenge(challenge, callback, bot)
+            elif action == "cancel":
+                await cancel_pending_challenge(challenge, callback, bot)
             else:
                 await callback.answer("Сначала примите вызов.", show_alert=True)
             return

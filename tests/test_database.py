@@ -344,6 +344,17 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             CHALLENGE_DEADLINE_SECONDS,
         )
 
+    async def test_challenge_creator_can_cancel_an_unaccepted_offer(self):
+        challenge_id = await self.database.create_challenge(
+            1, 10, 20, awaiting_acceptance=True
+        )
+        self.assertFalse(await self.database.cancel_challenge_offer(challenge_id, 20))
+        self.assertTrue(await self.database.cancel_challenge_offer(challenge_id, 10))
+        self.assertEqual(
+            (await self.database.get_challenge(challenge_id))["status"], "cancelled"
+        )
+        self.assertFalse(await self.database.cancel_challenge_offer(challenge_id, 10))
+
     async def test_challenge_remembers_newcomer_status(self):
         challenge_id = await self.database.create_challenge(
             1, 10, 20, opponent_newcomer=True

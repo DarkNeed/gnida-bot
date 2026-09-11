@@ -550,6 +550,33 @@ class Database:
                 "SELECT * FROM challenges WHERE id=?", (challenge_id,)
             ).fetchone()
 
+    async def cancel_challenge_offer(
+        self, challenge_id: int, challenger_id: int
+    ) -> bool:
+        """Cancel an unaccepted offer, only on behalf of its creator."""
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT chat_id, opponent_id, forced FROM challenges
+                   WHERE id=? AND challenger_id=? AND status='pending'""",
+                (challenge_id, challenger_id),
+            ).fetchone()
+            if row is None:
+                return False
+            self.connection.execute(
+                "UPDATE challenges SET status='cancelled' WHERE id=?",
+                (challenge_id,),
+            )
+            # A forced owner challenge only spends its weekly attempt once a game
+            # actually starts; cancelling an offer must not consume it.
+            if row["forced"]:
+                self.connection.execute(
+                    """UPDATE ownership SET last_forced_at=NULL
+                       WHERE chat_id=? AND slave_id=? AND owner_id=?""",
+                    (int(row["chat_id"]), challenger_id, int(row["opponent_id"])),
+                )
+            self.connection.commit()
+            return True
+
     async def set_challenge_message(self, challenge_id: int, message_id: int) -> None:
         async with self._lock:
             self.connection.execute(
