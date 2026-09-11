@@ -174,7 +174,7 @@ GNIDA_DIRECT_MEOW_RE = re.compile(
 )
 MEDIA_DIR = Path(__file__).resolve().parents[1] / "media"
 GNIDA_VIDEO_PATH = MEDIA_DIR / "Gnida.mp4"
-MEOW_AUDIO_PATH = MEDIA_DIR / "Meow.ogg"
+MEOW_AUDIO_PATH = MEDIA_DIR / "Meow-voice.ogg"
 SAFEBOORU_API_URL = "https://safebooru.org/index.php"
 SAFEBOORU_TAGS = "murder_drones rating:safe"
 INLINE_GAME_OPTIONS = {
@@ -3312,11 +3312,7 @@ def create_router(
         if not joke_available(message.chat.id, "gnida_meow_audio"):
             return
         try:
-            # The supplied OGG contains Vorbis, not Opus. Telegram accepts it as an
-            # ordinary audio track but rejects it as a voice message.
-            await message.answer_audio(
-                FSInputFile(MEOW_AUDIO_PATH), title="Мяу", performer="Гнида-бот"
-            )
+            await message.answer_voice(FSInputFile(MEOW_AUDIO_PATH))
         except (FileNotFoundError, TelegramAPIError) as error:
             logging.getLogger(__name__).warning("Could not send meow audio: %s", error)
 

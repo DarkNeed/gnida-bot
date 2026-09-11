@@ -36,6 +36,7 @@ from handlers.routes import (
     JOKE_COOLDOWN_SECONDS,
     MAKE_SLAVE_RE,
     MAKE_SLAVE_REPLY_RE,
+    MEOW_AUDIO_PATH,
     METAL_RASCALS_RE,
     MOSCOW_TZ,
     PIROJOK_BASEMENT_ESCAPE_RE,
@@ -299,6 +300,9 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(GNIDA_DIRECT_MEOW_RE.match("Гнида мяукни"))
         self.assertTrue(GNIDA_DIRECT_MEOW_RE.match("Гнида бот мяукай"))
         self.assertFalse(GNIDA_DIRECT_MEOW_RE.match("мяукни"))
+
+    def test_meow_voice_asset_is_telegram_compatible_opus(self):
+        self.assertIn(b"OpusHead", MEOW_AUDIO_PATH.read_bytes()[:128])
 
     def test_joke_keywords_work_inside_messages(self):
         self.assertTrue(GNIDA_RE.search("Интересно, кто гнида сегодня?"))
