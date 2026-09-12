@@ -59,6 +59,7 @@ from handlers.routes import (
     TRANSFER_RE,
     TrackingMiddleware,
     ART_THEFT_RE,
+    art_theft_count,
     challenge_offer_keyboard,
     checkers_keyboard,
     create_router,
@@ -319,6 +320,7 @@ class RoutePatternTests(unittest.TestCase):
     def test_personal_trigger_phrases(self):
         self.assertTrue(ART_THEFT_RE.search("Я спизжу этот арт"))
         self.assertTrue(ART_THEFT_RE.search("Уже спиздил"))
+        self.assertEqual(art_theft_count("Спизжу, спиздил и снова спизжу"), 3)
         self.assertTrue(HEAVENLY_PUNISHMENT_RE.match("Это кара небесная, сосунок!"))
         self.assertTrue(DUCK_SLAPS_RE.match("Давать леща 10 лет"))
         self.assertTrue(SLEEP_RE.match("Усыпить"))

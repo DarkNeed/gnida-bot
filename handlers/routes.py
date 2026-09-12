@@ -345,6 +345,10 @@ def silence_duration_seconds(text: str) -> int:
     return sum(1 for _ in SILENCE_RE.finditer(text)) * 180
 
 
+def art_theft_count(text: str) -> int:
+    return sum(1 for _ in ART_THEFT_RE.finditer(text))
+
+
 def russian_minutes(amount: int) -> str:
     if amount % 10 == 1 and amount % 100 != 11:
         unit = "минуту"
@@ -3261,7 +3265,10 @@ def create_router(
             or sender.username.casefold() != "pirojoksostajem"
         ):
             return
-        count = await database.increment_counter(message.chat.id, "stolen_art")
+        stolen_now = art_theft_count(message_content(message))
+        count = await database.increment_counter(
+            message.chat.id, "stolen_art", stolen_now
+        )
         responses = (
             f"Спизжено {count} артов, ваша коллекция растёт милорд",
             f"Спизжено {count} артов, галерея будет заполнена",

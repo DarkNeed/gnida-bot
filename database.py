@@ -1170,12 +1170,14 @@ class Database:
             self.connection.commit()
             return cursor.rowcount > 0
 
-    async def increment_counter(self, chat_id: int, key: str) -> int:
+    async def increment_counter(self, chat_id: int, key: str, amount: int = 1) -> int:
+        if amount < 1:
+            raise ValueError("Counter increment must be positive")
         async with self._lock:
             self.connection.execute(
-                """INSERT INTO counters(chat_id, counter_key, value) VALUES (?, ?, 1)
-                   ON CONFLICT(chat_id, counter_key) DO UPDATE SET value=value + 1""",
-                (chat_id, key),
+                """INSERT INTO counters(chat_id, counter_key, value) VALUES (?, ?, ?)
+                   ON CONFLICT(chat_id, counter_key) DO UPDATE SET value=value + excluded.value""",
+                (chat_id, key, amount),
             )
             row = self.connection.execute(
                 "SELECT value FROM counters WHERE chat_id=? AND counter_key=?",

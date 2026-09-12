@@ -380,7 +380,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_counter_increments_persistently(self):
         self.assertEqual(await self.database.increment_counter(1, "stolen_art"), 1)
-        self.assertEqual(await self.database.increment_counter(1, "stolen_art"), 2)
+        self.assertEqual(await self.database.increment_counter(1, "stolen_art", 3), 4)
         self.assertEqual(await self.database.increment_counter(2, "stolen_art"), 1)
 
     async def test_basement_membership_is_separate_and_removable(self):
