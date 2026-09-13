@@ -275,7 +275,8 @@ class RoutePatternTests(unittest.TestCase):
     def test_death_note_commands_and_countdown_text(self):
         self.assertTrue(DEATH_NOTE_RE.match("Записать в тетрадь @user"))
         self.assertTrue(DEATH_NOTE_ERASE_RE.match("-стереть имя @user"))
-        self.assertFalse(DEATH_NOTE_ERASE_RE.match("стереть имя @user"))
+        self.assertTrue(DEATH_NOTE_ERASE_RE.match("стереть имя @user"))
+        self.assertFalse(DEATH_NOTE_ERASE_RE.match("отменить имя @user"))
         self.assertIn("🕒 Осталось 30 секунд", death_note_countdown_text("Тест", 30))
 
     def test_piska_mute_command_is_case_insensitive_and_allows_exclamations(self):

@@ -136,7 +136,7 @@ DEATH_NOTE_RE = re.compile(
     r"^записать\s+в\s+тетрадь(?:@\w+)?(?:\s|$)", re.IGNORECASE
 )
 DEATH_NOTE_ERASE_RE = re.compile(
-    r"^-\s*стереть\s+имя(?:@\w+)?(?:\s|$)", re.IGNORECASE
+    r"^-?\s*стереть\s+имя(?:@\w+)?(?:\s|$)", re.IGNORECASE
 )
 LEGS_RE = re.compile(r"^скинь\s+ножки[!?.\s]*$", re.IGNORECASE)
 KARGASTAN_RE = re.compile(
