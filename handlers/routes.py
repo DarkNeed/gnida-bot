@@ -62,6 +62,8 @@ HEAVENLY_PUNISHMENT_HOURS = 100
 PISKA_MUTE_SECONDS = 24 * 60 * 60
 CAPTCHA_TIMEOUT_SECONDS = 30
 CAPTCHA_MAX_ATTEMPTS = 3
+DEATH_NOTE_SECONDS = 40
+DEATH_NOTE_CLOCKS = {40: "🕛", 30: "🕒", 20: "🕕", 10: "🕘"}
 CAPTCHA_EMOJI_NAMES = {
     "🐸": "лягушку",
     "🍉": "арбуз",
@@ -130,6 +132,12 @@ SILENCE_RE = re.compile(
     r"(?<![А-ЯЁ])(?:МОЛЧА+ТЬ(?:\s+ТВАРЬ)?|З+А+Т+К+Н+И+С+Ь+)!*(?![А-ЯЁ])"
 )
 PISKA_MUTE_RE = re.compile(r"^!+\s*писька\s+в\s+рот!*\s*$", re.IGNORECASE)
+DEATH_NOTE_RE = re.compile(
+    r"^записать\s+в\s+тетрадь(?:@\w+)?(?:\s|$)", re.IGNORECASE
+)
+DEATH_NOTE_ERASE_RE = re.compile(
+    r"^-\s*стереть\s+имя(?:@\w+)?(?:\s|$)", re.IGNORECASE
+)
 LEGS_RE = re.compile(r"^скинь\s+ножки[!?.\s]*$", re.IGNORECASE)
 KARGASTAN_RE = re.compile(
     r"^пусть\s+звенят\s+позолоченные\s+кранчики\s+самоваров\s+8\s+народов\.\s*"
@@ -347,6 +355,18 @@ def silence_duration_seconds(text: str) -> int:
 
 def art_theft_count(text: str) -> int:
     return sum(1 for _ in ART_THEFT_RE.finditer(text))
+
+
+def death_note_countdown_text(name: str, seconds_left: int) -> str:
+    clock = DEATH_NOTE_CLOCKS[seconds_left]
+    safe_name = html.escape(name)
+    phrases = {
+        40: f"Имя {safe_name} записано в тетрадь. 🍎",
+        30: "Яблоки уже готовы. 🍎",
+        20: "Имя не исчезает.",
+        10: "Синигами наблюдает.",
+    }
+    return f"{clock} Осталось {seconds_left} секунд.\n{phrases[seconds_left]}"
 
 
 def russian_minutes(amount: int) -> str:
@@ -815,6 +835,7 @@ def create_router(
     challenge_tasks: set[asyncio.Task[None]] = set()
     jug_tasks: set[asyncio.Task[None]] = set()
     captcha_tasks: set[asyncio.Task[None]] = set()
+    death_note_tasks: set[asyncio.Task[None]] = set()
     daily_message_tasks: set[asyncio.Task[None]] = set()
     recent_safebooru_ids: dict[int, list[int]] = {}
     challenge_edit_lock = asyncio.Lock()
@@ -918,6 +939,97 @@ def create_router(
         task = asyncio.create_task(enforce_captcha(captcha_id, bot))
         captcha_tasks.add(task)
         task.add_done_callback(captcha_tasks.discard)
+
+    async def death_note_name(entry) -> str:
+        target = await database.get_user(
+            int(entry["chat_id"]), int(entry["target_id"])
+        )
+        if target:
+            return str(target["display_name"] or target["username"] or target["user_id"])
+        return str(entry["target_id"])
+
+    async def edit_death_note(entry, bot: Bot, text: str) -> bool:
+        if not entry["message_id"]:
+            return False
+        try:
+            await bot.edit_message_text(
+                text,
+                chat_id=int(entry["chat_id"]),
+                message_id=int(entry["message_id"]),
+                parse_mode="HTML",
+            )
+            return True
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            logging.getLogger(__name__).warning(
+                "Could not update death note entry %s: %s", entry["id"], error
+            )
+            return False
+
+    async def enforce_death_note(entry_id: int, bot: Bot) -> None:
+        entry = await database.get_death_note_entry(entry_id)
+        if not entry or entry["status"] not in {"pending", "enforcing"}:
+            return
+        if entry["status"] == "pending":
+            for seconds_left in (30, 20, 10):
+                checkpoint = int(entry["deadline"]) - seconds_left
+                wait_seconds = checkpoint - utc_timestamp()
+                if wait_seconds <= 0:
+                    continue
+                await asyncio.sleep(wait_seconds)
+                entry = await database.get_death_note_entry(entry_id)
+                if not entry or entry["status"] != "pending":
+                    return
+                await edit_death_note(
+                    entry,
+                    bot,
+                    death_note_countdown_text(
+                        await death_note_name(entry), seconds_left
+                    ),
+                )
+            wait_seconds = int(entry["deadline"]) - utc_timestamp()
+            if wait_seconds > 0:
+                await asyncio.sleep(wait_seconds)
+            entry = await database.claim_expired_death_note_entry(entry_id)
+            if not entry:
+                return
+        try:
+            await bot.ban_chat_member(int(entry["chat_id"]), int(entry["target_id"]))
+            await database.record_action(
+                int(entry["chat_id"]),
+                int(entry["target_id"]),
+                "ban",
+                "записан в тетрадь",
+                int(entry["author_id"]),
+            )
+            await database.finish_death_note_entry(int(entry["id"]), "banned")
+            name = html.escape(await death_note_name(entry))
+            await edit_death_note(
+                entry, bot, f"☠️ Имя {name} было записано в тетрадь. 🍎"
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as error:
+            await database.finish_death_note_entry(int(entry["id"]), "failed")
+            await edit_death_note(
+                entry,
+                bot,
+                "🍎 Тетрадь не сработала: " + html.escape(str(error)),
+            )
+
+    def schedule_death_note(entry_id: int, bot: Bot) -> None:
+        task = asyncio.create_task(enforce_death_note(entry_id, bot))
+        death_note_tasks.add(task)
+
+        def finish_task(completed: asyncio.Task[None]) -> None:
+            death_note_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            try:
+                completed.result()
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Death note task %s failed.", entry_id
+                )
+
+        task.add_done_callback(finish_task)
 
     def slave_menu_back_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
@@ -1426,6 +1538,8 @@ def create_router(
             schedule_leg_request(int(request["id"]), bot)
         for captcha in await database.pending_captchas():
             schedule_captcha(int(captcha["id"]), bot)
+        for entry in await database.pending_death_note_entries():
+            schedule_death_note(int(entry["id"]), bot)
         for challenge in await database.pending_challenges():
             schedule_challenge(int(challenge["id"]), bot)
         for hiding in await database.pending_jug_hidings():
@@ -1449,6 +1563,8 @@ def create_router(
         for task in tuple(jug_tasks):
             task.cancel()
         for task in tuple(captcha_tasks):
+            task.cancel()
+        for task in tuple(death_note_tasks):
             task.cancel()
         for task in tuple(daily_message_tasks):
             task.cancel()
@@ -2059,6 +2175,80 @@ def create_router(
             await message.answer(
                 f"Не получилось применить действие: {html.escape(str(error))}"
             )
+
+    @router.message(text_or_caption_regexp(DEATH_NOTE_RE))
+    async def write_death_note(message: Message, bot: Bot) -> None:
+        if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
+            return
+        if not message.from_user:
+            return
+        text = message_content(message)
+        match = DEATH_NOTE_RE.match(text)
+        if not match:
+            return
+        target = await resolve_target(message, database, text[match.end() :].strip())
+        if not target:
+            return
+        target_id, target_name, _ = target
+        if target_id == message.from_user.id:
+            await message.answer("На себя эту команду применить нельзя.")
+            return
+        if await stored_sleepy_attack_is_blocked(
+            database, message.chat.id, message.from_user, target_id
+        ):
+            await message.answer(SLEEPY_PROTECTION_TEXT)
+            return
+        if await target_is_immune(database, message.chat.id, target_id):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        entry_id = await database.create_death_note_entry(
+            message.chat.id,
+            target_id,
+            message.from_user.id,
+            utc_timestamp() + DEATH_NOTE_SECONDS,
+        )
+        if entry_id is None:
+            await message.answer("Это имя уже записано в тетрадь.")
+            return
+        sent = await message.answer(
+            death_note_countdown_text(target_name, DEATH_NOTE_SECONDS),
+            parse_mode="HTML",
+        )
+        await database.set_death_note_message(entry_id, sent.message_id)
+        schedule_death_note(entry_id, bot)
+
+    @router.message(text_or_caption_regexp(DEATH_NOTE_ERASE_RE))
+    async def erase_death_note(message: Message, bot: Bot) -> None:
+        if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
+            return
+        text = message_content(message)
+        match = DEATH_NOTE_ERASE_RE.match(text)
+        if not match:
+            return
+        replied = message.reply_to_message
+        if (
+            replied
+            and replied.from_user
+            and replied.from_user.id == bot.id
+            and getattr(replied, "message_id", None)
+        ):
+            entry = await database.cancel_death_note_by_message(
+                message.chat.id, replied.message_id
+            )
+        else:
+            target = await resolve_target(message, database, text[match.end() :].strip())
+            if not target:
+                return
+            entry = await database.cancel_death_note_by_target(
+                message.chat.id, target[0]
+            )
+        if not entry:
+            await message.answer("В тетради такого имени нет.")
+            return
+        name = html.escape(await death_note_name(entry))
+        result_text = f"🍎 Имя {name} стёрто из тетради. Сегодня ему повезло."
+        if not await edit_death_note(entry, bot, result_text):
+            await message.answer(result_text, parse_mode="HTML")
 
     @router.message(text_or_caption_regexp(PISKA_MUTE_RE))
     async def piska_mute(message: Message, bot: Bot) -> None:

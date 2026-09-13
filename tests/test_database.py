@@ -218,6 +218,21 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(claimed["user_id"], 20)
         self.assertIsNone(await self.database.claim_expired_captcha(captcha_id))
 
+    async def test_death_note_can_be_cancelled_by_target_or_timer_message(self):
+        entry_id = await self.database.create_death_note_entry(1, 20, 10, 4102444800)
+        self.assertEqual(len(await self.database.pending_death_note_entries()), 1)
+        self.assertIsNone(await self.database.create_death_note_entry(1, 20, 10, 4102444800))
+        await self.database.set_death_note_message(entry_id, 123)
+        cancelled = await self.database.cancel_death_note_by_message(1, 123)
+        self.assertEqual(cancelled["target_id"], 20)
+        self.assertIsNone(await self.database.cancel_death_note_by_target(1, 20))
+
+    async def test_expired_death_note_is_claimed_once(self):
+        entry_id = await self.database.create_death_note_entry(1, 20, 10, 0)
+        claimed = await self.database.claim_expired_death_note_entry(entry_id)
+        self.assertEqual(claimed["author_id"], 10)
+        self.assertIsNone(await self.database.claim_expired_death_note_entry(entry_id))
+
     async def test_slave_cannot_receive_another_slave(self):
         await self.database.force_enslave(1, 20, 10)
         await self.database.force_enslave(1, 30, 10)

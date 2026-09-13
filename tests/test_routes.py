@@ -20,6 +20,8 @@ from handlers.routes import (
     CHALLENGE_RE,
     DUCK_RE,
     DUCK_SLAPS_RE,
+    DEATH_NOTE_ERASE_RE,
+    DEATH_NOTE_RE,
     FEMBOY_RE,
     GAME_RE,
     GNIDA_RE,
@@ -63,6 +65,7 @@ from handlers.routes import (
     challenge_offer_keyboard,
     checkers_keyboard,
     create_router,
+    death_note_countdown_text,
     inline_game_types,
     media_accepts_caption,
     message_content,
@@ -268,6 +271,12 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(MODERATION_RE.match("!мут @user 1 минута причина"))
         self.assertTrue(MODERATION_RE.match("!бан @user причина"))
         self.assertTrue(MODERATION_RE.match("!пред @user причина"))
+
+    def test_death_note_commands_and_countdown_text(self):
+        self.assertTrue(DEATH_NOTE_RE.match("Записать в тетрадь @user"))
+        self.assertTrue(DEATH_NOTE_ERASE_RE.match("-стереть имя @user"))
+        self.assertFalse(DEATH_NOTE_ERASE_RE.match("стереть имя @user"))
+        self.assertIn("🕒 Осталось 30 секунд", death_note_countdown_text("Тест", 30))
 
     def test_piska_mute_command_is_case_insensitive_and_allows_exclamations(self):
         self.assertTrue(PISKA_MUTE_RE.match("!Писька в рот"))

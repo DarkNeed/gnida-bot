@@ -164,6 +164,20 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_captchas_pending
                 ON captchas(status, deadline);
 
+            CREATE TABLE IF NOT EXISTS death_note_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                author_id INTEGER NOT NULL,
+                message_id INTEGER,
+                deadline INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_death_note_pending
+                ON death_note_entries(status, deadline);
+
             CREATE TABLE IF NOT EXISTS counters (
                 chat_id INTEGER NOT NULL,
                 counter_key TEXT NOT NULL,
@@ -1422,6 +1436,110 @@ class Database:
             self.connection.execute(
                 "UPDATE leg_requests SET status=? WHERE id=?",
                 (status, request_id),
+            )
+            self.connection.commit()
+
+    async def create_death_note_entry(
+        self, chat_id: int, target_id: int, author_id: int, deadline: int
+    ) -> int | None:
+        async with self._lock:
+            existing = self.connection.execute(
+                """SELECT id FROM death_note_entries
+                   WHERE chat_id=? AND target_id=? AND status='pending'""",
+                (chat_id, target_id),
+            ).fetchone()
+            if existing:
+                return None
+            cursor = self.connection.execute(
+                """INSERT INTO death_note_entries(
+                       chat_id, target_id, author_id, deadline, created_at
+                   ) VALUES (?, ?, ?, ?, ?)""",
+                (chat_id, target_id, author_id, deadline, utc_timestamp()),
+            )
+            self.connection.commit()
+            return int(cursor.lastrowid)
+
+    async def set_death_note_message(self, entry_id: int, message_id: int) -> None:
+        async with self._lock:
+            self.connection.execute(
+                "UPDATE death_note_entries SET message_id=? WHERE id=?",
+                (message_id, entry_id),
+            )
+            self.connection.commit()
+
+    async def get_death_note_entry(self, entry_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM death_note_entries WHERE id=?", (entry_id,)
+            ).fetchone()
+
+    async def pending_death_note_entries(self) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT * FROM death_note_entries
+                   WHERE status IN ('pending', 'enforcing') ORDER BY deadline"""
+            ).fetchall()
+
+    async def claim_expired_death_note_entry(
+        self, entry_id: int
+    ) -> sqlite3.Row | None:
+        now = utc_timestamp()
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT * FROM death_note_entries
+                   WHERE id=? AND status='pending' AND deadline<=?""",
+                (entry_id, now),
+            ).fetchone()
+            if row is None:
+                return None
+            self.connection.execute(
+                "UPDATE death_note_entries SET status='enforcing' WHERE id=?",
+                (entry_id,),
+            )
+            self.connection.commit()
+            return row
+
+    async def cancel_death_note_by_target(
+        self, chat_id: int, target_id: int
+    ) -> sqlite3.Row | None:
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT * FROM death_note_entries
+                   WHERE chat_id=? AND target_id=? AND status='pending'""",
+                (chat_id, target_id),
+            ).fetchone()
+            if row is None:
+                return None
+            self.connection.execute(
+                "UPDATE death_note_entries SET status='cancelled' WHERE id=?",
+                (int(row["id"]),),
+            )
+            self.connection.commit()
+            return row
+
+    async def cancel_death_note_by_message(
+        self, chat_id: int, message_id: int
+    ) -> sqlite3.Row | None:
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT * FROM death_note_entries
+                   WHERE chat_id=? AND message_id=? AND status='pending'""",
+                (chat_id, message_id),
+            ).fetchone()
+            if row is None:
+                return None
+            self.connection.execute(
+                "UPDATE death_note_entries SET status='cancelled' WHERE id=?",
+                (int(row["id"]),),
+            )
+            self.connection.commit()
+            return row
+
+    async def finish_death_note_entry(self, entry_id: int, status: str) -> None:
+        async with self._lock:
+            self.connection.execute(
+                "UPDATE death_note_entries SET status=? WHERE id=?",
+                (status, entry_id),
             )
             self.connection.commit()
 
