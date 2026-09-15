@@ -178,6 +178,24 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_death_note_pending
                 ON death_note_entries(status, deadline);
 
+            CREATE TABLE IF NOT EXISTS random_phrase_bags (
+                chat_id INTEGER PRIMARY KEY,
+                remaining_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS random_message_schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                service_day TEXT NOT NULL,
+                scheduled_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                UNIQUE(chat_id, service_day, scheduled_at)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_random_message_schedules_pending
+                ON random_message_schedules(chat_id, service_day, status, scheduled_at);
+
             CREATE TABLE IF NOT EXISTS counters (
                 chat_id INTEGER NOT NULL,
                 counter_key TEXT NOT NULL,
@@ -1540,6 +1558,112 @@ class Database:
             self.connection.execute(
                 "UPDATE death_note_entries SET status=? WHERE id=?",
                 (status, entry_id),
+            )
+            self.connection.commit()
+
+    async def take_random_phrase(
+        self, chat_id: int, phrases: list[str] | tuple[str, ...]
+    ) -> str:
+        """Return a shuffled phrase without repeating it until the bag is empty."""
+        pool = list(dict.fromkeys(phrases))
+        if not pool:
+            raise ValueError("Random phrase pool cannot be empty")
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT remaining_json FROM random_phrase_bags WHERE chat_id=?",
+                (chat_id,),
+            ).fetchone()
+            remaining: list[str] = []
+            if row:
+                try:
+                    saved = json.loads(row["remaining_json"])
+                    if isinstance(saved, list):
+                        remaining = [phrase for phrase in saved if phrase in pool]
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    remaining = []
+            if not remaining:
+                remaining = pool.copy()
+                random.shuffle(remaining)
+            phrase = remaining.pop()
+            self.connection.execute(
+                """INSERT INTO random_phrase_bags(chat_id, remaining_json, updated_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(chat_id) DO UPDATE SET
+                       remaining_json=excluded.remaining_json,
+                       updated_at=excluded.updated_at""",
+                (chat_id, json.dumps(remaining, ensure_ascii=False), utc_timestamp()),
+            )
+            self.connection.commit()
+            return phrase
+
+    async def get_or_create_random_message_schedule(
+        self, chat_id: int, service_day: str, scheduled_times: list[int]
+    ) -> list[sqlite3.Row]:
+        async with self._lock:
+            rows = self.connection.execute(
+                """SELECT * FROM random_message_schedules
+                   WHERE chat_id=? AND service_day=? ORDER BY scheduled_at""",
+                (chat_id, service_day),
+            ).fetchall()
+            if rows:
+                return rows
+            self.connection.executemany(
+                """INSERT INTO random_message_schedules(
+                       chat_id, service_day, scheduled_at
+                   ) VALUES (?, ?, ?)""",
+                [(chat_id, service_day, scheduled_at) for scheduled_at in scheduled_times],
+            )
+            self.connection.commit()
+            return self.connection.execute(
+                """SELECT * FROM random_message_schedules
+                   WHERE chat_id=? AND service_day=? ORDER BY scheduled_at""",
+                (chat_id, service_day),
+            ).fetchall()
+
+    async def skip_expired_random_messages(
+        self, chat_id: int, service_day: str, before: int
+    ) -> None:
+        async with self._lock:
+            self.connection.execute(
+                """UPDATE random_message_schedules SET status='skipped'
+                   WHERE chat_id=? AND service_day=? AND status='pending'
+                     AND scheduled_at<?""",
+                (chat_id, service_day, before),
+            )
+            self.connection.commit()
+
+    async def next_pending_random_message(
+        self, chat_id: int, service_day: str
+    ) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT * FROM random_message_schedules
+                   WHERE chat_id=? AND service_day=? AND status='pending'
+                   ORDER BY scheduled_at LIMIT 1""",
+                (chat_id, service_day),
+            ).fetchone()
+
+    async def claim_random_message(self, schedule_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT * FROM random_message_schedules
+                   WHERE id=? AND status='pending'""",
+                (schedule_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            self.connection.execute(
+                "UPDATE random_message_schedules SET status='sending' WHERE id=?",
+                (schedule_id,),
+            )
+            self.connection.commit()
+            return row
+
+    async def finish_random_message(self, schedule_id: int, status: str) -> None:
+        async with self._lock:
+            self.connection.execute(
+                "UPDATE random_message_schedules SET status=? WHERE id=?",
+                (status, schedule_id),
             )
             self.connection.commit()
 

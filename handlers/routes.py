@@ -82,6 +82,46 @@ DAILY_GROUP_MESSAGES = (
     (0, 0, "Спокойной ночи гниды"),
     (10, 0, "Утречка гниды"),
 )
+RANDOM_CHAT_PHRASES = (
+    "У чела сверху писька маленькая ☝️",
+    "Хей, давно не видел тебя на сайте сочныефембойчики.ком 💌",
+    "У МЕНЯ ГОРМОНАЛЬНЫЙ ШТОРМ, ГОНИТЕ АРТЫ!!! 🌪️",
+    "Мммм, пахнет тухлятиной и детским маслом 🧴",
+    "В чате обнаружен избыток гнид. Продолжаем наблюдение 🧪",
+    "Срочно: самовар опять ведёт себя подозрительно ☕",
+    "Не молчите, я уже начал думать за вас 🧠",
+    "Кому-то пора потрогать траву. Или хотя бы ковёр 🌱",
+    "Бот провёл анализ. Результат: вы странные 📊",
+    "Я не осуждаю. Я фиксирую 📋",
+    "Кто выключил интеллект на техническое обслуживание? 🔧",
+    "В чате замечен редкий вид: человек с мнением 🦜",
+    "Осторожно, сверху может упасть кринж 🪂",
+    "Сегодня разрешается быть гнидой, но умеренно 🐛",
+    "Самовар закипел. Кит где-то рядом ☕",
+    "Ваша аура была проверена. Результат засекречен 🔒",
+    "Не кормите чат после полуночи 🍞",
+    "Тут кто-нибудь вообще трогал реальность сегодня? 🌍",
+    "Система сообщает: уровень шизы в норме 📈",
+    "В воздухе пахнет новым конфликтом и дошираком 🍜",
+    "Кажется, кто-то забыл закрыть портал в Подвалград 🚪",
+    "Улыбнитесь, вас мысленно осудили 🙂",
+    "Бот напоминает: сильные тоже иногда пишут глупости 💪",
+    "У кого-то клавиатура работает быстрее мозга ⌨️",
+    "Пожалуйста, не пугайте новичков. Пока что 👶",
+    "Если молчать достаточно долго, можно стать легендой 🤫",
+    "Я не знаю, что происходит, но мне нравится 🤖",
+    "Время для важного вопроса: где самовар? ☕",
+    "Бот требует одну смешную мысль с каждого 🎟️",
+    "Кто-то наверху явно проиграл спор с эволюцией 🧬",
+    "Местный уровень адекватности: декоративный 🪴",
+    "Внимание, фембой-радар издаёт подозрительные звуки 📡",
+    "Не переживайте, хуже уже было. Наверное 🫠",
+    "По документам вы все нормальные. По сообщениям — нет 📁",
+    "Кажется, в этом чате завелась интеллектуальная плесень 🍄",
+    "Срочно вызывайте эксперта по бесполезным диалогам 📞",
+    "Если бы кринж был валютой, вы бы жили богато 💰",
+    "Гнида-бот посмотрел на чат и тихо вздохнул 😮‍💨",
+)
 IMMUNE_USERNAME = "kit_kitovich23"
 IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настолько сочные что ему плевать."
 SLEEPY_BLOCKED_ATTACKERS = {"cheto_neveru", "kit_kitovich23"}
@@ -107,6 +147,12 @@ GAME_RE = re.compile(
 TOP_RE = re.compile(r"^кому\s+делать\s+нехер[!?.\s]*$", re.IGNORECASE)
 GNIDA_RE = re.compile(
     r"(?<![а-яёa-z])(?:кто\s+гнида|гнида\s+чата)(?![а-яёa-z])", re.IGNORECASE
+)
+RANDOM_PHRASE_RE = re.compile(
+    r"^(?:гнида(?:\s*-\s*|\s+)?бот|гнида|бот)\s*,?\s*"
+    r"(?:скажи|расскажи)\s+(?:ч[её]\s*-?\s*то|что\s*-?\s*то|"
+    r"ч[её]\s*-?\s*нибудь|что\s*-?\s*нибудь)[!?.\s]*$",
+    re.IGNORECASE,
 )
 DUCK_RE = re.compile(
     r"(?<![а-яёa-z])(?:утин\s+член|длина\s+члена\s+уточки)(?![а-яёa-z])",
@@ -222,6 +268,37 @@ def next_daily_group_message(
             scheduled += timedelta(days=1)
         candidates.append((scheduled, text))
     return min(candidates, key=lambda item: item[0])
+
+
+def random_message_service_day(now: datetime | None = None) -> str:
+    """Return the Moscow date for a 07:00–02:00 random-message window."""
+    current = now.astimezone(MOSCOW_TZ) if now else datetime.now(MOSCOW_TZ)
+    if current.hour < 2:
+        current -= timedelta(days=1)
+    return current.date().isoformat()
+
+
+def random_message_window(service_day: str) -> tuple[datetime, datetime]:
+    start = datetime.fromisoformat(service_day).replace(
+        hour=7,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=MOSCOW_TZ,
+    )
+    return start, start + timedelta(hours=19)
+
+
+def random_message_schedule_times(service_day: str, count: int | None = None) -> list[int]:
+    """Pick one to three distinct minute slots between 07:00 and 02:00 MSK."""
+    start, _ = random_message_window(service_day)
+    amount = count if count is not None else random.randint(1, 3)
+    if not 1 <= amount <= 3:
+        raise ValueError("Random message count must be between 1 and 3")
+    # Leave the fixed 10:00 and 00:00 greetings alone.
+    available_minutes = [minute for minute in range(19 * 60) if minute not in {180, 1020}]
+    minutes = random.sample(available_minutes, amount)
+    return sorted(int((start + timedelta(minutes=minute)).timestamp()) for minute in minutes)
 
 
 def message_content(message: Message) -> str:
@@ -1136,6 +1213,59 @@ def create_router(
                     "Could not send scheduled group message: %s", error
                 )
 
+    async def send_random_group_messages(bot: Bot) -> None:
+        """Send 1–3 persistent, non-repeating chat phrases in each Moscow window."""
+        assert kargassia_chat_id is not None
+        while True:
+            now = datetime.now(MOSCOW_TZ)
+            if 2 <= now.hour < 7:
+                next_start = now.replace(hour=7, minute=0, second=0, microsecond=0)
+                await asyncio.sleep((next_start - now).total_seconds())
+                continue
+
+            service_day = random_message_service_day(now)
+            await database.get_or_create_random_message_schedule(
+                kargassia_chat_id,
+                service_day,
+                random_message_schedule_times(service_day),
+            )
+            await database.skip_expired_random_messages(
+                kargassia_chat_id, service_day, utc_timestamp()
+            )
+            scheduled = await database.next_pending_random_message(
+                kargassia_chat_id, service_day
+            )
+            if scheduled is None:
+                _, window_end = random_message_window(service_day)
+                now = datetime.now(MOSCOW_TZ)
+                next_start = (
+                    window_end
+                    if now < window_end
+                    else window_end.replace(hour=7) + timedelta(days=1)
+                )
+                await asyncio.sleep(max(1, (next_start - now).total_seconds()))
+                continue
+
+            delay = int(scheduled["scheduled_at"]) - utc_timestamp()
+            if delay > 0:
+                await asyncio.sleep(delay)
+                continue
+            claimed = await database.claim_random_message(int(scheduled["id"]))
+            if not claimed:
+                continue
+            phrase = await database.take_random_phrase(
+                kargassia_chat_id, RANDOM_CHAT_PHRASES
+            )
+            try:
+                await bot.send_message(kargassia_chat_id, phrase)
+            except TelegramAPIError as error:
+                await database.finish_random_message(int(claimed["id"]), "failed")
+                logging.getLogger(__name__).warning(
+                    "Could not send random chat phrase: %s", error
+                )
+            else:
+                await database.finish_random_message(int(claimed["id"]), "sent")
+
     async def finish_jug_hiding(
         chat_id: int, user_id: int, hidden_until: int, bot: Bot
     ) -> None:
@@ -1551,6 +1681,9 @@ def create_router(
             )
         if kargassia_chat_id is not None:
             task = asyncio.create_task(send_daily_group_messages(bot))
+            daily_message_tasks.add(task)
+            task.add_done_callback(daily_message_tasks.discard)
+            task = asyncio.create_task(send_random_group_messages(bot))
             daily_message_tasks.add(task)
             task.add_done_callback(daily_message_tasks.discard)
 
@@ -3404,6 +3537,15 @@ def create_router(
             return False
         joke_cooldowns[key] = now
         return True
+
+    @router.message(text_or_caption_regexp(RANDOM_PHRASE_RE))
+    async def random_phrase(message: Message) -> None:
+        if message.chat.type not in GROUP_TYPES:
+            return
+        phrase = await database.take_random_phrase(
+            message.chat.id, RANDOM_CHAT_PHRASES
+        )
+        await message.answer(phrase)
 
     @router.message(text_or_caption_regexp(METAL_RASCALS_RE))
     async def metal_rascals(message: Message) -> None:

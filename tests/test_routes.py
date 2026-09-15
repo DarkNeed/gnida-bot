@@ -47,6 +47,8 @@ from handlers.routes import (
     PISKA_MUTE_RE,
     PISKA_MUTE_SECONDS,
     PISYA_RE,
+    RANDOM_CHAT_PHRASES,
+    RANDOM_PHRASE_RE,
     MODERATION_RE,
     CLEAR_RE,
     RESTORE_RE,
@@ -72,6 +74,9 @@ from handlers.routes import (
     message_has_image,
     message_has_relayable_media,
     next_daily_group_message,
+    random_message_schedule_times,
+    random_message_service_day,
+    random_message_window,
     silence_duration_seconds,
     resolve_target,
     parse_safebooru_count,
@@ -266,6 +271,26 @@ class RoutePatternTests(unittest.TestCase):
         self.assertEqual(night_time.day, 27)
         self.assertEqual(night_text, "Спокойной ночи гниды")
         self.assertEqual(night_time.utcoffset(), timedelta(hours=3))
+
+    def test_random_phrase_commands_and_schedule_stay_in_moscow_window(self):
+        for text in (
+            "Гнида скажи чё-то",
+            "Гнида-бот скажи что-то",
+            "Бот скажи чтото",
+            "Бот расскажи что-нибудь!!!",
+        ):
+            self.assertTrue(RANDOM_PHRASE_RE.match(text))
+        self.assertFalse(RANDOM_PHRASE_RE.match("скажи что-то"))
+        self.assertGreaterEqual(len(RANDOM_CHAT_PHRASES), 30)
+
+        service_day = random_message_service_day(
+            datetime(2026, 9, 17, 1, 30, tzinfo=MOSCOW_TZ)
+        )
+        self.assertEqual(service_day, "2026-09-16")
+        start, end = random_message_window(service_day)
+        scheduled = random_message_schedule_times(service_day, count=3)
+        self.assertEqual(len(scheduled), len(set(scheduled)))
+        self.assertTrue(all(start.timestamp() <= value < end.timestamp() for value in scheduled))
 
     def test_moderation_accepts_bang_prefix(self):
         self.assertTrue(MODERATION_RE.match("!мут @user 1 минута причина"))

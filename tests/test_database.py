@@ -233,6 +233,29 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(claimed["author_id"], 10)
         self.assertIsNone(await self.database.claim_expired_death_note_entry(entry_id))
 
+    async def test_random_phrases_do_not_repeat_before_bag_is_empty(self):
+        phrases = ("первая", "вторая", "третья")
+        picked = [
+            await self.database.take_random_phrase(1, phrases) for _ in phrases
+        ]
+        self.assertEqual(set(picked), set(phrases))
+        self.assertIn(await self.database.take_random_phrase(1, phrases), phrases)
+
+    async def test_random_message_schedule_is_persistent_and_claimed_once(self):
+        initial = await self.database.get_or_create_random_message_schedule(
+            1, "2026-09-16", [100, 200]
+        )
+        repeated = await self.database.get_or_create_random_message_schedule(
+            1, "2026-09-16", [300]
+        )
+        self.assertEqual([row["scheduled_at"] for row in repeated], [100, 200])
+        await self.database.skip_expired_random_messages(1, "2026-09-16", 150)
+        pending = await self.database.next_pending_random_message(1, "2026-09-16")
+        self.assertEqual(pending["scheduled_at"], 200)
+        claimed = await self.database.claim_random_message(int(pending["id"]))
+        self.assertEqual(claimed["id"], pending["id"])
+        self.assertIsNone(await self.database.claim_random_message(int(pending["id"])))
+
     async def test_slave_cannot_receive_another_slave(self):
         await self.database.force_enslave(1, 20, 10)
         await self.database.force_enslave(1, 30, 10)
