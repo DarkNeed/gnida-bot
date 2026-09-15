@@ -58,6 +58,7 @@ from parsing import (
 
 GROUP_TYPES = {"group", "supergroup"}
 JOKE_COOLDOWN_SECONDS = 120
+RANDOM_PHRASE_COOLDOWN_SECONDS = 5 * 60
 HEAVENLY_PUNISHMENT_HOURS = 100
 PISKA_MUTE_SECONDS = 24 * 60 * 60
 CAPTCHA_TIMEOUT_SECONDS = 30
@@ -121,6 +122,39 @@ RANDOM_CHAT_PHRASES = (
     "Срочно вызывайте эксперта по бесполезным диалогам 📞",
     "Если бы кринж был валютой, вы бы жили богато 💰",
     "Гнида-бот посмотрел на чат и тихо вздохнул 😮‍💨",
+    "Срочное объявление: ваши мысли опять без очереди 🧾",
+    "Я пришёл проверить, не стали ли вы нормальными. Не стали 🧍",
+    "Ваше сообщение принято в отдел странных решений 📬",
+    "Пожалуйста, не шепчите при самоваре, он всё слышит ☕",
+    "Я бы пошутил, но чат уже справился без меня 🎭",
+    "Внимание: обнаружен человек с подозрительно хорошим настроением 🚨",
+    "Где-то рядом плачет один непрочитанный учебник 📚",
+    "Ваша репутация была сохранена в папке «непонятно» 📁",
+    "Пахнет новым мемом и старой ошибкой сервера 🖥️",
+    "Если это шутка, то я её уважаю. Немного 🤏",
+    "Кто-то опять выпустил мысли без намордника 🐕",
+    "В чате идёт тихая борьба за звание главного странного 🏆",
+    "Я не сплю. Я просто очень внимательно молчу 🌚",
+    "Кто украл атмосферу и заменил её кринжом? 🧯",
+    "Сейчас бы лечь, но сначала ещё немного позора 🛏️",
+    "Где-то вдалеке грустит один здравый смысл 🌫️",
+    "Уровень загадочности сообщения: холодильник в лесу 🧊",
+    "Бот рекомендует сделать паузу и посмотреть в стену 🧱",
+    "Кто-то здесь определённо работает на хаос 🌀",
+    "Секунду тишины в память о нормальном диалоге 🕯️",
+    "Вас заметили. Притворяйтесь естественно 🕴️",
+    "Если чат затих — значит, все одновременно думают ерунду 💭",
+    "Я не хочу никого обвинять, но виноваты вы 🫵",
+    "Осторожно, тут можно случайно получить мнение 🗣️",
+    "У самовара сегодня тяжёлый день, не давите на него ☕",
+    "Кажется, кто-то перепутал чат с дневником 📝",
+    "Я видел вещи, которые вам лучше не отправлять 👁️",
+    "Ваше присутствие было зарегистрировано как событие 🎫",
+    "Не переживайте, бот тоже не понял последнее сообщение 🤝",
+    "Я бы ушёл, но я буквально программа 🤖",
+    "Чат проверен на адекватность. Проверка сдалась 🏳️",
+    "Вам идёт этот хаос, честно говоря 🎀",
+    "Кто-то снова доказал, что интернет — это привилегия 🌐",
 )
 IMMUNE_USERNAME = "kit_kitovich23"
 IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настолько сочные что ему плевать."
@@ -3529,18 +3563,22 @@ def create_router(
             lines.append(f"{index}. {name} — {row['amount']}")
         await message.answer("\n".join(lines), parse_mode="HTML")
 
-    def joke_available(chat_id: int, command: str) -> bool:
+    def joke_available(
+        chat_id: int, command: str, cooldown_seconds: int = JOKE_COOLDOWN_SECONDS
+    ) -> bool:
         now = time.monotonic()
         key = (chat_id, command)
         previous = joke_cooldowns.get(key, 0.0)
-        if now - previous < JOKE_COOLDOWN_SECONDS:
+        if now - previous < cooldown_seconds:
             return False
         joke_cooldowns[key] = now
         return True
 
     @router.message(text_or_caption_regexp(RANDOM_PHRASE_RE))
     async def random_phrase(message: Message) -> None:
-        if message.chat.type not in GROUP_TYPES:
+        if message.chat.type not in GROUP_TYPES or not joke_available(
+            message.chat.id, "random_phrase", RANDOM_PHRASE_COOLDOWN_SECONDS
+        ):
             return
         phrase = await database.take_random_phrase(
             message.chat.id, RANDOM_CHAT_PHRASES

@@ -48,6 +48,7 @@ from handlers.routes import (
     PISKA_MUTE_SECONDS,
     PISYA_RE,
     RANDOM_CHAT_PHRASES,
+    RANDOM_PHRASE_COOLDOWN_SECONDS,
     RANDOM_PHRASE_RE,
     MODERATION_RE,
     CLEAR_RE,
@@ -282,6 +283,7 @@ class RoutePatternTests(unittest.TestCase):
             self.assertTrue(RANDOM_PHRASE_RE.match(text))
         self.assertFalse(RANDOM_PHRASE_RE.match("скажи что-то"))
         self.assertGreaterEqual(len(RANDOM_CHAT_PHRASES), 30)
+        self.assertEqual(RANDOM_PHRASE_COOLDOWN_SECONDS, 300)
 
         service_day = random_message_service_day(
             datetime(2026, 9, 17, 1, 30, tzinfo=MOSCOW_TZ)
