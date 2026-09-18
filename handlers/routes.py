@@ -194,6 +194,11 @@ DUCK_RE = re.compile(
 )
 HUILO_RE = re.compile(r"(?<![а-яёa-z])хуйло(?![а-яёa-z])", re.IGNORECASE)
 FEMBOY_RE = re.compile(r"(?<![а-яёa-z])дима\s+фембой(?![а-яёa-z])", re.IGNORECASE)
+LIES_RE = re.compile(
+    r"^(?:гнида(?:\s*-\s*|\s+)?бот|гнида|бот)\s*,?\s*"
+    r"(?:он\s+)?пиздит[!?.\s]*$",
+    re.IGNORECASE,
+)
 BASEMENT_RE = re.compile(
     r"^(?:в\s+подвалград|забрать\s+в\s+подвалград)[!?.\s]*$", re.IGNORECASE
 )
@@ -3674,6 +3679,27 @@ def create_router(
     async def femboy(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and joke_available(message.chat.id, "femboy"):
             await message.answer("бинарный")
+
+    @router.message(text_or_caption_regexp(LIES_RE))
+    async def lies(message: Message) -> None:
+        if message.chat.type not in GROUP_TYPES or not joke_available(
+            message.chat.id, "lies"
+        ):
+            return
+        await message.answer(
+            random.choice(
+                (
+                    "Конечно",
+                    "Как дышит",
+                    "Не",
+                    "Возможно",
+                    "Не знаю",
+                    "Не скажу",
+                    "Пиздит",
+                    "Ну вообще это правда",
+                )
+            )
+        )
 
     @router.message(
         text_or_caption_regexp(GNIDA_REPLY_INSULT_RE)

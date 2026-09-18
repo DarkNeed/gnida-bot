@@ -35,6 +35,7 @@ from handlers.routes import (
     IMMUNITY_TEXT,
     KARGASTAN_RE,
     LEGS_RE,
+    LIES_RE,
     JOKE_COOLDOWN_SECONDS,
     MAKE_SLAVE_RE,
     MAKE_SLAVE_REPLY_RE,
@@ -312,6 +313,17 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(PISKA_MUTE_RE.match("!!! ПИСЬКА В РОТ!!!"))
         self.assertFalse(PISKA_MUTE_RE.match("Писька в рот"))
         self.assertFalse(PISKA_MUTE_RE.match("!Писька в рот кому-нибудь"))
+
+    def test_lies_command_accepts_name_variants_without_comma(self):
+        for text in (
+            "Гнида, Пиздит?",
+            "Гнида-бот, Пиздит?",
+            "Бот, Пиздит?",
+            "Гнида, он пиздит?",
+            "гнида он ПИЗДИТ",
+        ):
+            self.assertTrue(LIES_RE.match(text))
+        self.assertFalse(LIES_RE.match("Гнида, он врёт?"))
         self.assertEqual(PISKA_MUTE_SECONDS, 24 * 60 * 60)
 
     def test_stats_accepts_both_names_and_prefixes(self):
