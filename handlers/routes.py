@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Awaitable, Callable
+from uuid import uuid4
 
 import aiohttp
 from aiogram import BaseMiddleware, Bot, F, Router
@@ -1001,7 +1002,12 @@ async def checkers_text(database: Database, challenge, game) -> str:
 
 
 def create_router(
-    database: Database, *, kargassia_chat_id: int | None = None
+    database: Database,
+    *,
+    kargassia_chat_id: int | None = None,
+    yookassa_shop_id: str | None = None,
+    yookassa_secret_key: str | None = None,
+    yookassa_return_url: str | None = None,
 ) -> Router:
     router = Router(name="gnida-bot")
     router.message.outer_middleware(TrackingMiddleware(database))
@@ -1036,6 +1042,7 @@ def create_router(
                     InlineKeyboardButton(text="🧰 Подработка", callback_data="sm:work"),
                     InlineKeyboardButton(text="🔓 Выкупиться", callback_data="sm:buyout"),
                 ],
+                [InlineKeyboardButton(text="💜 Поддержать", callback_data="sm:support")],
             ]
         )
 
@@ -1218,6 +1225,54 @@ def create_router(
         return InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="← Меню", callback_data="sm:home")]]
         )
+
+    def slave_menu_support() -> tuple[str, InlineKeyboardMarkup]:
+        return (
+            "<b>💜 Поддержать Гнида-бота</b>\n"
+            "Выбери сумму. Оплата откроется на защищённой странице ЮKassa; "
+            "бот не получает данные карты.",
+            InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="50 ₽", callback_data="sm:donate:50"),
+                        InlineKeyboardButton(text="100 ₽", callback_data="sm:donate:100"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="250 ₽", callback_data="sm:donate:250"),
+                        InlineKeyboardButton(text="500 ₽", callback_data="sm:donate:500"),
+                    ],
+                    [InlineKeyboardButton(text="← Меню", callback_data="sm:home")],
+                ]
+            ),
+        )
+
+    async def create_yookassa_donation(amount: int, user_id: int) -> str:
+        if not yookassa_shop_id or not yookassa_secret_key:
+            raise RuntimeError("ЮKassa не настроена")
+        confirmation: dict[str, str] = {"type": "redirect"}
+        if yookassa_return_url:
+            confirmation["return_url"] = yookassa_return_url
+        payload = {
+            "amount": {"value": f"{amount}.00", "currency": "RUB"},
+            "capture": True,
+            "confirmation": confirmation,
+            "description": f"Добровольная поддержка Гнида-бота от пользователя {user_id}",
+            "metadata": {"telegram_user_id": str(user_id), "kind": "donation"},
+        }
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                "https://api.yookassa.ru/v3/payments",
+                json=payload,
+                headers={"Idempotence-Key": str(uuid4())},
+                auth=aiohttp.BasicAuth(yookassa_shop_id, yookassa_secret_key),
+            ) as response:
+                response.raise_for_status()
+                payment = await response.json()
+        url = payment.get("confirmation", {}).get("confirmation_url")
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise RuntimeError("ЮKassa не вернула ссылку на оплату")
+        return url
 
     async def slave_menu_home(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         await database.settle_businesses_for_user(user_id)
@@ -2289,6 +2344,37 @@ def create_router(
             body, keyboard = await slave_menu_games(user_id)
         elif action == "guide":
             body, keyboard = slave_menu_guide()
+        elif action == "support":
+            body, keyboard = slave_menu_support()
+        elif action.startswith("donate:"):
+            try:
+                amount = int(action.split(":", 1)[1])
+            except ValueError:
+                await callback.answer("Некорректная сумма.", show_alert=True)
+                return
+            if amount not in {50, 100, 250, 500}:
+                await callback.answer("Недоступная сумма.", show_alert=True)
+                return
+            try:
+                payment_url = await create_yookassa_donation(amount, user_id)
+            except RuntimeError as error:
+                notice = str(error)
+                body, keyboard = slave_menu_support()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+                logging.getLogger(__name__).warning("Could not create YooKassa payment: %s", error)
+                notice = "Не удалось создать платёж. Попробуй позже."
+                body, keyboard = slave_menu_support()
+            else:
+                body = (
+                    f"<b>💜 Поддержка на {amount} ₽</b>\n"
+                    "Нажми кнопку ниже: оплата пройдёт на странице ЮKassa. Спасибо!"
+                )
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text=f"Оплатить {amount} ₽", url=payment_url)],
+                        [InlineKeyboardButton(text="← Поддержка", callback_data="sm:support")],
+                    ]
+                )
         elif action == "francs":
             body, keyboard = await slave_menu_francs(user_id)
         elif action == "business":

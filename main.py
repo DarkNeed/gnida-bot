@@ -29,7 +29,13 @@ async def main() -> None:
     await database.connect()
     dispatcher = Dispatcher()
     dispatcher.include_router(
-        create_router(database, kargassia_chat_id=kargassia_chat_id)
+        create_router(
+            database,
+            kargassia_chat_id=kargassia_chat_id,
+            yookassa_shop_id=getenv("YUKASSA_SHOP_ID", "").strip() or None,
+            yookassa_secret_key=getenv("YUKASSA_SECRET_KEY", "").strip() or None,
+            yookassa_return_url=getenv("YUKASSA_RETURN_URL", "").strip() or None,
+        )
     )
     bot = Bot(token=token)
 

@@ -102,6 +102,9 @@ Telegram-бот для большого группового чата на Pytho
    подсказку, например `play`.
 4. Скопируйте `.env.example` в `.env`, вставьте токен и Telegram ID Каргассии
    в `KARGASSIA_CHAT_ID`.
+   Для кнопки «💜 Поддержать» добавьте также `YUKASSA_SHOP_ID` и
+   `YUKASSA_SECRET_KEY` из личного кабинета ЮKassa; `YUKASSA_RETURN_URL` —
+   HTTPS-страница или ссылка `https://t.me/имя_вашего_бота` для возврата после оплаты.
 5. Установите зависимости и запустите:
 
 ```powershell
