@@ -234,7 +234,7 @@ BASEMENT_RE = re.compile(
     r"^(?:в\s+подвалград|забрать\s+в\s+подвалград)[!?.\s]*$", re.IGNORECASE
 )
 BASEMENT_RELEASE_RE = re.compile(
-    r"^[!/]отпустить\s+из\s+подвалграда(?:@\w+)?(?:\s|$)", re.IGNORECASE
+    r"^(?:[!/])?отпустить\s+из\s+подвалграда(?:@\w+)?(?:\s|$)", re.IGNORECASE
 )
 BASEMENT_LIST_RE = re.compile(r"^[!/]подвалград(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
 SLAP_RE = re.compile(r"^леща(?:\s|$)", re.IGNORECASE)

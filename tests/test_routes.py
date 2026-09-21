@@ -374,6 +374,7 @@ class RoutePatternTests(unittest.TestCase):
     def test_basement_management_phrases(self):
         self.assertTrue(BASEMENT_LIST_RE.match("/подвалград"))
         self.assertTrue(BASEMENT_RELEASE_RE.match("/отпустить из подвалграда @user"))
+        self.assertTrue(BASEMENT_RELEASE_RE.match("Отпустить из Подвалграда"))
         self.assertTrue(SLAP_RE.match("Леща @user"))
         self.assertTrue(BASEMENT_PROMOTE_RE.match("Повысить @user"))
         self.assertTrue(BASEMENT_DEMOTE_RE.match("Понизить @user"))
