@@ -2151,13 +2151,13 @@ def create_router(
         ):
             return
         owner = await database.get_owner(message.chat.id, sender.id)
-        if not owner:
-            return
-        owner_id = int(owner["owner_id"])
+        owner_id = sender.id if not owner else int(owner["owner_id"])
         business = await database.get_business(message.chat.id, owner_id)
         if not business or business["business_type"] != "brothel":
             return
-        if await database.business_worker_role(message.chat.id, owner_id, sender.id) != "manager":
+        if sender.id != owner_id and await database.business_worker_role(
+            message.chat.id, owner_id, sender.id
+        ) != "manager":
             return
         if await database.business_worker_role(message.chat.id, owner_id, target.id) != "courtesan":
             return
@@ -2186,13 +2186,13 @@ def create_router(
         ):
             return
         owner = await database.get_owner(message.chat.id, sender.id)
-        if not owner:
-            return
-        owner_id = int(owner["owner_id"])
+        owner_id = sender.id if not owner else int(owner["owner_id"])
         business = await database.get_business(message.chat.id, owner_id)
         if not business or business["business_type"] != "field":
             return
-        if await database.business_worker_role(message.chat.id, owner_id, sender.id) != "overseer":
+        if sender.id != owner_id and await database.business_worker_role(
+            message.chat.id, owner_id, sender.id
+        ) != "overseer":
             return
         if await database.business_worker_role(message.chat.id, owner_id, target.id) != "collector":
             return
@@ -2728,7 +2728,7 @@ def create_router(
         | text_or_caption_regexp(BASEMENT_DEMOTE_RE)
     )
     async def change_basement_rank(message: Message, bot: Bot) -> None:
-        if message.chat.type not in GROUP_TYPES or not is_cheto_neveru(message.from_user):
+        if message.chat.type not in GROUP_TYPES or not message.from_user:
             return
         text = message_content(message)
         is_promotion = bool(BASEMENT_PROMOTE_RE.match(text))
@@ -2744,6 +2744,62 @@ def create_router(
         if not target:
             return
         target_id, target_name, _ = target
+        if not is_cheto_neveru(message.from_user):
+            business = await database.get_business(message.chat.id, message.from_user.id)
+            if not business:
+                return
+            business_type = str(business["business_type"])
+            meta = BUSINESS_META[business_type]
+            producer_role = "courtesan" if business_type == "brothel" else "collector"
+            leader_role = "manager" if business_type == "brothel" else "overseer"
+            current = await database.business_worker_role(
+                message.chat.id, message.from_user.id, target_id
+            )
+            if is_promotion:
+                next_role = (
+                    producer_role
+                    if current is None
+                    else leader_role
+                    if current == producer_role
+                    else None
+                )
+            else:
+                next_role = producer_role if current == leader_role else None
+            if next_role is None and (
+                (is_promotion and current == leader_role)
+                or (not is_promotion and current is None)
+            ):
+                await message.answer(
+                    f"⚠️ {mention(target_id, target_name)} уже на предельной роли.",
+                    parse_mode="HTML",
+                )
+                return
+            result = await database.set_business_worker_role(
+                message.chat.id, message.from_user.id, target_id, next_role
+            )
+            if result not in {"updated", "removed"}:
+                await message.answer(
+                    "Повышать и понижать можно только собственных рабов этого предприятия."
+                )
+                return
+            previous_name = (
+                "не назначен"
+                if current is None
+                else meta["producer"] if current == producer_role else meta["leader"]
+            )
+            next_name = (
+                "не назначен"
+                if next_role is None
+                else meta["producer"]
+                if next_role == producer_role
+                else meta["leader"]
+            )
+            arrow = "⬆️" if is_promotion else "⬇️"
+            await message.answer(
+                f"{arrow} {mention(target_id, target_name)}: {previous_name} → {next_name}.",
+                parse_mode="HTML",
+            )
+            return
         changed = await database.change_basement_rank(
             message.chat.id, target_id, 1 if is_promotion else -1
         )
