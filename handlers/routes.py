@@ -690,6 +690,11 @@ class TrackingMiddleware(BaseMiddleware):
             await self.database.upsert_chat(
                 event.chat.id, event.chat.title or f"Чат {event.chat.id}"
             )
+            # Settle the past interval before refreshing last_seen: a new post starts
+            # the next active shift and cannot retroactively pay an inactive one.
+            settle_businesses = getattr(self.database, "settle_businesses_for_user", None)
+            if settle_businesses:
+                await settle_businesses(user.id)
             await self.database.upsert_user(
                 event.chat.id, user.id, user.username, display_name(user)
             )
@@ -1403,8 +1408,9 @@ def create_router(
             f"Чат: {title}\n"
             f"{meta['producer']}: {producers} · {meta['leader']}: {leaders}\n"
             f"Не назначены: {unassigned}\n\n"
-            "Доход начисляется каждый полный час. Управляющие и надзиратели "
-            "усиливают долю владельца с убывающим бонусом."
+            "Владелец получает доход каждый час. Активные работники получают 1 ₣ "
+            "раз в 6 часов, управляющие и надзиратели — раз в 12 часов. "
+            "Неактивные больше суток не получают зарплату, но дают пониженный доход."
         )
         return (
             text,
@@ -2371,6 +2377,8 @@ def create_router(
             body, keyboard = await slave_menu_work(user_id)
             if result == "worked":
                 notice = f"Смена завершена: +{worker_pay} ₣."
+            elif result == "inactive_slave":
+                notice = "Смена засчитана владельцу, но раб не писал в этом чате больше суток: зарплаты нет."
                 body = (
                     f"✅ <b>Смена завершена</b>\nТы получил: {worker_pay} ₣\n"
                     f"Владелец получил: {owner_pay} ₣\n\n{body}"

@@ -26,25 +26,34 @@ JUG_HIDING_SECONDS = 5 * 60
 JUG_COOLDOWN_SECONDS = 60 * 60
 BASEMENT_ESCAPE_COOLDOWN_SECONDS = 60 * 60
 BUSINESS_HOUR_SECONDS = 60 * 60
+BUSINESS_ACTIVE_SECONDS = 24 * 60 * 60
+SLAVE_EARNINGS_WEEK_SECONDS = 7 * 24 * 60 * 60
+SLAVE_WEEKLY_EARNINGS_LIMIT = 100
 BUYOUT_COST_FRANCS = 100
 BUSINESS_CONFIG = {
     "brothel": {
         "producer_role": "courtesan",
         "leader_role": "manager",
         "owner_per_producer": 4,
-        "producer_wage": 2,
+        "inactive_owner_per_producer": 1,
+        "producer_wage": 1,
+        "producer_wage_period_hours": 6,
         "leader_wage": 1,
-        "shift_owner": 2,
-        "shift_worker": 5,
+        "leader_wage_period_hours": 12,
+        "shift_owner": 1,
+        "shift_worker": 2,
     },
     "field": {
         "producer_role": "collector",
         "leader_role": "overseer",
         "owner_per_producer": 3,
+        "inactive_owner_per_producer": 1,
         "producer_wage": 1,
+        "producer_wage_period_hours": 6,
         "leader_wage": 1,
+        "leader_wage_period_hours": 12,
         "shift_owner": 1,
-        "shift_worker": 4,
+        "shift_worker": 1,
     },
 }
 
@@ -248,6 +257,7 @@ class Database:
                 worker_id INTEGER NOT NULL,
                 role TEXT NOT NULL,
                 assigned_at INTEGER NOT NULL,
+                wage_hours INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (chat_id, owner_id, worker_id)
             );
 
@@ -259,6 +269,14 @@ class Database:
                 worker_id INTEGER NOT NULL,
                 cooldown_until INTEGER NOT NULL,
                 PRIMARY KEY (chat_id, worker_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS slave_labor_earnings (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                window_started INTEGER NOT NULL,
+                earned INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (chat_id, user_id)
             );
 
             CREATE TABLE IF NOT EXISTS basement_members (
@@ -294,6 +312,7 @@ class Database:
             """
         )
         self._ensure_column("ownership", "last_forced_at", "INTEGER")
+        self._ensure_column("business_workers", "wage_hours", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column(
             "ownership", "transfer_priority", "INTEGER NOT NULL DEFAULT 0"
         )
@@ -1318,6 +1337,49 @@ class Database:
             (chat_id, user_id, amount, now),
         )
 
+    def _credit_labor_income_locked(
+        self, chat_id: int, user_id: int, amount: int, now: int
+    ) -> int:
+        """Credit labor income, capping only participants who are currently slaves."""
+        if amount <= 0:
+            return 0
+        is_slave = self.connection.execute(
+            "SELECT 1 FROM ownership WHERE chat_id=? AND slave_id=?",
+            (chat_id, user_id),
+        ).fetchone()
+        if is_slave is None:
+            self._add_francs_locked(chat_id, user_id, amount)
+            return amount
+        row = self.connection.execute(
+            """SELECT window_started, earned FROM slave_labor_earnings
+               WHERE chat_id=? AND user_id=?""",
+            (chat_id, user_id),
+        ).fetchone()
+        if row is None or now >= int(row["window_started"]) + SLAVE_EARNINGS_WEEK_SECONDS:
+            window_started, earned = now, 0
+        else:
+            window_started, earned = int(row["window_started"]), int(row["earned"])
+        paid = min(amount, max(0, SLAVE_WEEKLY_EARNINGS_LIMIT - earned))
+        self.connection.execute(
+            """INSERT INTO slave_labor_earnings(chat_id, user_id, window_started, earned)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                   window_started=excluded.window_started, earned=excluded.earned""",
+            (chat_id, user_id, window_started, earned + paid),
+        )
+        if paid:
+            self._add_francs_locked(chat_id, user_id, paid)
+        return paid
+
+    @staticmethod
+    def _active_hours_in_interval(
+        last_seen: int | None, start: int, end: int
+    ) -> int:
+        if last_seen is None:
+            return 0
+        active_end = min(end, last_seen + BUSINESS_ACTIVE_SECONDS)
+        return max(0, (active_end - start) // BUSINESS_HOUR_SECONDS)
+
     def _settle_business_locked(
         self, chat_id: int, owner_id: int, now: int
     ) -> dict[str, int | str] | None:
@@ -1331,38 +1393,59 @@ class Database:
         if hours == 0:
             return {"hours": 0, "owner_income": 0, "business_type": business["business_type"]}
         config = BUSINESS_CONFIG[str(business["business_type"])]
+        interval_start = int(business["last_accrued"])
+        interval_end = interval_start + hours * BUSINESS_HOUR_SECONDS
         workers = self.connection.execute(
-            """SELECT w.worker_id, w.role
+            """SELECT w.worker_id, w.role, w.wage_hours, u.last_seen
                FROM business_workers w
                INNER JOIN ownership o
                    ON o.chat_id=w.chat_id AND o.owner_id=w.owner_id
                       AND o.slave_id=w.worker_id
+               LEFT JOIN users u ON u.chat_id=w.chat_id AND u.user_id=w.worker_id
                WHERE w.chat_id=? AND w.owner_id=?""",
             (chat_id, owner_id),
         ).fetchall()
-        producers = [
-            int(worker["worker_id"])
-            for worker in workers
-            if worker["role"] == config["producer_role"]
-        ]
-        leaders = [
-            int(worker["worker_id"])
-            for worker in workers
-            if worker["role"] == config["leader_role"]
-        ]
+        producers = [worker for worker in workers if worker["role"] == config["producer_role"]]
+        leaders = [worker for worker in workers if worker["role"] == config["leader_role"]]
         # The next manager contributes half the previous bonus: 20%, 10%, 5%, 2%, 1%.
         bonus_percent = sum(20 // (2**index) for index in range(min(len(leaders), 5)))
-        base_owner_income = len(producers) * int(config["owner_per_producer"])
-        owner_income = base_owner_income * (100 + bonus_percent) // 100 * hours
+        active_producer_hours = sum(
+            self._active_hours_in_interval(
+                int(worker["last_seen"]) if worker["last_seen"] is not None else None,
+                interval_start,
+                interval_end,
+            )
+            for worker in producers
+        )
+        inactive_producer_hours = len(producers) * hours - active_producer_hours
+        owner_income = (
+            active_producer_hours * int(config["owner_per_producer"]) * (100 + bonus_percent) // 100
+            + inactive_producer_hours * int(config["inactive_owner_per_producer"])
+        )
         if owner_income:
             self._add_francs_locked(chat_id, owner_id, owner_income)
-        for worker_id in producers:
-            self._add_francs_locked(
-                chat_id, worker_id, int(config["producer_wage"]) * hours
+        for worker in workers:
+            active_hours = self._active_hours_in_interval(
+                int(worker["last_seen"]) if worker["last_seen"] is not None else None,
+                interval_start,
+                interval_end,
             )
-        for worker_id in leaders:
-            self._add_francs_locked(
-                chat_id, worker_id, int(config["leader_wage"]) * hours
+            if worker["role"] == config["producer_role"]:
+                period = int(config["producer_wage_period_hours"])
+                wage = int(config["producer_wage"])
+            else:
+                period = int(config["leader_wage_period_hours"])
+                wage = int(config["leader_wage"])
+            accrued_hours = int(worker["wage_hours"]) + active_hours
+            payouts, remainder = divmod(accrued_hours, period)
+            if payouts:
+                self._credit_labor_income_locked(
+                    chat_id, int(worker["worker_id"]), payouts * wage, now
+                )
+            self.connection.execute(
+                """UPDATE business_workers SET wage_hours=?
+                   WHERE chat_id=? AND owner_id=? AND worker_id=?""",
+                (remainder, chat_id, owner_id, int(worker["worker_id"])),
             )
         self.connection.execute(
             """UPDATE businesses SET last_accrued=last_accrued + ?
@@ -1600,7 +1683,26 @@ class Database:
             config = BUSINESS_CONFIG[str(business["business_type"])]
             worker_pay = int(config["shift_worker"])
             owner_pay = int(config["shift_owner"])
-            self._add_francs_locked(chat_id, worker_id, worker_pay)
+            worker = self.connection.execute(
+                """SELECT o.slave_id, u.last_seen
+                   FROM ownership o
+                   LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.slave_id
+                   WHERE o.chat_id=? AND o.slave_id=?""",
+                (chat_id, worker_id),
+            ).fetchone()
+            inactive_slave = bool(
+                worker
+                and (
+                    worker["last_seen"] is None
+                    or now > int(worker["last_seen"]) + BUSINESS_ACTIVE_SECONDS
+                )
+            )
+            if inactive_slave:
+                worker_pay = 0
+            else:
+                worker_pay = self._credit_labor_income_locked(
+                    chat_id, worker_id, worker_pay, now
+                )
             self._add_francs_locked(chat_id, owner_id, owner_pay)
             cooldown_until = now + BUSINESS_HOUR_SECONDS
             self.connection.execute(
@@ -1611,7 +1713,12 @@ class Database:
                 (chat_id, worker_id, cooldown_until),
             )
             self.connection.commit()
-            return "worked", worker_pay, owner_pay, cooldown_until
+            return (
+                "inactive_slave" if inactive_slave else "worked",
+                worker_pay,
+                owner_pay,
+                cooldown_until,
+            )
 
     async def buyout_slave(self, chat_id: int, owner_id: int, slave_id: int) -> str:
         async with self._lock:

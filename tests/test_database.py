@@ -443,20 +443,42 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             "updated",
         )
         self.database.connection.execute(
-            "UPDATE businesses SET last_accrued=last_accrued-3600 WHERE chat_id=1 AND owner_id=10"
+            "UPDATE businesses SET last_accrued=last_accrued-21600 WHERE chat_id=1 AND owner_id=10"
         )
         self.database.connection.commit()
         settled = await self.database.settle_business(1, 10)
-        self.assertEqual(settled["owner_income"], 4)
-        self.assertEqual(await self.database.franc_balance(1, 10), 4)
-        self.assertEqual(await self.database.franc_balance(1, 20), 2)
+        self.assertEqual(settled["owner_income"], 24)
+        self.assertEqual(await self.database.franc_balance(1, 10), 24)
+        self.assertEqual(await self.database.franc_balance(1, 20), 1)
 
         result, worker_pay, owner_pay, _ = await self.database.work_at_business(1, 10, 30)
-        self.assertEqual((result, worker_pay, owner_pay), ("worked", 5, 2))
+        self.assertEqual((result, worker_pay, owner_pay), ("worked", 2, 1))
         result, *_ = await self.database.work_at_business(1, 10, 30)
         self.assertEqual(result, "cooldown")
         self.assertEqual(await self.database.transfer_francs(1, 10, 30, 3), "transferred")
-        self.assertEqual(await self.database.franc_balance(1, 30), 8)
+        self.assertEqual(await self.database.franc_balance(1, 30), 5)
+
+        self.database.connection.execute(
+            "UPDATE users SET last_seen=? WHERE chat_id=1 AND user_id=20",
+            (utc_timestamp() - 2 * 24 * 60 * 60,),
+        )
+        self.database.connection.execute(
+            "UPDATE businesses SET last_accrued=last_accrued-21600 WHERE chat_id=1 AND owner_id=10"
+        )
+        self.database.connection.commit()
+        settled = await self.database.settle_business(1, 10)
+        self.assertEqual(settled["owner_income"], 6)
+        self.assertEqual(await self.database.franc_balance(1, 20), 1)
+
+        await self.database.upsert_user(1, 20, "loser", "Loser")
+        self.database.connection.execute(
+            """UPDATE slave_labor_earnings SET window_started=?, earned=99
+               WHERE chat_id=1 AND user_id=20""",
+            (utc_timestamp(),),
+        )
+        self.database.connection.commit()
+        result, worker_pay, _, _ = await self.database.work_at_business(1, 10, 20)
+        self.assertEqual((result, worker_pay), ("worked", 1))
 
         self.database.connection.execute(
             "UPDATE franc_balances SET balance=100 WHERE chat_id=1 AND user_id=20"
