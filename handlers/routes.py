@@ -239,6 +239,9 @@ SLAP_RE = re.compile(r"^леща(?:\s|$)", re.IGNORECASE)
 BASEMENT_PROMOTE_RE = re.compile(r"^повысить(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 BASEMENT_DEMOTE_RE = re.compile(r"^понизить(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 TRAIN_RE = re.compile(r"^в\s+п[ао]ровозик[!?.\s]*$", re.IGNORECASE)
+BUSINESS_ASSIGN_RE = re.compile(
+    r"^в\s+(бордель|хлопковое\s+поле)(?:@\w+)?(?:\s|$)", re.IGNORECASE
+)
 SELL_RE = re.compile(r"^продать[!?.\s]*$", re.IGNORECASE)
 WHIP_RE = re.compile(r"^(?:хлыст|кнут|удар\s+кнутом)[!?.\s]*$", re.IGNORECASE)
 ART_THEFT_RE = re.compile(r"(?<![а-яёa-z])(спизжу|спиздил)(?![а-яёa-z])", re.IGNORECASE)
@@ -2137,6 +2140,52 @@ def create_router(
             await message.answer("Себе переводить не нужно.")
         else:
             await message.answer("Сумма должна быть больше нуля.")
+
+    @router.message(text_or_caption_regexp(BUSINESS_ASSIGN_RE))
+    async def assign_business_worker(message: Message) -> None:
+        sender = message.from_user
+        if message.chat.type not in GROUP_TYPES or not sender:
+            return
+        text = message_content(message)
+        match = BUSINESS_ASSIGN_RE.match(text)
+        if not match:
+            return
+        business_type = "brothel" if match.group(1).casefold() == "бордель" else "field"
+        business = await database.get_business(message.chat.id, sender.id)
+        if not business or business["business_type"] != business_type:
+            await message.answer("У тебя нет такого предприятия в этом чате.")
+            return
+        target = await resolve_target(message, database, text[match.end() :].strip())
+        if not target:
+            return
+        target_id, target_name, _ = target
+        producer_role = "courtesan" if business_type == "brothel" else "collector"
+        leader_role = "manager" if business_type == "brothel" else "overseer"
+        current = await database.business_worker_role(message.chat.id, sender.id, target_id)
+        if current == leader_role:
+            await message.answer(
+                f"{mention(target_id, target_name)} уже {BUSINESS_META[business_type]['leader'].lower()}.",
+                parse_mode="HTML",
+            )
+            return
+        result = await database.set_business_worker_role(
+            message.chat.id, sender.id, target_id, producer_role
+        )
+        if result != "updated":
+            await message.answer("В предприятие можно назначить только своего раба.")
+            return
+        if current == producer_role:
+            await message.answer(
+                f"{mention(target_id, target_name)} уже назначен: "
+                f"{BUSINESS_META[business_type]['producer'].lower()}.",
+                parse_mode="HTML",
+            )
+            return
+        await message.answer(
+            f"{BUSINESS_META[business_type]['emoji']} {mention(target_id, target_name)} назначен: "
+            f"{BUSINESS_META[business_type]['producer'].lower()}.",
+            parse_mode="HTML",
+        )
 
     @router.message(text_or_caption_regexp(SELL_RE))
     async def business_sell(message: Message) -> None:

@@ -18,6 +18,7 @@ from handlers.routes import (
     BASEMENT_DEMOTE_RE,
     BASEMENT_PROMOTE_RE,
     BASEMENT_RELEASE_RE,
+    BUSINESS_ASSIGN_RE,
     CHAT_RE,
     CHALLENGE_RE,
     DUCK_RE,
@@ -385,6 +386,8 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(FRANC_TRANSFER_RE.match("!перевести @user 20"))
         self.assertTrue(BUSINESS_SUMMARY_RE.match("Бордель"))
         self.assertTrue(BUSINESS_SUMMARY_RE.match("/хлопковое поле"))
+        self.assertTrue(BUSINESS_ASSIGN_RE.match("В бордель @user"))
+        self.assertTrue(BUSINESS_ASSIGN_RE.match("в хлопковое поле"))
         self.assertTrue(SELL_RE.match("Продать!"))
         self.assertTrue(WHIP_RE.match("Удар кнутом"))
         self.assertTrue(WHIP_RE.match("кнут!!!"))
