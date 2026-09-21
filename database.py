@@ -208,6 +208,7 @@ class Database:
                 user_id INTEGER NOT NULL,
                 added_by INTEGER NOT NULL,
                 added_at INTEGER NOT NULL,
+                rank INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (chat_id, user_id)
             );
 
@@ -239,6 +240,9 @@ class Database:
             "ownership", "transfer_priority", "INTEGER NOT NULL DEFAULT 0"
         )
         self._ensure_column("captchas", "join_message_id", "INTEGER")
+        self._ensure_column(
+            "basement_members", "rank", "INTEGER NOT NULL DEFAULT 1"
+        )
         self._ensure_column(
             "challenges", "forced", "INTEGER NOT NULL DEFAULT 0"
         )
@@ -1282,13 +1286,45 @@ class Database:
             ).fetchone()
             return row is not None
 
+    async def basement_member_rank(self, chat_id: int, user_id: int) -> int | None:
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT rank FROM basement_members
+                   WHERE chat_id=? AND user_id=?""",
+                (chat_id, user_id),
+            ).fetchone()
+            return int(row["rank"]) if row else None
+
+    async def change_basement_rank(
+        self, chat_id: int, user_id: int, amount: int
+    ) -> tuple[int, int] | None:
+        """Change a resident rank, clamped between miner (1) and machinist (3)."""
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT rank FROM basement_members
+                   WHERE chat_id=? AND user_id=?""",
+                (chat_id, user_id),
+            ).fetchone()
+            if row is None:
+                return None
+            previous = int(row["rank"])
+            updated = max(1, min(3, previous + amount))
+            if updated != previous:
+                self.connection.execute(
+                    """UPDATE basement_members SET rank=?
+                       WHERE chat_id=? AND user_id=?""",
+                    (updated, chat_id, user_id),
+                )
+                self.connection.commit()
+            return previous, updated
+
     async def list_basement_members(self, chat_id: int) -> list[sqlite3.Row]:
         async with self._lock:
             return self.connection.execute(
-                """SELECT b.user_id, b.added_at, u.username, u.display_name
+                """SELECT b.user_id, b.added_at, b.rank, u.username, u.display_name
                    FROM basement_members b
                    LEFT JOIN users u ON u.chat_id=b.chat_id AND u.user_id=b.user_id
-                   WHERE b.chat_id=? ORDER BY b.added_at, b.user_id""",
+                   WHERE b.chat_id=? ORDER BY b.rank, b.added_at, b.user_id""",
                 (chat_id,),
             ).fetchall()
 

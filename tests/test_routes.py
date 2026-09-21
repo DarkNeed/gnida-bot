@@ -15,6 +15,8 @@ from parsing import command_payload
 from handlers.routes import (
     BASEMENT_RE,
     BASEMENT_LIST_RE,
+    BASEMENT_DEMOTE_RE,
+    BASEMENT_PROMOTE_RE,
     BASEMENT_RELEASE_RE,
     CHAT_RE,
     CHALLENGE_RE,
@@ -48,6 +50,7 @@ from handlers.routes import (
     PISKA_MUTE_RE,
     PISKA_MUTE_SECONDS,
     PISYA_RE,
+    POPA_RE,
     RANDOM_CHAT_PHRASES,
     RANDOM_PHRASE_COOLDOWN_SECONDS,
     RANDOM_PHRASE_RE,
@@ -63,6 +66,7 @@ from handlers.routes import (
     SLAVE_PRIORITY_RE,
     STATS_RE,
     TRANSFER_RE,
+    TRAIN_RE,
     TrackingMiddleware,
     ART_THEFT_RE,
     art_theft_count,
@@ -365,6 +369,11 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(BASEMENT_LIST_RE.match("/подвалград"))
         self.assertTrue(BASEMENT_RELEASE_RE.match("/отпустить из подвалграда @user"))
         self.assertTrue(SLAP_RE.match("Леща @user"))
+        self.assertTrue(BASEMENT_PROMOTE_RE.match("Повысить @user"))
+        self.assertTrue(BASEMENT_DEMOTE_RE.match("Понизить @user"))
+        self.assertTrue(TRAIN_RE.match("В паровозик"))
+        self.assertTrue(TRAIN_RE.match("в ПОРОВОЗИК!!!"))
+        self.assertTrue(POPA_RE.match("ПОПА"))
 
     def test_personal_trigger_phrases(self):
         self.assertTrue(ART_THEFT_RE.search("Я спизжу этот арт"))

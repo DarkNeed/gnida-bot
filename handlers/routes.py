@@ -83,6 +83,12 @@ DAILY_GROUP_MESSAGES = (
     (0, 0, "Спокойной ночи гниды"),
     (10, 0, "Утречка гниды"),
 )
+BASEMENT_RANKS = {
+    1: ("⛏️", "Шахтёр", "Шахтёры"),
+    2: ("👁️", "Надзиратель", "Надзиратели"),
+    3: ("🚂", "Машинист", "Машинисты"),
+}
+BASEMENT_RULER_RANK = 4
 RANDOM_CHAT_PHRASES = (
     "У чела сверху писька маленькая ☝️",
     "Хей, давно не видел тебя на сайте сочныефембойчики.ком 💌",
@@ -207,6 +213,9 @@ BASEMENT_RELEASE_RE = re.compile(
 )
 BASEMENT_LIST_RE = re.compile(r"^[!/]подвалград(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
 SLAP_RE = re.compile(r"^леща(?:\s|$)", re.IGNORECASE)
+BASEMENT_PROMOTE_RE = re.compile(r"^повысить(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+BASEMENT_DEMOTE_RE = re.compile(r"^понизить(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+TRAIN_RE = re.compile(r"^в\s+п[ао]ровозик[!?.\s]*$", re.IGNORECASE)
 ART_THEFT_RE = re.compile(r"(?<![а-яёa-z])(спизжу|спиздил)(?![а-яёa-z])", re.IGNORECASE)
 HEAVENLY_PUNISHMENT_RE = re.compile(
     r"^это\s+кара\s+небесная,?\s+сосунок[!?.\s]*$", re.IGNORECASE
@@ -250,6 +259,7 @@ PIROJOK_BASEMENT_ESCAPE_RE = re.compile(
 )
 SAMOVAR_RE = re.compile(r"(?<![а-яёa-z])самовар(?![а-яёa-z])", re.IGNORECASE)
 PISYA_RE = re.compile(r"^пися[!?.\s]*$", re.IGNORECASE)
+POPA_RE = re.compile(r"^попа[!?.\s]*$", re.IGNORECASE)
 GNIDA_REPLY_INSULT_RE = re.compile(
     r"^(?:ты\s+гнида|гнида\s+бот(?:у)?\s*[-—:]?\s*ты\s+гнида)[!?.\s]*$",
     re.IGNORECASE,
@@ -414,6 +424,20 @@ async def stored_sleepy_attack_is_blocked(
 
 def is_cheto_neveru(user: User | None) -> bool:
     return bool(user and user.username and user.username.casefold() == "cheto_neveru")
+
+
+def basement_rank_name(rank: int) -> str:
+    return BASEMENT_RANKS[rank][1]
+
+
+async def basement_actor_rank(
+    database: Database, chat_id: int, user: User | None
+) -> int | None:
+    if is_cheto_neveru(user):
+        return BASEMENT_RULER_RANK
+    if not user:
+        return None
+    return await database.basement_member_rank(chat_id, user.id)
 
 
 def is_utochka(user: User | None) -> bool:
@@ -2140,11 +2164,62 @@ def create_router(
         if not members:
             await message.answer("В Подвалграде пока никого нет.")
             return
-        lines = ["Жители Подвалграда:"]
-        for index, member in enumerate(members, 1):
-            nickname = member["display_name"] or member["username"] or str(member["user_id"])
-            lines.append(f"{index}. {html.escape(nickname)}")
+        lines = ["🏚️ Подвалград"]
+        for rank, (emoji, _, plural_name) in BASEMENT_RANKS.items():
+            residents = [member for member in members if int(member["rank"]) == rank]
+            if not residents:
+                continue
+            lines.extend(("", f"{emoji} {plural_name}:"))
+            for member in residents:
+                nickname = (
+                    member["display_name"]
+                    or member["username"]
+                    or str(member["user_id"])
+                )
+                lines.append(f"• {html.escape(nickname)}")
         await message.answer("\n".join(lines), parse_mode="HTML")
+
+    @router.message(
+        text_or_caption_regexp(BASEMENT_PROMOTE_RE)
+        | text_or_caption_regexp(BASEMENT_DEMOTE_RE)
+    )
+    async def change_basement_rank(message: Message, bot: Bot) -> None:
+        if message.chat.type not in GROUP_TYPES or not is_cheto_neveru(message.from_user):
+            return
+        text = message_content(message)
+        is_promotion = bool(BASEMENT_PROMOTE_RE.match(text))
+        match = BASEMENT_PROMOTE_RE.match(text) or BASEMENT_DEMOTE_RE.match(text)
+        if not match:
+            return
+        target = await resolve_target(
+            message,
+            database,
+            text[match.end() :].strip(),
+            allowed_bot_id=bot.id,
+        )
+        if not target:
+            return
+        target_id, target_name, _ = target
+        changed = await database.change_basement_rank(
+            message.chat.id, target_id, 1 if is_promotion else -1
+        )
+        if changed is None:
+            await message.answer("Этот участник не состоит в Подвалграде.")
+            return
+        previous, updated = changed
+        target_mention = mention(target_id, target_name)
+        if previous == updated:
+            await message.answer(
+                f"⚠️ {target_mention} уже {basement_rank_name(updated)}.",
+                parse_mode="HTML",
+            )
+            return
+        arrow = "⬆️" if is_promotion else "⬇️"
+        await message.answer(
+            f"{arrow} {target_mention}: {basement_rank_name(previous)} → "
+            f"{basement_rank_name(updated)}.",
+            parse_mode="HTML",
+        )
 
     @router.message(text_or_caption_regexp(PIROJOK_BASEMENT_ESCAPE_RE))
     async def pirojok_basement_escape(message: Message) -> None:
@@ -2238,7 +2313,10 @@ def create_router(
 
     @router.message(text_or_caption_regexp(SLAP_RE))
     async def basement_slap(message: Message, bot: Bot) -> None:
-        if message.chat.type not in GROUP_TYPES or not is_cheto_neveru(message.from_user):
+        sender_rank = await basement_actor_rank(
+            database, message.chat.id, message.from_user
+        )
+        if message.chat.type not in GROUP_TYPES or sender_rank is None or sender_rank < 2:
             return
         text = message_content(message)
         match = SLAP_RE.match(text)
@@ -2259,8 +2337,16 @@ def create_router(
         if await target_is_immune(database, message.chat.id, target_id):
             await message.answer(IMMUNITY_TEXT)
             return
-        if not await database.is_basement_member(message.chat.id, target_id):
+        target_rank = await database.basement_member_rank(message.chat.id, target_id)
+        if target_rank is None:
             await message.answer("Этот участник не состоит в Подвалграде.")
+            return
+        if sender_rank < target_rank:
+            await message.answer(
+                f"⛔ Нельзя дать леща {mention(target_id, target_name)}: "
+                "у него ранг выше.",
+                parse_mode="HTML",
+            )
             return
         if (
             await target_is_pirojok(database, message.chat.id, target_id)
@@ -2273,12 +2359,64 @@ def create_router(
             )
             return
         if target_id == bot.id:
+            if is_cheto_neveru(message.from_user):
+                await message.answer(
+                    "👋 Властитель Подвалграда дал леща бедному Гнида-боту, за что..."
+                )
+            else:
+                await message.answer("👋 Гнида-бот получил леща и ничего не понял.")
+            return
+        if is_cheto_neveru(message.from_user):
+            text = (
+                f"👑 Властитель Подвалграда дал леща "
+                f"{mention(target_id, target_name)}, работай раб."
+            )
+        else:
+            text = (
+                f"👋 {mention(message.from_user.id, display_name(message.from_user))} "
+                f"дал леща {mention(target_id, target_name)}. Работай в шахтах."
+            )
+        await message.answer(text, parse_mode="HTML")
+
+    @router.message(text_or_caption_regexp(TRAIN_RE))
+    async def basement_train(message: Message) -> None:
+        sender_rank = await basement_actor_rank(
+            database, message.chat.id, message.from_user
+        )
+        replied = message.reply_to_message
+        target = replied.from_user if replied and not replied.sender_chat else None
+        if (
+            message.chat.type not in GROUP_TYPES
+            or sender_rank is None
+            or sender_rank < 3
+            or not target
+            or target.is_bot
+        ):
+            return
+        if sleepy_attack_is_blocked(message.from_user, target.username):
+            await message.answer(SLEEPY_PROTECTION_TEXT)
+            return
+        if user_is_immune(target):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        target_rank = await database.basement_member_rank(message.chat.id, target.id)
+        if target_rank is not None and sender_rank < target_rank:
             await message.answer(
-                "Властитель Подвалграда дал леща бедному Гнида-боту, за что..."
+                f"⛔ Нельзя отправить {mention(target.id, display_name(target))} в паровозик: "
+                "у него ранг выше.",
+                parse_mode="HTML",
             )
             return
+        target_mention = mention(target.id, display_name(target))
         await message.answer(
-            f"Властитель Подвалграда дал леща {mention(target_id, target_name)}, работай раб.",
+            random.choice(
+                (
+                    f"🚂 {target_mention} отпоровозили, советую сходить к проктологу.",
+                    f"🚃 Этого чела {target_mention} поровозили всю ночь и весь день.",
+                    f"🫣 {target_mention}, не бойся, больно только в первый раз.",
+                    f"🍞 {target_mention} принял роль хлеба.",
+                )
+            ),
             parse_mode="HTML",
         )
 
@@ -3783,7 +3921,7 @@ def create_router(
             )
         else:
             await message.answer(
-                f"{mention(replied_user.id, display_name(replied_user))} забран в Подвалград, "
+                f"⛏️ {mention(replied_user.id, display_name(replied_user))} забран в Подвалград, "
                 "продуктивной работы в шахтах.",
                 parse_mode="HTML",
             )
@@ -3797,5 +3935,10 @@ def create_router(
     async def pisya(message: Message) -> None:
         if message.chat.type in GROUP_TYPES:
             await message.answer("попа")
+
+    @router.message(text_or_caption_regexp(POPA_RE))
+    async def popa(message: Message) -> None:
+        if message.chat.type in GROUP_TYPES and message.from_user and not message.from_user.is_bot:
+            await message.answer("пися")
 
     return router

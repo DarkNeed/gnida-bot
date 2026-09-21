@@ -427,6 +427,10 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.database.is_basement_member(1, 20))
         members = await self.database.list_basement_members(1)
         self.assertEqual(members[0]["username"], "loser")
+        self.assertEqual(members[0]["rank"], 1)
+        self.assertEqual(await self.database.change_basement_rank(1, 20, 1), (1, 2))
+        self.assertEqual(await self.database.change_basement_rank(1, 20, 5), (2, 3))
+        self.assertEqual(await self.database.change_basement_rank(1, 20, -10), (3, 1))
         self.assertTrue(await self.database.remove_basement_member(1, 20))
         self.assertFalse(await self.database.is_basement_member(1, 20))
 
