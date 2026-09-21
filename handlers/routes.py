@@ -88,8 +88,10 @@ BASEMENT_RANKS = {
     1: ("⛏️", "Шахтёр", "Шахтёры"),
     2: ("👁️", "Надзиратель", "Надзиратели"),
     3: ("🚂", "Мге браток", "Мге братки"),
+    4: ("👑", "Заместитель короля", "Заместители короля"),
 }
-BASEMENT_RULER_RANK = 4
+BASEMENT_DEPUTY_RANK = 4
+BASEMENT_RULER_RANK = 5
 BUSINESS_META = {
     "brothel": {
         "emoji": "🏩",
@@ -2723,7 +2725,14 @@ def create_router(
 
     @router.message(text_or_caption_regexp(BASEMENT_RELEASE_RE))
     async def release_from_basement(message: Message, bot: Bot) -> None:
-        if message.chat.type not in GROUP_TYPES or not is_cheto_neveru(message.from_user):
+        sender_rank = await basement_actor_rank(
+            database, message.chat.id, message.from_user
+        )
+        if (
+            message.chat.type not in GROUP_TYPES
+            or sender_rank is None
+            or sender_rank < BASEMENT_DEPUTY_RANK
+        ):
             return
         text = message_content(message)
         match = BASEMENT_RELEASE_RE.match(text)
@@ -4538,11 +4547,12 @@ def create_router(
     async def basement(message: Message, bot: Bot) -> None:
         sender = message.from_user
         replied_user = message.reply_to_message.from_user if message.reply_to_message else None
+        sender_rank = await basement_actor_rank(database, message.chat.id, sender)
         if (
             message.chat.type not in GROUP_TYPES
             or not sender
-            or not sender.username
-            or sender.username.casefold() != "cheto_neveru"
+            or sender_rank is None
+            or sender_rank < BASEMENT_DEPUTY_RANK
             or not replied_user
         ):
             return

@@ -1722,7 +1722,7 @@ class Database:
     async def change_basement_rank(
         self, chat_id: int, user_id: int, amount: int
     ) -> tuple[int, int] | None:
-        """Change a resident rank, clamped between miner (1) and machinist (3)."""
+        """Change a resident rank, clamped between miner (1) and deputy (4)."""
         async with self._lock:
             row = self.connection.execute(
                 """SELECT rank FROM basement_members
@@ -1732,7 +1732,7 @@ class Database:
             if row is None:
                 return None
             previous = int(row["rank"])
-            updated = max(1, min(3, previous + amount))
+            updated = max(1, min(4, previous + amount))
             if updated != previous:
                 self.connection.execute(
                     """UPDATE basement_members SET rank=?
