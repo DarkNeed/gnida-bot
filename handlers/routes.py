@@ -192,6 +192,10 @@ CLEAR_RE = re.compile(
 STATS_RE = re.compile(r"^[!/](стат|стата)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 FRANCS_RE = re.compile(r"^[!/](?:франки|francs)(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
 FRANC_TRANSFER_RE = re.compile(r"^[!/]перевести(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+BUSINESS_SUMMARY_RE = re.compile(
+    r"^[!/]?(?:бордель|хлопковое\s+поле)(?:@\w+)?[!?.\s]*$",
+    re.IGNORECASE,
+)
 SLAVES_RE = re.compile(r"^/рабы(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 SLAVE_MENU_RE = re.compile(r"^/(?:меню|menu)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 START_RE = re.compile(r"^/start(?:@\w+)?(?:\s|$)", re.IGNORECASE)
@@ -2055,6 +2059,47 @@ def create_router(
         await database.settle_businesses_for_user(message.from_user.id)
         balance = await database.franc_balance(message.chat.id, message.from_user.id)
         await message.answer(f"💰 Твой баланс: <b>{balance} ₣</b>", parse_mode="HTML")
+
+    @router.message(text_or_caption_regexp(BUSINESS_SUMMARY_RE))
+    async def business_summary(message: Message) -> None:
+        """Show a compact public summary of the sender's enterprise in this chat."""
+        if not message.from_user:
+            return
+        text = message_content(message)
+        requested_type = "brothel" if "бордель" in text.casefold() else "field"
+        if message.chat.type == "private":
+            businesses = await database.list_owned_businesses(message.from_user.id)
+            business = next(
+                (row for row in businesses if row["business_type"] == requested_type), None
+            )
+            if not business:
+                await message.answer("Такого предприятия у тебя пока нет.")
+                return
+            body, keyboard = await slave_menu_business_detail(
+                message.from_user.id, int(business["chat_id"])
+            )
+            await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+            return
+        if message.chat.type not in GROUP_TYPES:
+            return
+        await database.settle_business(message.chat.id, message.from_user.id)
+        business = await database.get_business(message.chat.id, message.from_user.id)
+        if not business or business["business_type"] != requested_type:
+            return
+        workers = await database.list_business_slaves(message.chat.id, message.from_user.id)
+        meta = BUSINESS_META[requested_type]
+        producer_role = "courtesan" if requested_type == "brothel" else "collector"
+        leader_role = "manager" if requested_type == "brothel" else "overseer"
+        producers = sum(row["role"] == producer_role for row in workers)
+        leaders = sum(row["role"] == leader_role for row in workers)
+        balance = await database.franc_balance(message.chat.id, message.from_user.id)
+        await message.answer(
+            f"<b>{meta['emoji']} {meta['name']}</b>\n"
+            f"{meta['producer']}: <b>{producers}</b> · {meta['leader']}: <b>{leaders}</b>\n"
+            f"💰 Баланс владельца: <b>{balance} ₣</b>\n"
+            "Подробное управление — в личке через /меню.",
+            parse_mode="HTML",
+        )
 
     @router.message(text_or_caption_regexp(FRANC_TRANSFER_RE))
     async def transfer_francs(message: Message) -> None:
