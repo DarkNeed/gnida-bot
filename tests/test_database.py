@@ -434,6 +434,37 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.database.remove_basement_member(1, 20))
         self.assertFalse(await self.database.is_basement_member(1, 20))
 
+    async def test_business_income_shifts_transfers_and_buyout(self):
+        self.assertEqual(await self.database.create_business(1, 10, "brothel"), "no_slaves")
+        self.assertEqual(await self.database.force_enslave(1, 20, 10), "enslaved")
+        self.assertEqual(await self.database.create_business(1, 10, "brothel"), "created")
+        self.assertEqual(
+            await self.database.set_business_worker_role(1, 10, 20, "courtesan"),
+            "updated",
+        )
+        self.database.connection.execute(
+            "UPDATE businesses SET last_accrued=last_accrued-3600 WHERE chat_id=1 AND owner_id=10"
+        )
+        self.database.connection.commit()
+        settled = await self.database.settle_business(1, 10)
+        self.assertEqual(settled["owner_income"], 4)
+        self.assertEqual(await self.database.franc_balance(1, 10), 4)
+        self.assertEqual(await self.database.franc_balance(1, 20), 2)
+
+        result, worker_pay, owner_pay, _ = await self.database.work_at_business(1, 10, 30)
+        self.assertEqual((result, worker_pay, owner_pay), ("worked", 5, 2))
+        result, *_ = await self.database.work_at_business(1, 10, 30)
+        self.assertEqual(result, "cooldown")
+        self.assertEqual(await self.database.transfer_francs(1, 10, 30, 3), "transferred")
+        self.assertEqual(await self.database.franc_balance(1, 30), 8)
+
+        self.database.connection.execute(
+            "UPDATE franc_balances SET balance=100 WHERE chat_id=1 AND user_id=20"
+        )
+        self.database.connection.commit()
+        self.assertEqual(await self.database.buyout_slave(1, 10, 20), "released")
+        self.assertIsNone(await self.database.get_owner(1, 20))
+
     async def test_pirojok_basement_escape_has_persistent_hour_cooldown(self):
         await self.database.add_basement_member(1, 20, 10)
         result, cooldown_until = await self.database.escape_basement_with_cooldown(1, 20)

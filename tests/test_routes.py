@@ -25,6 +25,8 @@ from handlers.routes import (
     DEATH_NOTE_ERASE_RE,
     DEATH_NOTE_RE,
     FEMBOY_RE,
+    FRANCS_RE,
+    FRANC_TRANSFER_RE,
     GAME_RE,
     GNIDA_RE,
     GNIDA_DIRECT_INSULT_RE,
@@ -63,10 +65,12 @@ from handlers.routes import (
     SLAP_RE,
     SLAVE_MENU_RE,
     SLEEP_RE,
+    SELL_RE,
     SLAVE_PRIORITY_RE,
     STATS_RE,
     TRANSFER_RE,
     TRAIN_RE,
+    WHIP_RE,
     TrackingMiddleware,
     ART_THEFT_RE,
     art_theft_count,
@@ -374,6 +378,13 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(TRAIN_RE.match("В паровозик"))
         self.assertTrue(TRAIN_RE.match("в ПОРОВОЗИК!!!"))
         self.assertTrue(POPA_RE.match("ПОПА"))
+
+    def test_business_and_franc_patterns(self):
+        self.assertTrue(FRANCS_RE.match("/франки"))
+        self.assertTrue(FRANC_TRANSFER_RE.match("!перевести @user 20"))
+        self.assertTrue(SELL_RE.match("Продать!"))
+        self.assertTrue(WHIP_RE.match("Удар кнутом"))
+        self.assertTrue(WHIP_RE.match("кнут!!!"))
 
     def test_personal_trigger_phrases(self):
         self.assertTrue(ART_THEFT_RE.search("Я спизжу этот арт"))

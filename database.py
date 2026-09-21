@@ -25,6 +25,28 @@ PIROJOK_USERNAME = "pirojoksostajem"
 JUG_HIDING_SECONDS = 5 * 60
 JUG_COOLDOWN_SECONDS = 60 * 60
 BASEMENT_ESCAPE_COOLDOWN_SECONDS = 60 * 60
+BUSINESS_HOUR_SECONDS = 60 * 60
+BUYOUT_COST_FRANCS = 100
+BUSINESS_CONFIG = {
+    "brothel": {
+        "producer_role": "courtesan",
+        "leader_role": "manager",
+        "owner_per_producer": 4,
+        "producer_wage": 2,
+        "leader_wage": 1,
+        "shift_owner": 2,
+        "shift_worker": 5,
+    },
+    "field": {
+        "producer_role": "collector",
+        "leader_role": "overseer",
+        "owner_per_producer": 3,
+        "producer_wage": 1,
+        "leader_wage": 1,
+        "shift_owner": 1,
+        "shift_worker": 4,
+    },
+}
 
 
 def utc_timestamp() -> int:
@@ -201,6 +223,42 @@ class Database:
                 counter_key TEXT NOT NULL,
                 value INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (chat_id, counter_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS franc_balances (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                balance INTEGER NOT NULL DEFAULT 0 CHECK(balance >= 0),
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS businesses (
+                chat_id INTEGER NOT NULL,
+                owner_id INTEGER NOT NULL,
+                business_type TEXT NOT NULL CHECK(business_type IN ('brothel', 'field')),
+                created_at INTEGER NOT NULL,
+                last_accrued INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, owner_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS business_workers (
+                chat_id INTEGER NOT NULL,
+                owner_id INTEGER NOT NULL,
+                worker_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                assigned_at INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, owner_id, worker_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_business_workers_worker
+                ON business_workers(chat_id, worker_id);
+
+            CREATE TABLE IF NOT EXISTS business_shift_cooldowns (
+                chat_id INTEGER NOT NULL,
+                worker_id INTEGER NOT NULL,
+                cooldown_until INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, worker_id)
             );
 
             CREATE TABLE IF NOT EXISTS basement_members (
@@ -992,6 +1050,10 @@ class Database:
                         "DELETE FROM ownership WHERE chat_id=? AND slave_id=?",
                         (chat_id, winner_id),
                     )
+                    self.connection.execute(
+                        "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
+                        (chat_id, winner_id),
+                    )
                     self.connection.commit()
                     return "freed", winner_id
                 self.connection.commit()
@@ -1021,6 +1083,10 @@ class Database:
             ).fetchone()
             if owned:
                 slave_id = int(owned["slave_id"])
+                self.connection.execute(
+                    "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
+                    (chat_id, slave_id),
+                )
                 self.connection.execute(
                     """UPDATE ownership SET owner_id=?, acquired_at=?, last_forced_at=NULL,
                            transfer_priority=0
@@ -1101,6 +1167,10 @@ class Database:
             if recipient_is_slave:
                 return "recipient_is_slave"
             self.connection.execute(
+                "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
+                (chat_id, slave_id),
+            )
+            self.connection.execute(
                 """UPDATE ownership
                    SET owner_id=?, acquired_at=?, last_forced_at=NULL, transfer_priority=0
                    WHERE chat_id=? AND slave_id=?""",
@@ -1134,6 +1204,14 @@ class Database:
                 (chat_id, slave_id),
             )
             self.connection.execute(
+                "DELETE FROM business_workers WHERE chat_id=? AND owner_id=?",
+                (chat_id, slave_id),
+            )
+            self.connection.execute(
+                "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
+                (chat_id, slave_id),
+            )
+            self.connection.execute(
                 """INSERT INTO ownership(
                        chat_id, slave_id, owner_id, acquired_at, last_forced_at
                    ) VALUES (?, ?, ?, ?, NULL)
@@ -1153,6 +1231,11 @@ class Database:
                 "DELETE FROM ownership WHERE chat_id=? AND owner_id=?",
                 (chat_id, owner_id),
             )
+            if cursor.rowcount:
+                self.connection.execute(
+                    "DELETE FROM business_workers WHERE chat_id=? AND owner_id=?",
+                    (chat_id, owner_id),
+                )
             self.connection.commit()
             return cursor.rowcount
 
@@ -1221,6 +1304,347 @@ class Database:
             ).fetchone()
             self.connection.commit()
             return int(row["value"])
+
+    def _add_francs_locked(self, chat_id: int, user_id: int, amount: int) -> None:
+        if amount < 0:
+            raise ValueError("Cannot add a negative franc amount")
+        now = utc_timestamp()
+        self.connection.execute(
+            """INSERT INTO franc_balances(chat_id, user_id, balance, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                   balance=balance + excluded.balance,
+                   updated_at=excluded.updated_at""",
+            (chat_id, user_id, amount, now),
+        )
+
+    def _settle_business_locked(
+        self, chat_id: int, owner_id: int, now: int
+    ) -> dict[str, int | str] | None:
+        business = self.connection.execute(
+            """SELECT * FROM businesses WHERE chat_id=? AND owner_id=?""",
+            (chat_id, owner_id),
+        ).fetchone()
+        if business is None:
+            return None
+        hours = max(0, (now - int(business["last_accrued"])) // BUSINESS_HOUR_SECONDS)
+        if hours == 0:
+            return {"hours": 0, "owner_income": 0, "business_type": business["business_type"]}
+        config = BUSINESS_CONFIG[str(business["business_type"])]
+        workers = self.connection.execute(
+            """SELECT w.worker_id, w.role
+               FROM business_workers w
+               INNER JOIN ownership o
+                   ON o.chat_id=w.chat_id AND o.owner_id=w.owner_id
+                      AND o.slave_id=w.worker_id
+               WHERE w.chat_id=? AND w.owner_id=?""",
+            (chat_id, owner_id),
+        ).fetchall()
+        producers = [
+            int(worker["worker_id"])
+            for worker in workers
+            if worker["role"] == config["producer_role"]
+        ]
+        leaders = [
+            int(worker["worker_id"])
+            for worker in workers
+            if worker["role"] == config["leader_role"]
+        ]
+        # The next manager contributes half the previous bonus: 20%, 10%, 5%, 2%, 1%.
+        bonus_percent = sum(20 // (2**index) for index in range(min(len(leaders), 5)))
+        base_owner_income = len(producers) * int(config["owner_per_producer"])
+        owner_income = base_owner_income * (100 + bonus_percent) // 100 * hours
+        if owner_income:
+            self._add_francs_locked(chat_id, owner_id, owner_income)
+        for worker_id in producers:
+            self._add_francs_locked(
+                chat_id, worker_id, int(config["producer_wage"]) * hours
+            )
+        for worker_id in leaders:
+            self._add_francs_locked(
+                chat_id, worker_id, int(config["leader_wage"]) * hours
+            )
+        self.connection.execute(
+            """UPDATE businesses SET last_accrued=last_accrued + ?
+               WHERE chat_id=? AND owner_id=?""",
+            (hours * BUSINESS_HOUR_SECONDS, chat_id, owner_id),
+        )
+        return {
+            "hours": hours,
+            "owner_income": owner_income,
+            "business_type": str(business["business_type"]),
+        }
+
+    async def settle_business(
+        self, chat_id: int, owner_id: int
+    ) -> dict[str, int | str] | None:
+        async with self._lock:
+            result = self._settle_business_locked(chat_id, owner_id, utc_timestamp())
+            if result and int(result["hours"]):
+                self.connection.commit()
+            return result
+
+    async def settle_businesses_for_user(self, user_id: int) -> None:
+        async with self._lock:
+            rows = self.connection.execute(
+                """SELECT DISTINCT b.chat_id, b.owner_id
+                   FROM businesses b
+                   LEFT JOIN business_workers w
+                       ON w.chat_id=b.chat_id AND w.owner_id=b.owner_id
+                   WHERE b.owner_id=? OR w.worker_id=?""",
+                (user_id, user_id),
+            ).fetchall()
+            now = utc_timestamp()
+            changed = False
+            for row in rows:
+                result = self._settle_business_locked(
+                    int(row["chat_id"]), int(row["owner_id"]), now
+                )
+                changed = changed or bool(result and int(result["hours"]))
+            if changed:
+                self.connection.commit()
+
+    async def franc_balance(self, chat_id: int, user_id: int) -> int:
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            ).fetchone()
+            return int(row["balance"]) if row else 0
+
+    async def list_franc_balances(self, user_id: int) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT f.chat_id, f.balance, c.title AS chat_title
+                   FROM franc_balances f
+                   LEFT JOIN chats c ON c.chat_id=f.chat_id
+                   WHERE f.user_id=? ORDER BY f.balance DESC, f.chat_id""",
+                (user_id,),
+            ).fetchall()
+
+    async def transfer_francs(
+        self, chat_id: int, sender_id: int, recipient_id: int, amount: int
+    ) -> str:
+        if amount <= 0:
+            return "invalid_amount"
+        if sender_id == recipient_id:
+            return "self"
+        async with self._lock:
+            balance = self.connection.execute(
+                "SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?",
+                (chat_id, sender_id),
+            ).fetchone()
+            if not balance or int(balance["balance"]) < amount:
+                return "insufficient"
+            now = utc_timestamp()
+            self.connection.execute(
+                """UPDATE franc_balances SET balance=balance-?, updated_at=?
+                   WHERE chat_id=? AND user_id=?""",
+                (amount, now, chat_id, sender_id),
+            )
+            self._add_francs_locked(chat_id, recipient_id, amount)
+            self.connection.commit()
+            return "transferred"
+
+    async def create_business(self, chat_id: int, owner_id: int, business_type: str) -> str:
+        if business_type not in BUSINESS_CONFIG:
+            raise ValueError("Unknown business type")
+        async with self._lock:
+            existing = self.connection.execute(
+                "SELECT 1 FROM businesses WHERE owner_id=?",
+                (owner_id,),
+            ).fetchone()
+            if existing:
+                return "exists"
+            slave = self.connection.execute(
+                "SELECT 1 FROM ownership WHERE chat_id=? AND owner_id=? LIMIT 1",
+                (chat_id, owner_id),
+            ).fetchone()
+            if slave is None:
+                return "no_slaves"
+            now = utc_timestamp()
+            self.connection.execute(
+                """INSERT INTO businesses(
+                       chat_id, owner_id, business_type, created_at, last_accrued
+                   ) VALUES (?, ?, ?, ?, ?)""",
+                (chat_id, owner_id, business_type, now, now),
+            )
+            self.connection.commit()
+            return "created"
+
+    async def get_business(self, chat_id: int, owner_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT b.*, c.title AS chat_title, u.username, u.display_name
+                   FROM businesses b
+                   LEFT JOIN chats c ON c.chat_id=b.chat_id
+                   LEFT JOIN users u ON u.chat_id=b.chat_id AND u.user_id=b.owner_id
+                   WHERE b.chat_id=? AND b.owner_id=?""",
+                (chat_id, owner_id),
+            ).fetchone()
+
+    async def list_owned_businesses(self, owner_id: int) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT b.*, c.title AS chat_title
+                   FROM businesses b
+                   LEFT JOIN chats c ON c.chat_id=b.chat_id
+                   WHERE b.owner_id=? ORDER BY b.created_at DESC""",
+                (owner_id,),
+            ).fetchall()
+
+    async def list_available_businesses(self, user_id: int) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT b.*, c.title AS chat_title, u.username, u.display_name
+                   FROM businesses b
+                   INNER JOIN users participant
+                       ON participant.chat_id=b.chat_id AND participant.user_id=?
+                   LEFT JOIN chats c ON c.chat_id=b.chat_id
+                   LEFT JOIN users u ON u.chat_id=b.chat_id AND u.user_id=b.owner_id
+                   WHERE b.owner_id<>?
+                   ORDER BY c.title, b.owner_id""",
+                (user_id, user_id),
+            ).fetchall()
+
+    async def list_business_slaves(
+        self, chat_id: int, owner_id: int
+    ) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT o.slave_id AS user_id, u.username, u.display_name, w.role
+                   FROM ownership o
+                   LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.slave_id
+                   LEFT JOIN business_workers w
+                       ON w.chat_id=o.chat_id AND w.owner_id=o.owner_id
+                          AND w.worker_id=o.slave_id
+                   WHERE o.chat_id=? AND o.owner_id=? ORDER BY o.acquired_at DESC""",
+                (chat_id, owner_id),
+            ).fetchall()
+
+    async def set_business_worker_role(
+        self, chat_id: int, owner_id: int, worker_id: int, role: str | None
+    ) -> str:
+        async with self._lock:
+            business = self.connection.execute(
+                "SELECT business_type FROM businesses WHERE chat_id=? AND owner_id=?",
+                (chat_id, owner_id),
+            ).fetchone()
+            if business is None:
+                return "no_business"
+            config = BUSINESS_CONFIG[str(business["business_type"])]
+            valid_roles = {config["producer_role"], config["leader_role"]}
+            if role is not None and role not in valid_roles:
+                return "invalid_role"
+            owned = self.connection.execute(
+                """SELECT 1 FROM ownership
+                   WHERE chat_id=? AND owner_id=? AND slave_id=?""",
+                (chat_id, owner_id, worker_id),
+            ).fetchone()
+            if owned is None:
+                return "not_owned"
+            if role is None:
+                self.connection.execute(
+                    """DELETE FROM business_workers
+                       WHERE chat_id=? AND owner_id=? AND worker_id=?""",
+                    (chat_id, owner_id, worker_id),
+                )
+                self.connection.commit()
+                return "removed"
+            self.connection.execute(
+                """INSERT INTO business_workers(
+                       chat_id, owner_id, worker_id, role, assigned_at
+                   ) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(chat_id, owner_id, worker_id) DO UPDATE SET role=excluded.role""",
+                (chat_id, owner_id, worker_id, role, utc_timestamp()),
+            )
+            self.connection.commit()
+            return "updated"
+
+    async def business_worker_role(
+        self, chat_id: int, owner_id: int, worker_id: int
+    ) -> str | None:
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT w.role FROM business_workers w
+                   INNER JOIN ownership o
+                       ON o.chat_id=w.chat_id AND o.owner_id=w.owner_id
+                          AND o.slave_id=w.worker_id
+                   WHERE w.chat_id=? AND w.owner_id=? AND w.worker_id=?""",
+                (chat_id, owner_id, worker_id),
+            ).fetchone()
+            return str(row["role"]) if row else None
+
+    async def work_at_business(
+        self, chat_id: int, owner_id: int, worker_id: int
+    ) -> tuple[str, int | None, int | None, int | None]:
+        """Pay a one-hour temporary job. Returns status, worker pay, owner pay, cooldown."""
+        async with self._lock:
+            business = self.connection.execute(
+                """SELECT business_type FROM businesses
+                   WHERE chat_id=? AND owner_id=?""",
+                (chat_id, owner_id),
+            ).fetchone()
+            if business is None:
+                return "no_business", None, None, None
+            if owner_id == worker_id:
+                return "own_business", None, None, None
+            now = utc_timestamp()
+            cooldown = self.connection.execute(
+                """SELECT cooldown_until FROM business_shift_cooldowns
+                   WHERE chat_id=? AND worker_id=?""",
+                (chat_id, worker_id),
+            ).fetchone()
+            if cooldown and int(cooldown["cooldown_until"]) > now:
+                return "cooldown", None, None, int(cooldown["cooldown_until"])
+            config = BUSINESS_CONFIG[str(business["business_type"])]
+            worker_pay = int(config["shift_worker"])
+            owner_pay = int(config["shift_owner"])
+            self._add_francs_locked(chat_id, worker_id, worker_pay)
+            self._add_francs_locked(chat_id, owner_id, owner_pay)
+            cooldown_until = now + BUSINESS_HOUR_SECONDS
+            self.connection.execute(
+                """INSERT INTO business_shift_cooldowns(chat_id, worker_id, cooldown_until)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(chat_id, worker_id) DO UPDATE SET
+                       cooldown_until=excluded.cooldown_until""",
+                (chat_id, worker_id, cooldown_until),
+            )
+            self.connection.commit()
+            return "worked", worker_pay, owner_pay, cooldown_until
+
+    async def buyout_slave(self, chat_id: int, owner_id: int, slave_id: int) -> str:
+        async with self._lock:
+            owned = self.connection.execute(
+                """SELECT 1 FROM ownership
+                   WHERE chat_id=? AND owner_id=? AND slave_id=?""",
+                (chat_id, owner_id, slave_id),
+            ).fetchone()
+            if owned is None:
+                return "not_owned"
+            balance = self.connection.execute(
+                "SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?",
+                (chat_id, slave_id),
+            ).fetchone()
+            if not balance or int(balance["balance"]) < BUYOUT_COST_FRANCS:
+                return "insufficient"
+            now = utc_timestamp()
+            self.connection.execute(
+                """UPDATE franc_balances SET balance=balance-?, updated_at=?
+                   WHERE chat_id=? AND user_id=?""",
+                (BUYOUT_COST_FRANCS, now, chat_id, slave_id),
+            )
+            self.connection.execute(
+                "DELETE FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?",
+                (chat_id, owner_id, slave_id),
+            )
+            self.connection.execute(
+                """DELETE FROM business_workers
+                   WHERE chat_id=? AND owner_id=? AND worker_id=?""",
+                (chat_id, owner_id, slave_id),
+            )
+            self.connection.commit()
+            return "released"
 
     async def add_basement_member(
         self, chat_id: int, user_id: int, added_by: int
@@ -1408,6 +1832,12 @@ class Database:
                 "DELETE FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?",
                 (chat_id, owner_id, slave_id),
             )
+            if cursor.rowcount:
+                self.connection.execute(
+                    """DELETE FROM business_workers
+                       WHERE chat_id=? AND owner_id=? AND worker_id=?""",
+                    (chat_id, owner_id, slave_id),
+                )
             self.connection.commit()
             return cursor.rowcount > 0
 

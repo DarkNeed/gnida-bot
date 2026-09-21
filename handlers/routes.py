@@ -40,6 +40,7 @@ from aiogram.types import (
 from blackjack import full_hand, hand_total, visible_hand
 from checkers import BLACK, WHITE, EMPTY, legal_moves as legal_checkers_moves
 from database import (
+    BUYOUT_COST_FRANCS,
     CHALLENGE_DEADLINE_SECONDS,
     NEWCOMER_CHALLENGE_DEADLINE_SECONDS,
     PIROJOK_USERNAME,
@@ -89,6 +90,22 @@ BASEMENT_RANKS = {
     3: ("🚂", "Мге браток", "Мге братки"),
 }
 BASEMENT_RULER_RANK = 4
+BUSINESS_META = {
+    "brothel": {
+        "emoji": "🏩",
+        "name": "Бордель",
+        "producer": "Куртизанка",
+        "leader": "Управляющий",
+        "assign": "Назначить куртизанкой",
+    },
+    "field": {
+        "emoji": "🌾",
+        "name": "Хлопковое поле",
+        "producer": "Сборщик",
+        "leader": "Надзиратель",
+        "assign": "Назначить сборщиком",
+    },
+}
 RANDOM_CHAT_PHRASES = (
     "У чела сверху писька маленькая ☝️",
     "Хей, давно не видел тебя на сайте сочныефембойчики.ком 💌",
@@ -173,6 +190,8 @@ CLEAR_RE = re.compile(
     re.IGNORECASE,
 )
 STATS_RE = re.compile(r"^[!/](стат|стата)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+FRANCS_RE = re.compile(r"^[!/](?:франки|francs)(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
+FRANC_TRANSFER_RE = re.compile(r"^[!/]перевести(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 SLAVES_RE = re.compile(r"^/рабы(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 SLAVE_MENU_RE = re.compile(r"^/(?:меню|menu)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 START_RE = re.compile(r"^/start(?:@\w+)?(?:\s|$)", re.IGNORECASE)
@@ -216,6 +235,8 @@ SLAP_RE = re.compile(r"^леща(?:\s|$)", re.IGNORECASE)
 BASEMENT_PROMOTE_RE = re.compile(r"^повысить(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 BASEMENT_DEMOTE_RE = re.compile(r"^понизить(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 TRAIN_RE = re.compile(r"^в\s+п[ао]ровозик[!?.\s]*$", re.IGNORECASE)
+SELL_RE = re.compile(r"^продать[!?.\s]*$", re.IGNORECASE)
+WHIP_RE = re.compile(r"^(?:хлыст|кнут|удар\s+кнутом)[!?.\s]*$", re.IGNORECASE)
 ART_THEFT_RE = re.compile(r"(?<![а-яёa-z])(спизжу|спиздил)(?![а-яёa-z])", re.IGNORECASE)
 HEAVENLY_PUNISHMENT_RE = re.compile(
     r"^это\s+кара\s+небесная,?\s+сосунок[!?.\s]*$", re.IGNORECASE
@@ -993,6 +1014,14 @@ def create_router(
                     InlineKeyboardButton(text="🎮 Статистика игр", callback_data="sm:games"),
                     InlineKeyboardButton(text="📖 Гайд", callback_data="sm:guide"),
                 ],
+                [
+                    InlineKeyboardButton(text="💰 Франки", callback_data="sm:francs"),
+                    InlineKeyboardButton(text="🏢 Предприятия", callback_data="sm:business"),
+                ],
+                [
+                    InlineKeyboardButton(text="🧰 Подработка", callback_data="sm:work"),
+                    InlineKeyboardButton(text="🔓 Выкупиться", callback_data="sm:buyout"),
+                ],
             ]
         )
 
@@ -1177,6 +1206,7 @@ def create_router(
         )
 
     async def slave_menu_home(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        await database.settle_businesses_for_user(user_id)
         slaves, owners = await asyncio.gather(
             database.list_slaves_globally(user_id),
             database.list_owners_globally(user_id),
@@ -1195,10 +1225,13 @@ def create_router(
             for row in owners[:5]
         )
         owner_text = f"\nВладельцы:\n{owner_lines}" if owner_lines else ""
+        balances = await database.list_franc_balances(user_id)
+        francs = sum(int(row["balance"]) for row in balances)
         return (
             "<b>Рабовладение</b>\n"
             f"Статус: <b>{status}</b>\n"
-            f"Твоих рабов: {len(slaves)}{owner_text}\n\n"
+            f"Твоих рабов: {len(slaves)}\n"
+            f"Франки: <b>{francs} ₣</b>{owner_text}\n\n"
             "Выбери раздел.",
             slave_menu_keyboard(),
         )
@@ -1261,6 +1294,233 @@ def create_router(
             "• Раб не может иметь рабов и может вызывать только своего владельца. Победа над владельцем освобождает раба.\n"
             "• /рабы в личке показывает список, а /приоритет @юзер меняет приоритет текстовой командой.",
             slave_menu_back_keyboard(),
+        )
+
+    async def slave_menu_francs(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        await database.settle_businesses_for_user(user_id)
+        balances = await database.list_franc_balances(user_id)
+        if not balances:
+            text = "<b>💰 Франки</b>\nУ тебя пока 0 ₣. Подработай в предприятии или заведи рабов."
+        else:
+            total = sum(int(row["balance"]) for row in balances)
+            lines = [f"<b>💰 Франки</b>\nВсего: <b>{total} ₣</b>"]
+            for row in balances[:10]:
+                title = html.escape(row["chat_title"] or f"Чат {row['chat_id']}")
+                lines.append(f"• {title}: {int(row['balance'])} ₣")
+            text = "\n".join(lines)
+        return text, slave_menu_back_keyboard()
+
+    async def slave_menu_businesses(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        await database.settle_businesses_for_user(user_id)
+        businesses, slaves = await asyncio.gather(
+            database.list_owned_businesses(user_id),
+            database.list_slaves_globally(user_id),
+        )
+        buttons: list[list[InlineKeyboardButton]] = []
+        for business in businesses:
+            meta = BUSINESS_META[str(business["business_type"])]
+            title = business["chat_title"] or f"Чат {business['chat_id']}"
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{meta['emoji']} {title}"[:60],
+                        callback_data=f"sm:bd:{business['chat_id']}",
+                    )
+                ]
+            )
+        creation_chats: dict[int, str] = {}
+        if not businesses:
+            for slave in slaves:
+                chat_id = int(slave["ownership_chat_id"])
+                creation_chats[chat_id] = slave["chat_title"] or f"Чат {chat_id}"
+        for chat_id, title in creation_chats.items():
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"➕ Создать · {title}"[:60],
+                        callback_data=f"sm:bc:{chat_id}",
+                    )
+                ]
+            )
+        buttons.append([InlineKeyboardButton(text="← Меню", callback_data="sm:home")])
+        if businesses:
+            text = "<b>🏢 Твои предприятия</b>\nВыбери предприятие для управления."
+        elif creation_chats:
+            text = "<b>🏢 Предприятия</b>\nВыбери чат и открой первое предприятие."
+        else:
+            text = "<b>🏢 Предприятия</b>\nДля открытия предприятия нужен хотя бы один раб."
+        return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    async def slave_menu_business_type(
+        user_id: int, chat_id: int
+    ) -> tuple[str, InlineKeyboardMarkup]:
+        slaves = await database.list_slaves(chat_id, user_id)
+        if not slaves:
+            return "<b>🏢 Предприятия</b>\nВ этом чате у тебя больше нет рабов.", slave_menu_back_keyboard()
+        return (
+            "<b>Выбери предприятие</b>\nПока можно открыть только одно предприятие. Оно будет работать в этом чате.",
+            InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🏩 Бордель", callback_data=f"sm:bn:{chat_id}:brothel"
+                        ),
+                        InlineKeyboardButton(
+                            text="🌾 Хлопковое поле", callback_data=f"sm:bn:{chat_id}:field"
+                        ),
+                    ],
+                    [InlineKeyboardButton(text="← Предприятия", callback_data="sm:business")],
+                ]
+            ),
+        )
+
+    async def slave_menu_business_detail(
+        user_id: int, chat_id: int
+    ) -> tuple[str, InlineKeyboardMarkup]:
+        await database.settle_business(chat_id, user_id)
+        business = await database.get_business(chat_id, user_id)
+        if not business:
+            return await slave_menu_businesses(user_id)
+        workers = await database.list_business_slaves(chat_id, user_id)
+        meta = BUSINESS_META[str(business["business_type"])]
+        producer_role = "courtesan" if business["business_type"] == "brothel" else "collector"
+        leader_role = "manager" if business["business_type"] == "brothel" else "overseer"
+        producers = sum(row["role"] == producer_role for row in workers)
+        leaders = sum(row["role"] == leader_role for row in workers)
+        unassigned = sum(row["role"] is None for row in workers)
+        title = html.escape(business["chat_title"] or f"Чат {chat_id}")
+        text = (
+            f"<b>{meta['emoji']} {meta['name']}</b>\n"
+            f"Чат: {title}\n"
+            f"{meta['producer']}: {producers} · {meta['leader']}: {leaders}\n"
+            f"Не назначены: {unassigned}\n\n"
+            "Доход начисляется каждый полный час. Управляющие и надзиратели "
+            "усиливают долю владельца с убывающим бонусом."
+        )
+        return (
+            text,
+            InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="👥 Работники", callback_data=f"sm:bw:{chat_id}"
+                        )
+                    ],
+                    [InlineKeyboardButton(text="← Предприятия", callback_data="sm:business")],
+                ]
+            ),
+        )
+
+    async def slave_menu_business_workers(
+        user_id: int, chat_id: int
+    ) -> tuple[str, InlineKeyboardMarkup]:
+        business = await database.get_business(chat_id, user_id)
+        if not business:
+            return await slave_menu_businesses(user_id)
+        meta = BUSINESS_META[str(business["business_type"])]
+        role_labels = {
+            None: "➖ Не назначен",
+            "courtesan": "💃 Куртизанка",
+            "manager": "💼 Управляющий",
+            "collector": "🧺 Сборщик",
+            "overseer": "🪢 Надзиратель",
+        }
+        workers = await database.list_business_slaves(chat_id, user_id)
+        buttons: list[list[InlineKeyboardButton]] = []
+        for worker in workers:
+            name = worker["username"] and f"@{worker['username']}" or worker["display_name"] or str(worker["user_id"])
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{role_labels[worker['role']]} · {name}"[:60],
+                        callback_data=f"sm:bs:{chat_id}:{worker['user_id']}",
+                    )
+                ]
+            )
+        buttons.append([InlineKeyboardButton(text="← Предприятие", callback_data=f"sm:bd:{chat_id}")])
+        return (
+            f"<b>{meta['emoji']} Работники</b>\nНажми на раба, чтобы назначить, повысить или снять с работы.",
+            InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+
+    async def slave_menu_business_worker(
+        user_id: int, chat_id: int, worker_id: int
+    ) -> tuple[str, InlineKeyboardMarkup]:
+        business = await database.get_business(chat_id, user_id)
+        workers = await database.list_business_slaves(chat_id, user_id)
+        worker = next((row for row in workers if int(row["user_id"]) == worker_id), None)
+        if not business or not worker:
+            return await slave_menu_businesses(user_id)
+        meta = BUSINESS_META[str(business["business_type"])]
+        producer_role = "courtesan" if business["business_type"] == "brothel" else "collector"
+        leader_role = "manager" if business["business_type"] == "brothel" else "overseer"
+        name = worker["username"] and "@" + html.escape(worker["username"]) or html.escape(worker["display_name"] or str(worker_id))
+        role = worker["role"]
+        buttons: list[list[InlineKeyboardButton]] = []
+        if role is None:
+            buttons.append([InlineKeyboardButton(text=meta["assign"], callback_data=f"sm:br:{chat_id}:{worker_id}:{producer_role}")])
+        elif role == producer_role:
+            buttons.append([InlineKeyboardButton(text=f"⬆️ Повысить до «{meta['leader']}»", callback_data=f"sm:br:{chat_id}:{worker_id}:{leader_role}")])
+            buttons.append([InlineKeyboardButton(text="🚪 Снять с работы", callback_data=f"sm:br:{chat_id}:{worker_id}:none")])
+        else:
+            buttons.append([InlineKeyboardButton(text=f"⬇️ Понизить до «{meta['producer']}»", callback_data=f"sm:br:{chat_id}:{worker_id}:{producer_role}")])
+            buttons.append([InlineKeyboardButton(text="🚪 Снять с работы", callback_data=f"sm:br:{chat_id}:{worker_id}:none")])
+        buttons.append([InlineKeyboardButton(text="← Работники", callback_data=f"sm:bw:{chat_id}")])
+        role_labels = {
+            None: "не назначен",
+            "courtesan": "Куртизанка",
+            "manager": "Управляющий",
+            "collector": "Сборщик",
+            "overseer": "Надзиратель",
+        }
+        current = role_labels.get(role, "не назначен")
+        return (
+            f"<b>{meta['emoji']} {name}</b>\nТекущая роль: {html.escape(current)}",
+            InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+
+    async def slave_menu_work(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        businesses = await database.list_available_businesses(user_id)
+        if not businesses:
+            return "<b>🧰 Подработка</b>\nПодходящих предприятий пока нет.", slave_menu_back_keyboard()
+        buttons: list[list[InlineKeyboardButton]] = []
+        for business in businesses[:20]:
+            meta = BUSINESS_META[str(business["business_type"])]
+            owner = business["username"] and "@" + business["username"] or business["display_name"] or str(business["owner_id"])
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{meta['emoji']} {owner}"[:60],
+                        callback_data=f"sm:job:{business['chat_id']}:{business['owner_id']}",
+                    )
+                ]
+            )
+        buttons.append([InlineKeyboardButton(text="← Меню", callback_data="sm:home")])
+        return (
+            "<b>🧰 Подработка</b>\nВыбери предприятие. Одна смена доступна раз в час.",
+            InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+
+    async def slave_menu_buyout(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        await database.settle_businesses_for_user(user_id)
+        owners = await database.list_owners_globally(user_id)
+        if not owners:
+            return "<b>🔓 Выкуп</b>\nТы свободен.", slave_menu_back_keyboard()
+        buttons: list[list[InlineKeyboardButton]] = []
+        for owner in owners:
+            owner_name = owner["username"] and "@" + owner["username"] or owner["display_name"] or str(owner["owner_id"])
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"🔓 Выкупиться у {owner_name} · {BUYOUT_COST_FRANCS} ₣"[:60],
+                        callback_data=f"sm:buy:{owner['chat_id']}:{owner['owner_id']}",
+                    )
+                ]
+            )
+        buttons.append([InlineKeyboardButton(text="← Меню", callback_data="sm:home")])
+        return (
+            f"<b>🔓 Выкуп из рабства</b>\nКаждый выкуп стоит {BUYOUT_COST_FRANCS} ₣.",
+            InlineKeyboardMarkup(inline_keyboard=buttons),
         )
 
     async def send_daily_group_messages(bot: Bot) -> None:
@@ -1782,6 +2042,127 @@ def create_router(
         body, keyboard = await slave_menu_home(message.from_user.id)
         await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
 
+    @router.message(text_or_caption_regexp(FRANCS_RE))
+    async def francs(message: Message) -> None:
+        if not message.from_user:
+            return
+        if message.chat.type == "private":
+            body, keyboard = await slave_menu_francs(message.from_user.id)
+            await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+            return
+        if message.chat.type not in GROUP_TYPES:
+            return
+        await database.settle_businesses_for_user(message.from_user.id)
+        balance = await database.franc_balance(message.chat.id, message.from_user.id)
+        await message.answer(f"💰 Твой баланс: <b>{balance} ₣</b>", parse_mode="HTML")
+
+    @router.message(text_or_caption_regexp(FRANC_TRANSFER_RE))
+    async def transfer_francs(message: Message) -> None:
+        if message.chat.type not in GROUP_TYPES or not message.from_user:
+            return
+        text = message_content(message)
+        match = FRANC_TRANSFER_RE.match(text)
+        if not match:
+            return
+        target = await resolve_target(message, database, text[match.end() :].strip())
+        if not target:
+            return
+        target_id, target_name, amount_text = target
+        amount_token, _ = split_first(amount_text)
+        if not amount_token or not amount_token.isdigit():
+            await message.answer("Укажи целое число франков после участника.")
+            return
+        amount = int(amount_token)
+        await asyncio.gather(
+            database.settle_businesses_for_user(message.from_user.id),
+            database.settle_businesses_for_user(target_id),
+        )
+        result = await database.transfer_francs(
+            message.chat.id, message.from_user.id, target_id, amount
+        )
+        if result == "transferred":
+            await message.answer(
+                f"💸 {mention(message.from_user.id, display_name(message.from_user))} "
+                f"перевёл {mention(target_id, target_name)} <b>{amount} ₣</b>.",
+                parse_mode="HTML",
+            )
+        elif result == "insufficient":
+            await message.answer("Недостаточно франков.")
+        elif result == "self":
+            await message.answer("Себе переводить не нужно.")
+        else:
+            await message.answer("Сумма должна быть больше нуля.")
+
+    @router.message(text_or_caption_regexp(SELL_RE))
+    async def business_sell(message: Message) -> None:
+        replied = message.reply_to_message
+        sender = message.from_user
+        target = replied.from_user if replied and not replied.sender_chat else None
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not sender
+            or not target
+            or target.is_bot
+        ):
+            return
+        owner = await database.get_owner(message.chat.id, sender.id)
+        if not owner:
+            return
+        owner_id = int(owner["owner_id"])
+        business = await database.get_business(message.chat.id, owner_id)
+        if not business or business["business_type"] != "brothel":
+            return
+        if await database.business_worker_role(message.chat.id, owner_id, sender.id) != "manager":
+            return
+        if await database.business_worker_role(message.chat.id, owner_id, target.id) != "courtesan":
+            return
+        target_mention = mention(target.id, display_name(target))
+        await message.answer(
+            random.choice(
+                (
+                    f"💥 После жаркой ночи с клиентом у {target_mention} отваливаются ноги.",
+                    f"📖 {target_mention} почувствовал себя персонажем хентай-манги.",
+                    f"🔥 Эта куртизанка в ударе. {target_mention} столько клиентов обслужила, что вам и не снилось.",
+                )
+            ),
+            parse_mode="HTML",
+        )
+
+    @router.message(text_or_caption_regexp(WHIP_RE))
+    async def business_whip(message: Message) -> None:
+        replied = message.reply_to_message
+        sender = message.from_user
+        target = replied.from_user if replied and not replied.sender_chat else None
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not sender
+            or not target
+            or target.is_bot
+        ):
+            return
+        owner = await database.get_owner(message.chat.id, sender.id)
+        if not owner:
+            return
+        owner_id = int(owner["owner_id"])
+        business = await database.get_business(message.chat.id, owner_id)
+        if not business or business["business_type"] != "field":
+            return
+        if await database.business_worker_role(message.chat.id, owner_id, sender.id) != "overseer":
+            return
+        if await database.business_worker_role(message.chat.id, owner_id, target.id) != "collector":
+            return
+        target_mention = mention(target.id, display_name(target))
+        await message.answer(
+            random.choice(
+                (
+                    f"🪢 {target_mention} получил хлыст. Хлопок сам себя не соберёт.",
+                    f"🌾 {target_mention} услышал свист кнута и внезапно вспомнил о норме.",
+                    f"⚡ Надзиратель щёлкнул кнутом рядом с {target_mention} — работа закипела.",
+                )
+            ),
+            parse_mode="HTML",
+        )
+
     @router.callback_query(F.data.startswith("sm:"))
     async def slave_menu_callback(callback: CallbackQuery) -> None:
         if (
@@ -1806,6 +2187,124 @@ def create_router(
             body, keyboard = await slave_menu_games(user_id)
         elif action == "guide":
             body, keyboard = slave_menu_guide()
+        elif action == "francs":
+            body, keyboard = await slave_menu_francs(user_id)
+        elif action == "business":
+            body, keyboard = await slave_menu_businesses(user_id)
+        elif action.startswith("bc:"):
+            try:
+                _, raw_chat_id = action.split(":", 1)
+                chat_id = int(raw_chat_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            body, keyboard = await slave_menu_business_type(user_id, chat_id)
+        elif action.startswith("bn:"):
+            try:
+                _, raw_chat_id, business_type = action.split(":", 2)
+                chat_id = int(raw_chat_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            if business_type not in BUSINESS_META:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            result = await database.create_business(chat_id, user_id, business_type)
+            if result == "created":
+                notice = "Предприятие открыто."
+                body, keyboard = await slave_menu_business_detail(user_id, chat_id)
+            elif result == "exists":
+                body, keyboard = await slave_menu_business_detail(user_id, chat_id)
+            else:
+                notice = "Для предприятия нужен хотя бы один раб."
+                body, keyboard = await slave_menu_businesses(user_id)
+        elif action.startswith("bd:"):
+            try:
+                _, raw_chat_id = action.split(":", 1)
+                chat_id = int(raw_chat_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            body, keyboard = await slave_menu_business_detail(user_id, chat_id)
+        elif action.startswith("bw:"):
+            try:
+                _, raw_chat_id = action.split(":", 1)
+                chat_id = int(raw_chat_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            body, keyboard = await slave_menu_business_workers(user_id, chat_id)
+        elif action.startswith("bs:"):
+            try:
+                _, raw_chat_id, raw_worker_id = action.split(":", 2)
+                chat_id, worker_id = int(raw_chat_id), int(raw_worker_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            body, keyboard = await slave_menu_business_worker(user_id, chat_id, worker_id)
+        elif action.startswith("br:"):
+            try:
+                _, raw_chat_id, raw_worker_id, role = action.split(":", 3)
+                chat_id, worker_id = int(raw_chat_id), int(raw_worker_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            result = await database.set_business_worker_role(
+                chat_id, user_id, worker_id, None if role == "none" else role
+            )
+            if result == "updated":
+                notice = "Роль обновлена."
+            elif result == "removed":
+                notice = "Раб снят с работы."
+            else:
+                notice = "Этот раб или предприятие больше недоступны."
+            body, keyboard = await slave_menu_business_worker(user_id, chat_id, worker_id)
+        elif action == "work":
+            body, keyboard = await slave_menu_work(user_id)
+        elif action.startswith("job:"):
+            try:
+                _, raw_chat_id, raw_owner_id = action.split(":", 2)
+                chat_id, owner_id = int(raw_chat_id), int(raw_owner_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            await database.settle_business(chat_id, owner_id)
+            result, worker_pay, owner_pay, cooldown_until = await database.work_at_business(
+                chat_id, owner_id, user_id
+            )
+            body, keyboard = await slave_menu_work(user_id)
+            if result == "worked":
+                notice = f"Смена завершена: +{worker_pay} ₣."
+                body = (
+                    f"✅ <b>Смена завершена</b>\nТы получил: {worker_pay} ₣\n"
+                    f"Владелец получил: {owner_pay} ₣\n\n{body}"
+                )
+            elif result == "cooldown":
+                until = datetime.fromtimestamp(int(cooldown_until), MOSCOW_TZ).strftime("%H:%M")
+                notice = f"Следующая смена после {until} МСК."
+            elif result == "own_business":
+                notice = "В собственном предприятии подработка не нужна."
+            else:
+                notice = "Предприятие больше недоступно."
+        elif action == "buyout":
+            body, keyboard = await slave_menu_buyout(user_id)
+        elif action.startswith("buy:"):
+            try:
+                _, raw_chat_id, raw_owner_id = action.split(":", 2)
+                chat_id, owner_id = int(raw_chat_id), int(raw_owner_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            await database.settle_businesses_for_user(user_id)
+            result = await database.buyout_slave(chat_id, owner_id, user_id)
+            body, keyboard = await slave_menu_buyout(user_id)
+            if result == "released":
+                notice = "Выкуп успешен. Ты свободен."
+                body = f"✅ <b>Свобода за {BUYOUT_COST_FRANCS} ₣</b>\n\n{body}"
+            elif result == "insufficient":
+                notice = f"Нужно {BUYOUT_COST_FRANCS} ₣."
+            else:
+                notice = "Эта связь рабства уже изменилась."
         elif action.startswith("p:"):
             try:
                 _, raw_chat_id, raw_slave_id = action.split(":", 2)
