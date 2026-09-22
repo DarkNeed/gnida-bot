@@ -777,6 +777,25 @@ async def resolve_target(
     return None
 
 
+async def slavery_challenge_block_reason(
+    database: Database, chat_id: int, challenger_id: int, opponent_id: int
+) -> str | None:
+    """Return a rule violation when a non-friendly game risks someone else's slave."""
+    challenger_owner, opponent_owner = await asyncio.gather(
+        database.get_owner(chat_id, challenger_id),
+        database.get_owner(chat_id, opponent_id),
+    )
+    challenger_owner_id = int(challenger_owner["owner_id"]) if challenger_owner else None
+    opponent_owner_id = int(opponent_owner["owner_id"]) if opponent_owner else None
+    if challenger_owner_id is not None and opponent_id != challenger_owner_id:
+        if opponent_owner_id != challenger_owner_id:
+            return "Раб может играть только с владельцем или с рабом того же владельца."
+    if opponent_owner_id is not None and challenger_id != opponent_owner_id:
+        if challenger_owner_id != opponent_owner_id:
+            return "Нельзя вызывать чужого раба: играть с ним может только его владелец."
+    return None
+
+
 def challenge_keyboard(challenge_id: int) -> InlineKeyboardMarkup:
     prefix = f"rps:{challenge_id}:"
     return InlineKeyboardMarkup(
@@ -2012,6 +2031,8 @@ def create_router(
             consequence = "Этот кувшин слишком тесен для вас двоих."
         elif outcome == "kept":
             consequence = f"{plain_name(loser)} остаётся рабом победителя."
+        elif outcome == "protected_slave":
+            consequence = f"{plain_name(loser)} остаётся у своего владельца."
         elif outcome == "transferred":
             slave = await database.get_user(chat_id, affected_id)
             consequence = f"{plain_name(loser)} отдаёт раба {plain_name(slave)}."
@@ -4070,14 +4091,16 @@ def create_router(
         if user_is_immune(opponent):
             await callback.answer(IMMUNITY_TEXT, show_alert=True)
             return
-        owner = await database.get_owner(kargassia_chat_id, challenger_id)
-        if owner and int(owner["owner_id"]) != opponent.id:
-            owner_name = owner["display_name"] or owner["username"] or str(owner["owner_id"])
+        block_reason = await slavery_challenge_block_reason(
+            database, kargassia_chat_id, challenger_id, opponent.id
+        )
+        if block_reason:
             await callback.answer(
-                f"Рабы могут вызывать только владельца: {owner_name}.",
+                block_reason,
                 show_alert=True,
             )
             return
+        owner = await database.get_owner(kargassia_chat_id, challenger_id)
         forced = bool(
             owner
             and int(owner["owner_id"]) == opponent.id
@@ -4176,14 +4199,14 @@ def create_router(
         await database.upsert_user(
             message.chat.id, opponent.id, opponent.username, display_name(opponent), touch=False
         )
-        owner = await database.get_owner(message.chat.id, message.from_user.id)
-        if not friendly and owner and int(owner["owner_id"]) != opponent.id:
-            owner_name = owner["display_name"] or owner["username"] or str(owner["owner_id"])
-            await message.answer(
-                f"Рабы могут вызывать на бой только своего владельца: {html.escape(owner_name)}.",
-                parse_mode="HTML",
+        if not friendly:
+            block_reason = await slavery_challenge_block_reason(
+                database, message.chat.id, message.from_user.id, opponent.id
             )
-            return
+            if block_reason:
+                await message.answer(block_reason)
+                return
+        owner = await database.get_owner(message.chat.id, message.from_user.id)
         forced = bool(
             not friendly
             and owner

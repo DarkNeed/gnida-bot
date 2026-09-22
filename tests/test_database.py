@@ -65,6 +65,12 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((outcome, slave_id), ("transferred", 30))
         self.assertEqual([row["user_id"] for row in slaves], [30])
 
+    async def test_slave_cannot_be_taken_by_a_player_who_is_not_the_owner(self):
+        await self.database.force_enslave(1, 20, 10)
+        outcome, affected_id = await self.database.transfer_after_loss(1, 20, 30)
+        self.assertEqual((outcome, affected_id), ("protected_slave", 20))
+        self.assertEqual((await self.database.get_owner(1, 20))["owner_id"], 10)
+
     async def test_priority_slave_is_transferred_last_and_priority_resets(self):
         await self.database.upsert_user(1, 40, "winner", "Winner")
         await self.database.force_enslave(1, 20, 10)

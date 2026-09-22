@@ -1106,6 +1106,9 @@ class Database:
             if loser_owner and int(loser_owner["owner_id"]) == winner_id:
                 self.connection.commit()
                 return "kept", loser_id
+            if loser_owner:
+                self.connection.commit()
+                return "protected_slave", loser_id
             owned = self.connection.execute(
                 """SELECT slave_id FROM ownership
                    WHERE chat_id=? AND owner_id=? AND slave_id != ?
