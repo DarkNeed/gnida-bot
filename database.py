@@ -1678,6 +1678,21 @@ class Database:
                    WHERE c.enabled=1 ORDER BY c.chat_id, c.trigger_key"""
             ).fetchall()
 
+    async def list_available_custom_commands(self, user_id: int) -> list[sqlite3.Row]:
+        """Commands in known chats that this user may invoke; caller verifies membership."""
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT cmd.id, cmd.chat_id, cmd.trigger, cmd.cost,
+                          cmd.success_chance, chats.title AS chat_title
+                   FROM custom_commands cmd
+                   JOIN users u ON u.chat_id=cmd.chat_id AND u.user_id=?
+                   LEFT JOIN chats ON chats.chat_id=cmd.chat_id
+                   WHERE cmd.enabled=1
+                     AND (cmd.exclusive_user_id IS NULL OR cmd.exclusive_user_id=?)
+                   ORDER BY cmd.chat_id, cmd.trigger_key""",
+                (user_id, user_id),
+            ).fetchall()
+
     async def list_custom_command_chats(self, owner_id: int) -> list[sqlite3.Row]:
         async with self._lock:
             return self.connection.execute(

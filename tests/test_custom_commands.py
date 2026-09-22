@@ -235,6 +235,68 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await callback_handler(callback, state, SimpleNamespace())
         self.assertEqual(state.clear.await_count, 2)
 
+    async def test_franc_menu_lists_only_available_commands_in_current_chats(self):
+        await self.database.save_custom_command(
+            1, "Общая команда", "общая команда", 12, 75,
+            ["Успех"], ["Неудача"], None, 1980056841,
+        )
+        await self.database.save_custom_command(
+            1, "Личная команда", "личная команда", 0, 100,
+            ["Успех"], [], 10, 1980056841,
+        )
+        await self.database.save_custom_command(
+            1, "Чужая команда", "чужая команда", 0, 100,
+            ["Успех"], [], 99, 1980056841,
+        )
+        await self.database.upsert_chat(2, "Покинутый чат")
+        await self.database.upsert_user(2, 10, "actor", "Автор")
+        await self.database.save_custom_command(
+            2, "Старая команда", "старая команда", 0, 100,
+            ["Успех"], [], None, 1980056841,
+        )
+        rows = await self.database.list_available_custom_commands(10)
+        self.assertEqual(len(rows), 3)
+
+        router = create_router(self.database)
+        handler = next(
+            item.callback for item in router.callback_query.handlers
+            if item.callback.__name__ == "slave_menu_callback"
+        )
+        callback = SimpleNamespace(
+            from_user=User(id=10, is_bot=False, first_name="Автор"),
+            message=SimpleNamespace(
+                chat=SimpleNamespace(type="private"),
+                edit_text=AsyncMock(), answer=AsyncMock(),
+            ),
+            data="sm:offers:0", answer=AsyncMock(),
+        )
+        async def get_chat_member(chat_id, user_id):
+            return SimpleNamespace(status="member" if chat_id == 1 else "left")
+
+        await handler(callback, SimpleNamespace(get_chat_member=get_chat_member))
+        body = callback.message.edit_text.await_args.args[0]
+        self.assertIn("Общая команда — 12 ₣ · успех 75%", body)
+        self.assertIn("Личная команда", body)
+        self.assertNotIn("Чужая команда", body)
+        self.assertNotIn("Старая команда", body)
+
+    async def test_start_shows_public_guide_and_menu_button(self):
+        router = create_router(self.database)
+        handler = next(
+            item.callback for item in router.message.handlers
+            if item.callback.__name__ == "start"
+        )
+        message = SimpleNamespace(
+            chat=SimpleNamespace(type="private"), answer=AsyncMock(),
+        )
+        await handler(message)
+        body = message.answer.await_args.args[0]
+        self.assertIn("Игры", body)
+        self.assertIn("Франки", body)
+        self.assertIn("Рофлы", body)
+        keyboard = message.answer.await_args.kwargs["reply_markup"]
+        self.assertEqual(keyboard.inline_keyboard[0][0].callback_data, "sm:home")
+
     async def test_route_uses_reply_target_random_recent_user_and_charges_actor(self):
         await self.database.upsert_user(1, 20, "target", "Цель")
         await self.database.upsert_user(1, 30, "random", "Случайный")

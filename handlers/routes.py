@@ -1443,7 +1443,58 @@ def create_router(
                 title = html.escape(row["chat_title"] or f"Чат {row['chat_id']}")
                 lines.append(f"• {title}: {int(row['balance'])} ₣")
             text = "\n".join(lines)
-        return text, slave_menu_back_keyboard()
+        return text, InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎭 Доступные команды", callback_data="sm:offers:0")],
+            [InlineKeyboardButton(text="← Меню", callback_data="sm:home")],
+        ])
+
+    async def slave_menu_custom_offers(
+        user_id: int, bot: Bot, page: int = 0
+    ) -> tuple[str, InlineKeyboardMarkup]:
+        rows = await database.list_available_custom_commands(user_id)
+        membership: dict[int, bool] = {}
+        for row in rows:
+            chat_id = int(row["chat_id"])
+            if chat_id not in membership:
+                membership[chat_id] = await is_chat_participant(bot, chat_id, user_id)
+        available = [row for row in rows if membership[int(row["chat_id"])]]
+        page_size = 8
+        page_count = max(1, (len(available) + page_size - 1) // page_size)
+        page = max(0, min(page, page_count - 1))
+        if available:
+            lines = [
+                f"<b>🎭 Доступные команды</b> · {len(available)} шт. · "
+                f"стр. {page + 1}/{page_count}",
+                "Напиши фразу в указанном чате. Ответ выбирается случайно.",
+            ]
+            previous_chat_id: int | None = None
+            for row in available[page * page_size:(page + 1) * page_size]:
+                chat_id = int(row["chat_id"])
+                if chat_id != previous_chat_id:
+                    lines.append(
+                        f"\n<b>{html.escape(str(row['chat_title'] or f'Чат {chat_id}'))}</b>"
+                    )
+                    previous_chat_id = chat_id
+                lines.append(
+                    f"• {html.escape(str(row['trigger']))} — "
+                    f"{int(row['cost'])} ₣ · успех {int(row['success_chance'])}%"
+                )
+            body = "\n".join(lines)
+        else:
+            body = (
+                "<b>🎭 Доступные команды</b>\n"
+                "Пока нет команд для твоих чатов. Когда они появятся, увидишь их здесь."
+            )
+        buttons: list[list[InlineKeyboardButton]] = []
+        navigation: list[InlineKeyboardButton] = []
+        if page > 0:
+            navigation.append(InlineKeyboardButton(text="←", callback_data=f"sm:offers:{page - 1}"))
+        if page + 1 < page_count:
+            navigation.append(InlineKeyboardButton(text="→", callback_data=f"sm:offers:{page + 1}"))
+        if navigation:
+            buttons.append(navigation)
+        buttons.append([InlineKeyboardButton(text="← Франки", callback_data="sm:francs")])
+        return body, InlineKeyboardMarkup(inline_keyboard=buttons)
 
     async def slave_menu_businesses(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         await database.settle_businesses_for_user(user_id)
@@ -2852,10 +2903,21 @@ def create_router(
     async def start(message: Message) -> None:
         if message.chat.type == "private":
             await message.answer(
-                "Я работаю в группах: модерирую чат, веду статистику и провожу КНБ. "
-                "Добавьте меня в чат и выдайте право блокировать участников.\n\n"
-                "Здесь можно запросить /рабы, а администратору — /рабы @username.\n"
-                "Для меню рабовладения: /меню или /menu."
+                "<b>Привет! Я Гнида-бот.</b> Вот что можно делать в чате:\n\n"
+                "🎮 <b>Игры:</b> ответь на сообщение «Игра кнб», «Игра блекджек» "
+                "или «Игра шашки» — без последствий. «Вызов» запускает игру "
+                "с последствиями для рабства.\n"
+                "👥 <b>Рабство:</b> /рабы показывает твоих рабов, /меню — статус, "
+                "приоритет, статистику игр и гайд.\n"
+                "💰 <b>Франки:</b> зарабатывай на предприятиях, подрабатывай, "
+                "выкупайся из рабства и трать валюту на доступные кастомные команды. "
+                "Их список — в разделе «Франки».\n"
+                "😄 <b>Рофлы:</b> попробуй «пися», «попа» или «кто гнида».\n\n"
+                "Открой меню, чтобы посмотреть всё подробнее.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="📋 Открыть меню", callback_data="sm:home")]
+                ]),
             )
 
     @router.message(text_or_caption_regexp(SLAVE_MENU_RE))
@@ -3084,7 +3146,7 @@ def create_router(
         )
 
     @router.callback_query(F.data.startswith("sm:"))
-    async def slave_menu_callback(callback: CallbackQuery) -> None:
+    async def slave_menu_callback(callback: CallbackQuery, bot: Bot) -> None:
         if (
             not callback.from_user
             or not callback.message
@@ -3142,6 +3204,13 @@ def create_router(
                 )
         elif action == "francs":
             body, keyboard = await slave_menu_francs(user_id)
+        elif action.startswith("offers:"):
+            try:
+                page = int(action.split(":", 1)[1])
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            body, keyboard = await slave_menu_custom_offers(user_id, bot, page)
         elif action == "business":
             body, keyboard = await slave_menu_businesses(user_id)
         elif action.startswith("bc:"):
