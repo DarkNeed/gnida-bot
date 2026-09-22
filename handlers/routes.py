@@ -3828,19 +3828,28 @@ def create_router(
             await message.answer("Нельзя определить автора сообщения от имени канала.")
             return
         if replied and replied.from_user:
-            slave_user = replied.from_user
-            recipient_token, extra = split_first(payload)
-            if extra:
-                await message.answer("Формат: /передать @получатель — ответом на сообщение раба.")
+            recipient_user = replied.from_user
+            slave_token, extra = split_first(payload)
+            if not slave_token or extra:
+                await message.answer(
+                    "Формат ответом: /передать @раб — ответьте на сообщение нового владельца."
+                )
+                return
+            if recipient_user.is_bot:
+                await message.answer("Нельзя передать раба боту.")
                 return
             await database.upsert_user(
                 message.chat.id,
-                slave_user.id,
-                slave_user.username,
-                display_name(slave_user),
+                recipient_user.id,
+                recipient_user.username,
+                display_name(recipient_user),
                 touch=False,
             )
-            slave_id, slave_name = slave_user.id, display_name(slave_user)
+            slave = await resolve_user_token(message, database, slave_token)
+            if not slave:
+                return
+            slave_id, slave_name = slave
+            recipient = (recipient_user.id, display_name(recipient_user))
         else:
             slave_token, remainder = split_first(payload)
             recipient_token, extra = split_first(remainder)
@@ -3851,12 +3860,12 @@ def create_router(
             if not slave:
                 return
             slave_id, slave_name = slave
-        if recipient_token.casefold() in {"мне", "себе"}:
-            recipient = (message.from_user.id, display_name(message.from_user))
-        else:
-            recipient = await resolve_user_token(message, database, recipient_token)
-        if not recipient:
-            return
+            if recipient_token.casefold() in {"мне", "себе"}:
+                recipient = (message.from_user.id, display_name(message.from_user))
+            else:
+                recipient = await resolve_user_token(message, database, recipient_token)
+            if not recipient:
+                return
         recipient_id, recipient_name = recipient
         if await stored_sleepy_attack_is_blocked(
             database, message.chat.id, message.from_user, slave_id
