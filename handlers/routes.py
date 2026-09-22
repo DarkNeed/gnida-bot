@@ -36,6 +36,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InputTextMessageContent,
     Message,
+    MessageEntity,
     TelegramObject,
     URLInputFile,
     User,
@@ -430,6 +431,33 @@ def random_message_schedule_times(service_day: str, count: int | None = None) ->
 def message_content(message: Message) -> str:
     """Return user-entered content for both plain and media messages."""
     return message.text or message.caption or ""
+
+
+def chat_relay_payload(
+    content: str, entities: list[MessageEntity] | None,
+) -> tuple[str, list[MessageEntity]]:
+    """Remove /чат and shift Telegram's UTF-16 formatting offsets into the payload."""
+    match = CHAT_RE.match(content)
+    if match is None:
+        return "", []
+    start = match.end()
+    while start < len(content) and content[start].isspace():
+        start += 1
+    end = len(content.rstrip())
+    if start >= end:
+        return "", []
+    start_units = len(content[:start].encode("utf-16-le")) // 2
+    end_units = len(content[:end].encode("utf-16-le")) // 2
+    shifted = []
+    for entity in entities or []:
+        entity_start = max(entity.offset, start_units)
+        entity_end = min(entity.offset + entity.length, end_units)
+        if entity_start < entity_end:
+            shifted.append(entity.model_copy(update={
+                "offset": entity_start - start_units,
+                "length": entity_end - entity_start,
+            }))
+    return content[start:end], shifted
 
 
 def text_or_caption_regexp(pattern: re.Pattern[str], *, mode: str | None = None):
@@ -3997,7 +4025,10 @@ def create_router(
     async def sleepy_chat(message: Message, bot: Bot) -> None:
         if not is_mister_sleepy(message.from_user):
             return
-        payload = command_payload(message_content(message))
+        payload, entities = chat_relay_payload(
+            message_content(message),
+            message.entities if message.text is not None else message.caption_entities,
+        )
         if kargassia_chat_id is None:
             await message.answer("Не задан KARGASSIA_CHAT_ID.")
             return
@@ -4023,12 +4054,19 @@ def create_router(
                     "message_id": source_message.message_id,
                 }
                 if replace_caption:
-                    copy_arguments["caption"] = payload
+                    # Telegram may retain the original caption when given an empty string.
+                    copy_arguments["caption"] = payload or "\u200b"
+                    copy_arguments["caption_entities"] = entities
+                    copy_arguments["parse_mode"] = None
                 await bot.copy_message(**copy_arguments)
                 if payload and not replace_caption:
-                    await bot.send_message(kargassia_chat_id, payload)
+                    await bot.send_message(
+                        kargassia_chat_id, payload, entities=entities, parse_mode=None
+                    )
             else:
-                await bot.send_message(kargassia_chat_id, payload)
+                await bot.send_message(
+                    kargassia_chat_id, payload, entities=entities, parse_mode=None
+                )
         except (TelegramBadRequest, TelegramForbiddenError) as error:
             await message.answer(
                 f"Не получилось отправить сообщение в Каргассию: "

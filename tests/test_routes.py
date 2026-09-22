@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from pathlib import Path
 
-from aiogram.types import Chat, ChatMemberOwner, Message, PhotoSize, User
+from aiogram.types import Chat, ChatMemberOwner, Message, MessageEntity, PhotoSize, User
 from checkers import initial_board
 from database import Database
 from parsing import command_payload
@@ -79,6 +79,7 @@ from handlers.routes import (
     art_theft_count,
     challenge_offer_keyboard,
     checkers_keyboard,
+    chat_relay_payload,
     create_router,
     death_note_countdown_text,
     inline_game_types,
@@ -147,6 +148,22 @@ class RoutePatternTests(unittest.TestCase):
         command = "/чат@GnidaBot\nДай пять"
         self.assertTrue(CHAT_RE.match(command))
         self.assertEqual(command_payload(command), "Дай пять")
+
+    def test_chat_relay_shifts_formatting_using_utf16_offsets(self):
+        payload, entities = chat_relay_payload(
+            "/чат 👋 Жирно",
+            [MessageEntity(type="bold", offset=8, length=5)],
+        )
+        self.assertEqual(payload, "👋 Жирно")
+        self.assertEqual((entities[0].offset, entities[0].length), (3, 5))
+
+    def test_chat_relay_clips_entities_covering_the_command(self):
+        payload, entities = chat_relay_payload(
+            "/чат Привет",
+            [MessageEntity(type="bold", offset=0, length=11)],
+        )
+        self.assertEqual(payload, "Привет")
+        self.assertEqual((entities[0].offset, entities[0].length), (0, 6))
 
     def test_slave_menu_accepts_russian_and_latin_commands(self):
         self.assertTrue(SLAVE_MENU_RE.match("/меню"))
@@ -771,6 +788,76 @@ class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
         target = await resolve_target(message, database, "@other причина")
 
         self.assertEqual(target, (99, "Другой", "причина"))
+
+
+class ChatRelayTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        router = create_router(SimpleNamespace(), kargassia_chat_id=-1001)
+        self.handler = next(
+            item.callback for item in router.message.handlers
+            if item.callback.__name__ == "sleepy_chat"
+        )
+        self.user = User(
+            id=10, is_bot=False, first_name="Сон", username="MisterSleeppy"
+        )
+        self.bot = SimpleNamespace(copy_message=AsyncMock(), send_message=AsyncMock())
+
+    def message(self, *, text=None, caption=None, entities=None,
+                caption_entities=None, photo=None, reply_to_message=None):
+        return SimpleNamespace(
+            text=text, caption=caption, entities=entities,
+            caption_entities=caption_entities, photo=photo,
+            reply_to_message=reply_to_message,
+            chat=SimpleNamespace(id=10), message_id=123,
+            from_user=self.user, answer=AsyncMock(),
+        )
+
+    async def test_text_relay_preserves_formatted_entities(self):
+        message = self.message(
+            text="/чат 👋 Жирно",
+            entities=[MessageEntity(type="bold", offset=8, length=5)],
+        )
+        await self.handler(message, self.bot)
+        kwargs = self.bot.send_message.await_args.kwargs
+        self.assertEqual(self.bot.send_message.await_args.args, (-1001, "👋 Жирно"))
+        self.assertEqual((kwargs["entities"][0].offset, kwargs["entities"][0].length), (3, 5))
+
+    async def test_media_with_only_command_does_not_show_it_as_caption(self):
+        message = self.message(
+            caption="/чат", photo=[object()],
+            caption_entities=[MessageEntity(type="bot_command", offset=0, length=4)],
+        )
+        await self.handler(message, self.bot)
+        kwargs = self.bot.copy_message.await_args.kwargs
+        self.assertEqual(kwargs["caption"], "\u200b")
+        self.assertEqual(kwargs["caption_entities"], [])
+        self.bot.send_message.assert_not_awaited()
+
+    async def test_media_caption_relay_preserves_formatting(self):
+        message = self.message(
+            caption="/чат Привет", photo=[object()],
+            caption_entities=[MessageEntity(type="bold", offset=5, length=6)],
+        )
+        await self.handler(message, self.bot)
+        kwargs = self.bot.copy_message.await_args.kwargs
+        self.assertEqual(kwargs["caption"], "Привет")
+        self.assertEqual((kwargs["caption_entities"][0].offset,
+                          kwargs["caption_entities"][0].length), (0, 6))
+
+    async def test_reply_to_media_uses_formatted_command_as_new_caption(self):
+        source = self.message(caption="Старая подпись", photo=[object()])
+        source.message_id = 456
+        message = self.message(
+            text="/чат Новая подпись",
+            entities=[MessageEntity(type="bold", offset=5, length=13)],
+            reply_to_message=source,
+        )
+        await self.handler(message, self.bot)
+        kwargs = self.bot.copy_message.await_args.kwargs
+        self.assertEqual(kwargs["message_id"], 456)
+        self.assertEqual(kwargs["caption"], "Новая подпись")
+        self.assertEqual((kwargs["caption_entities"][0].offset,
+                          kwargs["caption_entities"][0].length), (0, 13))
 
 
 if __name__ == "__main__":
