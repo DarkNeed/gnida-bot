@@ -4,7 +4,7 @@ import asyncio
 import json
 import random
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ JUG_HIDING_SECONDS = 5 * 60
 JUG_COOLDOWN_SECONDS = 60 * 60
 BASEMENT_ESCAPE_COOLDOWN_SECONDS = 60 * 60
 BUSINESS_HOUR_SECONDS = 60 * 60
+BUSINESS_STATS_TZ = timezone(timedelta(hours=3), name="MSK")
 BUSINESS_ACTIVE_SECONDS = 24 * 60 * 60
 SLAVE_EARNINGS_WEEK_SECONDS = 7 * 24 * 60 * 60
 SLAVE_WEEKLY_EARNINGS_LIMIT = 100
@@ -250,6 +251,17 @@ class Database:
                 last_accrued INTEGER NOT NULL,
                 PRIMARY KEY (chat_id, owner_id)
             );
+
+            CREATE TABLE IF NOT EXISTS business_income_daily (
+                chat_id INTEGER NOT NULL,
+                owner_id INTEGER NOT NULL,
+                income_day TEXT NOT NULL,
+                owner_income INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (chat_id, owner_id, income_day)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_business_income_daily_period
+                ON business_income_daily(chat_id, income_day);
 
             CREATE TABLE IF NOT EXISTS business_workers (
                 chat_id INTEGER NOT NULL,
@@ -1380,6 +1392,58 @@ class Database:
         active_end = min(end, last_seen + BUSINESS_ACTIVE_SECONDS)
         return max(0, (active_end - start) // BUSINESS_HOUR_SECONDS)
 
+    def _record_business_income_locked(
+        self,
+        chat_id: int,
+        owner_id: int,
+        start: int,
+        hours: int,
+        producers: list[sqlite3.Row],
+        config: dict[str, int | str],
+        bonus_percent: int,
+        owner_income: int,
+    ) -> None:
+        """Split settled owner income across Moscow calendar days for public stats."""
+        if owner_income <= 0:
+            return
+        weights: dict[str, int] = {}
+        for offset in range(hours):
+            hour_end = start + (offset + 1) * BUSINESS_HOUR_SECONDS
+            active = sum(
+                worker["last_seen"] is not None
+                and hour_end <= int(worker["last_seen"]) + BUSINESS_ACTIVE_SECONDS
+                for worker in producers
+            )
+            inactive = len(producers) - active
+            hourly_income = (
+                active * int(config["owner_per_producer"]) * (100 + bonus_percent) // 100
+                + inactive * int(config["inactive_owner_per_producer"])
+            )
+            day = datetime.fromtimestamp(hour_end - 1, BUSINESS_STATS_TZ).date().isoformat()
+            weights[day] = weights.get(day, 0) + hourly_income
+        weight_total = sum(weights.values())
+        if weight_total <= 0:
+            return
+        remaining = owner_income
+        days = sorted(weights)
+        for day in days[:-1]:
+            allocated = owner_income * weights[day] // weight_total
+            remaining -= allocated
+            self.connection.execute(
+                """INSERT INTO business_income_daily(chat_id, owner_id, income_day, owner_income)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(chat_id, owner_id, income_day) DO UPDATE SET
+                       owner_income=owner_income + excluded.owner_income""",
+                (chat_id, owner_id, day, allocated),
+            )
+        self.connection.execute(
+            """INSERT INTO business_income_daily(chat_id, owner_id, income_day, owner_income)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(chat_id, owner_id, income_day) DO UPDATE SET
+                   owner_income=owner_income + excluded.owner_income""",
+            (chat_id, owner_id, days[-1], remaining),
+        )
+
     def _settle_business_locked(
         self, chat_id: int, owner_id: int, now: int
     ) -> dict[str, int | str] | None:
@@ -1423,6 +1487,16 @@ class Database:
             + inactive_producer_hours * int(config["inactive_owner_per_producer"])
         )
         if owner_income:
+            self._record_business_income_locked(
+                chat_id,
+                owner_id,
+                interval_start,
+                hours,
+                producers,
+                config,
+                bonus_percent,
+                owner_income,
+            )
             self._add_francs_locked(chat_id, owner_id, owner_income)
         for worker in workers:
             active_hours = self._active_hours_in_interval(
@@ -1575,6 +1649,37 @@ class Database:
                    WHERE b.owner_id=? ORDER BY b.created_at DESC""",
                 (owner_id,),
             ).fetchall()
+
+    async def list_chat_businesses(self, chat_id: int) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT b.*, u.username, u.display_name
+                   FROM businesses b
+                   LEFT JOIN users u ON u.chat_id=b.chat_id AND u.user_id=b.owner_id
+                   WHERE b.chat_id=? ORDER BY b.created_at, b.owner_id""",
+                (chat_id,),
+            ).fetchall()
+
+    async def business_income_periods(
+        self, chat_id: int, owner_id: int
+    ) -> tuple[int, int]:
+        """Return owner income for yesterday and the seven completed Moscow days."""
+        now = datetime.now(BUSINESS_STATS_TZ).date()
+        yesterday = now - timedelta(days=1)
+        week_start = now - timedelta(days=7)
+        async with self._lock:
+            rows = self.connection.execute(
+                """SELECT income_day, owner_income FROM business_income_daily
+                   WHERE chat_id=? AND owner_id=? AND income_day>=? AND income_day<=?""",
+                (chat_id, owner_id, week_start.isoformat(), yesterday.isoformat()),
+            ).fetchall()
+        yesterday_income = sum(
+            int(row["owner_income"])
+            for row in rows
+            if row["income_day"] == yesterday.isoformat()
+        )
+        week_income = sum(int(row["owner_income"]) for row in rows)
+        return yesterday_income, week_income
 
     async def list_available_businesses(self, user_id: int) -> list[sqlite3.Row]:
         async with self._lock:

@@ -19,6 +19,7 @@ from handlers.routes import (
     BASEMENT_PROMOTE_RE,
     BASEMENT_RELEASE_RE,
     BUSINESS_ASSIGN_RE,
+    ENTERPRISE_STATS_RE,
     CHAT_RE,
     CHALLENGE_RE,
     DUCK_RE,
@@ -389,6 +390,7 @@ class RoutePatternTests(unittest.TestCase):
         self.assertTrue(BUSINESS_SUMMARY_RE.match("/хлопковое поле"))
         self.assertTrue(BUSINESS_ASSIGN_RE.match("В бордель @user"))
         self.assertTrue(BUSINESS_ASSIGN_RE.match("в хлопковое поле"))
+        self.assertTrue(ENTERPRISE_STATS_RE.match("Стата предприятий"))
         self.assertTrue(SELL_RE.match("Продать!"))
         self.assertTrue(WHIP_RE.match("Удар кнутом"))
         self.assertTrue(WHIP_RE.match("кнут!!!"))

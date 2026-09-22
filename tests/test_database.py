@@ -2,9 +2,11 @@ import asyncio
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from database import (
+    BUSINESS_STATS_TZ,
     CHALLENGE_DEADLINE_SECONDS,
     FORCE_OWNER_COOLDOWN_SECONDS,
     Database,
@@ -486,6 +488,22 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.database.connection.commit()
         self.assertEqual(await self.database.buyout_slave(1, 10, 20), "released")
         self.assertIsNone(await self.database.get_owner(1, 20))
+
+    async def test_business_income_periods_and_chat_listing(self):
+        await self.database.force_enslave(1, 20, 10)
+        self.assertEqual(await self.database.create_business(1, 10, "field"), "created")
+        today = datetime.now(BUSINESS_STATS_TZ).date()
+        yesterday = today - timedelta(days=1)
+        six_days_ago = today - timedelta(days=6)
+        self.database.connection.executemany(
+            """INSERT INTO business_income_daily(chat_id, owner_id, income_day, owner_income)
+               VALUES (1, 10, ?, ?)""",
+            [(yesterday.isoformat(), 11), (six_days_ago.isoformat(), 9)],
+        )
+        self.database.connection.commit()
+        self.assertEqual(await self.database.business_income_periods(1, 10), (11, 20))
+        businesses = await self.database.list_chat_businesses(1)
+        self.assertEqual((businesses[0]["owner_id"], businesses[0]["business_type"]), (10, "field"))
 
     async def test_pirojok_basement_escape_has_persistent_hour_cooldown(self):
         await self.database.add_basement_member(1, 20, 10)

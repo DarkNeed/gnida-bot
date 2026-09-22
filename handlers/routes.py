@@ -199,6 +199,9 @@ BUSINESS_SUMMARY_RE = re.compile(
     r"^[!/]?(?:бордель|хлопковое\s+поле)(?:@\w+)?[!?.\s]*$",
     re.IGNORECASE,
 )
+ENTERPRISE_STATS_RE = re.compile(
+    r"^(?:[!/])?стата\s+предприятий[!?.\s]*$", re.IGNORECASE
+)
 SLAVES_RE = re.compile(r"^/рабы(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 SLAVE_MENU_RE = re.compile(r"^/(?:меню|menu)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 START_RE = re.compile(r"^/start(?:@\w+)?(?:\s|$)", re.IGNORECASE)
@@ -1481,6 +1484,76 @@ def create_router(
             ),
         )
 
+    async def enterprise_stats_list(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        businesses = await database.list_chat_businesses(chat_id)
+        for business in businesses:
+            await database.settle_business(chat_id, int(business["owner_id"]))
+        if not businesses:
+            return (
+                "<b>🏢 Стата предприятий</b>\nВ этом чате пока нет предприятий.",
+                InlineKeyboardMarkup(inline_keyboard=[]),
+            )
+        buttons: list[list[InlineKeyboardButton]] = []
+        for business in businesses:
+            meta = BUSINESS_META[str(business["business_type"])]
+            owner_name = (
+                "@" + str(business["username"])
+                if business["username"]
+                else str(business["display_name"] or business["owner_id"])
+            )
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{meta['emoji']} {meta['name']} · {owner_name}"[:60],
+                        callback_data=f"es:{chat_id}:{business['owner_id']}",
+                    )
+                ]
+            )
+        return (
+            "<b>🏢 Стата предприятий</b>\n"
+            "Нажми на предприятие: покажу состав и доход владельца за вчера и 7 завершённых дней.",
+            InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+
+    async def enterprise_stats_detail(
+        chat_id: int, owner_id: int
+    ) -> tuple[str, InlineKeyboardMarkup] | None:
+        await database.settle_business(chat_id, owner_id)
+        business = await database.get_business(chat_id, owner_id)
+        if not business:
+            return None
+        workers, periods = await asyncio.gather(
+            database.list_business_slaves(chat_id, owner_id),
+            database.business_income_periods(chat_id, owner_id),
+        )
+        yesterday_income, week_income = periods
+        business_type = str(business["business_type"])
+        meta = BUSINESS_META[business_type]
+        producer_role = "courtesan" if business_type == "brothel" else "collector"
+        leader_role = "manager" if business_type == "brothel" else "overseer"
+        producers = sum(worker["role"] == producer_role for worker in workers)
+        leaders = sum(worker["role"] == leader_role for worker in workers)
+        unassigned = len(workers) - producers - leaders
+        owner_name = (
+            "@" + html.escape(str(business["username"]))
+            if business["username"]
+            else html.escape(str(business["display_name"] or owner_id))
+        )
+        return (
+            f"<b>{meta['emoji']} {meta['name']}</b>\n"
+            f"Владелец: {owner_name}\n"
+            f"{meta['producer']}: <b>{producers}</b> · {meta['leader']}: <b>{leaders}</b>\n"
+            f"Не назначены: {unassigned}\n\n"
+            f"💰 Доход владельца вчера: <b>{yesterday_income} ₣</b>\n"
+            f"📈 Доход владельца за 7 завершённых дней: <b>{week_income} ₣</b>\n\n"
+            "История доходов считается с момента подключения этой статистики.",
+            InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="← Все предприятия", callback_data=f"es:{chat_id}:list")]
+                ]
+            ),
+        )
+
     async def slave_menu_business_workers(
         user_id: int, chat_id: int
     ) -> tuple[str, InlineKeyboardMarkup]:
@@ -2204,6 +2277,13 @@ def create_router(
         else:
             await message.answer("Сумма должна быть больше нуля.")
 
+    @router.message(text_or_caption_regexp(ENTERPRISE_STATS_RE))
+    async def enterprise_stats(message: Message) -> None:
+        if message.chat.type not in GROUP_TYPES:
+            return
+        body, keyboard = await enterprise_stats_list(message.chat.id)
+        await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+
     @router.message(text_or_caption_regexp(BUSINESS_ASSIGN_RE))
     async def assign_business_worker(message: Message) -> None:
         sender = message.from_user
@@ -2523,6 +2603,40 @@ def create_router(
             if "message is not modified" not in str(error).casefold():
                 await callback.message.answer(body, reply_markup=keyboard, parse_mode="HTML")
         await callback.answer(notice or "")
+
+    @router.callback_query(F.data.startswith("es:"))
+    async def enterprise_stats_callback(callback: CallbackQuery) -> None:
+        if not callback.data or not callback.message or callback.message.chat.type not in GROUP_TYPES:
+            await callback.answer()
+            return
+        try:
+            _, raw_chat_id, raw_owner_id = callback.data.split(":", 2)
+            chat_id = int(raw_chat_id)
+        except ValueError:
+            await callback.answer("Некорректная кнопка.", show_alert=True)
+            return
+        if chat_id != callback.message.chat.id:
+            await callback.answer("Эта статистика относится к другому чату.", show_alert=True)
+            return
+        if raw_owner_id == "list":
+            body, keyboard = await enterprise_stats_list(chat_id)
+        else:
+            try:
+                owner_id = int(raw_owner_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            result = await enterprise_stats_detail(chat_id, owner_id)
+            if result is None:
+                await callback.answer("Предприятие больше не существует.", show_alert=True)
+                return
+            body, keyboard = result
+        try:
+            await callback.message.edit_text(body, reply_markup=keyboard, parse_mode="HTML")
+        except TelegramBadRequest as error:
+            if "message is not modified" not in str(error).casefold():
+                await callback.message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+        await callback.answer()
 
     @router.message(F.new_chat_members)
     async def new_members(message: Message, bot: Bot) -> None:
