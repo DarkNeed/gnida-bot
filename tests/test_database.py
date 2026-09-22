@@ -504,6 +504,9 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.database.business_income_periods(1, 10), (11, 20))
         businesses = await self.database.list_chat_businesses(1)
         self.assertEqual((businesses[0]["owner_id"], businesses[0]["business_type"]), (10, "field"))
+        visible = await self.database.list_visible_businesses(20)
+        self.assertEqual(visible[0]["owner_id"], 10)
+        self.assertTrue(await self.database.user_knows_chat(20, 1))
 
     async def test_pirojok_basement_escape_has_persistent_hour_cooldown(self):
         await self.database.add_basement_member(1, 20, 10)

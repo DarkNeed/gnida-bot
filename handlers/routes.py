@@ -2279,9 +2279,12 @@ def create_router(
 
     @router.message(text_or_caption_regexp(ENTERPRISE_STATS_RE))
     async def enterprise_stats(message: Message) -> None:
-        if message.chat.type not in GROUP_TYPES:
+        if message.chat.type in GROUP_TYPES:
+            body, keyboard = await enterprise_stats_list(message.chat.id)
+        elif message.chat.type == "private" and message.from_user:
+            body, keyboard = await enterprise_stats_list_for_user(message.from_user.id)
+        else:
             return
-        body, keyboard = await enterprise_stats_list(message.chat.id)
         await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
 
     @router.message(text_or_caption_regexp(BUSINESS_ASSIGN_RE))
@@ -2606,7 +2609,7 @@ def create_router(
 
     @router.callback_query(F.data.startswith("es:"))
     async def enterprise_stats_callback(callback: CallbackQuery) -> None:
-        if not callback.data or not callback.message or callback.message.chat.type not in GROUP_TYPES:
+        if not callback.data or not callback.message or not callback.from_user:
             await callback.answer()
             return
         try:
@@ -2615,11 +2618,22 @@ def create_router(
         except ValueError:
             await callback.answer("Некорректная кнопка.", show_alert=True)
             return
-        if chat_id != callback.message.chat.id:
+        is_group = callback.message.chat.type in GROUP_TYPES
+        is_private = callback.message.chat.type == "private"
+        if not is_group and not is_private:
+            await callback.answer()
+            return
+        if is_group and chat_id != callback.message.chat.id:
             await callback.answer("Эта статистика относится к другому чату.", show_alert=True)
             return
+        if is_private and not await database.user_knows_chat(callback.from_user.id, chat_id):
+            await callback.answer("Этот чат недоступен в твоей статистике.", show_alert=True)
+            return
         if raw_owner_id == "list":
-            body, keyboard = await enterprise_stats_list(chat_id)
+            if is_group:
+                body, keyboard = await enterprise_stats_list(chat_id)
+            else:
+                body, keyboard = await enterprise_stats_list_for_user(callback.from_user.id)
         else:
             try:
                 owner_id = int(raw_owner_id)

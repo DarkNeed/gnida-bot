@@ -1660,6 +1660,27 @@ class Database:
                 (chat_id,),
             ).fetchall()
 
+    async def list_visible_businesses(self, user_id: int) -> list[sqlite3.Row]:
+        """Businesses in chats where the bot has seen this user."""
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT b.*, c.title AS chat_title, u.username, u.display_name
+                   FROM businesses b
+                   INNER JOIN users participant
+                       ON participant.chat_id=b.chat_id AND participant.user_id=?
+                   LEFT JOIN chats c ON c.chat_id=b.chat_id
+                   LEFT JOIN users u ON u.chat_id=b.chat_id AND u.user_id=b.owner_id
+                   ORDER BY c.title, b.created_at, b.owner_id""",
+                (user_id,),
+            ).fetchall()
+
+    async def user_knows_chat(self, user_id: int, chat_id: int) -> bool:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT 1 FROM users WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            ).fetchone() is not None
+
     async def business_income_periods(
         self, chat_id: int, owner_id: int
     ) -> tuple[int, int]:
