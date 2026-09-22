@@ -661,11 +661,14 @@ def plain_name(row) -> str:
 
 def slave_tag(row) -> str:
     priority = "⭐ " if row and "transfer_priority" in row.keys() and row["transfer_priority"] else ""
-    if row and row["username"]:
-        return priority + "@" + html.escape(row["username"])
     if row:
-        name = html.escape(row["display_name"] or "без username")
-        return f"{priority}{name} (<code>{row['user_id']}</code>)"
+        # A username can be changed and later reused by a different account.
+        # Link by the immutable Telegram ID, so stale usernames cannot make
+        # two different slaves look like one person.
+        name = "@" + str(row["username"]) if row["username"] else (
+            row["display_name"] or "без username"
+        )
+        return f"{priority}{mention(int(row['user_id']), name)} (<code>{row['user_id']}</code>)"
     return "неизвестный участник"
 
 

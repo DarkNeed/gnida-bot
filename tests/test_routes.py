@@ -94,6 +94,7 @@ from handlers.routes import (
     resolve_target,
     parse_safebooru_count,
     select_safebooru_post,
+    slave_tag,
     sleepy_attack_is_blocked,
     text_or_caption_regexp,
     is_chat_participant,
@@ -102,6 +103,24 @@ from handlers.routes import (
 
 
 class RoutePatternTests(unittest.TestCase):
+    def test_slave_tag_links_to_telegram_id_even_when_username_is_stale(self):
+        first = slave_tag(
+            {"user_id": 101, "username": "Lord_of_LSD", "display_name": "Старый"}
+        )
+        second = slave_tag(
+            {
+                "user_id": 202,
+                "username": "Lord_of_LSD",
+                "display_name": "Текущий",
+                "transfer_priority": 1,
+            }
+        )
+
+        self.assertIn('href="tg://user?id=101"', first)
+        self.assertIn('href="tg://user?id=202"', second)
+        self.assertIn("<code>101</code>", first)
+        self.assertIn("⭐", second)
+
     def test_inline_game_search_and_handlers(self):
         self.assertEqual(inline_game_types("шашки"), ["checkers"])
         self.assertEqual(inline_game_types("блэкджек"), ["blackjack"])
