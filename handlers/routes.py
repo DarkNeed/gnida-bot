@@ -1534,6 +1534,43 @@ def create_router(
             InlineKeyboardMarkup(inline_keyboard=buttons),
         )
 
+    async def enterprise_stats_list_for_user(
+        user_id: int,
+    ) -> tuple[str, InlineKeyboardMarkup]:
+        businesses = await database.list_visible_businesses(user_id)
+        for business in businesses:
+            await database.settle_business(
+                int(business["chat_id"]), int(business["owner_id"])
+            )
+        if not businesses:
+            return (
+                "<b>🏢 Стата предприятий</b>\n"
+                "Я пока не знаю предприятий из твоих чатов.",
+                InlineKeyboardMarkup(inline_keyboard=[]),
+            )
+        buttons: list[list[InlineKeyboardButton]] = []
+        for business in businesses:
+            meta = BUSINESS_META[str(business["business_type"])]
+            owner_name = (
+                "@" + str(business["username"])
+                if business["username"]
+                else str(business["display_name"] or business["owner_id"])
+            )
+            chat_title = str(business["chat_title"] or "Чат")
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{meta['emoji']} {chat_title} · {owner_name}"[:60],
+                        callback_data=f"es:{business['chat_id']}:{business['owner_id']}",
+                    )
+                ]
+            )
+        return (
+            "<b>🏢 Стата предприятий</b>\n"
+            "Предприятия из чатов, где бот тебя видел. Нажми на любое для подробностей.",
+            InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+
     async def enterprise_stats_detail(
         chat_id: int, owner_id: int
     ) -> tuple[str, InlineKeyboardMarkup] | None:
