@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 from aiogram.types import User
 
 from custom_commands import (
+    command_responses,
     normalize_custom_trigger,
     parse_response_lines,
     render_custom_template,
@@ -98,6 +99,141 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.database.franc_balance(1, 10), 50)
         self.assertTrue(await self.database.spend_francs(1, 10, 20))
         self.assertEqual(await self.database.franc_balance(1, 10), 30)
+
+    async def test_menu_edits_keep_other_responses_and_validate_required_outcomes(self):
+        command_id = await self.database.save_custom_command(
+            1, "Подарить ламборгини", "подарить ламборгини", 50, 30,
+            ["Первый успех"], ["Первая неудача"], None, 1980056841,
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_response(
+                command_id, "success", "add", text="Второй успех"
+            ), "updated",
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_response(
+                command_id, "success", "edit", index=0, text="Исправленный успех"
+            ), "updated",
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_response(
+                command_id, "failure", "delete", index=0
+            ), "last_required",
+        )
+        self.assertEqual(
+            await self.database.update_custom_command_setting(command_id, "cost", 75),
+            "updated",
+        )
+        self.assertEqual(
+            await self.database.update_custom_command_setting(command_id, "success_chance", 100),
+            "updated",
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_response(
+                command_id, "failure", "delete", index=0
+            ), "updated",
+        )
+        self.assertEqual(
+            await self.database.update_custom_command_setting(command_id, "success_chance", 30),
+            "needs_failure",
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_response(
+                command_id, "success", "delete", index=0
+            ), "updated",
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_response(
+                command_id, "success", "delete", index=0
+            ), "last_required",
+        )
+        row = await self.database.get_custom_command_by_id(command_id)
+        self.assertEqual(row["cost"], 75)
+        self.assertEqual(row["success_responses"], '["Второй успех"]')
+        self.assertEqual(row["failure_responses"], '[]')
+        self.assertEqual(len(await self.database.list_all_custom_commands()), 1)
+        self.assertEqual(len(await self.database.list_custom_command_chats(10)), 1)
+
+    async def test_renaming_command_cannot_overwrite_another_trigger(self):
+        first_id = await self.database.save_custom_command(
+            1, "Первая", "первая", 0, 100, ["Один"], [], None, 1980056841,
+        )
+        await self.database.save_custom_command(
+            1, "Вторая", "вторая", 0, 100, ["Два"], [], None, 1980056841,
+        )
+        self.assertEqual(
+            await self.database.update_custom_command_setting(first_id, "trigger", "Вторая"),
+            "exists",
+        )
+        self.assertEqual(
+            (await self.database.get_custom_command_by_id(first_id))["trigger"], "Первая"
+        )
+
+    async def test_private_menu_adds_one_response_to_existing_command(self):
+        command_id = await self.database.save_custom_command(
+            1, "Подарить ламборгини", "подарить ламборгини", 0, 100,
+            ["Первый вариант"], [], None, 1980056841,
+        )
+        router = create_router(self.database)
+        callback_handler = next(
+            item.callback for item in router.callback_query.handlers
+            if item.callback.__name__ == "custom_command_menu_callback"
+        )
+        edit_handler = next(
+            item.callback for item in router.message.handlers
+            if item.callback.__name__ == "custom_command_edit_value"
+        )
+        state = SimpleNamespace(
+            clear=AsyncMock(), set_state=AsyncMock(), update_data=AsyncMock(),
+            get_data=AsyncMock(return_value={
+                "command_id": command_id, "field": "response",
+                "outcome": "success", "action": "add", "index": None,
+            }),
+        )
+        menu_message = SimpleNamespace(
+            chat=SimpleNamespace(type="private"),
+            answer=AsyncMock(), edit_text=AsyncMock(),
+        )
+        callback = SimpleNamespace(
+            from_user=User(id=1980056841, is_bot=False, first_name="Владелец"),
+            message=menu_message, data=f"cc:add:{command_id}:s", answer=AsyncMock(),
+        )
+
+        await callback_handler(callback, state, SimpleNamespace())
+
+        state.update_data.assert_awaited_once_with(
+            command_id=command_id, field="response", outcome="success",
+            action="add", index=None,
+        )
+        self.assertIn("Пришли вариант", menu_message.answer.await_args.args[0])
+        response_message = SimpleNamespace(
+            text="Второй вариант", caption=None,
+            chat=SimpleNamespace(type="private"),
+            from_user=callback.from_user, answer=AsyncMock(),
+        )
+
+        await edit_handler(response_message, state)
+
+        row = await self.database.get_custom_command_by_id(command_id)
+        self.assertEqual(
+            command_responses(row, "success_responses"),
+            ["Первый вариант", "Второй вариант"],
+        )
+        self.assertIn("✅ Вариант добавлен", response_message.answer.await_args.args[0])
+        self.assertEqual(state.clear.await_count, 1)
+
+        response_message.text = "Третий вариант"
+        await edit_handler(response_message, state)
+        row = await self.database.get_custom_command_by_id(command_id)
+        self.assertEqual(
+            command_responses(row, "success_responses"),
+            ["Первый вариант", "Второй вариант", "Третий вариант"],
+        )
+        self.assertEqual(state.clear.await_count, 1)
+
+        callback.data = f"cc:out:{command_id}:s:0"
+        await callback_handler(callback, state, SimpleNamespace())
+        self.assertEqual(state.clear.await_count, 2)
 
     async def test_route_uses_reply_target_random_recent_user_and_charges_actor(self):
         await self.database.upsert_user(1, 20, "target", "Цель")

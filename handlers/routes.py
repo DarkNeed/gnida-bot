@@ -44,6 +44,8 @@ from blackjack import full_hand, hand_total, visible_hand
 from checkers import BLACK, WHITE, EMPTY, legal_moves as legal_checkers_moves
 from custom_commands import (
     CUSTOM_COMMAND_OWNER_ID,
+    MAX_RESPONSE_LENGTH,
+    MAX_RESPONSES_PER_OUTCOME,
     MAX_TRIGGER_LENGTH,
     command_responses,
     normalize_custom_trigger,
@@ -324,6 +326,10 @@ class CustomCommandForm(StatesGroup):
     exclusive = State()
     successes = State()
     failures = State()
+
+
+class CustomCommandEdit(StatesGroup):
+    value = State()
 
 
 GNIDA_REPLY_INSULT_RE = re.compile(
@@ -1080,28 +1086,31 @@ def create_router(
     checkers_render_lock = asyncio.Lock()
     last_challenge_edit_at = 0.0
 
-    def slave_menu_keyboard() -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="👥 Мои рабы", callback_data="sm:slaves"),
-                    InlineKeyboardButton(text="⭐ Приоритет", callback_data="sm:priority"),
-                ],
-                [
-                    InlineKeyboardButton(text="🎮 Статистика игр", callback_data="sm:games"),
-                    InlineKeyboardButton(text="📖 Гайд", callback_data="sm:guide"),
-                ],
-                [
-                    InlineKeyboardButton(text="💰 Франки", callback_data="sm:francs"),
-                    InlineKeyboardButton(text="🏢 Предприятия", callback_data="sm:business"),
-                ],
-                [
-                    InlineKeyboardButton(text="🧰 Подработка", callback_data="sm:work"),
-                    InlineKeyboardButton(text="🔓 Выкупиться", callback_data="sm:buyout"),
-                ],
-                [InlineKeyboardButton(text="💜 Поддержать", callback_data="sm:support")],
-            ]
-        )
+    def slave_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
+        buttons = [
+            [
+                InlineKeyboardButton(text="👥 Мои рабы", callback_data="sm:slaves"),
+                InlineKeyboardButton(text="⭐ Приоритет", callback_data="sm:priority"),
+            ],
+            [
+                InlineKeyboardButton(text="🎮 Статистика игр", callback_data="sm:games"),
+                InlineKeyboardButton(text="📖 Гайд", callback_data="sm:guide"),
+            ],
+            [
+                InlineKeyboardButton(text="💰 Франки", callback_data="sm:francs"),
+                InlineKeyboardButton(text="🏢 Предприятия", callback_data="sm:business"),
+            ],
+            [
+                InlineKeyboardButton(text="🧰 Подработка", callback_data="sm:work"),
+                InlineKeyboardButton(text="🔓 Выкупиться", callback_data="sm:buyout"),
+            ],
+            [InlineKeyboardButton(text="💜 Поддержать", callback_data="sm:support")],
+        ]
+        if user_id == CUSTOM_COMMAND_OWNER_ID:
+            buttons.append(
+                [InlineKeyboardButton(text="⚙️ Кастомные команды", callback_data="sm:custom")]
+            )
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     def captcha_keyboard(captcha_id: int, correct_emoji: str) -> InlineKeyboardMarkup:
         choices = [correct_emoji] + random.sample(
@@ -1359,7 +1368,7 @@ def create_router(
             f"Твоих рабов: {len(slaves)}\n"
             f"Франки: <b>{francs} ₣</b>{owner_text}\n\n"
             "Выбери раздел.",
-            slave_menu_keyboard(),
+            slave_menu_keyboard(user_id),
         )
 
     async def slave_menu_slaves(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -2266,6 +2275,140 @@ def create_router(
             message.from_user and message.from_user.id == CUSTOM_COMMAND_OWNER_ID
         )
 
+    async def custom_commands_menu(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
+        rows = await database.list_all_custom_commands()
+        page_size = 8
+        page_count = max(1, (len(rows) + page_size - 1) // page_size)
+        page = max(0, min(page, page_count - 1))
+        buttons = [
+            [InlineKeyboardButton(
+                text=f"{row['chat_title'] or row['chat_id']} · {row['trigger']}"[:60],
+                callback_data=f"cc:detail:{row['id']}",
+            )]
+            for row in rows[page * page_size:(page + 1) * page_size]
+        ]
+        navigation = []
+        if page > 0:
+            navigation.append(InlineKeyboardButton(text="←", callback_data=f"cc:list:{page - 1}"))
+        if page + 1 < page_count:
+            navigation.append(InlineKeyboardButton(text="→", callback_data=f"cc:list:{page + 1}"))
+        if navigation:
+            buttons.append(navigation)
+        buttons.append([InlineKeyboardButton(text="➕ Создать команду", callback_data="cc:chats")])
+        buttons.append([InlineKeyboardButton(text="← Главное меню", callback_data="sm:home")])
+        return (
+            f"<b>⚙️ Кастомные команды</b> · {len(rows)} шт. · стр. {page + 1}/{page_count}\n"
+            "Выбери команду для настройки." if rows else
+            "<b>⚙️ Кастомные команды</b>\nПока команд нет. Нажми «Создать команду».",
+            InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+
+    async def custom_command_chats_menu(bot: Bot) -> tuple[str, InlineKeyboardMarkup]:
+        chats = await database.list_custom_command_chats(CUSTOM_COMMAND_OWNER_ID)
+        buttons = []
+        for chat in chats:
+            if await is_chat_participant(bot, int(chat["chat_id"]), CUSTOM_COMMAND_OWNER_ID):
+                buttons.append([InlineKeyboardButton(
+                    text=str(chat["title"])[:60],
+                    callback_data=f"cc:new:{chat['chat_id']}",
+                )])
+        buttons.append([InlineKeyboardButton(text="← Команды", callback_data="cc:list:0")])
+        return (
+            "<b>➕ Новая команда</b>\nВыбери чат, где она будет работать."
+            if len(buttons) > 1 else
+            "<b>➕ Новая команда</b>\nНе нашёл общего чата. Напиши в нужном чате /команда создать.",
+            InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+
+    async def custom_command_detail(command_id: int) -> tuple[str, InlineKeyboardMarkup] | None:
+        row = await database.get_custom_command_by_id(command_id)
+        if row is None:
+            return None
+        successes = command_responses(row, "success_responses")
+        failures = command_responses(row, "failure_responses")
+        exclusive = (
+            f"{html.escape('@' + str(row['exclusive_username']))} "
+            f"(ID {row['exclusive_user_id']})"
+            if row["exclusive_username"] else
+            f"ID {row['exclusive_user_id']}"
+            if row["exclusive_user_id"] is not None else "все"
+        )
+        body = (
+            f"<b>⚙️ {html.escape(str(row['trigger']))}</b>\n"
+            f"Чат: {html.escape(str(row['chat_title'] or row['chat_id']))}\n"
+            f"Цена: <b>{row['cost']} ₣</b> · Успех: <b>{row['success_chance']}%</b>\n"
+            f"Доступ: {exclusive}\n"
+            f"Ответов: успех {len(successes)}, неудача {len(failures)}\n\n"
+            "Нажми на настройку, которую хочешь изменить."
+        )
+        buttons = [
+            [InlineKeyboardButton(text="💰 Цена", callback_data=f"cc:edit:{command_id}:cost"),
+             InlineKeyboardButton(text="🎲 Шанс", callback_data=f"cc:edit:{command_id}:chance")],
+            [InlineKeyboardButton(text="👤 Доступ", callback_data=f"cc:edit:{command_id}:exclusive"),
+             InlineKeyboardButton(text="✏️ Фраза", callback_data=f"cc:edit:{command_id}:trigger")],
+            [InlineKeyboardButton(text=f"✅ Успехи ({len(successes)})", callback_data=f"cc:out:{command_id}:s:0"),
+             InlineKeyboardButton(text=f"❌ Неудачи ({len(failures)})", callback_data=f"cc:out:{command_id}:f:0")],
+            [InlineKeyboardButton(text="🗑 Удалить команду", callback_data=f"cc:delete:{command_id}")],
+            [InlineKeyboardButton(text="← Все команды", callback_data="cc:list:0")],
+        ]
+        return body, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    async def custom_command_outcomes(
+        command_id: int, outcome: str, page: int = 0
+    ) -> tuple[str, InlineKeyboardMarkup] | None:
+        row = await database.get_custom_command_by_id(command_id)
+        if row is None:
+            return None
+        field = "success_responses" if outcome == "s" else "failure_responses"
+        responses = command_responses(row, field)
+        page_size = 5
+        page_count = max(1, (len(responses) + page_size - 1) // page_size)
+        page = max(0, min(page, page_count - 1))
+        title = "✅ Успехи" if outcome == "s" else "❌ Неудачи"
+        buttons = [
+            [InlineKeyboardButton(
+                text=f"{index + 1}. {responses[index]}"[:60],
+                callback_data=f"cc:resp:{command_id}:{outcome}:{index}",
+            )]
+            for index in range(page * page_size, min((page + 1) * page_size, len(responses)))
+        ]
+        navigation = []
+        if page > 0:
+            navigation.append(InlineKeyboardButton(text="←", callback_data=f"cc:out:{command_id}:{outcome}:{page - 1}"))
+        if page + 1 < page_count:
+            navigation.append(InlineKeyboardButton(text="→", callback_data=f"cc:out:{command_id}:{outcome}:{page + 1}"))
+        if navigation:
+            buttons.append(navigation)
+        buttons.append([InlineKeyboardButton(text="➕ Добавить вариант", callback_data=f"cc:add:{command_id}:{outcome}")])
+        buttons.append([InlineKeyboardButton(text="← Команда", callback_data=f"cc:detail:{command_id}")])
+        body = (
+            f"<b>{title}</b> · {html.escape(str(row['trigger']))}\n"
+            f"Вариантов: {len(responses)} · стр. {page + 1}/{page_count}\n"
+            "Нажми на вариант для изменения или удаления."
+        )
+        return body, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    async def custom_command_response_detail(
+        command_id: int, outcome: str, index: int
+    ) -> tuple[str, InlineKeyboardMarkup] | None:
+        row = await database.get_custom_command_by_id(command_id)
+        if row is None:
+            return None
+        field = "success_responses" if outcome == "s" else "failure_responses"
+        responses = command_responses(row, field)
+        if not 0 <= index < len(responses):
+            return None
+        title = "успеха" if outcome == "s" else "неудачи"
+        return (
+            f"<b>Вариант {title} №{index + 1}</b>\n\n"
+            f"{html.escape(responses[index])}",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✏️ Изменить", callback_data=f"cc:editresp:{command_id}:{outcome}:{index}"),
+                 InlineKeyboardButton(text="🗑 Удалить", callback_data=f"cc:delresp:{command_id}:{outcome}:{index}")],
+                [InlineKeyboardButton(text="← К вариантам", callback_data=f"cc:out:{command_id}:{outcome}:{index // 5}")],
+            ]),
+        )
+
     async def reject_non_owner(message: Message) -> bool:
         if custom_command_owner(message):
             return False
@@ -2276,7 +2419,7 @@ def create_router(
         value = message_content(message).strip()
         if value.casefold() in {"/отмена", "отмена"}:
             await state.clear()
-            await message.answer("Создание команды отменено.")
+            await message.answer("Действие отменено.")
             return None
         if not value:
             await message.answer("Пришли значение обычным текстовым сообщением.")
@@ -2284,14 +2427,18 @@ def create_router(
         return value
 
     @router.message(text_or_caption_regexp(CUSTOM_COMMAND_CREATE_RE))
-    async def custom_command_create(message: Message, state: FSMContext) -> None:
+    async def custom_command_create(message: Message, state: FSMContext, bot: Bot) -> None:
         if await reject_non_owner(message):
             return
+        if message.chat.type == "private":
+            body, keyboard = await custom_command_chats_menu(bot)
+            await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+            return
         if message.chat.type not in GROUP_TYPES:
-            await message.answer("Создавать команды нужно в том групповом чате, где они будут работать.")
             return
         await state.clear()
         await state.set_state(CustomCommandForm.trigger)
+        await state.update_data(chat_id=message.chat.id)
         await message.answer(
             "Шаг 1/6. Напиши фразу-команду, например: <code>Послать отряд омона</code>\n\n"
             "Регистр и знаки !?. в конце при вызове не важны. Для отмены: /отмена",
@@ -2354,9 +2501,11 @@ def create_router(
         value = await wizard_text(message, state)
         if value is None:
             return
+        data = await state.get_data()
+        chat_id = int(data["chat_id"])
         exclusive_user_id: int | None = None
         if value.casefold() not in {"нет", "-", "все", "всем"}:
-            row = await database.resolve_user(message.chat.id, value)
+            row = await database.resolve_user(chat_id, value)
             if row:
                 exclusive_user_id = int(row["user_id"])
             elif value.lstrip("-").isdigit():
@@ -2406,7 +2555,7 @@ def create_router(
             await message.answer("При шансе ниже 100% нужен хотя бы один вариант неудачи.")
             return
         await database.save_custom_command(
-            message.chat.id,
+            int(data["chat_id"]),
             str(data["trigger"]),
             str(data["trigger_key"]),
             int(data["cost"]),
@@ -2417,54 +2566,37 @@ def create_router(
             CUSTOM_COMMAND_OWNER_ID,
         )
         await state.clear()
+        command_row = await database.get_custom_command(int(data["chat_id"]), str(data["trigger_key"]))
         await message.answer(
             "✅ Команда сохранена. Теперь напиши в чат: "
             f"<code>{html.escape(str(data['trigger']))}</code>\n"
             "Повторное создание с той же фразой обновит её настройки.",
             parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚙️ Настроить", callback_data=f"cc:detail:{command_row['id']}")]
+            ]) if message.chat.type == "private" and command_row else None,
         )
 
     @router.message(text_or_caption_regexp(CUSTOM_COMMAND_LIST_RE))
-    async def custom_command_list(message: Message) -> None:
+    async def custom_command_list(message: Message, bot: Bot) -> None:
         if await reject_non_owner(message):
             return
-        if message.chat.type not in GROUP_TYPES:
-            await message.answer("Список команд открывается в нужном групповом чате.")
-            return
-        rows = await database.list_custom_commands(message.chat.id)
-        if not rows:
-            await message.answer("В этом чате ещё нет пользовательских команд. Создать: /команда создать")
-            return
-        lines = ["<b>Пользовательские команды</b>"]
-        for row in rows:
-            exclusive = "для всех"
-            if row["exclusive_user_id"] is not None:
-                exclusive = "только " + mention(
-                    int(row["exclusive_user_id"]),
-                    row["exclusive_username"]
-                    and "@" + str(row["exclusive_username"])
-                    or row["exclusive_display_name"]
-                    or str(row["exclusive_user_id"]),
-                )
-            lines.append(
-                f"• <code>{html.escape(str(row['trigger']))}</code> — "
-                f"{int(row['cost'])} ₣, успех {int(row['success_chance'])}%, {exclusive}"
-            )
-        chunk: list[str] = []
-        chunk_length = 0
-        for line in lines:
-            if chunk and chunk_length + len(line) + 1 > 3800:
-                await message.answer("\n".join(chunk), parse_mode="HTML")
-                chunk = []
-                chunk_length = 0
-            chunk.append(line)
-            chunk_length += len(line) + 1
-        if chunk:
-            await message.answer("\n".join(chunk), parse_mode="HTML")
+        body, keyboard = await custom_commands_menu()
+        if message.chat.type == "private":
+            await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+        elif message.chat.type in GROUP_TYPES:
+            try:
+                await bot.send_message(CUSTOM_COMMAND_OWNER_ID, body, reply_markup=keyboard, parse_mode="HTML")
+                await message.answer("⚙️ Меню команд отправлено тебе в личку.")
+            except TelegramForbiddenError:
+                await message.answer("Открой личку с ботом, нажми Start и напиши /команды.")
 
     @router.message(text_or_caption_regexp(CUSTOM_COMMAND_DELETE_RE))
     async def custom_command_delete(message: Message) -> None:
         if await reject_non_owner(message):
+            return
+        if message.chat.type not in GROUP_TYPES:
+            await message.answer("Для удаления из лички открой /команды и выбери нужную команду.")
             return
         match = CUSTOM_COMMAND_DELETE_RE.match(message_content(message))
         trigger_key = normalize_custom_trigger(match.group(1) if match else "")
@@ -2477,13 +2609,244 @@ def create_router(
             return
         await message.answer(
             "<b>Конструктор команд</b>\n"
-            "/команда создать — создать или обновить команду\n"
-            "/команды — показать команды этого чата\n"
-            "/команда удалить Фраза — удалить команду\n"
+            "/команды — меню всех команд в личке\n"
+            "/команда создать — создать команду\n"
+            "В меню можно менять цену, шанс, доступ, фразу и ответы по одному.\n"
             "/отмена — выйти из мастера создания\n\n"
             "Вызов — точная фраза без учёта регистра и конечных !?.",
             parse_mode="HTML",
         )
+
+    @router.message(CustomCommandEdit.value)
+    async def custom_command_edit_value(message: Message, state: FSMContext) -> None:
+        if not custom_command_owner(message) or message.chat.type != "private":
+            return
+        value = await wizard_text(message, state)
+        if value is None:
+            return
+        data = await state.get_data()
+        command_id = int(data["command_id"])
+        row = await database.get_custom_command_by_id(command_id)
+        if row is None:
+            await state.clear()
+            await message.answer("Команда уже удалена.")
+            return
+        field = str(data["field"])
+        if field == "response":
+            if "\n" in value or len(value) > MAX_RESPONSE_LENGTH:
+                await message.answer(f"Пришли один вариант одним сообщением до {MAX_RESPONSE_LENGTH} символов.")
+                return
+            result = await database.modify_custom_command_response(
+                command_id, str(data["outcome"]), str(data["action"]),
+                index=data.get("index"), text=value,
+            )
+        elif field == "cost":
+            try:
+                parsed = int(value.replace(" ", ""))
+            except ValueError:
+                parsed = -1
+            result = await database.update_custom_command_setting(command_id, "cost", parsed)
+        elif field == "chance":
+            try:
+                parsed = int(value.removesuffix("%").strip())
+            except ValueError:
+                parsed = -1
+            result = await database.update_custom_command_setting(command_id, "success_chance", parsed)
+        elif field == "exclusive":
+            if value.casefold() in {"нет", "-", "все", "всем"}:
+                exclusive_id = None
+            else:
+                user = await database.resolve_user(int(row["chat_id"]), value)
+                if user:
+                    exclusive_id = int(user["user_id"])
+                elif value.isdigit():
+                    exclusive_id = int(value)
+                else:
+                    await message.answer("Не знаю этот @username в чате. Пришли Telegram ID или «нет».")
+                    return
+            result = await database.update_custom_command_setting(
+                command_id, "exclusive_user_id", exclusive_id
+            )
+        elif field == "trigger":
+            result = await database.update_custom_command_setting(command_id, "trigger", value)
+        else:
+            await state.clear()
+            return
+        errors = {
+            "invalid": "Значение не подходит. Проверь формат и попробуй ещё раз.",
+            "exists": "Команда с такой фразой уже есть в этом чате. Выбери другую.",
+            "needs_failure": "Сначала добавь хотя бы один вариант неудачи, затем снижай шанс ниже 100%.",
+            "limit": "Уже есть 20 вариантов. Удали один перед добавлением нового.",
+        }
+        if result != "updated":
+            if result == "not_found":
+                await state.clear()
+            await message.answer(errors.get(result, "Не удалось изменить команду."))
+            return
+        if field == "response":
+            view = await custom_command_outcomes(
+                command_id, "s" if data["outcome"] == "success" else "f"
+            )
+            if data["action"] == "add":
+                await message.answer(
+                    "✅ Вариант добавлен. Пришли следующий отдельным сообщением "
+                    "или нажми «Готово».",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(
+                            text="✅ Готово · к вариантам",
+                            callback_data=(
+                                f"cc:out:{command_id}:"
+                                f"{'s' if data['outcome'] == 'success' else 'f'}:0"
+                            ),
+                        )],
+                    ]),
+                )
+                return
+        else:
+            view = await custom_command_detail(command_id)
+        await state.clear()
+        if view:
+            await message.answer("✅ Сохранено.\n\n" + view[0], reply_markup=view[1], parse_mode="HTML")
+
+    @router.callback_query(F.data.startswith("cc:"))
+    async def custom_command_menu_callback(
+        callback: CallbackQuery, state: FSMContext, bot: Bot
+    ) -> None:
+        if (
+            not callback.from_user
+            or callback.from_user.id != CUSTOM_COMMAND_OWNER_ID
+            or not callback.message
+            or callback.message.chat.type != "private"
+            or not callback.data
+        ):
+            await callback.answer("Это меню доступно только владельцу бота.", show_alert=True)
+            return
+        parts = callback.data.split(":")
+        action = parts[1] if len(parts) > 1 else ""
+        if action not in {"new", "add", "edit", "editresp"}:
+            await state.clear()
+        view: tuple[str, InlineKeyboardMarkup] | None = None
+        notice: str | None = None
+        try:
+            if action == "list":
+                view = await custom_commands_menu(int(parts[2]))
+            elif action == "chats":
+                view = await custom_command_chats_menu(bot)
+            elif action == "new":
+                chat_id = int(parts[2])
+                allowed = any(
+                    int(chat["chat_id"]) == chat_id
+                    for chat in await database.list_custom_command_chats(CUSTOM_COMMAND_OWNER_ID)
+                ) and await is_chat_participant(bot, chat_id, CUSTOM_COMMAND_OWNER_ID)
+                if not allowed:
+                    await callback.answer("Этот чат недоступен.", show_alert=True)
+                    return
+                await state.clear()
+                await state.set_state(CustomCommandForm.trigger)
+                await state.update_data(chat_id=chat_id)
+                view = (
+                    "<b>Шаг 1/6</b> · Напиши фразу новой команды одним сообщением.\n"
+                    "Для отмены: /отмена",
+                    InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="← Команды", callback_data="cc:list:0")]
+                    ]),
+                )
+            elif action == "detail":
+                view = await custom_command_detail(int(parts[2]))
+            elif action == "out" and parts[3] in {"s", "f"}:
+                view = await custom_command_outcomes(int(parts[2]), parts[3], int(parts[4]))
+            elif action == "resp" and parts[3] in {"s", "f"}:
+                view = await custom_command_response_detail(int(parts[2]), parts[3], int(parts[4]))
+            elif action in {"add", "edit", "editresp"}:
+                command_id = int(parts[2])
+                row = await database.get_custom_command_by_id(command_id)
+                if row is None:
+                    notice = "Команда уже удалена."
+                else:
+                    if action == "edit":
+                        field = parts[3]
+                        if field not in {"cost", "chance", "exclusive", "trigger"}:
+                            raise ValueError
+                        prompts = {
+                            "cost": "Напиши новую цену в франках (0–1 000 000).",
+                            "chance": "Напиши новый шанс успеха (0–100%).",
+                            "exclusive": "Пришли Telegram ID, известный боту @username или «нет» для всех.",
+                            "trigger": "Напиши новую фразу команды (до 80 символов).",
+                        }
+                        prompt = prompts[field]
+                    else:
+                        outcome = "success" if parts[3] == "s" else "failure"
+                        if parts[3] not in {"s", "f"}:
+                            raise ValueError
+                        index = int(parts[4]) if action == "editresp" else None
+                        responses = command_responses(
+                            row, "success_responses" if outcome == "success" else "failure_responses"
+                        )
+                        if index is not None and not 0 <= index < len(responses):
+                            raise ValueError
+                        if action == "add" and len(responses) >= MAX_RESPONSES_PER_OUTCOME:
+                            await callback.answer("Уже есть 20 вариантов. Удали один перед добавлением.", show_alert=True)
+                            return
+                        prompt = (
+                            "Пришли новый вариант одним сообщением (до 1000 символов).\n"
+                            "Метки: {actor}, {target}, {random}."
+                            if action == "editresp" else
+                            "Пришли вариант одним сообщением (до 1000 символов). "
+                            "Затем можно присылать следующие по одному.\n"
+                            "Метки: {actor}, {target}, {random}."
+                        )
+                    await state.clear()
+                    await state.set_state(CustomCommandEdit.value)
+                    if action == "edit":
+                        await state.update_data(command_id=command_id, field=field)
+                    else:
+                        await state.update_data(
+                            command_id=command_id, field="response", outcome=outcome,
+                            action="edit" if action == "editresp" else "add", index=index,
+                        )
+                    await callback.message.answer(prompt + "\nДля отмены: /отмена")
+                    await callback.answer()
+                    return
+            elif action == "delresp" and parts[3] in {"s", "f"}:
+                command_id, index = int(parts[2]), int(parts[4])
+                outcome = "success" if parts[3] == "s" else "failure"
+                result = await database.modify_custom_command_response(
+                    command_id, outcome, "delete", index=index
+                )
+                notice = {
+                    "updated": "Вариант удалён.",
+                    "last_required": "Последний обязательный вариант удалять нельзя.",
+                }.get(result, "Вариант уже недоступен.")
+                view = await custom_command_outcomes(command_id, parts[3])
+            elif action == "delete":
+                command_id = int(parts[2])
+                row = await database.get_custom_command_by_id(command_id)
+                if row:
+                    view = (
+                        f"Удалить команду <b>{html.escape(str(row['trigger']))}</b>?",
+                        InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"cc:confirm:{command_id}")],
+                            [InlineKeyboardButton(text="← Отмена", callback_data=f"cc:detail:{command_id}")],
+                        ]),
+                    )
+            elif action == "confirm":
+                deleted = await database.delete_custom_command_by_id(int(parts[2]))
+                notice = "Команда удалена." if deleted else "Команда уже удалена."
+                view = await custom_commands_menu()
+            else:
+                raise ValueError
+        except (ValueError, IndexError):
+            await callback.answer("Кнопка устарела или повреждена.", show_alert=True)
+            return
+        if view is None:
+            view = await custom_commands_menu()
+            notice = notice or "Команда уже удалена."
+        try:
+            await callback.message.edit_text(view[0], reply_markup=view[1], parse_mode="HTML")
+        except TelegramBadRequest as error:
+            if "message is not modified" not in str(error).casefold():
+                await callback.message.answer(view[0], reply_markup=view[1], parse_mode="HTML")
+        await callback.answer(notice)
 
     @router.message(text_or_caption_regexp(START_RE))
     async def start(message: Message) -> None:
@@ -2736,6 +3099,8 @@ def create_router(
         notice: str | None = None
         if action == "home":
             body, keyboard = await slave_menu_home(user_id)
+        elif action == "custom" and user_id == CUSTOM_COMMAND_OWNER_ID:
+            body, keyboard = await custom_commands_menu()
         elif action == "slaves":
             body, keyboard = await slave_menu_slaves(user_id)
         elif action == "priority":

@@ -16,6 +16,12 @@ from checkers import (
     initial_board as initial_checkers_board,
     legal_moves as legal_checkers_moves,
 )
+from custom_commands import (
+    MAX_RESPONSE_LENGTH,
+    MAX_RESPONSES_PER_OUTCOME,
+    MAX_TRIGGER_LENGTH,
+    normalize_custom_trigger,
+)
 
 
 CHALLENGE_DEADLINE_SECONDS = 3 * 60 * 60
@@ -1662,6 +1668,132 @@ class Database:
                    ORDER BY c.trigger_key""",
                 (chat_id,),
             ).fetchall()
+
+    async def list_all_custom_commands(self) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT c.*, chats.title AS chat_title
+                   FROM custom_commands c
+                   LEFT JOIN chats ON chats.chat_id=c.chat_id
+                   WHERE c.enabled=1 ORDER BY c.chat_id, c.trigger_key"""
+            ).fetchall()
+
+    async def list_custom_command_chats(self, owner_id: int) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT c.chat_id, c.title FROM chats c
+                   WHERE EXISTS (SELECT 1 FROM users u
+                                 WHERE u.chat_id=c.chat_id AND u.user_id=?)
+                      OR EXISTS (SELECT 1 FROM custom_commands cmd
+                                 WHERE cmd.chat_id=c.chat_id AND cmd.created_by=?)
+                   ORDER BY c.title, c.chat_id""",
+                (owner_id, owner_id),
+            ).fetchall()
+
+    async def get_custom_command_by_id(self, command_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT cmd.*, c.title AS chat_title,
+                          u.username AS exclusive_username,
+                          u.display_name AS exclusive_display_name
+                   FROM custom_commands cmd
+                   LEFT JOIN chats c ON c.chat_id=cmd.chat_id
+                   LEFT JOIN users u ON u.chat_id=cmd.chat_id
+                                    AND u.user_id=cmd.exclusive_user_id
+                   WHERE cmd.id=? AND cmd.enabled=1""",
+                (command_id,),
+            ).fetchone()
+
+    async def update_custom_command_setting(
+        self, command_id: int, field: str, value: str | int | None
+    ) -> str:
+        if field not in {"trigger", "cost", "success_chance", "exclusive_user_id"}:
+            raise ValueError("Unknown custom command setting")
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT * FROM custom_commands WHERE id=? AND enabled=1", (command_id,)
+            ).fetchone()
+            if row is None:
+                return "not_found"
+            if field == "trigger":
+                trigger = str(value).strip()
+                key = normalize_custom_trigger(trigger)
+                if not key or len(trigger) > MAX_TRIGGER_LENGTH or trigger.startswith("/"):
+                    return "invalid"
+                try:
+                    self.connection.execute(
+                        """UPDATE custom_commands
+                           SET trigger=?, trigger_key=?, updated_at=? WHERE id=?""",
+                        (trigger, key, utc_timestamp(), command_id),
+                    )
+                except sqlite3.IntegrityError:
+                    return "exists"
+            else:
+                if field == "cost" and (not isinstance(value, int) or not 0 <= value <= 1_000_000):
+                    return "invalid"
+                if field == "success_chance":
+                    if not isinstance(value, int) or not 0 <= value <= 100:
+                        return "invalid"
+                    if value < 100 and not json.loads(row["failure_responses"]):
+                        return "needs_failure"
+                if field == "exclusive_user_id" and value is not None and (
+                    not isinstance(value, int) or value <= 0
+                ):
+                    return "invalid"
+                self.connection.execute(
+                    f"UPDATE custom_commands SET {field}=?, updated_at=? WHERE id=?",
+                    (value, utc_timestamp(), command_id),
+                )
+            self.connection.commit()
+            return "updated"
+
+    async def modify_custom_command_response(
+        self, command_id: int, outcome: str, action: str,
+        *, index: int | None = None, text: str | None = None,
+    ) -> str:
+        if outcome not in {"success", "failure"} or action not in {"add", "edit", "delete"}:
+            raise ValueError("Unknown response change")
+        column = "success_responses" if outcome == "success" else "failure_responses"
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT * FROM custom_commands WHERE id=? AND enabled=1", (command_id,)
+            ).fetchone()
+            if row is None:
+                return "not_found"
+            responses = json.loads(row[column])
+            if action in {"add", "edit"}:
+                if not text or not text.strip() or len(text.strip()) > MAX_RESPONSE_LENGTH:
+                    return "invalid"
+                if action == "add":
+                    if len(responses) >= MAX_RESPONSES_PER_OUTCOME:
+                        return "limit"
+                    responses.append(text.strip())
+                else:
+                    if index is None or not 0 <= index < len(responses):
+                        return "not_found"
+                    responses[index] = text.strip()
+            else:
+                if index is None or not 0 <= index < len(responses):
+                    return "not_found"
+                if len(responses) == 1 and (
+                    outcome == "success" or int(row["success_chance"]) < 100
+                ):
+                    return "last_required"
+                responses.pop(index)
+            self.connection.execute(
+                f"UPDATE custom_commands SET {column}=?, updated_at=? WHERE id=?",
+                (json.dumps(responses, ensure_ascii=False), utc_timestamp(), command_id),
+            )
+            self.connection.commit()
+            return "updated"
+
+    async def delete_custom_command_by_id(self, command_id: int) -> bool:
+        async with self._lock:
+            cursor = self.connection.execute(
+                "DELETE FROM custom_commands WHERE id=?", (command_id,)
+            )
+            self.connection.commit()
+            return cursor.rowcount > 0
 
     async def delete_custom_command(self, chat_id: int, trigger_key: str) -> bool:
         async with self._lock:
