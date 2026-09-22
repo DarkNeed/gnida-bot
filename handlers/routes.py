@@ -15,6 +15,8 @@ from uuid import uuid4
 
 import aiohttp
 from aiogram import BaseMiddleware, Bot, F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import (
     TelegramAPIError,
     TelegramBadRequest,
@@ -40,6 +42,15 @@ from aiogram.types import (
 
 from blackjack import full_hand, hand_total, visible_hand
 from checkers import BLACK, WHITE, EMPTY, legal_moves as legal_checkers_moves
+from custom_commands import (
+    CUSTOM_COMMAND_OWNER_ID,
+    MAX_TRIGGER_LENGTH,
+    command_responses,
+    normalize_custom_trigger,
+    parse_response_lines,
+    render_custom_template,
+    template_placeholders,
+)
 from database import (
     BUYOUT_COST_FRANCS,
     CHALLENGE_DEADLINE_SECONDS,
@@ -194,6 +205,16 @@ CLEAR_RE = re.compile(
 )
 STATS_RE = re.compile(r"^[!/](стат|стата)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 FRANCS_RE = re.compile(r"^[!/](?:франки|francs)(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
+CUSTOM_COMMAND_CREATE_RE = re.compile(
+    r"^/команда(?:@\w+)?\s+создать[!?.\s]*$", re.IGNORECASE
+)
+CUSTOM_COMMAND_DELETE_RE = re.compile(
+    r"^/команда(?:@\w+)?\s+удалить\s+(.+?)\s*$", re.IGNORECASE | re.DOTALL
+)
+CUSTOM_COMMAND_HELP_RE = re.compile(
+    r"^/команда(?:@\w+)?(?:\s+помощь)?[!?.\s]*$", re.IGNORECASE
+)
+CUSTOM_COMMAND_LIST_RE = re.compile(r"^/команды(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
 FRANC_TRANSFER_RE = re.compile(r"^[!/]перевести(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 BUSINESS_SUMMARY_RE = re.compile(
     r"^[!/]?(?:бордель|хлопковое\s+поле)(?:@\w+)?[!?.\s]*$",
@@ -294,6 +315,17 @@ PIROJOK_BASEMENT_ESCAPE_RE = re.compile(
 SAMOVAR_RE = re.compile(r"(?<![а-яёa-z])самовар(?![а-яёa-z])", re.IGNORECASE)
 PISYA_RE = re.compile(r"^пися[!?.\s]*$", re.IGNORECASE)
 POPA_RE = re.compile(r"^попа[!?.\s]*$", re.IGNORECASE)
+
+
+class CustomCommandForm(StatesGroup):
+    trigger = State()
+    cost = State()
+    chance = State()
+    exclusive = State()
+    successes = State()
+    failures = State()
+
+
 GNIDA_REPLY_INSULT_RE = re.compile(
     r"^(?:ты\s+гнида|гнида\s+бот(?:у)?\s*[-—:]?\s*ты\s+гнида)[!?.\s]*$",
     re.IGNORECASE,
@@ -2228,6 +2260,230 @@ def create_router(
             task.cancel()
         for task in tuple(daily_message_tasks):
             task.cancel()
+
+    def custom_command_owner(message: Message) -> bool:
+        return bool(
+            message.from_user and message.from_user.id == CUSTOM_COMMAND_OWNER_ID
+        )
+
+    async def reject_non_owner(message: Message) -> bool:
+        if custom_command_owner(message):
+            return False
+        await message.answer("Конструктор команд доступен только владельцу бота.")
+        return True
+
+    async def wizard_text(message: Message, state: FSMContext) -> str | None:
+        value = message_content(message).strip()
+        if value.casefold() in {"/отмена", "отмена"}:
+            await state.clear()
+            await message.answer("Создание команды отменено.")
+            return None
+        if not value:
+            await message.answer("Пришли значение обычным текстовым сообщением.")
+            return None
+        return value
+
+    @router.message(text_or_caption_regexp(CUSTOM_COMMAND_CREATE_RE))
+    async def custom_command_create(message: Message, state: FSMContext) -> None:
+        if await reject_non_owner(message):
+            return
+        if message.chat.type not in GROUP_TYPES:
+            await message.answer("Создавать команды нужно в том групповом чате, где они будут работать.")
+            return
+        await state.clear()
+        await state.set_state(CustomCommandForm.trigger)
+        await message.answer(
+            "Шаг 1/6. Напиши фразу-команду, например: <code>Послать отряд омона</code>\n\n"
+            "Регистр и знаки !?. в конце при вызове не важны. Для отмены: /отмена",
+            parse_mode="HTML",
+        )
+
+    @router.message(CustomCommandForm.trigger)
+    async def custom_command_trigger(message: Message, state: FSMContext) -> None:
+        value = await wizard_text(message, state)
+        if value is None:
+            return
+        trigger_key = normalize_custom_trigger(value)
+        if not trigger_key or len(value) > MAX_TRIGGER_LENGTH or value.startswith("/"):
+            await message.answer(
+                f"Фраза должна быть короче {MAX_TRIGGER_LENGTH + 1} символов и не начинаться с /."
+            )
+            return
+        await state.update_data(trigger=value.strip(), trigger_key=trigger_key)
+        await state.set_state(CustomCommandForm.cost)
+        await message.answer("Шаг 2/6. Сколько франков стоит попытка? Напиши целое число от 0 до 1 000 000.")
+
+    @router.message(CustomCommandForm.cost)
+    async def custom_command_cost(message: Message, state: FSMContext) -> None:
+        value = await wizard_text(message, state)
+        if value is None:
+            return
+        try:
+            cost = int(value.replace(" ", ""))
+        except ValueError:
+            cost = -1
+        if not 0 <= cost <= 1_000_000:
+            await message.answer("Нужно целое число от 0 до 1 000 000.")
+            return
+        await state.update_data(cost=cost)
+        await state.set_state(CustomCommandForm.chance)
+        await message.answer("Шаг 3/6. Укажи шанс успеха целым числом от 0 до 100 (без знака %).")
+
+    @router.message(CustomCommandForm.chance)
+    async def custom_command_chance(message: Message, state: FSMContext) -> None:
+        value = await wizard_text(message, state)
+        if value is None:
+            return
+        try:
+            chance = int(value.removesuffix("%").strip())
+        except ValueError:
+            chance = -1
+        if not 0 <= chance <= 100:
+            await message.answer("Шанс должен быть целым числом от 0 до 100.")
+            return
+        await state.update_data(success_chance=chance)
+        await state.set_state(CustomCommandForm.exclusive)
+        await message.answer(
+            "Шаг 4/6. Кто сможет вызывать команду?\n"
+            "Напиши <code>нет</code>, чтобы разрешить всем, либо @username/Telegram ID одного пользователя.",
+            parse_mode="HTML",
+        )
+
+    @router.message(CustomCommandForm.exclusive)
+    async def custom_command_exclusive(message: Message, state: FSMContext) -> None:
+        value = await wizard_text(message, state)
+        if value is None:
+            return
+        exclusive_user_id: int | None = None
+        if value.casefold() not in {"нет", "-", "все", "всем"}:
+            row = await database.resolve_user(message.chat.id, value)
+            if row:
+                exclusive_user_id = int(row["user_id"])
+            elif value.lstrip("-").isdigit():
+                exclusive_user_id = int(value)
+            else:
+                await message.answer(
+                    "Я ещё не видел этого @username в чате. Пришли числовой Telegram ID или «нет»."
+                )
+                return
+        await state.update_data(exclusive_user_id=exclusive_user_id)
+        await state.set_state(CustomCommandForm.successes)
+        await message.answer(
+            "Шаг 5/6. Пришли варианты УСПЕХА — каждый с новой строки (до 20).\n\n"
+            "Метки: <code>{actor}</code> — автор команды, <code>{target}</code> — пользователь из ответа "
+            "или случайный из последних 50, <code>{random}</code> — отдельный случайный участник. "
+            "Также работают (тег1), (тег2), (тег) и (рандомный тег).",
+            parse_mode="HTML",
+        )
+
+    @router.message(CustomCommandForm.successes)
+    async def custom_command_successes(message: Message, state: FSMContext) -> None:
+        value = await wizard_text(message, state)
+        if value is None:
+            return
+        responses = parse_response_lines(value)
+        if responses is None:
+            await message.answer("Нужно от 1 до 20 непустых строк, не длиннее 1000 символов каждая.")
+            return
+        await state.update_data(success_responses=responses)
+        await state.set_state(CustomCommandForm.failures)
+        await message.answer(
+            "Шаг 6/6. Пришли варианты НЕУДАЧИ — каждый с новой строки. "
+            "Если шанс успеха 100%, можно написать «нет»."
+        )
+
+    @router.message(CustomCommandForm.failures)
+    async def custom_command_failures(message: Message, state: FSMContext) -> None:
+        value = await wizard_text(message, state)
+        if value is None:
+            return
+        data = await state.get_data()
+        responses = parse_response_lines(value, allow_empty=True)
+        if responses is None:
+            await message.answer("Нужно до 20 непустых строк, не длиннее 1000 символов каждая.")
+            return
+        if int(data["success_chance"]) < 100 and not responses:
+            await message.answer("При шансе ниже 100% нужен хотя бы один вариант неудачи.")
+            return
+        await database.save_custom_command(
+            message.chat.id,
+            str(data["trigger"]),
+            str(data["trigger_key"]),
+            int(data["cost"]),
+            int(data["success_chance"]),
+            list(data["success_responses"]),
+            responses,
+            data.get("exclusive_user_id"),
+            CUSTOM_COMMAND_OWNER_ID,
+        )
+        await state.clear()
+        await message.answer(
+            "✅ Команда сохранена. Теперь напиши в чат: "
+            f"<code>{html.escape(str(data['trigger']))}</code>\n"
+            "Повторное создание с той же фразой обновит её настройки.",
+            parse_mode="HTML",
+        )
+
+    @router.message(text_or_caption_regexp(CUSTOM_COMMAND_LIST_RE))
+    async def custom_command_list(message: Message) -> None:
+        if await reject_non_owner(message):
+            return
+        if message.chat.type not in GROUP_TYPES:
+            await message.answer("Список команд открывается в нужном групповом чате.")
+            return
+        rows = await database.list_custom_commands(message.chat.id)
+        if not rows:
+            await message.answer("В этом чате ещё нет пользовательских команд. Создать: /команда создать")
+            return
+        lines = ["<b>Пользовательские команды</b>"]
+        for row in rows:
+            exclusive = "для всех"
+            if row["exclusive_user_id"] is not None:
+                exclusive = "только " + mention(
+                    int(row["exclusive_user_id"]),
+                    row["exclusive_username"]
+                    and "@" + str(row["exclusive_username"])
+                    or row["exclusive_display_name"]
+                    or str(row["exclusive_user_id"]),
+                )
+            lines.append(
+                f"• <code>{html.escape(str(row['trigger']))}</code> — "
+                f"{int(row['cost'])} ₣, успех {int(row['success_chance'])}%, {exclusive}"
+            )
+        chunk: list[str] = []
+        chunk_length = 0
+        for line in lines:
+            if chunk and chunk_length + len(line) + 1 > 3800:
+                await message.answer("\n".join(chunk), parse_mode="HTML")
+                chunk = []
+                chunk_length = 0
+            chunk.append(line)
+            chunk_length += len(line) + 1
+        if chunk:
+            await message.answer("\n".join(chunk), parse_mode="HTML")
+
+    @router.message(text_or_caption_regexp(CUSTOM_COMMAND_DELETE_RE))
+    async def custom_command_delete(message: Message) -> None:
+        if await reject_non_owner(message):
+            return
+        match = CUSTOM_COMMAND_DELETE_RE.match(message_content(message))
+        trigger_key = normalize_custom_trigger(match.group(1) if match else "")
+        deleted = await database.delete_custom_command(message.chat.id, trigger_key)
+        await message.answer("Команда удалена." if deleted else "Такой команды в этом чате нет.")
+
+    @router.message(text_or_caption_regexp(CUSTOM_COMMAND_HELP_RE))
+    async def custom_command_help(message: Message) -> None:
+        if await reject_non_owner(message):
+            return
+        await message.answer(
+            "<b>Конструктор команд</b>\n"
+            "/команда создать — создать или обновить команду\n"
+            "/команды — показать команды этого чата\n"
+            "/команда удалить Фраза — удалить команду\n"
+            "/отмена — выйти из мастера создания\n\n"
+            "Вызов — точная фраза без учёта регистра и конечных !?.",
+            parse_mode="HTML",
+        )
 
     @router.message(text_or_caption_regexp(START_RE))
     async def start(message: Message) -> None:
@@ -4893,5 +5149,118 @@ def create_router(
     async def popa(message: Message) -> None:
         if message.chat.type in GROUP_TYPES and message.from_user and not message.from_user.is_bot:
             await message.answer("пися")
+
+    @router.message()
+    async def run_custom_command(message: Message, bot: Bot) -> None:
+        """Final catch-all: execute an owner-defined natural-language command."""
+        sender = message.from_user
+        content = message_content(message)
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not sender
+            or sender.is_bot
+            or not content
+        ):
+            return
+        trigger_key = normalize_custom_trigger(content)
+        if not trigger_key:
+            return
+        command = await database.get_custom_command(message.chat.id, trigger_key)
+        if command is None:
+            return
+        exclusive_user_id = command["exclusive_user_id"]
+        if exclusive_user_id is not None and sender.id != int(exclusive_user_id):
+            await message.answer("Эта команда создана эксклюзивно для другого пользователя.")
+            return
+
+        success = random.randint(1, 100) <= int(command["success_chance"])
+        field = "success_responses" if success else "failure_responses"
+        responses = command_responses(command, field)
+        if not responses:
+            responses = command_responses(command, "success_responses")
+        if not responses:
+            logging.getLogger(__name__).warning(
+                "Custom command %s has no usable responses", command["id"]
+            )
+            return
+        template = random.choice(responses)
+        placeholders = template_placeholders(template)
+        recent = await database.recent_users(message.chat.id, 50)
+        candidates = [row for row in recent if int(row["user_id"]) != sender.id]
+
+        async def choose_present_user(excluded_id: int | None = None):
+            shuffled = [
+                row for row in candidates if int(row["user_id"]) != excluded_id
+            ]
+            random.shuffle(shuffled)
+            for row in shuffled:
+                if await is_chat_participant(bot, message.chat.id, int(row["user_id"])):
+                    return row
+            return None
+
+        target: object | None = None
+        replied = message.reply_to_message
+        if replied and not replied.sender_chat and replied.from_user:
+            replied_user = replied.from_user
+            await database.upsert_user(
+                message.chat.id,
+                replied_user.id,
+                replied_user.username,
+                display_name(replied_user),
+                touch=False,
+            )
+            target = {
+                "user_id": replied_user.id,
+                "display_name": display_name(replied_user),
+            }
+        elif "target" in placeholders:
+            target = await choose_present_user()
+
+        if "target" in placeholders and target is None:
+            await message.answer(
+                "Не удалось выбрать цель: ответь командой на сообщение или дождись активности участников."
+            )
+            return
+
+        target_id = int(target["user_id"]) if target is not None else None
+        random_target = (
+            await choose_present_user(target_id)
+            if "random" in placeholders
+            else None
+        )
+        if "random" in placeholders and random_target is None:
+            await message.answer(
+                "Не удалось выбрать случайного участника: среди последних 50 пока никого нет."
+            )
+            return
+
+        cost = int(command["cost"])
+        if not await database.spend_francs(message.chat.id, sender.id, cost):
+            balance = await database.franc_balance(message.chat.id, sender.id)
+            await message.answer(
+                f"Недостаточно франков: нужно {cost} ₣, на балансе {balance} ₣."
+            )
+            return
+
+        actor_mention = mention(sender.id, display_name(sender))
+        target_mention = (
+            mention(int(target["user_id"]), str(target["display_name"]))
+            if target is not None
+            else None
+        )
+        random_mention = (
+            mention(int(random_target["user_id"]), str(random_target["display_name"]))
+            if random_target is not None
+            else None
+        )
+        await message.answer(
+            render_custom_template(
+                template,
+                actor_mention=actor_mention,
+                target_mention=target_mention,
+                random_mention=random_mention,
+            ),
+            parse_mode="HTML",
+        )
 
     return router

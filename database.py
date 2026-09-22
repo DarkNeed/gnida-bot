@@ -243,6 +243,27 @@ class Database:
                 PRIMARY KEY (chat_id, user_id)
             );
 
+            CREATE TABLE IF NOT EXISTS custom_commands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                trigger TEXT NOT NULL,
+                trigger_key TEXT NOT NULL,
+                cost INTEGER NOT NULL DEFAULT 0 CHECK(cost >= 0),
+                success_chance INTEGER NOT NULL DEFAULT 100
+                    CHECK(success_chance BETWEEN 0 AND 100),
+                success_responses TEXT NOT NULL,
+                failure_responses TEXT NOT NULL,
+                exclusive_user_id INTEGER,
+                created_by INTEGER NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(chat_id, trigger_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_custom_commands_chat
+                ON custom_commands(chat_id, enabled, trigger_key);
+
             CREATE TABLE IF NOT EXISTS businesses (
                 chat_id INTEGER NOT NULL,
                 owner_id INTEGER NOT NULL,
@@ -1563,6 +1584,109 @@ class Database:
                 changed = changed or bool(result and int(result["hours"]))
             if changed:
                 self.connection.commit()
+
+    async def save_custom_command(
+        self,
+        chat_id: int,
+        trigger: str,
+        trigger_key: str,
+        cost: int,
+        success_chance: int,
+        success_responses: list[str],
+        failure_responses: list[str],
+        exclusive_user_id: int | None,
+        created_by: int,
+    ) -> int:
+        if cost < 0 or not 0 <= success_chance <= 100:
+            raise ValueError("Invalid custom command cost or success chance")
+        if not trigger_key or not success_responses:
+            raise ValueError("A trigger and success response are required")
+        now = utc_timestamp()
+        async with self._lock:
+            self.connection.execute(
+                """INSERT INTO custom_commands(
+                       chat_id, trigger, trigger_key, cost, success_chance,
+                       success_responses, failure_responses, exclusive_user_id,
+                       created_by, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(chat_id, trigger_key) DO UPDATE SET
+                       trigger=excluded.trigger,
+                       cost=excluded.cost,
+                       success_chance=excluded.success_chance,
+                       success_responses=excluded.success_responses,
+                       failure_responses=excluded.failure_responses,
+                       exclusive_user_id=excluded.exclusive_user_id,
+                       created_by=excluded.created_by,
+                       enabled=1,
+                       updated_at=excluded.updated_at""",
+                (
+                    chat_id,
+                    trigger,
+                    trigger_key,
+                    cost,
+                    success_chance,
+                    json.dumps(success_responses, ensure_ascii=False),
+                    json.dumps(failure_responses, ensure_ascii=False),
+                    exclusive_user_id,
+                    created_by,
+                    now,
+                    now,
+                ),
+            )
+            row = self.connection.execute(
+                "SELECT id FROM custom_commands WHERE chat_id=? AND trigger_key=?",
+                (chat_id, trigger_key),
+            ).fetchone()
+            self.connection.commit()
+            return int(row["id"])
+
+    async def get_custom_command(
+        self, chat_id: int, trigger_key: str
+    ) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT * FROM custom_commands
+                   WHERE chat_id=? AND trigger_key=? AND enabled=1""",
+                (chat_id, trigger_key),
+            ).fetchone()
+
+    async def list_custom_commands(self, chat_id: int) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT c.*, u.display_name AS exclusive_display_name,
+                          u.username AS exclusive_username
+                   FROM custom_commands c
+                   LEFT JOIN users u
+                     ON u.chat_id=c.chat_id AND u.user_id=c.exclusive_user_id
+                   WHERE c.chat_id=? AND c.enabled=1
+                   ORDER BY c.trigger_key""",
+                (chat_id,),
+            ).fetchall()
+
+    async def delete_custom_command(self, chat_id: int, trigger_key: str) -> bool:
+        async with self._lock:
+            cursor = self.connection.execute(
+                "DELETE FROM custom_commands WHERE chat_id=? AND trigger_key=?",
+                (chat_id, trigger_key),
+            )
+            self.connection.commit()
+            return cursor.rowcount > 0
+
+    async def spend_francs(self, chat_id: int, user_id: int, amount: int) -> bool:
+        """Atomically debit a balance, returning False when funds are insufficient."""
+        if amount < 0:
+            raise ValueError("Cannot spend a negative franc amount")
+        if amount == 0:
+            return True
+        async with self._lock:
+            cursor = self.connection.execute(
+                """UPDATE franc_balances
+                   SET balance=balance-?, updated_at=?
+                   WHERE chat_id=? AND user_id=? AND balance>=?""",
+                (amount, utc_timestamp(), chat_id, user_id, amount),
+            )
+            self.connection.commit()
+            return cursor.rowcount == 1
 
     async def franc_balance(self, chat_id: int, user_id: int) -> int:
         async with self._lock:
