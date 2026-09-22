@@ -249,6 +249,23 @@ class Database:
                 PRIMARY KEY (chat_id, user_id)
             );
 
+            CREATE TABLE IF NOT EXISTS donations (
+                payment_id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                amount_kopecks INTEGER NOT NULL CHECK(amount_kopecks > 0),
+                username TEXT,
+                display_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending', 'succeeded', 'canceled')),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_donations_status
+                ON donations(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_donations_user
+                ON donations(user_id, status);
+
             CREATE TABLE IF NOT EXISTS custom_commands (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER NOT NULL,
@@ -1851,6 +1868,64 @@ class Database:
                    LEFT JOIN chats c ON c.chat_id=f.chat_id
                    WHERE f.user_id=? ORDER BY f.balance DESC, f.chat_id""",
                 (user_id,),
+            ).fetchall()
+
+    async def record_donation_payment(
+        self, payment_id: str, user_id: int, amount_kopecks: int,
+        username: str | None, display_name: str,
+    ) -> None:
+        if not payment_id or user_id <= 0 or amount_kopecks <= 0:
+            raise ValueError("Invalid donation payment")
+        now = utc_timestamp()
+        async with self._lock:
+            self.connection.execute(
+                """INSERT INTO donations(
+                       payment_id, user_id, amount_kopecks, username,
+                       display_name, status, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+                   ON CONFLICT(payment_id) DO NOTHING""",
+                (payment_id, user_id, amount_kopecks, username, display_name, now, now),
+            )
+            self.connection.commit()
+
+    async def pending_donations(self, limit: int = 20) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT payment_id, user_id, amount_kopecks FROM donations
+                   WHERE status='pending' ORDER BY created_at, payment_id LIMIT ?""",
+                (limit,),
+            ).fetchall()
+
+    async def set_donation_status(self, payment_id: str, status: str) -> bool:
+        if status not in {"succeeded", "canceled"}:
+            raise ValueError("Invalid final donation status")
+        async with self._lock:
+            cursor = self.connection.execute(
+                """UPDATE donations SET status=?, updated_at=?
+                   WHERE payment_id=? AND status='pending'""",
+                (status, utc_timestamp(), payment_id),
+            )
+            self.connection.commit()
+            return cursor.rowcount == 1
+
+    async def top_donors(self, limit: int = 10) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT d.user_id, SUM(d.amount_kopecks) AS total_kopecks,
+                          COUNT(*) AS payment_count,
+                          (SELECT latest.username FROM donations latest
+                           WHERE latest.user_id=d.user_id
+                           ORDER BY latest.created_at DESC, latest.rowid DESC
+                           LIMIT 1) AS username,
+                          (SELECT latest.display_name FROM donations latest
+                           WHERE latest.user_id=d.user_id
+                           ORDER BY latest.created_at DESC, latest.rowid DESC
+                           LIMIT 1) AS display_name
+                   FROM donations d WHERE d.status='succeeded'
+                   GROUP BY d.user_id
+                   ORDER BY total_kopecks DESC, payment_count DESC, d.user_id
+                   LIMIT ?""",
+                (limit,),
             ).fetchall()
 
     async def transfer_francs(

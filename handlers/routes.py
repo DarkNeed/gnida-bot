@@ -9,6 +9,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Awaitable, Callable
 from uuid import uuid4
@@ -228,6 +229,10 @@ ENTERPRISE_STATS_RE = re.compile(
 SLAVES_RE = re.compile(r"^/рабы(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 SLAVE_MENU_RE = re.compile(r"^/(?:меню|menu)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 START_RE = re.compile(r"^/start(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+TOP_DONORS_RE = re.compile(
+    r"^/(?:топ(?:@\w+)?\s+донатеров|top_donors(?:@\w+)?)[!?.\s]*$",
+    re.IGNORECASE,
+)
 CHAT_RE = re.compile(r"^/чат(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RELEASE_RE = re.compile(r"^(?:/отпустить(?:@\w+)?|отпустить\s+раба)(?:\s|$)", re.IGNORECASE)
 CHALLENGE_RE = re.compile(
@@ -1081,6 +1086,8 @@ def create_router(
     captcha_tasks: set[asyncio.Task[None]] = set()
     death_note_tasks: set[asyncio.Task[None]] = set()
     daily_message_tasks: set[asyncio.Task[None]] = set()
+    donation_tasks: set[asyncio.Task[None]] = set()
+    donation_sync_lock = asyncio.Lock()
     recent_safebooru_ids: dict[int, list[int]] = {}
     challenge_edit_lock = asyncio.Lock()
     checkers_render_lock = asyncio.Lock()
@@ -1312,7 +1319,7 @@ def create_router(
             ),
         )
 
-    async def create_yookassa_donation(amount: int, user_id: int) -> str:
+    async def create_yookassa_donation(amount: int, user: User) -> str:
         if not yookassa_shop_id or not yookassa_secret_key:
             raise RuntimeError("ЮKassa не настроена")
         confirmation: dict[str, str] = {"type": "redirect"}
@@ -1322,23 +1329,100 @@ def create_router(
             "amount": {"value": f"{amount}.00", "currency": "RUB"},
             "capture": True,
             "confirmation": confirmation,
-            "description": f"Добровольная поддержка Гнида-бота от пользователя {user_id}",
-            "metadata": {"telegram_user_id": str(user_id), "kind": "donation"},
+            "description": f"Добровольная поддержка Гнида-бота от пользователя {user.id}",
+            "metadata": {"telegram_user_id": str(user.id), "kind": "donation"},
         }
         timeout = aiohttp.ClientTimeout(total=20)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 "https://api.yookassa.ru/v3/payments",
                 json=payload,
-                headers={"Idempotence-Key": str(uuid4())},
-                auth=aiohttp.BasicAuth(yookassa_shop_id, yookassa_secret_key),
+                headers={
+                    "Idempotence-Key": str(uuid4()),
+                    "Authorization": aiohttp.encode_basic_auth(
+                        yookassa_shop_id, yookassa_secret_key
+                    ),
+                },
             ) as response:
                 response.raise_for_status()
                 payment = await response.json()
-        url = payment.get("confirmation", {}).get("confirmation_url")
-        if not isinstance(url, str) or not url.startswith("https://"):
-            raise RuntimeError("ЮKassa не вернула ссылку на оплату")
+        confirmation_result = payment.get("confirmation") or {}
+        url = (
+            confirmation_result.get("confirmation_url")
+            if isinstance(confirmation_result, dict) else None
+        )
+        payment_id = payment.get("id")
+        if (
+            not isinstance(url, str) or not url.startswith("https://")
+            or not isinstance(payment_id, str) or not payment_id
+        ):
+            raise RuntimeError("ЮKassa не вернула данные для оплаты")
+        await database.record_donation_payment(
+            payment_id, user.id, amount * 100, user.username, user.full_name,
+        )
         return url
+
+    async def sync_pending_donations(limit: int = 20) -> bool:
+        if not yookassa_shop_id or not yookassa_secret_key:
+            return False
+        async with donation_sync_lock:
+            pending = await database.pending_donations(limit)
+            if not pending:
+                return True
+            timeout = aiohttp.ClientTimeout(total=8)
+            semaphore = asyncio.Semaphore(5)
+            auth_header = aiohttp.encode_basic_auth(
+                yookassa_shop_id, yookassa_secret_key
+            )
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async def check_one(row) -> bool:
+                    async with semaphore:
+                        payment_id = str(row["payment_id"])
+                        try:
+                            async with session.get(
+                                f"https://api.yookassa.ru/v3/payments/{payment_id}",
+                                headers={"Authorization": auth_header},
+                            ) as response:
+                                response.raise_for_status()
+                                payment = await response.json()
+                            if not isinstance(payment, dict):
+                                raise ValueError("Invalid payment response")
+                            if payment.get("id") != payment_id:
+                                raise ValueError("Payment ID mismatch")
+                            metadata = payment.get("metadata") or {}
+                            amount = payment.get("amount") or {}
+                            if (
+                                not isinstance(metadata, dict)
+                                or not isinstance(amount, dict)
+                                or metadata.get("kind") != "donation"
+                                or metadata.get("telegram_user_id") != str(row["user_id"])
+                                or amount.get("currency") != "RUB"
+                                or Decimal(str(amount.get("value"))) * 100
+                                != int(row["amount_kopecks"])
+                            ):
+                                raise ValueError("Payment details mismatch")
+                            status = payment.get("status")
+                            if status in {"succeeded", "canceled"}:
+                                await database.set_donation_status(payment_id, status)
+                            return True
+                        except (
+                            aiohttp.ClientError, asyncio.TimeoutError, ValueError,
+                            InvalidOperation, TypeError,
+                        ) as error:
+                            logging.getLogger(__name__).warning(
+                                "Could not verify donation %s: %s", payment_id, error
+                            )
+                            return False
+
+                return all(await asyncio.gather(*(check_one(row) for row in pending)))
+
+    async def sync_donations_loop() -> None:
+        while True:
+            try:
+                await sync_pending_donations(50)
+            except Exception:
+                logging.getLogger(__name__).exception("Donation sync failed")
+            await asyncio.sleep(120)
 
     async def slave_menu_home(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         await database.settle_businesses_for_user(user_id)
@@ -2305,6 +2389,10 @@ def create_router(
             task = asyncio.create_task(send_random_group_messages(bot))
             daily_message_tasks.add(task)
             task.add_done_callback(daily_message_tasks.discard)
+        if yookassa_shop_id and yookassa_secret_key:
+            task = asyncio.create_task(sync_donations_loop())
+            donation_tasks.add(task)
+            task.add_done_callback(donation_tasks.discard)
 
     @router.shutdown()
     async def stop_leg_timers() -> None:
@@ -2319,6 +2407,8 @@ def create_router(
         for task in tuple(death_note_tasks):
             task.cancel()
         for task in tuple(daily_message_tasks):
+            task.cancel()
+        for task in tuple(donation_tasks):
             task.cancel()
 
     def custom_command_owner(message: Message) -> bool:
@@ -2920,6 +3010,38 @@ def create_router(
                 ]),
             )
 
+    @router.message(text_or_caption_regexp(TOP_DONORS_RE))
+    async def top_donors(message: Message) -> None:
+        if not message.from_user or message.chat.type not in {*GROUP_TYPES, "private"}:
+            return
+        try:
+            fresh = (
+                not donation_sync_lock.locked()
+                and await sync_pending_donations(5)
+            )
+        except Exception:
+            logging.getLogger(__name__).exception("Could not refresh donor leaderboard")
+            fresh = False
+        donors = await database.top_donors(10)
+        if not donors:
+            body = "🏆 Донатов пока нет. Первое место свободно!"
+        else:
+            lines = ["<b>🏆 Топ донатеров</b>"]
+            for position, donor in enumerate(donors, start=1):
+                name = donor["username"] or donor["display_name"] or str(donor["user_id"])
+                kopecks = int(donor["total_kopecks"])
+                amount = (
+                    str(kopecks // 100) if kopecks % 100 == 0
+                    else f"{kopecks // 100},{kopecks % 100:02d}"
+                )
+                lines.append(f"{position}. {html.escape(str(name))} — {amount} ₽")
+            body = "\n".join(lines)
+        if not yookassa_shop_id or not yookassa_secret_key:
+            body += "\n\n⚠️ ЮKassa не настроена: новые платежи не проверяются."
+        elif not fresh:
+            body += "\n\n⚠️ Не удалось проверить часть новых платежей. Топ обновится позже."
+        await message.answer(body, parse_mode="HTML")
+
     @router.message(text_or_caption_regexp(SLAVE_MENU_RE))
     async def slave_menu(message: Message) -> None:
         if message.chat.type != "private" or not message.from_user:
@@ -3182,8 +3304,11 @@ def create_router(
             if amount not in {50, 100, 250, 500}:
                 await callback.answer("Недоступная сумма.", show_alert=True)
                 return
+            if callback.from_user is None:
+                await callback.answer()
+                return
             try:
-                payment_url = await create_yookassa_donation(amount, user_id)
+                payment_url = await create_yookassa_donation(amount, callback.from_user)
             except RuntimeError as error:
                 notice = str(error)
                 body, keyboard = slave_menu_support()
