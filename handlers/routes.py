@@ -61,6 +61,7 @@ from database import (
     NEWCOMER_CHALLENGE_DEADLINE_SECONDS,
     PIROJOK_USERNAME,
     Database,
+    InsufficientFrancStake,
     utc_timestamp,
 )
 from parsing import (
@@ -237,13 +238,18 @@ TOP_DONORS_RE = re.compile(
 CHAT_RE = re.compile(r"^/чат(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 RELEASE_RE = re.compile(r"^(?:/отпустить(?:@\w+)?|отпустить\s+раба)(?:\s|$)", re.IGNORECASE)
 CHALLENGE_RE = re.compile(
-    r"^вызов(?:\s+(кнб|бл[еэ]кджек|шашки))?[!?.\s]*$", re.IGNORECASE
+    r"^вызов(?:\s+(кнб|бл[еэ]кджек|шашки))?"
+    r"(?:\s+(\d+)(?:\s+франк(?:ов|а)?)?)?[!?.\s]*$", re.IGNORECASE
 )
 GAME_RE = re.compile(
-    r"^игра\s+(кнб|бл[еэ]кджек|шашки|рандом)[!?.\s]*$", re.IGNORECASE
+    r"^игра\s+(кнб|бл[еэ]кджек|шашки|рандом)"
+    r"(?:\s+(\d+)(?:\s+франк(?:ов|а)?)?)?[!?.\s]*$", re.IGNORECASE
 )
 COMPETITION_RE = re.compile(
     r"^соревнование\s+шашки(?:\s+(.+?))?[!?.\s]*$", re.IGNORECASE
+)
+COMPETITION_STAKE_RE = re.compile(
+    r"^(.+?)\s+(\d+)\s+франк(?:ов|а)?$", re.IGNORECASE
 )
 BET_RE = re.compile(
     r"^ставка\s+(\d+)(?:\s+франк(?:ов|а)?)?\s+на\s+(@\w+|\d+)[!?.\s]*$",
@@ -986,6 +992,14 @@ def checkers_keyboard(challenge_id: int, challenge, game) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def challenge_wager_text(database: Database, challenge) -> str:
+    wager = await database.get_challenge_wager(int(challenge["id"]))
+    if wager is None:
+        return ""
+    stake = int(wager["stake"])
+    return f"\n💰 Ставка каждого игрока: {stake} ₣ · приз победителю: {stake * 2} ₣."
+
+
 async def challenge_text(database: Database, challenge) -> str:
     challenger = await database.get_user(challenge["chat_id"], challenge["challenger_id"])
     opponent = await database.get_user(challenge["chat_id"], challenge["opponent_id"])
@@ -1002,7 +1016,7 @@ async def challenge_text(database: Database, challenge) -> str:
         f"КНБ: {plain_name(challenger)} против {plain_name(opponent)}\n"
         f"{first_state} {plain_name(challenger)} · {second_state} {plain_name(opponent)}\n"
         f"Выберите ход — соперник его не увидит. На ход даётся {deadline_text}."
-        f"{forced_text}{friendly_text}"
+        f"{forced_text}{friendly_text}{await challenge_wager_text(database, challenge)}"
     )
 
 
@@ -1017,7 +1031,7 @@ async def challenge_offer_text(database: Database, challenge) -> str:
             "на соревнование в шашки.\n"
             f"После принятия откроются ставки на {format_duration(duration)}. "
             "Партия начнётся, когда таймер закончится.\n"
-            "Соревнование не меняет рабство."
+            f"Соревнование не меняет рабство.{await challenge_wager_text(database, challenge)}"
         )
     game_name = {
         "rps": "КНБ",
@@ -1047,6 +1061,7 @@ async def challenge_offer_text(database: Database, challenge) -> str:
         f"{plain_name(opponent)}, прими или отклони вызов. "
         f"На ответ даётся {deadline_text}."
         f"{forced_text}{newcomer_text}{friendly_text}"
+        f"{await challenge_wager_text(database, challenge)}"
     )
 
 
@@ -1080,7 +1095,7 @@ async def blackjack_text(database: Database, challenge, game) -> str:
         f"{plain_name(opponent)}: {visible_hand(opponent_hand)} · "
         f"{state(int(challenge['opponent_id']), bool(game['opponent_stood']))}\n\n"
         f"Свою скрытую карту можно посмотреть кнопкой. На игру даётся {deadline_text}."
-        f"{forced_text}{friendly_text}"
+        f"{forced_text}{friendly_text}{await challenge_wager_text(database, challenge)}"
     )
 
 
@@ -1116,6 +1131,7 @@ async def checkers_text(database: Database, challenge, game) -> str:
         f"Ходит: {plain_name(turn)} {turn_symbol}\n"
         "На ход даётся 3 часа."
         f"{chain_text}{forced_text}{friendly_text}"
+        f"{await challenge_wager_text(database, challenge)}"
     )
 
 
@@ -2200,11 +2216,13 @@ def create_router(
             f"⚫ {plain_name(challenger)} — {first_total} ₣",
             f"⚪ {plain_name(opponent)} — {second_total} ₣",
             f"Общий банк: <b>{first_total + second_total} ₣</b>",
+            (await challenge_wager_text(database, challenge)).strip(),
             f"Ставки до {close_time:%H:%M:%S} МСК. Затем начнётся партия.",
             "Пиши в чате: <code>ставка 50 на @ник_игрока</code> "
             "или <code>ставка 120 франков на @ник_игрока</code>.",
             "Если ставки будут только на одного игрока, франки вернутся.",
         ]
+        lines = [line for line in lines if line]
         if bets:
             lines.append("\n<b>Ставки зрителей:</b>")
             for bet in bets[-12:]:
@@ -2274,14 +2292,26 @@ def create_router(
             await callback.answer("Время на принятие уже истекло.", show_alert=True)
             return False
         competition = await database.get_checkers_competition(int(challenge["id"]))
-        if competition is not None:
-            accepted = await database.accept_checkers_competition(
-                int(challenge["id"]), callback.from_user.id
+        if await database.get_challenge_wager(int(challenge["id"])):
+            await database.settle_businesses_for_user(callback.from_user.id)
+        try:
+            if competition is not None:
+                accepted = await database.accept_checkers_competition(
+                    int(challenge["id"]), callback.from_user.id
+                )
+            else:
+                accepted = await database.accept_challenge(
+                    int(challenge["id"]), callback.from_user.id
+                )
+        except InsufficientFrancStake:
+            await database.finish_challenge(int(challenge["id"]), "failed")
+            await edit_challenge(
+                challenge, bot,
+                "💸 У соперника больше не хватает франков на ставку. "
+                "Вызов отменён, взнос создателя возвращён.",
             )
-        else:
-            accepted = await database.accept_challenge(
-                int(challenge["id"]), callback.from_user.id
-            )
+            await callback.answer("Недостаточно франков для ставки.", show_alert=True)
+            return False
         if not accepted:
             await callback.answer("Этот вызов уже недоступен.", show_alert=True)
             return False
@@ -2315,10 +2345,14 @@ def create_router(
             await callback.answer("Первые 5 минут после входа отказаться нельзя.", show_alert=True)
             return False
         if await database.finish_challenge(int(challenge["id"]), "refused"):
+            refund = (
+                " Взнос создателя возвращён."
+                if await database.get_challenge_wager(int(challenge["id"])) else ""
+            )
             await edit_challenge(
                 challenge,
                 bot,
-                f"🚫 {html.escape(display_name(callback.from_user))} отказался от вызова.",
+                f"🚫 {html.escape(display_name(callback.from_user))} отказался от вызова.{refund}",
             )
         await callback.answer()
         return True
@@ -2335,7 +2369,11 @@ def create_router(
         await edit_challenge(
             challenge,
             bot,
-            f"↩ {html.escape(display_name(callback.from_user))} отменил вызов.",
+            f"↩ {html.escape(display_name(callback.from_user))} отменил вызов."
+            + (
+                " Взнос возвращён."
+                if await database.get_challenge_wager(int(challenge["id"])) else ""
+            ),
         )
         await callback.answer("Вызов отменён")
         return True
@@ -2370,6 +2408,11 @@ def create_router(
         chat_id = int(challenge["chat_id"])
         winner = await database.get_user(chat_id, winner_id)
         loser = await database.get_user(chat_id, loser_id)
+        wager = await database.get_challenge_wager(int(challenge["id"]))
+        wager_result = (
+            f"\n💰 {plain_name(winner)} получает {int(wager['stake']) * 2} ₣."
+            if wager is not None and wager["settlement"] == "paid" else ""
+        )
         competition = await database.get_checkers_competition(int(challenge["id"]))
         if competition is not None:
             bets = await database.list_checkers_bets(int(challenge["id"]))
@@ -2382,7 +2425,7 @@ def create_router(
             await edit_challenge(
                 challenge, bot,
                 f"{heading}\n🏆 Победил {plain_name(winner)}. "
-                f"Рабство не изменилось.\n{bet_result}",
+                f"Рабство не изменилось.{wager_result}\n{bet_result}",
             )
             return
         if challenge["friendly"]:
@@ -2390,7 +2433,7 @@ def create_router(
                 challenge,
                 bot,
                 f"{heading}\n🏆 Победил {plain_name(winner)}. "
-                "Дружеская игра — рабство не изменилось.",
+                f"Дружеская игра — рабство не изменилось.{wager_result}",
             )
             return
         outcome, affected_id = await database.transfer_after_loss(
@@ -2423,10 +2466,12 @@ def create_router(
         icons = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
         if first == second:
             await database.record_challenge_result(int(challenge["id"]), None)
+            wager = await database.get_challenge_wager(int(challenge["id"]))
+            wager_text = " Франки возвращены игрокам." if wager is not None else ""
             await edit_challenge(
                 challenge,
                 bot,
-                f"🤝 Ничья: {icons[first]} — {icons[second]}. Никто не пострадал.",
+                f"🤝 Ничья: {icons[first]} — {icons[second]}. Никто не пострадал.{wager_text}",
             )
             return
         first_wins = (first, second) in {
@@ -2483,6 +2528,8 @@ def create_router(
                     )
             else:
                 text = "⌛ За 3 часа вызов не был принят. Последствий нет."
+            if await database.get_challenge_wager(challenge_id):
+                text += " Взнос создателя возвращён."
             await edit_challenge(challenge, bot, text)
             return
         if challenge["game_type"] == "blackjack":
@@ -2504,6 +2551,8 @@ def create_router(
                 " Ставки возвращены зрителям."
                 if competition is not None else ""
             )
+            if await database.get_challenge_wager(challenge_id):
+                suffix += " Ставки игроков возвращены."
             await edit_challenge(
                 challenge,
                 bot,
@@ -5206,10 +5255,16 @@ def create_router(
         competition_match = COMPETITION_RE.match(content)
         game_match = GAME_RE.match(content)
         match = competition_match or game_match or CHALLENGE_RE.match(content)
-        friendly = game_match is not None or competition_match is not None
+        player_stake = 0
+        stake_specified = False
         competition_seconds: int | None = None
         if competition_match:
             raw_duration = competition_match.group(1)
+            stake_match = COMPETITION_STAKE_RE.fullmatch(raw_duration) if raw_duration else None
+            if stake_match:
+                raw_duration = stake_match.group(1)
+                player_stake = int(stake_match.group(2))
+                stake_specified = True
             parsed_duration = parse_duration(raw_duration) if raw_duration else None
             competition_seconds = parsed_duration.seconds if parsed_duration else 60
             if (
@@ -5223,6 +5278,8 @@ def create_router(
                 return
             game_type = "checkers"
         else:
+            stake_specified = bool(match and match.group(2))
+            player_stake = int(match.group(2)) if stake_specified else 0
             requested_game = match.group(1).casefold() if match and match.group(1) else None
             if requested_game == "кнб":
                 game_type = "rps"
@@ -5232,6 +5289,10 @@ def create_router(
                 game_type = "checkers"
             else:
                 game_type = random.choice(("rps", "blackjack", "checkers"))
+        if player_stake > 1_000_000 or (stake_specified and player_stake == 0):
+            await message.answer("Ставка игрока: от 1 до 1 000 000 франков.")
+            return
+        friendly = game_match is not None or competition_match is not None or player_stake > 0
         if (
             message.sender_chat
             or not message.reply_to_message
@@ -5284,17 +5345,26 @@ def create_router(
         opponent_newcomer = bool(
             not friendly and await database.is_vulnerable(message.chat.id, opponent.id)
         )
-        challenge_id = await database.create_challenge(
-            message.chat.id,
-            message.from_user.id,
-            opponent.id,
-            forced=forced,
-            opponent_newcomer=opponent_newcomer,
-            game_type=game_type,
-            friendly=friendly,
-            awaiting_acceptance=True,
-            competition_bet_seconds=competition_seconds,
-        )
+        if player_stake:
+            await database.settle_businesses_for_user(message.from_user.id)
+            await database.settle_businesses_for_user(opponent.id)
+        try:
+            challenge_id = await database.create_challenge(
+                message.chat.id,
+                message.from_user.id,
+                opponent.id,
+                forced=forced,
+                opponent_newcomer=opponent_newcomer,
+                game_type=game_type,
+                friendly=friendly,
+                awaiting_acceptance=True,
+                competition_bet_seconds=competition_seconds,
+                player_stake=player_stake,
+            )
+        except InsufficientFrancStake as error:
+            who = "У тебя" if error.user_id == message.from_user.id else "У соперника"
+            await message.answer(f"{who} не хватает франков для ставки {player_stake} ₣.")
+            return
         if challenge_id is None:
             await message.answer("У одного из участников уже есть активный вызов.")
             return
@@ -5426,10 +5496,14 @@ def create_router(
                 await callback.answer("Первые 5 минут после входа отказаться нельзя.", show_alert=True)
                 return
             if await database.finish_challenge(challenge_id, "refused"):
+                refund = (
+                    " Ставки игроков возвращены."
+                    if await database.get_challenge_wager(challenge_id) else ""
+                )
                 await edit_challenge(
                     challenge,
                     bot,
-                    f"🚫 {html.escape(display_name(callback.from_user))} отказался от вызова.",
+                    f"🚫 {html.escape(display_name(callback.from_user))} отказался от вызова.{refund}",
                 )
             await callback.answer()
             return
@@ -5514,11 +5588,15 @@ def create_router(
                 )
                 return
             if await database.finish_challenge(challenge_id, "refused"):
+                refund = (
+                    " Ставки игроков возвращены."
+                    if await database.get_challenge_wager(challenge_id) else ""
+                )
                 await edit_challenge(
                     challenge,
                     bot,
                     f"🚫 {html.escape(display_name(callback.from_user))} "
-                    "отказался от вызова.",
+                    f"отказался от вызова.{refund}",
                 )
             await callback.answer()
             return
@@ -5657,22 +5735,24 @@ def create_router(
                 return
             if await database.finish_challenge(challenge_id, "refused"):
                 competition = await database.get_checkers_competition(challenge_id)
+                wager = await database.get_challenge_wager(challenge_id)
                 await edit_challenge(
                     challenge,
                     bot,
                     f"🚫 {html.escape(display_name(callback.from_user))} "
                     "отказался от вызова."
-                    + (" Ставки возвращены." if competition is not None else ""),
+                    + (" Ставки зрителей возвращены." if competition is not None else "")
+                    + (" Ставки игроков возвращены." if wager is not None else ""),
                 )
             await callback.answer()
             return
 
         if action == "resign":
-            if not await database.finish_challenge(challenge_id):
-                await callback.answer("Партия уже завершена.", show_alert=True)
-                return
             loser_id = callback.from_user.id
             winner_id = next(user_id for user_id in participant_ids if user_id != loser_id)
+            if not await database.finish_challenge(challenge_id, winner_id=winner_id):
+                await callback.answer("Партия уже завершена.", show_alert=True)
+                return
             await database.record_challenge_result(challenge_id, winner_id)
             await callback.answer("Вы сдались")
             await publish_game_win(

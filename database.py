@@ -37,6 +37,14 @@ BUSINESS_ACTIVE_SECONDS = 24 * 60 * 60
 SLAVE_EARNINGS_WEEK_SECONDS = 7 * 24 * 60 * 60
 SLAVE_WEEKLY_EARNINGS_LIMIT = 100
 BUYOUT_COST_FRANCS = 100
+
+
+class InsufficientFrancStake(ValueError):
+    def __init__(self, user_id: int):
+        self.user_id = user_id
+        super().__init__(f"Not enough francs for user {user_id}")
+
+
 BUSINESS_CONFIG = {
     "brothel": {
         "producer_role": "courtesan",
@@ -192,6 +200,16 @@ class Database:
                 display_name TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 PRIMARY KEY (challenge_id, bettor_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS challenge_wagers (
+                challenge_id INTEGER PRIMARY KEY,
+                stake INTEGER NOT NULL CHECK(stake > 0),
+                challenger_paid INTEGER NOT NULL DEFAULT 0,
+                opponent_paid INTEGER NOT NULL DEFAULT 0,
+                settlement TEXT NOT NULL DEFAULT 'open'
+                    CHECK(settlement IN ('open', 'paid', 'refunded')),
+                settled_at INTEGER
             );
 
             CREATE INDEX IF NOT EXISTS idx_checkers_competitions_phase
@@ -643,6 +661,7 @@ class Database:
         friendly: bool = False,
         awaiting_acceptance: bool = False,
         competition_bet_seconds: int | None = None,
+        player_stake: int = 0,
     ) -> int | None:
         if game_type not in {"rps", "blackjack", "checkers"}:
             raise ValueError("Unknown challenge game type")
@@ -651,6 +670,10 @@ class Database:
             or not 60 <= competition_bet_seconds <= 3600
         ):
             raise ValueError("Invalid checkers competition")
+        if player_stake < 0 or player_stake > 1_000_000:
+            raise ValueError("Invalid player stake")
+        if player_stake and not friendly:
+            raise ValueError("A wager must be a friendly game")
         if friendly:
             forced = False
             opponent_newcomer = False
@@ -663,6 +686,14 @@ class Database:
             ).fetchone()
             if existing:
                 return None
+            if player_stake:
+                for user_id in (challenger_id, opponent_id):
+                    balance = self.connection.execute(
+                        "SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?",
+                        (chat_id, user_id),
+                    ).fetchone()
+                    if balance is None or int(balance["balance"]) < player_stake:
+                        raise InsufficientFrancStake(user_id)
             now = utc_timestamp()
             cursor = self.connection.execute(
                 """INSERT INTO challenges(
@@ -722,6 +753,24 @@ class Database:
                        VALUES (?, ?)""",
                     (challenge_id, competition_bet_seconds),
                 )
+            if player_stake:
+                self.connection.execute(
+                    """UPDATE franc_balances SET balance=balance-?, updated_at=?
+                       WHERE chat_id=? AND user_id=? AND balance>=?""",
+                    (player_stake, now, chat_id, challenger_id, player_stake),
+                )
+                if not awaiting_acceptance:
+                    self.connection.execute(
+                        """UPDATE franc_balances SET balance=balance-?, updated_at=?
+                           WHERE chat_id=? AND user_id=? AND balance>=?""",
+                        (player_stake, now, chat_id, opponent_id, player_stake),
+                    )
+                self.connection.execute(
+                    """INSERT INTO challenge_wagers(
+                           challenge_id, stake, challenger_paid, opponent_paid
+                       ) VALUES (?, ?, 1, ?)""",
+                    (challenge_id, player_stake, int(not awaiting_acceptance)),
+                )
             if forced:
                 self.connection.execute(
                     """UPDATE ownership SET last_forced_at=?
@@ -737,18 +786,30 @@ class Database:
         """Activate a pending challenge when its invited opponent accepts it."""
         async with self._lock:
             accepted_at = utc_timestamp()
+            challenge = self.connection.execute(
+                """SELECT chat_id FROM challenges
+                   WHERE id=? AND opponent_id=? AND status='pending' AND deadline>?""",
+                (challenge_id, opponent_id, accepted_at),
+            ).fetchone()
+            if challenge is None:
+                return None
+            if not self._charge_opponent_wager_locked(
+                challenge_id, int(challenge["chat_id"]), opponent_id, accepted_at
+            ):
+                raise InsufficientFrancStake(opponent_id)
             cursor = self.connection.execute(
                 """UPDATE challenges SET status='active', created_at=?, deadline=?
-                   WHERE id=? AND opponent_id=? AND status='pending'""",
+                   WHERE id=? AND opponent_id=? AND status='pending' AND deadline>?""",
                 (
                     accepted_at,
                     accepted_at + CHALLENGE_DEADLINE_SECONDS,
                     challenge_id,
                     opponent_id,
+                    accepted_at,
                 ),
             )
             if cursor.rowcount == 0:
-                self.connection.commit()
+                self.connection.rollback()
                 return None
             self.connection.commit()
             return self.connection.execute(
@@ -772,6 +833,7 @@ class Database:
                 (challenge_id,),
             )
             self._refund_competition_locked(challenge_id)
+            self._refund_wager_locked(challenge_id)
             self.connection.execute(
                 "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
                 (challenge_id,),
@@ -829,6 +891,94 @@ class Database:
                 (challenge_id,),
             ).fetchone()
 
+    async def get_challenge_wager(self, challenge_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM challenge_wagers WHERE challenge_id=?",
+                (challenge_id,),
+            ).fetchone()
+
+    def _charge_opponent_wager_locked(
+        self, challenge_id: int, chat_id: int, opponent_id: int, now: int
+    ) -> bool:
+        wager = self.connection.execute(
+            "SELECT * FROM challenge_wagers WHERE challenge_id=?",
+            (challenge_id,),
+        ).fetchone()
+        if wager is None:
+            return True
+        if wager["settlement"] != "open":
+            return False
+        if wager["opponent_paid"]:
+            return True
+        paid = self.connection.execute(
+            """UPDATE franc_balances SET balance=balance-?, updated_at=?
+               WHERE chat_id=? AND user_id=? AND balance>=?""",
+            (int(wager["stake"]), now, chat_id, opponent_id, int(wager["stake"])),
+        )
+        if paid.rowcount != 1:
+            return False
+        self.connection.execute(
+            "UPDATE challenge_wagers SET opponent_paid=1 WHERE challenge_id=?",
+            (challenge_id,),
+        )
+        return True
+
+    def _refund_wager_locked(self, challenge_id: int) -> None:
+        wager = self.connection.execute(
+            "SELECT * FROM challenge_wagers WHERE challenge_id=? AND settlement='open'",
+            (challenge_id,),
+        ).fetchone()
+        if wager is None:
+            return
+        challenge = self.connection.execute(
+            "SELECT chat_id, challenger_id, opponent_id FROM challenges WHERE id=?",
+            (challenge_id,),
+        ).fetchone()
+        if challenge is None:
+            return
+        for paid_column, user_column in (
+            ("challenger_paid", "challenger_id"),
+            ("opponent_paid", "opponent_id"),
+        ):
+            if wager[paid_column]:
+                self._add_francs_locked(
+                    int(challenge["chat_id"]), int(challenge[user_column]),
+                    int(wager["stake"]),
+                )
+        self.connection.execute(
+            """UPDATE challenge_wagers SET settlement='refunded', settled_at=?
+               WHERE challenge_id=?""",
+            (utc_timestamp(), challenge_id),
+        )
+
+    def _pay_wager_locked(self, challenge_id: int, winner_id: int) -> None:
+        wager = self.connection.execute(
+            "SELECT * FROM challenge_wagers WHERE challenge_id=? AND settlement='open'",
+            (challenge_id,),
+        ).fetchone()
+        if wager is None:
+            return
+        challenge = self.connection.execute(
+            "SELECT chat_id, challenger_id, opponent_id FROM challenges WHERE id=?",
+            (challenge_id,),
+        ).fetchone()
+        if challenge is None:
+            return
+        if winner_id not in {int(challenge["challenger_id"]), int(challenge["opponent_id"])}:
+            raise ValueError("Wager winner is not a player")
+        if not wager["challenger_paid"] or not wager["opponent_paid"]:
+            self._refund_wager_locked(challenge_id)
+            return
+        self._add_francs_locked(
+            int(challenge["chat_id"]), winner_id, 2 * int(wager["stake"])
+        )
+        self.connection.execute(
+            """UPDATE challenge_wagers SET settlement='paid', settled_at=?
+               WHERE challenge_id=?""",
+            (utc_timestamp(), challenge_id),
+        )
+
     async def accept_checkers_competition(
         self, challenge_id: int, opponent_id: int
     ) -> sqlite3.Row | None:
@@ -842,13 +992,24 @@ class Database:
                 return None
             now = utc_timestamp()
             closes_at = now + int(competition["bet_duration"])
+            challenge = self.connection.execute(
+                """SELECT chat_id FROM challenges
+                   WHERE id=? AND opponent_id=? AND status='pending' AND deadline>?""",
+                (challenge_id, opponent_id, now),
+            ).fetchone()
+            if challenge is None:
+                return None
+            if not self._charge_opponent_wager_locked(
+                challenge_id, int(challenge["chat_id"]), opponent_id, now
+            ):
+                raise InsufficientFrancStake(opponent_id)
             cursor = self.connection.execute(
                 """UPDATE challenges SET status='betting', created_at=?, deadline=?
                    WHERE id=? AND opponent_id=? AND status='pending' AND deadline>?""",
                 (now, closes_at, challenge_id, opponent_id, now),
             )
             if cursor.rowcount != 1:
-                self.connection.commit()
+                self.connection.rollback()
                 return None
             self.connection.execute(
                 """UPDATE checkers_competitions
@@ -888,6 +1049,7 @@ class Database:
             for row in rows:
                 challenge_id = int(row["challenge_id"])
                 self._refund_competition_locked(challenge_id)
+                self._refund_wager_locked(challenge_id)
                 self.connection.execute(
                     "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
                     (challenge_id,),
@@ -1173,6 +1335,7 @@ class Database:
                     (winner_id, challenge_id),
                 )
                 self._pay_competition_locked(challenge_id, winner_id)
+                self._pay_wager_locked(challenge_id, winner_id)
                 self.connection.execute(
                     "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
                     (challenge_id,),
@@ -1305,6 +1468,7 @@ class Database:
                        WHERE id=?""",
                     (winner_id, challenge_id),
                 )
+                self._pay_wager_locked(challenge_id, winner_id)
             self.connection.commit()
             return {
                 "status": "finished" if finished else "updated",
@@ -1344,6 +1508,20 @@ class Database:
                 ),
             )
             self._refund_competition_locked(challenge_id)
+            if row["status"] == "active" and row["game_type"] == "rps":
+                rps_winner = self._rps_winner_locked(row)
+                if row["challenger_choice"] and row["opponent_choice"]:
+                    self.connection.execute(
+                        """UPDATE challenges SET winner_id=?, result_recorded=1
+                           WHERE id=?""",
+                        (rps_winner, challenge_id),
+                    )
+                if rps_winner is not None:
+                    self._pay_wager_locked(challenge_id, rps_winner)
+                else:
+                    self._refund_wager_locked(challenge_id)
+            else:
+                self._refund_wager_locked(challenge_id)
             self.connection.execute(
                 "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
                 (challenge_id,),
@@ -1373,14 +1551,48 @@ class Database:
                 "SELECT * FROM challenges WHERE id=?", (challenge_id,)
             ).fetchone()
 
-    async def finish_challenge(self, challenge_id: int, status: str = "finished") -> bool:
+    @staticmethod
+    def _rps_winner_locked(challenge: sqlite3.Row) -> int | None:
+        first = challenge["challenger_choice"]
+        second = challenge["opponent_choice"]
+        if not first or not second or first == second:
+            return None
+        first_wins = (first, second) in {
+            ("rock", "scissors"), ("scissors", "paper"), ("paper", "rock")
+        }
+        return int(challenge["challenger_id"] if first_wins else challenge["opponent_id"])
+
+    async def finish_challenge(
+        self, challenge_id: int, status: str = "finished", *, winner_id: int | None = None
+    ) -> bool:
         async with self._lock:
+            challenge = self.connection.execute(
+                "SELECT * FROM challenges WHERE id=?", (challenge_id,)
+            ).fetchone()
             cursor = self.connection.execute(
                 """UPDATE challenges SET status=? WHERE id=?
                    AND status IN ('pending', 'betting', 'active')""",
                 (status, challenge_id),
             )
             if cursor.rowcount:
+                if status == "finished" and challenge["game_type"] == "rps":
+                    winner_id = self._rps_winner_locked(challenge)
+                    if challenge["challenger_choice"] and challenge["opponent_choice"]:
+                        self.connection.execute(
+                            """UPDATE challenges SET winner_id=?, result_recorded=1
+                               WHERE id=?""",
+                            (winner_id, challenge_id),
+                        )
+                elif status == "finished" and winner_id is not None:
+                    self.connection.execute(
+                        """UPDATE challenges SET winner_id=?, result_recorded=1
+                           WHERE id=?""",
+                        (winner_id, challenge_id),
+                    )
+                if status == "finished" and winner_id is not None:
+                    self._pay_wager_locked(challenge_id, winner_id)
+                else:
+                    self._refund_wager_locked(challenge_id)
                 self._refund_competition_locked(challenge_id)
                 self.connection.execute(
                     "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
@@ -1400,6 +1612,7 @@ class Database:
                 (challenge_id,),
             )
             self._refund_competition_locked(challenge_id)
+            self._refund_wager_locked(challenge_id)
             self.connection.execute(
                 "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
                 (challenge_id,),
