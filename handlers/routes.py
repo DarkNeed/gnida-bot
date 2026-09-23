@@ -242,6 +242,13 @@ CHALLENGE_RE = re.compile(
 GAME_RE = re.compile(
     r"^игра\s+(кнб|бл[еэ]кджек|шашки|рандом)[!?.\s]*$", re.IGNORECASE
 )
+COMPETITION_RE = re.compile(
+    r"^соревнование\s+шашки(?:\s+(.+?))?[!?.\s]*$", re.IGNORECASE
+)
+BET_RE = re.compile(
+    r"^ставка\s+(\d+)(?:\s+франк(?:ов|а)?)?\s+на\s+(@\w+|\d+)[!?.\s]*$",
+    re.IGNORECASE,
+)
 TOP_RE = re.compile(r"^кому\s+делать\s+нехер[!?.\s]*$", re.IGNORECASE)
 GNIDA_RE = re.compile(
     r"(?<![а-яёa-z])(?:кто\s+гнида|гнида\s+чата)(?![а-яёa-z])", re.IGNORECASE
@@ -1002,6 +1009,16 @@ async def challenge_text(database: Database, challenge) -> str:
 async def challenge_offer_text(database: Database, challenge) -> str:
     challenger = await database.get_user(challenge["chat_id"], challenge["challenger_id"])
     opponent = await database.get_user(challenge["chat_id"], challenge["opponent_id"])
+    competition = await database.get_checkers_competition(int(challenge["id"]))
+    if competition is not None:
+        duration = int(competition["bet_duration"])
+        return (
+            f"🏆 {plain_name(challenger)} приглашает {plain_name(opponent)} "
+            "на соревнование в шашки.\n"
+            f"После принятия откроются ставки на {format_duration(duration)}. "
+            "Партия начнётся, когда таймер закончится.\n"
+            "Соревнование не меняет рабство."
+        )
     game_name = {
         "rps": "КНБ",
         "blackjack": "мини-блэкджек",
@@ -1088,6 +1105,11 @@ async def checkers_text(database: Database, challenge, game) -> str:
         if challenge["friendly"]
         else ""
     )
+    competition = await database.get_checkers_competition(int(challenge["id"]))
+    if competition is not None:
+        bets = await database.list_checkers_bets(int(challenge["id"]))
+        total = sum(int(bet["amount"]) for bet in bets)
+        friendly_text = f"\n🏆 Соревнование · банк {total} ₣ · рабство не меняется."
     return (
         "Шашки\n\n"
         f"Играют: {plain_name(challenger)} ⚫ · {plain_name(opponent)} ⚪\n"
@@ -1115,7 +1137,9 @@ def create_router(
     death_note_tasks: set[asyncio.Task[None]] = set()
     daily_message_tasks: set[asyncio.Task[None]] = set()
     donation_tasks: set[asyncio.Task[None]] = set()
+    competition_tasks: set[asyncio.Task[None]] = set()
     donation_sync_lock = asyncio.Lock()
+    competition_render_lock = asyncio.Lock()
     recent_safebooru_ids: dict[int, list[int]] = {}
     challenge_edit_lock = asyncio.Lock()
     checkers_render_lock = asyncio.Lock()
@@ -2161,6 +2185,85 @@ def create_router(
             )
         return await challenge_text(database, challenge), challenge_keyboard(challenge_id)
 
+    async def competition_betting_text(challenge) -> str:
+        challenge_id = int(challenge["id"])
+        competition = await database.get_checkers_competition(challenge_id)
+        bets = await database.list_checkers_bets(challenge_id)
+        challenger = await database.get_user(challenge["chat_id"], challenge["challenger_id"])
+        opponent = await database.get_user(challenge["chat_id"], challenge["opponent_id"])
+        challenger_id, opponent_id = int(challenge["challenger_id"]), int(challenge["opponent_id"])
+        first_total = sum(int(bet["amount"]) for bet in bets if int(bet["target_id"]) == challenger_id)
+        second_total = sum(int(bet["amount"]) for bet in bets if int(bet["target_id"]) == opponent_id)
+        close_time = datetime.fromtimestamp(int(competition["bets_close_at"]), MOSCOW_TZ)
+        lines = [
+            f"<b>🏆 Соревнование в шашки</b> · №{challenge_id}",
+            f"⚫ {plain_name(challenger)} — {first_total} ₣",
+            f"⚪ {plain_name(opponent)} — {second_total} ₣",
+            f"Общий банк: <b>{first_total + second_total} ₣</b>",
+            f"Ставки до {close_time:%H:%M:%S} МСК. Затем начнётся партия.",
+            "Пиши в чате: <code>ставка 50 на @ник_игрока</code> "
+            "или <code>ставка 120 франков на @ник_игрока</code>.",
+            "Если ставки будут только на одного игрока, франки вернутся.",
+        ]
+        if bets:
+            lines.append("\n<b>Ставки зрителей:</b>")
+            for bet in bets[-12:]:
+                side = "⚫" if int(bet["target_id"]) == challenger_id else "⚪"
+                bettor_name = html.escape(str(bet["display_name"])[:40])
+                lines.append(
+                    f"• {bettor_name}: {int(bet['amount'])} ₣ на {side}"
+                )
+            if len(bets) > 12:
+                lines.append(f"…и ещё {len(bets) - 12} ставок.")
+        return "\n".join(lines)
+
+    async def render_competition_bets(challenge_id: int, bot: Bot) -> None:
+        async with competition_render_lock:
+            challenge = await database.get_challenge(challenge_id)
+            if not challenge or challenge["status"] != "betting":
+                return
+            if not await edit_challenge(
+                challenge, bot, await competition_betting_text(challenge)
+            ):
+                await database.finish_challenge(challenge_id, "failed")
+
+    async def end_competition_betting(challenge_id: int, bot: Bot) -> None:
+        while True:
+            competition = await database.get_checkers_competition(challenge_id)
+            if competition is None or competition["phase"] != "betting":
+                return
+            remaining = int(competition["bets_close_at"]) - utc_timestamp()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+                continue
+            async with competition_render_lock:
+                challenge = await database.start_checkers_competition(challenge_id)
+                if challenge is None:
+                    return
+                text, keyboard = await active_challenge_view(challenge)
+                if not await edit_challenge(challenge, bot, text, keyboard):
+                    await database.finish_challenge(challenge_id, "failed")
+                    return
+            schedule_challenge(challenge_id, bot)
+            return
+
+    def schedule_competition(challenge_id: int, bot: Bot) -> None:
+        task = asyncio.create_task(end_competition_betting(challenge_id, bot))
+        competition_tasks.add(task)
+
+        def finish_task(completed: asyncio.Task[None]) -> None:
+            competition_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            try:
+                completed.result()
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Competition betting timer %s failed", challenge_id
+                )
+
+        task.add_done_callback(finish_task)
+
     async def accept_pending_challenge(
         challenge, callback: CallbackQuery, bot: Bot
     ) -> bool:
@@ -2170,17 +2273,28 @@ def create_router(
         if utc_timestamp() >= int(challenge["deadline"]):
             await callback.answer("Время на принятие уже истекло.", show_alert=True)
             return False
-        accepted = await database.accept_challenge(
-            int(challenge["id"]), callback.from_user.id
-        )
+        competition = await database.get_checkers_competition(int(challenge["id"]))
+        if competition is not None:
+            accepted = await database.accept_checkers_competition(
+                int(challenge["id"]), callback.from_user.id
+            )
+        else:
+            accepted = await database.accept_challenge(
+                int(challenge["id"]), callback.from_user.id
+            )
         if not accepted:
             await callback.answer("Этот вызов уже недоступен.", show_alert=True)
             return False
-        text, keyboard = await active_challenge_view(accepted)
+        if competition is not None:
+            text, keyboard = await competition_betting_text(accepted), None
+        else:
+            text, keyboard = await active_challenge_view(accepted)
         if not await edit_challenge(accepted, bot, text, keyboard):
             await database.finish_challenge(int(accepted["id"]), "failed")
             await callback.answer("Не удалось открыть игру.", show_alert=True)
             return False
+        if competition is not None:
+            schedule_competition(int(accepted["id"]), bot)
         await callback.answer("Вызов принят")
         return True
 
@@ -2256,6 +2370,21 @@ def create_router(
         chat_id = int(challenge["chat_id"])
         winner = await database.get_user(chat_id, winner_id)
         loser = await database.get_user(chat_id, loser_id)
+        competition = await database.get_checkers_competition(int(challenge["id"]))
+        if competition is not None:
+            bets = await database.list_checkers_bets(int(challenge["id"]))
+            pool = sum(int(bet["amount"]) for bet in bets)
+            bet_result = (
+                f"💰 Банк {pool} ₣ распределён между теми, кто поставил на победителя."
+                if competition["settlement"] == "paid" else
+                "💰 Ставки возвращены зрителям." if bets else "💰 Ставок не было."
+            )
+            await edit_challenge(
+                challenge, bot,
+                f"{heading}\n🏆 Победил {plain_name(winner)}. "
+                f"Рабство не изменилось.\n{bet_result}",
+            )
+            return
         if challenge["friendly"]:
             await edit_challenge(
                 challenge,
@@ -2370,10 +2499,15 @@ def create_router(
         if challenge["game_type"] == "rps" and first_moved and second_moved:
             await publish_played_result(challenge, bot)
         else:
+            competition = await database.get_checkers_competition(challenge_id)
+            suffix = (
+                " Ставки возвращены зрителям."
+                if competition is not None else ""
+            )
             await edit_challenge(
                 challenge,
                 bot,
-                "⌛ За 3 часа бой не был завершён. Последствий нет.",
+                "⌛ За 3 часа бой не был завершён. Последствий нет." + suffix,
             )
 
     def schedule_challenge(challenge_id: int, bot: Bot) -> None:
@@ -2395,6 +2529,7 @@ def create_router(
 
     @router.startup()
     async def resume_leg_requests(bot: Bot) -> None:
+        await database.reconcile_checkers_competitions()
         for request in await database.pending_leg_requests():
             schedule_leg_request(int(request["id"]), bot)
         for captcha in await database.pending_captchas():
@@ -2403,6 +2538,12 @@ def create_router(
             schedule_death_note(int(entry["id"]), bot)
         for challenge in await database.pending_challenges():
             schedule_challenge(int(challenge["id"]), bot)
+        for competition in await database.betting_competitions():
+            schedule_competition(int(competition["challenge_id"]), bot)
+        for competition in await database.playing_competitions():
+            challenge_id = int(competition["challenge_id"])
+            if not await render_checkers(challenge_id, bot):
+                await database.finish_challenge(challenge_id, "failed")
         for hiding in await database.pending_jug_hidings():
             schedule_jug_hiding(
                 int(hiding["chat_id"]),
@@ -2437,6 +2578,8 @@ def create_router(
         for task in tuple(daily_message_tasks):
             task.cancel()
         for task in tuple(donation_tasks):
+            task.cancel()
+        for task in tuple(competition_tasks):
             task.cancel()
 
     def custom_command_owner(message: Message) -> bool:
@@ -5052,31 +5195,52 @@ def create_router(
         await callback.answer("Вызов принят")
 
     @router.message(
-        text_or_caption_regexp(CHALLENGE_RE) | text_or_caption_regexp(GAME_RE)
+        text_or_caption_regexp(CHALLENGE_RE)
+        | text_or_caption_regexp(GAME_RE)
+        | text_or_caption_regexp(COMPETITION_RE)
     )
     async def challenge(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
             return
         content = message_content(message)
+        competition_match = COMPETITION_RE.match(content)
         game_match = GAME_RE.match(content)
-        match = game_match or CHALLENGE_RE.match(content)
-        friendly = game_match is not None
-        requested_game = match.group(1).casefold() if match and match.group(1) else None
-        if requested_game == "кнб":
-            game_type = "rps"
-        elif requested_game in {"блекджек", "блэкджек"}:
-            game_type = "blackjack"
-        elif requested_game == "шашки":
+        match = competition_match or game_match or CHALLENGE_RE.match(content)
+        friendly = game_match is not None or competition_match is not None
+        competition_seconds: int | None = None
+        if competition_match:
+            raw_duration = competition_match.group(1)
+            parsed_duration = parse_duration(raw_duration) if raw_duration else None
+            competition_seconds = parsed_duration.seconds if parsed_duration else 60
+            if (
+                (raw_duration and parsed_duration is None)
+                or not 60 <= competition_seconds <= 3600
+            ):
+                await message.answer(
+                    "Таймер ставок: от 1 до 60 минут. Например: "
+                    "«Соревнование шашки 5 минут» или «Соревнование шашки 400 сек»."
+                )
+                return
             game_type = "checkers"
         else:
-            game_type = random.choice(("rps", "blackjack", "checkers"))
+            requested_game = match.group(1).casefold() if match and match.group(1) else None
+            if requested_game == "кнб":
+                game_type = "rps"
+            elif requested_game in {"блекджек", "блэкджек"}:
+                game_type = "blackjack"
+            elif requested_game == "шашки":
+                game_type = "checkers"
+            else:
+                game_type = random.choice(("rps", "blackjack", "checkers"))
         if (
             message.sender_chat
             or not message.reply_to_message
             or message.reply_to_message.sender_chat
             or not message.reply_to_message.from_user
         ):
-            command_name = "Игру" if friendly else "Вызов"
+            command_name = (
+                "Соревнование" if competition_match else "Игру" if friendly else "Вызов"
+            )
             await message.answer(
                 f"Отправьте «{command_name}» в ответ на сообщение соперника."
             )
@@ -5129,6 +5293,7 @@ def create_router(
             game_type=game_type,
             friendly=friendly,
             awaiting_acceptance=True,
+            competition_bet_seconds=competition_seconds,
         )
         if challenge_id is None:
             await message.answer("У одного из участников уже есть активный вызов.")
@@ -5144,6 +5309,67 @@ def create_router(
         )
         await database.set_challenge_message(challenge_id, sent.message_id)
         schedule_challenge(challenge_id, bot)
+
+    @router.message(F.text.regexp(BET_RE))
+    async def checkers_bet(message: Message, bot: Bot) -> None:
+        if message.chat.type not in GROUP_TYPES or not message.from_user:
+            return
+        match = BET_RE.match(message_content(message))
+        if match is None:
+            return
+        amount = int(match.group(1))
+        if not 1 <= amount <= 1_000_000:
+            await message.answer("Ставка должна быть от 1 до 1 000 000 франков.")
+            return
+        target_token = match.group(2)
+        target = await database.resolve_user(message.chat.id, target_token)
+        if target is None:
+            await message.answer("Не знаю этот @ник. Укажи актуальный тег одного из игроков.")
+            return
+        target_id = int(target["user_id"])
+        competition = await database.find_open_competition_for_target(
+            message.chat.id, target_id
+        )
+        if competition is None:
+            await message.answer("Для этого игрока сейчас нет открытых ставок на шашки.")
+            return
+        if not await is_chat_participant(bot, message.chat.id, message.from_user.id):
+            await message.answer("Ставить могут только участники этого чата.")
+            return
+        try:
+            member = await bot.get_chat_member(message.chat.id, target_id)
+        except (TelegramBadRequest, TelegramForbiddenError):
+            await message.answer("Не могу проверить участника, на которого ты ставишь.")
+            return
+        if not await is_chat_participant(bot, message.chat.id, target_id):
+            await message.answer("Игрок уже не состоит в чате.")
+            return
+        current_username = getattr(getattr(member, "user", None), "username", None)
+        if target_token.startswith("@") and (
+            not current_username
+            or current_username.casefold() != target_token[1:].casefold()
+        ):
+            await message.answer("Этот тег уже не принадлежит игроку. Используй его текущий @ник.")
+            return
+        await database.settle_businesses_for_user(message.from_user.id)
+        result = await database.place_checkers_bet(
+            int(competition["id"]), message.chat.id, message.from_user.id,
+            target_id, amount, display_name(message.from_user),
+        )
+        if result != "placed":
+            messages = {
+                "closed": "Приём ставок уже закрыт.",
+                "player": "Участники партии не могут ставить на свой матч.",
+                "already_bet": "Ты уже сделал ставку на это соревнование.",
+                "insufficient": "Недостаточно франков в этом чате.",
+            }
+            await message.answer(messages.get(result, "Не получилось принять ставку."))
+            return
+        try:
+            await message.delete()
+        except (TelegramBadRequest, TelegramForbiddenError):
+            pass
+        await render_competition_bets(int(competition["id"]), bot)
 
     @router.callback_query(F.data.startswith("rps:"))
     async def rps_callback(callback: CallbackQuery, bot: Bot) -> None:
@@ -5430,11 +5656,13 @@ def create_router(
                 )
                 return
             if await database.finish_challenge(challenge_id, "refused"):
+                competition = await database.get_checkers_competition(challenge_id)
                 await edit_challenge(
                     challenge,
                     bot,
                     f"🚫 {html.escape(display_name(callback.from_user))} "
-                    "отказался от вызова.",
+                    "отказался от вызова."
+                    + (" Ставки возвращены." if competition is not None else ""),
                 )
             await callback.answer()
             return

@@ -173,6 +173,30 @@ class Database:
                 move_count INTEGER NOT NULL DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS checkers_competitions (
+                challenge_id INTEGER PRIMARY KEY,
+                bet_duration INTEGER NOT NULL CHECK(bet_duration >= 60),
+                bets_close_at INTEGER,
+                phase TEXT NOT NULL DEFAULT 'offer'
+                    CHECK(phase IN ('offer', 'betting', 'playing', 'done')),
+                settlement TEXT NOT NULL DEFAULT 'open'
+                    CHECK(settlement IN ('open', 'paid', 'refunded')),
+                settled_at INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS checkers_bets (
+                challenge_id INTEGER NOT NULL,
+                bettor_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                amount INTEGER NOT NULL CHECK(amount > 0),
+                display_name TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (challenge_id, bettor_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_checkers_competitions_phase
+                ON checkers_competitions(phase, bets_close_at);
+
             CREATE TABLE IF NOT EXISTS leg_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER NOT NULL,
@@ -618,16 +642,22 @@ class Database:
         game_type: str = "rps",
         friendly: bool = False,
         awaiting_acceptance: bool = False,
+        competition_bet_seconds: int | None = None,
     ) -> int | None:
         if game_type not in {"rps", "blackjack", "checkers"}:
             raise ValueError("Unknown challenge game type")
+        if competition_bet_seconds is not None and (
+            game_type != "checkers" or not friendly
+            or not 60 <= competition_bet_seconds <= 3600
+        ):
+            raise ValueError("Invalid checkers competition")
         if friendly:
             forced = False
             opponent_newcomer = False
         async with self._lock:
             existing = self.connection.execute(
                 """SELECT id FROM challenges WHERE chat_id=?
-                   AND status IN ('pending', 'active')
+                   AND status IN ('pending', 'betting', 'active')
                    AND (challenger_id IN (?, ?) OR opponent_id IN (?, ?))""",
                 (chat_id, challenger_id, opponent_id, challenger_id, opponent_id),
             ).fetchone()
@@ -686,6 +716,12 @@ class Database:
                         opponent_id,
                     ),
                 )
+            if competition_bet_seconds is not None:
+                self.connection.execute(
+                    """INSERT INTO checkers_competitions(challenge_id, bet_duration)
+                       VALUES (?, ?)""",
+                    (challenge_id, competition_bet_seconds),
+                )
             if forced:
                 self.connection.execute(
                     """UPDATE ownership SET last_forced_at=?
@@ -735,6 +771,11 @@ class Database:
                 "UPDATE challenges SET status='cancelled' WHERE id=?",
                 (challenge_id,),
             )
+            self._refund_competition_locked(challenge_id)
+            self.connection.execute(
+                "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
+                (challenge_id,),
+            )
             # A forced owner challenge only spends its weekly attempt once a game
             # actually starts; cancelling an offer must not consume it.
             if row["forced"]:
@@ -779,6 +820,250 @@ class Database:
         async with self._lock:
             return self.connection.execute(
                 "SELECT * FROM checkers_games WHERE challenge_id=?", (challenge_id,)
+            ).fetchone()
+
+    async def get_checkers_competition(self, challenge_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM checkers_competitions WHERE challenge_id=?",
+                (challenge_id,),
+            ).fetchone()
+
+    async def accept_checkers_competition(
+        self, challenge_id: int, opponent_id: int
+    ) -> sqlite3.Row | None:
+        async with self._lock:
+            competition = self.connection.execute(
+                """SELECT * FROM checkers_competitions
+                   WHERE challenge_id=? AND phase='offer'""",
+                (challenge_id,),
+            ).fetchone()
+            if competition is None:
+                return None
+            now = utc_timestamp()
+            closes_at = now + int(competition["bet_duration"])
+            cursor = self.connection.execute(
+                """UPDATE challenges SET status='betting', created_at=?, deadline=?
+                   WHERE id=? AND opponent_id=? AND status='pending' AND deadline>?""",
+                (now, closes_at, challenge_id, opponent_id, now),
+            )
+            if cursor.rowcount != 1:
+                self.connection.commit()
+                return None
+            self.connection.execute(
+                """UPDATE checkers_competitions
+                   SET phase='betting', bets_close_at=? WHERE challenge_id=?""",
+                (closes_at, challenge_id),
+            )
+            self.connection.commit()
+            return self.connection.execute(
+                "SELECT * FROM challenges WHERE id=?", (challenge_id,)
+            ).fetchone()
+
+    async def betting_competitions(self) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT c.challenge_id, c.bets_close_at FROM checkers_competitions c
+                   JOIN challenges ch ON ch.id=c.challenge_id
+                   WHERE c.phase='betting' AND ch.status='betting'"""
+            ).fetchall()
+
+    async def playing_competitions(self) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT c.challenge_id FROM checkers_competitions c
+                   JOIN challenges ch ON ch.id=c.challenge_id
+                   WHERE c.phase='playing' AND ch.status='active'"""
+            ).fetchall()
+
+    async def reconcile_checkers_competitions(self) -> None:
+        """Refund interrupted competitions after a crash or unavailable message."""
+        async with self._lock:
+            rows = self.connection.execute(
+                """SELECT c.challenge_id FROM checkers_competitions c
+                   JOIN challenges ch ON ch.id=c.challenge_id
+                   WHERE (c.phase='betting' AND ch.status!='betting')
+                      OR (c.phase='playing' AND ch.status!='active')"""
+            ).fetchall()
+            for row in rows:
+                challenge_id = int(row["challenge_id"])
+                self._refund_competition_locked(challenge_id)
+                self.connection.execute(
+                    "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
+                    (challenge_id,),
+                )
+            self.connection.commit()
+
+    async def list_checkers_bets(self, challenge_id: int) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT * FROM checkers_bets WHERE challenge_id=?
+                   ORDER BY created_at, bettor_id""",
+                (challenge_id,),
+            ).fetchall()
+
+    async def find_open_competition_for_target(
+        self, chat_id: int, target_id: int
+    ) -> sqlite3.Row | None:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT ch.* FROM challenges ch
+                   JOIN checkers_competitions c ON c.challenge_id=ch.id
+                   WHERE ch.chat_id=? AND ? IN (ch.challenger_id, ch.opponent_id)
+                     AND ch.status='betting' AND c.phase='betting'
+                     AND c.bets_close_at>?
+                   ORDER BY ch.id DESC LIMIT 1""",
+                (chat_id, target_id, utc_timestamp()),
+            ).fetchone()
+
+    async def place_checkers_bet(
+        self, challenge_id: int, chat_id: int, bettor_id: int,
+        target_id: int, amount: int, display_name: str,
+    ) -> str:
+        if amount < 1 or amount > 1_000_000:
+            return "invalid_amount"
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT ch.chat_id, ch.challenger_id, ch.opponent_id,
+                          ch.status, c.phase, c.bets_close_at
+                   FROM challenges ch JOIN checkers_competitions c
+                     ON c.challenge_id=ch.id WHERE ch.id=?""",
+                (challenge_id,),
+            ).fetchone()
+            if (
+                row is None or int(row["chat_id"]) != chat_id
+                or row["status"] != "betting" or row["phase"] != "betting"
+                or utc_timestamp() >= int(row["bets_close_at"])
+            ):
+                return "closed"
+            player_ids = {int(row["challenger_id"]), int(row["opponent_id"])}
+            if target_id not in player_ids:
+                return "invalid_target"
+            if bettor_id in player_ids:
+                return "player"
+            if self.connection.execute(
+                """SELECT 1 FROM checkers_bets
+                   WHERE challenge_id=? AND bettor_id=?""",
+                (challenge_id, bettor_id),
+            ).fetchone():
+                return "already_bet"
+            debited = self.connection.execute(
+                """UPDATE franc_balances SET balance=balance-?, updated_at=?
+                   WHERE chat_id=? AND user_id=? AND balance>=?""",
+                (amount, utc_timestamp(), chat_id, bettor_id, amount),
+            )
+            if debited.rowcount != 1:
+                self.connection.commit()
+                return "insufficient"
+            try:
+                self.connection.execute(
+                    """INSERT INTO checkers_bets(
+                           challenge_id, bettor_id, target_id, amount,
+                           display_name, created_at
+                       ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    (challenge_id, bettor_id, target_id, amount, display_name, utc_timestamp()),
+                )
+            except sqlite3.Error:
+                self.connection.rollback()
+                raise
+            self.connection.commit()
+            return "placed"
+
+    def _refund_competition_locked(self, challenge_id: int) -> None:
+        competition = self.connection.execute(
+            "SELECT settlement FROM checkers_competitions WHERE challenge_id=?",
+            (challenge_id,),
+        ).fetchone()
+        if competition is None or competition["settlement"] != "open":
+            return
+        challenge = self.connection.execute(
+            "SELECT chat_id FROM challenges WHERE id=?", (challenge_id,)
+        ).fetchone()
+        if challenge is None:
+            return
+        for bet in self.connection.execute(
+            "SELECT bettor_id, amount FROM checkers_bets WHERE challenge_id=?",
+            (challenge_id,),
+        ).fetchall():
+            self._add_francs_locked(
+                int(challenge["chat_id"]), int(bet["bettor_id"]), int(bet["amount"])
+            )
+        self.connection.execute(
+            """UPDATE checkers_competitions
+               SET settlement='refunded', settled_at=? WHERE challenge_id=?""",
+            (utc_timestamp(), challenge_id),
+        )
+
+    def _pay_competition_locked(self, challenge_id: int, winner_id: int) -> None:
+        competition = self.connection.execute(
+            "SELECT settlement FROM checkers_competitions WHERE challenge_id=?",
+            (challenge_id,),
+        ).fetchone()
+        if competition is None or competition["settlement"] != "open":
+            return
+        challenge = self.connection.execute(
+            "SELECT chat_id FROM challenges WHERE id=?", (challenge_id,)
+        ).fetchone()
+        bets = self.connection.execute(
+            """SELECT bettor_id, target_id, amount FROM checkers_bets
+               WHERE challenge_id=? ORDER BY bettor_id""",
+            (challenge_id,),
+        ).fetchall()
+        total = sum(int(bet["amount"]) for bet in bets)
+        winners = [bet for bet in bets if int(bet["target_id"]) == winner_id]
+        winning_pool = sum(int(bet["amount"]) for bet in winners)
+        if not total or not winning_pool or winning_pool == total:
+            self._refund_competition_locked(challenge_id)
+            return
+        payouts = []
+        for bet in winners:
+            numerator = int(bet["amount"]) * total
+            payouts.append([
+                int(bet["bettor_id"]), numerator // winning_pool,
+                numerator % winning_pool,
+            ])
+        extra = total - sum(payout[1] for payout in payouts)
+        for payout in sorted(payouts, key=lambda item: (-item[2], item[0]))[:extra]:
+            payout[1] += 1
+        for bettor_id, payout, _ in payouts:
+            self._add_francs_locked(int(challenge["chat_id"]), bettor_id, payout)
+        self.connection.execute(
+            """UPDATE checkers_competitions
+               SET settlement='paid', settled_at=? WHERE challenge_id=?""",
+            (utc_timestamp(), challenge_id),
+        )
+
+    async def start_checkers_competition(self, challenge_id: int) -> sqlite3.Row | None:
+        async with self._lock:
+            row = self.connection.execute(
+                """SELECT c.bets_close_at, ch.status FROM checkers_competitions c
+                   JOIN challenges ch ON ch.id=c.challenge_id
+                   WHERE c.challenge_id=? AND c.phase='betting'""",
+                (challenge_id,),
+            ).fetchone()
+            now = utc_timestamp()
+            if row is None or row["status"] != "betting" or now < int(row["bets_close_at"]):
+                return None
+            sides = self.connection.execute(
+                """SELECT COUNT(DISTINCT target_id) FROM checkers_bets
+                   WHERE challenge_id=?""",
+                (challenge_id,),
+            ).fetchone()[0]
+            if sides < 2:
+                self._refund_competition_locked(challenge_id)
+            self.connection.execute(
+                """UPDATE checkers_competitions SET phase='playing'
+                   WHERE challenge_id=?""",
+                (challenge_id,),
+            )
+            self.connection.execute(
+                """UPDATE challenges
+                   SET status='active', created_at=?, deadline=? WHERE id=?""",
+                (now, now + CHALLENGE_DEADLINE_SECONDS, challenge_id),
+            )
+            self.connection.commit()
+            return self.connection.execute(
+                "SELECT * FROM challenges WHERE id=?", (challenge_id,)
             ).fetchone()
 
     async def checkers_click(
@@ -886,6 +1171,11 @@ class Database:
                        SET status='finished', winner_id=?, result_recorded=1
                        WHERE id=?""",
                     (winner_id, challenge_id),
+                )
+                self._pay_competition_locked(challenge_id, winner_id)
+                self.connection.execute(
+                    "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
+                    (challenge_id,),
                 )
             else:
                 self.connection.execute(
@@ -1053,6 +1343,11 @@ class Database:
                     challenge_id,
                 ),
             )
+            self._refund_competition_locked(challenge_id)
+            self.connection.execute(
+                "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
+                (challenge_id,),
+            )
             self.connection.commit()
             return row
 
@@ -1082,9 +1377,15 @@ class Database:
         async with self._lock:
             cursor = self.connection.execute(
                 """UPDATE challenges SET status=? WHERE id=?
-                   AND status IN ('pending', 'active')""",
+                   AND status IN ('pending', 'betting', 'active')""",
                 (status, challenge_id),
             )
+            if cursor.rowcount:
+                self._refund_competition_locked(challenge_id)
+                self.connection.execute(
+                    "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
+                    (challenge_id,),
+                )
             self.connection.commit()
             return cursor.rowcount > 0
 
@@ -1093,7 +1394,14 @@ class Database:
         async with self._lock:
             self.connection.execute(
                 """UPDATE challenges SET status='unavailable'
-                   WHERE id=? AND status IN ('pending', 'active', 'deadline', 'pending_deadline')""",
+                   WHERE id=? AND status IN (
+                       'pending', 'betting', 'active', 'deadline', 'pending_deadline'
+                   )""",
+                (challenge_id,),
+            )
+            self._refund_competition_locked(challenge_id)
+            self.connection.execute(
+                "UPDATE checkers_competitions SET phase='done' WHERE challenge_id=?",
                 (challenge_id,),
             )
             self.connection.commit()
