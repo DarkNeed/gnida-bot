@@ -69,10 +69,14 @@ def user_mention(user_id: int, name: str) -> str:
     return f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
 
 
-def rendered_phrase(phrase: str, user_id: int, name: str, reward: int) -> str:
+def rendered_phrase(
+    phrase: str, user_id: int, name: str, reward: int,
+    *, username: str | None = None,
+) -> str:
+    display_name = f"@{username}" if username else name
     return (
         html.escape(phrase)
-        .replace("{user}", user_mention(user_id, name))
+        .replace("{user}", user_mention(user_id, display_name))
         .replace("{amount}", str(reward))
     )
 
@@ -196,7 +200,8 @@ def create_franc_event_router(database: Database) -> Router:
         )
         if config["kind"] == "luck":
             body += f" · шанс успеха {config['success_chance']}%"
-        body += "\nФразы: {0} успеха / {1} неудачи. Метки: {{user}}, {{amount}}.".format(
+        body += "\nФразы: {0} успеха / {1} неудачи. Метки: {{user}} — тег участника, " \
+                "{{amount}} — начисленные франки.".format(
             len(config["success_messages"]), len(config["failure_messages"])
         )
         if config["kind"] != "luck" and config["failure_reward"]:
@@ -455,10 +460,16 @@ def create_franc_event_router(database: Database) -> Router:
     async def finish_public_event(event, result: dict, user: Message | CallbackQuery, bot: Bot) -> None:
         actor = user.from_user
         name = actor.full_name if actor else "участник"
-        mention = rendered_phrase(str(result["phrase"]), actor.id, name, int(result["reward"]))
+        phrase = str(result["phrase"])
+        mention = rendered_phrase(
+            phrase, actor.id, name, int(result["reward"]), username=actor.username
+        )
         reward = f"\n💰 +{result['reward']} ₣" if result["reward"] else "\n💸 Без награды"
         heading = "✅ Успех" if result["status"] == "success" else "❌ Неудача"
-        text = f"🎲 <b>Событие завершено</b> · {heading}\n{mention}\n{user_mention(actor.id, name)}{reward}"
+        footer = "" if "{user}" in phrase else "\n" + user_mention(
+            actor.id, f"@{actor.username}" if actor.username else name
+        )
+        text = f"🎲 <b>Событие завершено</b> · {heading}\n{mention}{footer}{reward}"
         try:
             await bot.edit_message_text(
                 text, chat_id=int(event["chat_id"]), message_id=int(event["message_id"]),
@@ -508,13 +519,22 @@ def create_franc_event_router(database: Database) -> Router:
             await callback.answer("Результат готов!")
             await finish_public_event(event, result, callback, bot)
         else:
-            text = (
-                str(result["phrase"])
-                .replace("{user}", callback.from_user.full_name)
-                .replace("{amount}", str(result["reward"]))
-                + (f" +{result['reward']} ₣" if result["reward"] else "")
-            )
-            await callback.answer(text[:190], show_alert=True)
+            phrase = str(result["phrase"])
+            reward = f" +{result['reward']} ₣" if result["reward"] else ""
+            if "{user}" in phrase:
+                text = rendered_phrase(
+                    phrase, callback.from_user.id, callback.from_user.full_name,
+                    int(result["reward"]), username=callback.from_user.username,
+                ) + reward
+                try:
+                    await bot.send_message(int(event["chat_id"]), text, parse_mode="HTML")
+                except TelegramAPIError:
+                    await callback.answer("Ответ принят, но сообщение в чат отправить не удалось.", show_alert=True)
+                else:
+                    await callback.answer("Ответ принят.")
+            else:
+                text = phrase.replace("{amount}", str(result["reward"])) + reward
+                await callback.answer(text[:190], show_alert=True)
 
     @router.message(EventReplyFilter(store))
     async def event_text_answer(message: Message, franc_event, bot: Bot) -> None:
@@ -528,6 +548,7 @@ def create_franc_event_router(database: Database) -> Router:
             text = rendered_phrase(
                 str(result["phrase"]), message.from_user.id,
                 message.from_user.full_name, int(result["reward"]),
+                username=message.from_user.username,
             ) + (f" +{result['reward']} ₣" if result["reward"] else "")
             await message.reply(text, parse_mode="HTML")
 

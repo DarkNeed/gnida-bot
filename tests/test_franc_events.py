@@ -13,7 +13,7 @@ from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from database import Database
 from franc_events import FrancEventStore, event_config
 from handlers.franc_events import (
-    EventReplyFilter, create_franc_event_router, public_event_view,
+    EventReplyFilter, create_franc_event_router, public_event_view, rendered_phrase,
     schedule_times, service_day,
 )
 
@@ -216,8 +216,41 @@ class FrancEventTests(unittest.IsolatedAsyncioTestCase):
             await handler(callback, bot)
         self.assertEqual(await self.db.franc_balance(-100, 3), 15)
         bot.edit_message_text.assert_awaited_once()
+        self.assertIn("@guest", bot.edit_message_text.await_args.args[0])
         await handler(callback, bot)
         self.assertEqual(await self.db.franc_balance(-100, 3), 15)
+
+    async def test_user_placeholder_tags_the_participant_on_failure(self):
+        template_id = await self.make_template("choice")
+        await self.store.change_list(
+            template_id, "failure", "edit", value="{user} не угадал", index=0
+        )
+        event, error = await self.store.begin_manual_event(template_id)
+        self.assertIsNone(error)
+        await self.store.activate_event(int(event["id"]), 900)
+        router = create_franc_event_router(self.db)
+        handler = next(
+            item.callback for item in router.callback_query.handlers
+            if item.callback.__name__ == "event_button"
+        )
+        callback = SimpleNamespace(
+            data=f"fe:{event['id']}:0",
+            from_user=User(id=3, is_bot=False, first_name="Участник", username="guest"),
+            message=SimpleNamespace(chat=SimpleNamespace(id=-100)), answer=AsyncMock(),
+        )
+        bot = SimpleNamespace(
+            get_chat_member=AsyncMock(return_value=SimpleNamespace(status="member")),
+            send_message=AsyncMock(), edit_message_text=AsyncMock(),
+        )
+        await handler(callback, bot)
+        body = bot.send_message.await_args.args[1]
+        self.assertIn('<a href="tg://user?id=3">@guest</a> не угадал', body)
+        bot.edit_message_text.assert_not_awaited()
+        self.assertEqual(await self.db.franc_balance(-100, 3), 0)
+        self.assertIn(
+            '<a href="tg://user?id=3">@guest</a>',
+            rendered_phrase("{user} получил {amount} ₣", 3, "Участник", 5, username="guest"),
+        )
 
     async def test_owner_only_constructor_detail_menu(self):
         template_id = await self.make_template("choice")
