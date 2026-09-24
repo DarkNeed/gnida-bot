@@ -56,6 +56,7 @@ class FrancEventTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_choice_constructor_and_once_only_payout(self):
         event = await self.make_active_event()
+        self.assertEqual(public_event_view(event)[0], "Выбери верный ответ")
         self.assertIn("Нет", public_event_view(event)[1].inline_keyboard[0][0].text)
         first = await self.store.submit_attempt(int(event["id"]), 3, "0")
         self.assertEqual((first["status"], first["reward"], first["resolved"]), ("failure", 0, False))
@@ -216,9 +217,40 @@ class FrancEventTests(unittest.IsolatedAsyncioTestCase):
             await handler(callback, bot)
         self.assertEqual(await self.db.franc_balance(-100, 3), 15)
         bot.edit_message_text.assert_awaited_once()
-        self.assertIn("@guest", bot.edit_message_text.await_args.args[0])
+        self.assertEqual(bot.edit_message_text.await_args.args[0], "Удача на твоей стороне!")
         await handler(callback, bot)
         self.assertEqual(await self.db.franc_balance(-100, 3), 15)
+
+    async def test_luck_failure_displays_exact_custom_phrase_without_user(self):
+        template_id = await self.make_template("luck")
+        await self.store.update_scalar(template_id, "prompt", "Появилась пиньята🎉\nКто готов ударить?")
+        await self.store.update_scalar(template_id, "success_chance", "0")
+        await self.store.change_list(
+            template_id, "failure", "edit", value="В этот раз не получилось.", index=0
+        )
+        event, error = await self.store.begin_manual_event(template_id)
+        self.assertIsNone(error)
+        await self.store.activate_event(int(event["id"]), 901)
+        prompt, markup = public_event_view(event)
+        self.assertEqual(prompt, "Появилась пиньята🎉\nКто готов ударить?")
+        self.assertEqual(markup.inline_keyboard[0][0].text, "🎰 Испытать удачу")
+        router = create_franc_event_router(self.db)
+        handler = next(
+            item.callback for item in router.callback_query.handlers
+            if item.callback.__name__ == "event_button"
+        )
+        callback = SimpleNamespace(
+            data=f"fe:{event['id']}:go",
+            from_user=User(id=3, is_bot=False, first_name="Участник", username="guest"),
+            message=SimpleNamespace(chat=SimpleNamespace(id=-100)), answer=AsyncMock(),
+        )
+        bot = SimpleNamespace(
+            get_chat_member=AsyncMock(return_value=SimpleNamespace(status="member")),
+            edit_message_text=AsyncMock(), send_message=AsyncMock(),
+        )
+        await handler(callback, bot)
+        self.assertEqual(bot.edit_message_text.await_args.args[0], "В этот раз не получилось.")
+        self.assertEqual(await self.db.franc_balance(-100, 3), 0)
 
     async def test_user_placeholder_tags_the_participant_on_failure(self):
         template_id = await self.make_template("choice")
@@ -244,7 +276,7 @@ class FrancEventTests(unittest.IsolatedAsyncioTestCase):
         )
         await handler(callback, bot)
         body = bot.send_message.await_args.args[1]
-        self.assertIn('<a href="tg://user?id=3">@guest</a> не угадал', body)
+        self.assertEqual(body, '<a href="tg://user?id=3">@guest</a> не угадал')
         bot.edit_message_text.assert_not_awaited()
         self.assertEqual(await self.db.franc_balance(-100, 3), 0)
         self.assertIn(

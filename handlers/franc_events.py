@@ -84,21 +84,16 @@ def rendered_phrase(
 def public_event_view(event) -> tuple[str, InlineKeyboardMarkup | None]:
     config = json.loads(event["snapshot_json"])
     kind = config["kind"]
-    body = (
-        f"🎲 <b>Событие за франки</b>\n{html.escape(config['prompt'])}\n\n"
-        f"💰 Успех: {config['success_reward']} ₣"
-        + (f" · неудача: {config['failure_reward']} ₣" if config["failure_reward"] else "")
-        + "\n⏱ Время: 10 минут · одна попытка на человека."
-    )
+    body = html.escape(config["prompt"])
     if kind == "choice":
         buttons = [
             [InlineKeyboardButton(text=label, callback_data=f"fe:{event['id']}:{index}")]
             for index, label in enumerate(config["options"])
         ]
-        return body + "\nВыбери правильную кнопку.", keyboard(buttons)
+        return body, keyboard(buttons)
     if kind == "text":
-        return body + "\nОтветь на это сообщение правильным ответом.", None
-    return body + "\nНажми кнопку — результат решит удача.", keyboard([
+        return body, None
+    return body, keyboard([
         [InlineKeyboardButton(text=config["luck_button"], callback_data=f"fe:{event['id']}:go")]
     ])
 
@@ -460,16 +455,10 @@ def create_franc_event_router(database: Database) -> Router:
     async def finish_public_event(event, result: dict, user: Message | CallbackQuery, bot: Bot) -> None:
         actor = user.from_user
         name = actor.full_name if actor else "участник"
-        phrase = str(result["phrase"])
-        mention = rendered_phrase(
-            phrase, actor.id, name, int(result["reward"]), username=actor.username
+        text = rendered_phrase(
+            str(result["phrase"]), actor.id, name, int(result["reward"]),
+            username=actor.username,
         )
-        reward = f"\n💰 +{result['reward']} ₣" if result["reward"] else "\n💸 Без награды"
-        heading = "✅ Успех" if result["status"] == "success" else "❌ Неудача"
-        footer = "" if "{user}" in phrase else "\n" + user_mention(
-            actor.id, f"@{actor.username}" if actor.username else name
-        )
-        text = f"🎲 <b>Событие завершено</b> · {heading}\n{mention}{footer}{reward}"
         try:
             await bot.edit_message_text(
                 text, chat_id=int(event["chat_id"]), message_id=int(event["message_id"]),
@@ -516,25 +505,32 @@ def create_franc_event_router(database: Database) -> Router:
             }[result["status"]], show_alert=True)
             return
         if result["resolved"]:
-            await callback.answer("Результат готов!")
+            await callback.answer()
             await finish_public_event(event, result, callback, bot)
         else:
             phrase = str(result["phrase"])
-            reward = f" +{result['reward']} ₣" if result["reward"] else ""
             if "{user}" in phrase:
                 text = rendered_phrase(
                     phrase, callback.from_user.id, callback.from_user.full_name,
                     int(result["reward"]), username=callback.from_user.username,
-                ) + reward
+                )
                 try:
                     await bot.send_message(int(event["chat_id"]), text, parse_mode="HTML")
                 except TelegramAPIError:
                     await callback.answer("Ответ принят, но сообщение в чат отправить не удалось.", show_alert=True)
                 else:
-                    await callback.answer("Ответ принят.")
+                    await callback.answer()
             else:
-                text = phrase.replace("{amount}", str(result["reward"])) + reward
-                await callback.answer(text[:190], show_alert=True)
+                text = phrase.replace("{amount}", str(result["reward"]))
+                if len(text) <= 200:
+                    await callback.answer(text, show_alert=True)
+                else:
+                    try:
+                        await bot.send_message(int(event["chat_id"]), html.escape(text), parse_mode="HTML")
+                    except TelegramAPIError:
+                        await callback.answer("Ответ принят, но сообщение в чат отправить не удалось.", show_alert=True)
+                    else:
+                        await callback.answer()
 
     @router.message(EventReplyFilter(store))
     async def event_text_answer(message: Message, franc_event, bot: Bot) -> None:
@@ -549,7 +545,7 @@ def create_franc_event_router(database: Database) -> Router:
                 str(result["phrase"]), message.from_user.id,
                 message.from_user.full_name, int(result["reward"]),
                 username=message.from_user.username,
-            ) + (f" +{result['reward']} ₣" if result["reward"] else "")
+            )
             await message.reply(text, parse_mode="HTML")
 
     async def event_scheduler(bot: Bot) -> None:
