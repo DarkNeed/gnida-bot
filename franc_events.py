@@ -6,6 +6,7 @@ import json
 import random
 import re
 import sqlite3
+from uuid import uuid4
 from typing import Any
 
 from database import Database, utc_timestamp
@@ -273,7 +274,7 @@ class FrancEventStore:
             if schedule is None:
                 return None
             if self.connection.execute(
-                """SELECT 1 FROM franc_events WHERE chat_id=? AND status='active'
+                """SELECT 1 FROM franc_events WHERE chat_id=? AND status IN ('sending', 'active')
                    AND expires_at>?""",
                 (int(schedule["chat_id"]), utc_timestamp()),
             ).fetchone():
@@ -319,6 +320,44 @@ class FrancEventStore:
             return self.connection.execute(
                 "SELECT * FROM franc_events WHERE id=?", (int(cursor.lastrowid),)
             ).fetchone()
+
+    async def begin_manual_event(self, template_id: int) -> tuple[sqlite3.Row | None, str | None]:
+        """Reserve one immediate event without consuming a daily schedule slot."""
+        async with self.database._lock:
+            template = self.connection.execute(
+                "SELECT * FROM franc_event_templates WHERE id=?", (template_id,)
+            ).fetchone()
+            if template is None:
+                return None, "Событие не найдено."
+            error = config_error(event_config(template))
+            if error:
+                return None, error
+            chat_id = int(template["chat_id"])
+            now = utc_timestamp()
+            if self.connection.execute(
+                """SELECT 1 FROM franc_events WHERE chat_id=? AND status IN ('sending', 'active')
+                   AND expires_at>?""",
+                (chat_id, now),
+            ).fetchone():
+                return None, "В этом чате уже идёт событие. Дождись его завершения."
+            schedule = self.connection.execute(
+                """INSERT INTO franc_event_schedules(
+                       chat_id, service_day, slot, scheduled_at, status
+                   ) VALUES (?, ?, 0, ?, 'sending')""",
+                (chat_id, f"manual:{uuid4().hex}", now),
+            )
+            event = self.connection.execute(
+                """INSERT INTO franc_events(
+                       schedule_id, template_id, chat_id, snapshot_json, starts_at, expires_at
+                   ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (int(schedule.lastrowid), template_id, chat_id,
+                 json.dumps(event_config(template), ensure_ascii=False),
+                 now, now + EVENT_LIFETIME_SECONDS),
+            )
+            self.connection.commit()
+            return self.connection.execute(
+                "SELECT * FROM franc_events WHERE id=?", (int(event.lastrowid),)
+            ).fetchone(), None
 
     async def activate_event(self, event_id: int, message_id: int) -> None:
         async with self.database._lock:

@@ -147,6 +147,54 @@ class FrancEventTests(unittest.IsolatedAsyncioTestCase):
         ).fetchall()
         self.assertEqual(len(rows), len(times))
 
+    async def test_manual_event_does_not_consume_daily_slot_or_duplicate(self):
+        template_id = await self.make_template("choice")
+        await self.store.toggle_template(template_id)  # A valid disabled template can still run manually.
+        event, error = await self.store.begin_manual_event(template_id)
+        self.assertIsNone(error)
+        self.assertEqual(event["status"], "sending")
+        duplicate, error = await self.store.begin_manual_event(template_id)
+        self.assertIsNone(duplicate)
+        self.assertIn("уже идёт", error)
+        day = service_day(datetime.now(timezone.utc))
+        await self.store.ensure_schedule(-100, day, [int(datetime.now(timezone.utc).timestamp()) + 60])
+        daily = self.db.connection.execute(
+            "SELECT * FROM franc_event_schedules WHERE chat_id=-100 AND service_day=?", (day,)
+        ).fetchall()
+        self.assertEqual(len(daily), 1)
+        await self.store.activate_event(int(event["id"]), 123)
+        await self.store.submit_attempt(int(event["id"]), 3, "1")
+        again, error = await self.store.begin_manual_event(template_id)
+        self.assertIsNone(error)
+        self.assertIsNotNone(again)
+
+    async def test_manual_command_launches_event_only_for_owner_in_private(self):
+        template_id = await self.make_template("luck")
+        router = create_franc_event_router(self.db)
+        handler = next(
+            item.callback for item in router.message.handlers
+            if item.callback.__name__ == "event_manual_command"
+        )
+        bot = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(message_id=501)))
+        state = SimpleNamespace(clear=AsyncMock())
+        message = SimpleNamespace(
+            text=f"/event {template_id}", chat=SimpleNamespace(type="private"),
+            from_user=User(id=99, is_bot=False, first_name="Чужой"), answer=AsyncMock(),
+        )
+        await handler(message, bot, state)
+        bot.send_message.assert_not_awaited()
+        message.from_user = User(id=CUSTOM_COMMAND_OWNER_ID, is_bot=False, first_name="Владелец")
+        await handler(message, bot, state)
+        bot.send_message.assert_awaited_once()
+        self.assertIn("запущено", message.answer.await_args.args[0])
+        active = self.db.connection.execute(
+            "SELECT * FROM franc_events WHERE status='active'"
+        ).fetchone()
+        self.assertEqual(active["message_id"], 501)
+        await handler(message, bot, state)
+        bot.send_message.assert_awaited_once()
+        self.assertIn("уже идёт", message.answer.await_args.args[0])
+
     async def test_button_handler_updates_existing_message(self):
         event = await self.make_active_event("luck")
         router = create_franc_event_router(self.db)

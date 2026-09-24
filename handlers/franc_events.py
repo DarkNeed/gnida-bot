@@ -216,6 +216,7 @@ def create_franc_event_router(database: Database) -> Router:
         rows += [
             [InlineKeyboardButton(text="✅ Фразы успеха", callback_data=f"evm:items:{template_id}:success"),
              InlineKeyboardButton(text="❌ Фразы неудачи", callback_data=f"evm:items:{template_id}:failure")],
+            [InlineKeyboardButton(text="🚀 Запустить сейчас", callback_data=f"evm:launch_confirm:{template_id}")],
             [InlineKeyboardButton(text="⏯ Включить / выключить", callback_data=f"evm:toggle:{template_id}")],
             [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"evm:delete:{template_id}"),
              InlineKeyboardButton(text="← Список", callback_data="evm:list")],
@@ -253,6 +254,39 @@ def create_franc_event_router(database: Database) -> Router:
         except TelegramBadRequest as error:
             if "message is not modified" not in str(error).casefold():
                 await callback.message.answer(view[0], reply_markup=view[1], parse_mode="HTML")
+
+    async def send_event(bot: Bot, event) -> bool:
+        body, markup = public_event_view(event)
+        try:
+            sent = await bot.send_message(
+                int(event["chat_id"]), body, parse_mode="HTML", reply_markup=markup
+            )
+        except TelegramAPIError as error:
+            await store.fail_event(int(event["id"]))
+            logging.getLogger(__name__).warning("Could not send franc event %s: %s", event["id"], error)
+            return False
+        await store.activate_event(int(event["id"]), sent.message_id)
+        return True
+
+    async def launch_manual_event(bot: Bot, template_id: int) -> str:
+        event, error = await store.begin_manual_event(template_id)
+        if event is None:
+            return error or "Не удалось запустить событие."
+        if not await send_event(bot, event):
+            return "Не удалось отправить событие в чат. Проверь, что бот там есть и может писать."
+        return f"🚀 Событие №{template_id} запущено. На ответ есть 10 минут."
+
+    @router.message(F.text.regexp(r"^/(?:event|событие)(?:@\w+)?(?:\s+\d+)?\s*$"))
+    async def event_manual_command(message: Message, bot: Bot, state: FSMContext) -> None:
+        if message.chat.type != "private" or not message.from_user or message.from_user.id != CUSTOM_COMMAND_OWNER_ID:
+            return
+        await state.clear()
+        parts = (message.text or "").split()
+        if len(parts) == 1:
+            body, markup = await template_list_view()
+            await message.answer(body + "\nДля ручного запуска: /event ID", reply_markup=markup, parse_mode="HTML")
+            return
+        await message.answer(await launch_manual_event(bot, int(parts[1])))
 
     @router.message(F.text.regexp(r"^/(?:события|events)(?:@\w+)?\s*$"))
     async def events_menu(message: Message) -> None:
@@ -335,6 +369,23 @@ def create_franc_event_router(database: Database) -> Router:
                 template_id = int(parts[2])
                 enabled, error = await store.toggle_template(template_id)
                 notice = error or ("Событие включено." if enabled else "Событие выключено.")
+                view = await detail_view(template_id)
+            elif action == "launch_confirm":
+                template_id = int(parts[2])
+                row = await store.get_template(template_id)
+                if row is None:
+                    raise ValueError
+                view = (
+                    f"Запустить событие №{template_id} сейчас в чате "
+                    f"{html.escape(str(row['chat_title'] or row['chat_id']))}?",
+                    keyboard([
+                        [InlineKeyboardButton(text="🚀 Да, запустить", callback_data=f"evm:launch:{template_id}")],
+                        [InlineKeyboardButton(text="← Отмена", callback_data=f"evm:detail:{template_id}")],
+                    ]),
+                )
+            elif action == "launch":
+                template_id = int(parts[2])
+                notice = await launch_manual_event(bot, template_id)
                 view = await detail_view(template_id)
             elif action == "delete":
                 template_id = int(parts[2])
@@ -494,16 +545,7 @@ def create_franc_event_router(database: Database) -> Router:
                     event = await store.begin_scheduled_event(int(scheduled["id"]))
                     if event is None:
                         continue
-                    text, markup = public_event_view(event)
-                    try:
-                        sent = await bot.send_message(
-                            int(event["chat_id"]), text, parse_mode="HTML", reply_markup=markup
-                        )
-                    except TelegramAPIError as error:
-                        await store.fail_event(int(event["id"]))
-                        logging.getLogger(__name__).warning("Could not send franc event %s: %s", event["id"], error)
-                    else:
-                        await store.activate_event(int(event["id"]), sent.message_id)
+                    await send_event(bot, event)
                 for event in await store.active_events_to_expire(utc_timestamp()):
                     if await store.expire_event(int(event["id"])):
                         try:
