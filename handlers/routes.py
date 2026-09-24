@@ -1185,6 +1185,9 @@ def create_router(
             buttons.append(
                 [InlineKeyboardButton(text="⚙️ Кастомные команды", callback_data="sm:custom")]
             )
+            buttons.append(
+                [InlineKeyboardButton(text="🎲 Конструктор событий", callback_data="evm:list")]
+            )
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     def captcha_keyboard(captcha_id: int, correct_emoji: str) -> InlineKeyboardMarkup:
@@ -3222,6 +3225,8 @@ def create_router(
                 "💰 <b>Франки:</b> зарабатывай на предприятиях, подрабатывай, "
                 "выкупайся из рабства и трать валюту на доступные кастомные команды. "
                 "Их список — в разделе «Франки».\n"
+                "🎲 <b>События:</b> иногда в чате можно выиграть франки, выбрав "
+                "кнопку или ответив на сообщение бота.\n"
                 "😄 <b>Рофлы:</b> попробуй «пися», «попа» или «кто гнида».\n\n"
                 "Открой меню, чтобы посмотреть всё подробнее.",
                 parse_mode="HTML",

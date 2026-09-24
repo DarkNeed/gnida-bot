@@ -276,6 +276,65 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_random_message_schedules_pending
                 ON random_message_schedules(chat_id, service_day, status, scheduled_at);
 
+            CREATE TABLE IF NOT EXISTS franc_event_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('choice', 'text', 'luck')),
+                prompt TEXT NOT NULL DEFAULT 'Новое событие',
+                luck_button TEXT NOT NULL DEFAULT '🎰 Испытать удачу',
+                options_json TEXT NOT NULL DEFAULT '[]',
+                answers_json TEXT NOT NULL DEFAULT '[]',
+                correct_index INTEGER NOT NULL DEFAULT 0,
+                success_chance INTEGER NOT NULL DEFAULT 50,
+                success_reward INTEGER NOT NULL DEFAULT 15,
+                failure_reward INTEGER NOT NULL DEFAULT 0,
+                success_messages_json TEXT NOT NULL DEFAULT '["Удача на твоей стороне!"]',
+                failure_messages_json TEXT NOT NULL DEFAULT '["В этот раз не получилось."]',
+                enabled INTEGER NOT NULL DEFAULT 0,
+                last_used_at INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS franc_event_schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                service_day TEXT NOT NULL,
+                slot INTEGER NOT NULL,
+                scheduled_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                UNIQUE(chat_id, service_day, slot)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_franc_event_schedules_pending
+                ON franc_event_schedules(status, scheduled_at);
+
+            CREATE TABLE IF NOT EXISTS franc_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                schedule_id INTEGER NOT NULL UNIQUE,
+                template_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER,
+                snapshot_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'sending',
+                starts_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                winner_id INTEGER,
+                outcome TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_franc_events_active
+                ON franc_events(chat_id, status, expires_at);
+
+            CREATE TABLE IF NOT EXISTS franc_event_attempts (
+                event_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                outcome TEXT NOT NULL,
+                reward INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY(event_id, user_id)
+            );
+
             CREATE TABLE IF NOT EXISTS counters (
                 chat_id INTEGER NOT NULL,
                 counter_key TEXT NOT NULL,

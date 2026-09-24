@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher
 from dotenv import load_dotenv
 
 from database import Database
+from handlers.franc_events import create_franc_event_router
 from handlers.routes import create_router
 
 
@@ -28,6 +29,7 @@ async def main() -> None:
     database = Database(getenv("DATABASE_PATH", "data/gnida_bot.sqlite3"))
     await database.connect()
     dispatcher = Dispatcher()
+    dispatcher.include_router(create_franc_event_router(database))
     dispatcher.include_router(
         create_router(
             database,
