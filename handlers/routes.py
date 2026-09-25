@@ -29,6 +29,7 @@ from aiogram.types import (
     ChatMemberAdministrator,
     ChatMemberOwner,
     ChatPermissions,
+    CopyTextButton,
     FSInputFile,
     InlineQuery,
     InlineQueryResultArticle,
@@ -49,6 +50,7 @@ from custom_commands import (
     MAX_RESPONSE_LENGTH,
     MAX_RESPONSES_PER_OUTCOME,
     MAX_TRIGGER_LENGTH,
+    MAX_TRIGGER_VARIANTS,
     command_responses,
     normalize_custom_trigger,
     parse_response_lines,
@@ -2685,12 +2687,27 @@ def create_router(
             InlineKeyboardMarkup(inline_keyboard=buttons),
         )
 
+    def custom_placeholder_hint() -> str:
+        return (
+            "Метки: <code>{actor}</code> — автор, "
+            "<code>{target}</code> — цель из ответа (иначе случайный участник), "
+            "<code>{random}</code> — другой случайный из последних 50."
+        )
+
+    def custom_placeholder_buttons() -> list[list[InlineKeyboardButton]]:
+        return [[
+            InlineKeyboardButton(text="📋 Автор", copy_text=CopyTextButton(text="{actor}")),
+            InlineKeyboardButton(text="📋 Цель", copy_text=CopyTextButton(text="{target}")),
+            InlineKeyboardButton(text="📋 Случайный", copy_text=CopyTextButton(text="{random}")),
+        ]]
+
     async def custom_command_detail(command_id: int) -> tuple[str, InlineKeyboardMarkup] | None:
         row = await database.get_custom_command_by_id(command_id)
         if row is None:
             return None
         successes = command_responses(row, "success_responses")
         failures = command_responses(row, "failure_responses")
+        aliases = await database.list_custom_command_aliases(command_id)
         exclusive = (
             f"{html.escape('@' + str(row['exclusive_username']))} "
             f"(ID {row['exclusive_user_id']})"
@@ -2703,16 +2720,20 @@ def create_router(
             f"Чат: {html.escape(str(row['chat_title'] or row['chat_id']))}\n"
             f"Цена: <b>{row['cost']} ₣</b> · Успех: <b>{row['success_chance']}%</b>\n"
             f"Доступ: {exclusive}\n"
+            f"Фраз запуска: {1 + len(aliases)}\n"
             f"Ответов: успех {len(successes)}, неудача {len(failures)}\n\n"
-            "Нажми на настройку, которую хочешь изменить."
+            "Нажми на настройку, которую хочешь изменить.\n"
+            + custom_placeholder_hint()
         )
         buttons = [
             [InlineKeyboardButton(text="💰 Цена", callback_data=f"cc:edit:{command_id}:cost"),
              InlineKeyboardButton(text="🎲 Шанс", callback_data=f"cc:edit:{command_id}:chance")],
             [InlineKeyboardButton(text="👤 Доступ", callback_data=f"cc:edit:{command_id}:exclusive"),
              InlineKeyboardButton(text="✏️ Фраза", callback_data=f"cc:edit:{command_id}:trigger")],
+            [InlineKeyboardButton(text=f"🔀 Варианты запуска ({len(aliases)})", callback_data=f"cc:aliases:{command_id}:0")],
             [InlineKeyboardButton(text=f"✅ Успехи ({len(successes)})", callback_data=f"cc:out:{command_id}:s:0"),
              InlineKeyboardButton(text=f"❌ Неудачи ({len(failures)})", callback_data=f"cc:out:{command_id}:f:0")],
+            *custom_placeholder_buttons(),
             [InlineKeyboardButton(text="🗑 Удалить команду", callback_data=f"cc:delete:{command_id}")],
             [InlineKeyboardButton(text="← Все команды", callback_data="cc:list:0")],
         ]
@@ -2726,13 +2747,13 @@ def create_router(
             return None
         field = "success_responses" if outcome == "s" else "failure_responses"
         responses = command_responses(row, field)
-        page_size = 5
+        page_size = 3
         page_count = max(1, (len(responses) + page_size - 1) // page_size)
         page = max(0, min(page, page_count - 1))
         title = "✅ Успехи" if outcome == "s" else "❌ Неудачи"
         buttons = [
             [InlineKeyboardButton(
-                text=f"{index + 1}. {responses[index]}"[:60],
+                text=str(index + 1),
                 callback_data=f"cc:resp:{command_id}:{outcome}:{index}",
             )]
             for index in range(page * page_size, min((page + 1) * page_size, len(responses)))
@@ -2745,13 +2766,17 @@ def create_router(
         if navigation:
             buttons.append(navigation)
         buttons.append([InlineKeyboardButton(text="➕ Добавить вариант", callback_data=f"cc:add:{command_id}:{outcome}")])
+        buttons.extend(custom_placeholder_buttons())
         buttons.append([InlineKeyboardButton(text="← Команда", callback_data=f"cc:detail:{command_id}")])
-        body = (
+        lines = [
             f"<b>{title}</b> · {html.escape(str(row['trigger']))}\n"
             f"Вариантов: {len(responses)} · стр. {page + 1}/{page_count}\n"
-            "Нажми на вариант для изменения или удаления."
-        )
-        return body, InlineKeyboardMarkup(inline_keyboard=buttons)
+            "Нажми номер для изменения или удаления."
+        ]
+        for index in range(page * page_size, min((page + 1) * page_size, len(responses))):
+            lines.append(f"<b>№{index + 1}</b>\n{html.escape(responses[index])}")
+        lines.append(custom_placeholder_hint())
+        return "\n\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
 
     async def custom_command_response_detail(
         command_id: int, outcome: str, index: int
@@ -2770,7 +2795,59 @@ def create_router(
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="✏️ Изменить", callback_data=f"cc:editresp:{command_id}:{outcome}:{index}"),
                  InlineKeyboardButton(text="🗑 Удалить", callback_data=f"cc:delresp:{command_id}:{outcome}:{index}")],
-                [InlineKeyboardButton(text="← К вариантам", callback_data=f"cc:out:{command_id}:{outcome}:{index // 5}")],
+                *custom_placeholder_buttons(),
+                [InlineKeyboardButton(text="← К вариантам", callback_data=f"cc:out:{command_id}:{outcome}:{index // 3}")],
+            ]),
+        )
+
+    async def custom_command_aliases(
+        command_id: int, page: int = 0
+    ) -> tuple[str, InlineKeyboardMarkup] | None:
+        row = await database.get_custom_command_by_id(command_id)
+        if row is None:
+            return None
+        aliases = await database.list_custom_command_aliases(command_id)
+        page_size = 8
+        page_count = max(1, (len(aliases) + page_size - 1) // page_size)
+        page = max(0, min(page, page_count - 1))
+        lines = [
+            f"<b>🔀 Варианты запуска</b> · {html.escape(str(row['trigger']))}",
+            f"Основная фраза: <code>{html.escape(str(row['trigger']))}</code>",
+            f"Дополнительных: {len(aliases)}/{MAX_TRIGGER_VARIANTS} · стр. {page + 1}/{page_count}",
+        ]
+        buttons = []
+        for index in range(page * page_size, min((page + 1) * page_size, len(aliases))):
+            lines.append(f"<b>№{index + 1}</b> · <code>{html.escape(str(aliases[index]['trigger']))}</code>")
+            buttons.append([InlineKeyboardButton(
+                text=str(index + 1),
+                callback_data=f"cc:alias:{command_id}:{aliases[index]['id']}",
+            )])
+        navigation = []
+        if page > 0:
+            navigation.append(InlineKeyboardButton(text="←", callback_data=f"cc:aliases:{command_id}:{page - 1}"))
+        if page + 1 < page_count:
+            navigation.append(InlineKeyboardButton(text="→", callback_data=f"cc:aliases:{command_id}:{page + 1}"))
+        if navigation:
+            buttons.append(navigation)
+        buttons.append([InlineKeyboardButton(text="➕ Добавить фразу", callback_data=f"cc:addalias:{command_id}")])
+        buttons.append([InlineKeyboardButton(text="← Команда", callback_data=f"cc:detail:{command_id}")])
+        return "\n\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    async def custom_command_alias_detail(
+        command_id: int, alias_id: int
+    ) -> tuple[str, InlineKeyboardMarkup] | None:
+        aliases = await database.list_custom_command_aliases(command_id)
+        selected = next((row for row in aliases if int(row["id"]) == alias_id), None)
+        if selected is None:
+            return None
+        index = aliases.index(selected)
+        return (
+            f"<b>Фраза запуска №{index + 1}</b>\n\n"
+            f"<code>{html.escape(str(selected['trigger']))}</code>",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✏️ Изменить", callback_data=f"cc:editalias:{command_id}:{alias_id}"),
+                 InlineKeyboardButton(text="🗑 Удалить", callback_data=f"cc:delalias:{command_id}:{alias_id}")],
+                [InlineKeyboardButton(text="← К вариантам", callback_data=f"cc:aliases:{command_id}:{index // 8}")],
             ]),
         )
 
@@ -2820,6 +2897,11 @@ def create_router(
             await message.answer(
                 f"Фраза должна быть короче {MAX_TRIGGER_LENGTH + 1} символов и не начинаться с /."
             )
+            return
+        data = await state.get_data()
+        existing = await database.get_custom_command(int(data["chat_id"]), trigger_key)
+        if existing and str(existing["trigger_key"]) != trigger_key:
+            await message.answer("Эта фраза уже используется как вариант другой команды.")
             return
         await state.update_data(trigger=value.strip(), trigger_key=trigger_key)
         await state.set_state(CustomCommandForm.cost)
@@ -2884,10 +2966,9 @@ def create_router(
         await state.set_state(CustomCommandForm.successes)
         await message.answer(
             "Шаг 5/6. Пришли варианты УСПЕХА — каждый с новой строки (до 20).\n\n"
-            "Метки: <code>{actor}</code> — автор команды, <code>{target}</code> — пользователь из ответа "
-            "или случайный из последних 50, <code>{random}</code> — отдельный случайный участник. "
-            "Также работают (тег1), (тег2), (тег) и (рандомный тег).",
+            + custom_placeholder_hint() + "\nТакже работают (тег1), (тег2), (тег) и (рандомный тег).",
             parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=custom_placeholder_buttons()),
         )
 
     @router.message(CustomCommandForm.successes)
@@ -2903,7 +2984,10 @@ def create_router(
         await state.set_state(CustomCommandForm.failures)
         await message.answer(
             "Шаг 6/6. Пришли варианты НЕУДАЧИ — каждый с новой строки. "
-            "Если шанс успеха 100%, можно написать «нет»."
+            "Если шанс успеха 100%, можно написать «нет».\n"
+            + custom_placeholder_hint(),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=custom_placeholder_buttons()),
         )
 
     @router.message(CustomCommandForm.failures)
@@ -2919,17 +3003,21 @@ def create_router(
         if int(data["success_chance"]) < 100 and not responses:
             await message.answer("При шансе ниже 100% нужен хотя бы один вариант неудачи.")
             return
-        await database.save_custom_command(
-            int(data["chat_id"]),
-            str(data["trigger"]),
-            str(data["trigger_key"]),
-            int(data["cost"]),
-            int(data["success_chance"]),
-            list(data["success_responses"]),
-            responses,
-            data.get("exclusive_user_id"),
-            CUSTOM_COMMAND_OWNER_ID,
-        )
+        try:
+            await database.save_custom_command(
+                int(data["chat_id"]),
+                str(data["trigger"]),
+                str(data["trigger_key"]),
+                int(data["cost"]),
+                int(data["success_chance"]),
+                list(data["success_responses"]),
+                responses,
+                data.get("exclusive_user_id"),
+                CUSTOM_COMMAND_OWNER_ID,
+            )
+        except ValueError:
+            await message.answer("Фраза запуска уже занята другой командой. Отмени создание и выбери другую.")
+            return
         await state.clear()
         command_row = await database.get_custom_command(int(data["chat_id"]), str(data["trigger_key"]))
         await message.answer(
@@ -2976,10 +3064,13 @@ def create_router(
             "<b>Конструктор команд</b>\n"
             "/команды — меню всех команд в личке\n"
             "/команда создать — создать команду\n"
-            "В меню можно менять цену, шанс, доступ, фразу и ответы по одному.\n"
+            "В меню можно менять цену, шанс, доступ, добавлять фразы запуска "
+            "и ответы по одному.\n"
             "/отмена — выйти из мастера создания\n\n"
-            "Вызов — точная фраза без учёта регистра и конечных !?.",
+            "Вызов — любая заданная фраза запуска без учёта регистра и конечных !?.\n"
+            + custom_placeholder_hint(),
             parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=custom_placeholder_buttons()),
         )
 
     @router.message(CustomCommandEdit.value)
@@ -3004,6 +3095,14 @@ def create_router(
             result = await database.modify_custom_command_response(
                 command_id, str(data["outcome"]), str(data["action"]),
                 index=data.get("index"), text=value,
+            )
+        elif field == "alias":
+            if "\n" in value:
+                await message.answer("Пришли одну фразу запуска одним сообщением.")
+                return
+            result = await database.modify_custom_command_alias(
+                command_id, str(data["action"]),
+                alias_id=data.get("alias_id"), trigger=value,
             )
         elif field == "cost":
             try:
@@ -3067,6 +3166,19 @@ def create_router(
                     ]),
                 )
                 return
+        elif field == "alias":
+            view = await custom_command_aliases(command_id)
+            if data["action"] == "add":
+                await message.answer(
+                    "✅ Фраза добавлена. Пришли следующую отдельно или нажми «Готово».",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(
+                            text="✅ Готово · к вариантам запуска",
+                            callback_data=f"cc:aliases:{command_id}:0",
+                        )],
+                    ]),
+                )
+                return
         else:
             view = await custom_command_detail(command_id)
         await state.clear()
@@ -3088,7 +3200,7 @@ def create_router(
             return
         parts = callback.data.split(":")
         action = parts[1] if len(parts) > 1 else ""
-        if action not in {"new", "add", "edit", "editresp"}:
+        if action not in {"new", "add", "edit", "editresp", "addalias", "editalias"}:
             await state.clear()
         view: tuple[str, InlineKeyboardMarkup] | None = None
         notice: str | None = None
@@ -3118,10 +3230,40 @@ def create_router(
                 )
             elif action == "detail":
                 view = await custom_command_detail(int(parts[2]))
+            elif action == "aliases":
+                view = await custom_command_aliases(int(parts[2]), int(parts[3]))
+            elif action == "alias":
+                view = await custom_command_alias_detail(int(parts[2]), int(parts[3]))
             elif action == "out" and parts[3] in {"s", "f"}:
                 view = await custom_command_outcomes(int(parts[2]), parts[3], int(parts[4]))
             elif action == "resp" and parts[3] in {"s", "f"}:
                 view = await custom_command_response_detail(int(parts[2]), parts[3], int(parts[4]))
+            elif action in {"addalias", "editalias"}:
+                command_id = int(parts[2])
+                row = await database.get_custom_command_by_id(command_id)
+                if row is None:
+                    notice = "Команда уже удалена."
+                else:
+                    alias_id = int(parts[3]) if action == "editalias" else None
+                    aliases = await database.list_custom_command_aliases(command_id)
+                    if alias_id is not None and not any(int(alias["id"]) == alias_id for alias in aliases):
+                        raise ValueError
+                    if action == "addalias" and len(aliases) >= MAX_TRIGGER_VARIANTS:
+                        await callback.answer("Уже есть 20 фраз запуска.", show_alert=True)
+                        return
+                    await state.clear()
+                    await state.set_state(CustomCommandEdit.value)
+                    await state.update_data(
+                        command_id=command_id, field="alias",
+                        action="edit" if alias_id is not None else "add",
+                        alias_id=alias_id,
+                    )
+                    await callback.message.answer(
+                        "Пришли одну дополнительную фразу запуска (до 80 символов). "
+                        "Её можно будет отправлять вместо основной.\nДля отмены: /отмена"
+                    )
+                    await callback.answer()
+                    return
             elif action in {"add", "edit", "editresp"}:
                 command_id = int(parts[2])
                 row = await database.get_custom_command_by_id(command_id)
@@ -3154,11 +3296,11 @@ def create_router(
                             return
                         prompt = (
                             "Пришли новый вариант одним сообщением (до 1000 символов).\n"
-                            "Метки: {actor}, {target}, {random}."
+                            + custom_placeholder_hint()
                             if action == "editresp" else
                             "Пришли вариант одним сообщением (до 1000 символов). "
                             "Затем можно присылать следующие по одному.\n"
-                            "Метки: {actor}, {target}, {random}."
+                            + custom_placeholder_hint()
                         )
                     await state.clear()
                     await state.set_state(CustomCommandEdit.value)
@@ -3169,7 +3311,14 @@ def create_router(
                             command_id=command_id, field="response", outcome=outcome,
                             action="edit" if action == "editresp" else "add", index=index,
                         )
-                    await callback.message.answer(prompt + "\nДля отмены: /отмена")
+                    await callback.message.answer(
+                        prompt + "\nДля отмены: /отмена",
+                        parse_mode="HTML" if action != "edit" else None,
+                        reply_markup=(
+                            InlineKeyboardMarkup(inline_keyboard=custom_placeholder_buttons())
+                            if action != "edit" else None
+                        ),
+                    )
                     await callback.answer()
                     return
             elif action == "delresp" and parts[3] in {"s", "f"}:
@@ -3183,6 +3332,13 @@ def create_router(
                     "last_required": "Последний обязательный вариант удалять нельзя.",
                 }.get(result, "Вариант уже недоступен.")
                 view = await custom_command_outcomes(command_id, parts[3])
+            elif action == "delalias":
+                command_id, alias_id = int(parts[2]), int(parts[3])
+                result = await database.modify_custom_command_alias(
+                    command_id, "delete", alias_id=alias_id
+                )
+                notice = "Фраза удалена." if result == "updated" else "Фраза уже недоступна."
+                view = await custom_command_aliases(command_id)
             elif action == "delete":
                 command_id = int(parts[2])
                 row = await database.get_custom_command_by_id(command_id)
@@ -6123,6 +6279,7 @@ def create_router(
             target = {
                 "user_id": replied_user.id,
                 "display_name": display_name(replied_user),
+                "username": replied_user.username,
             }
         elif "target" in placeholders:
             target = await choose_present_user()
@@ -6153,14 +6310,23 @@ def create_router(
             )
             return
 
-        actor_mention = mention(sender.id, display_name(sender))
+        actor_mention = mention(
+            sender.id, f"@{sender.username}" if sender.username else display_name(sender)
+        )
         target_mention = (
-            mention(int(target["user_id"]), str(target["display_name"]))
+            mention(
+                int(target["user_id"]),
+                f"@{target['username']}" if target["username"] else str(target["display_name"]),
+            )
             if target is not None
             else None
         )
         random_mention = (
-            mention(int(random_target["user_id"]), str(random_target["display_name"]))
+            mention(
+                int(random_target["user_id"]),
+                f"@{random_target['username']}"
+                if random_target["username"] else str(random_target["display_name"]),
+            )
             if random_target is not None
             else None
         )

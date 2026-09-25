@@ -20,6 +20,7 @@ from custom_commands import (
     MAX_RESPONSE_LENGTH,
     MAX_RESPONSES_PER_OUTCOME,
     MAX_TRIGGER_LENGTH,
+    MAX_TRIGGER_VARIANTS,
     normalize_custom_trigger,
 )
 
@@ -395,6 +396,20 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_custom_commands_chat
                 ON custom_commands(chat_id, enabled, trigger_key);
+
+            CREATE TABLE IF NOT EXISTS custom_command_aliases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command_id INTEGER NOT NULL REFERENCES custom_commands(id) ON DELETE CASCADE,
+                chat_id INTEGER NOT NULL,
+                trigger TEXT NOT NULL,
+                trigger_key TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(chat_id, trigger_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_custom_command_aliases_command
+                ON custom_command_aliases(command_id);
 
             CREATE TABLE IF NOT EXISTS businesses (
                 chat_id INTEGER NOT NULL,
@@ -2249,6 +2264,11 @@ class Database:
             raise ValueError("A trigger and success response are required")
         now = utc_timestamp()
         async with self._lock:
+            if self.connection.execute(
+                "SELECT 1 FROM custom_command_aliases WHERE chat_id=? AND trigger_key=?",
+                (chat_id, trigger_key),
+            ).fetchone():
+                raise ValueError("A command variant already uses this phrase")
             self.connection.execute(
                 """INSERT INTO custom_commands(
                        chat_id, trigger, trigger_key, cost, success_chance,
@@ -2291,10 +2311,87 @@ class Database:
     ) -> sqlite3.Row | None:
         async with self._lock:
             return self.connection.execute(
-                """SELECT * FROM custom_commands
-                   WHERE chat_id=? AND trigger_key=? AND enabled=1""",
-                (chat_id, trigger_key),
+                """SELECT cmd.* FROM custom_commands cmd
+                   LEFT JOIN custom_command_aliases alias
+                     ON alias.command_id=cmd.id AND alias.trigger_key=?
+                   WHERE cmd.chat_id=? AND cmd.enabled=1
+                     AND (cmd.trigger_key=? OR alias.id IS NOT NULL)""",
+                (trigger_key, chat_id, trigger_key),
             ).fetchone()
+
+    async def list_custom_command_aliases(self, command_id: int) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT * FROM custom_command_aliases
+                   WHERE command_id=? ORDER BY id""",
+                (command_id,),
+            ).fetchall()
+
+    async def modify_custom_command_alias(
+        self, command_id: int, action: str,
+        *, alias_id: int | None = None, trigger: str | None = None,
+    ) -> str:
+        if action not in {"add", "edit", "delete"}:
+            raise ValueError("Unknown command variant change")
+        if action != "delete":
+            trigger = (trigger or "").strip()
+            trigger_key = normalize_custom_trigger(trigger)
+            if not trigger_key or len(trigger) > MAX_TRIGGER_LENGTH or trigger.startswith("/"):
+                return "invalid"
+        async with self._lock:
+            command = self.connection.execute(
+                "SELECT chat_id, trigger_key FROM custom_commands WHERE id=? AND enabled=1",
+                (command_id,),
+            ).fetchone()
+            if command is None:
+                return "not_found"
+            chat_id = int(command["chat_id"])
+            if action == "add":
+                count = self.connection.execute(
+                    "SELECT COUNT(*) FROM custom_command_aliases WHERE command_id=?",
+                    (command_id,),
+                ).fetchone()[0]
+                if count >= MAX_TRIGGER_VARIANTS:
+                    return "limit"
+            else:
+                existing = self.connection.execute(
+                    "SELECT id FROM custom_command_aliases WHERE id=? AND command_id=?",
+                    (alias_id, command_id),
+                ).fetchone()
+                if existing is None:
+                    return "not_found"
+            if action == "delete":
+                self.connection.execute(
+                    "DELETE FROM custom_command_aliases WHERE id=?", (alias_id,)
+                )
+            else:
+                if self.connection.execute(
+                    "SELECT 1 FROM custom_commands WHERE chat_id=? AND trigger_key=?",
+                    (chat_id, trigger_key),
+                ).fetchone():
+                    return "exists"
+                collision = self.connection.execute(
+                    "SELECT id FROM custom_command_aliases WHERE chat_id=? AND trigger_key=?",
+                    (chat_id, trigger_key),
+                ).fetchone()
+                if collision and int(collision["id"]) != alias_id:
+                    return "exists"
+                now = utc_timestamp()
+                if action == "add":
+                    self.connection.execute(
+                        """INSERT INTO custom_command_aliases(
+                               command_id, chat_id, trigger, trigger_key, created_at, updated_at
+                           ) VALUES (?, ?, ?, ?, ?, ?)""",
+                        (command_id, chat_id, trigger, trigger_key, now, now),
+                    )
+                else:
+                    self.connection.execute(
+                        """UPDATE custom_command_aliases
+                           SET trigger=?, trigger_key=?, updated_at=? WHERE id=?""",
+                        (trigger, trigger_key, now, alias_id),
+                    )
+            self.connection.commit()
+            return "updated"
 
     async def list_custom_commands(self, chat_id: int) -> list[sqlite3.Row]:
         async with self._lock:
@@ -2375,6 +2472,11 @@ class Database:
                 key = normalize_custom_trigger(trigger)
                 if not key or len(trigger) > MAX_TRIGGER_LENGTH or trigger.startswith("/"):
                     return "invalid"
+                if self.connection.execute(
+                    "SELECT 1 FROM custom_command_aliases WHERE chat_id=? AND trigger_key=?",
+                    (int(row["chat_id"]), key),
+                ).fetchone():
+                    return "exists"
                 try:
                     self.connection.execute(
                         """UPDATE custom_commands

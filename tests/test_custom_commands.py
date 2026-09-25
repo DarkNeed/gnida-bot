@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock
 from aiogram.types import User
 
 from custom_commands import (
+    CUSTOM_COMMAND_OWNER_ID,
+    MAX_TRIGGER_VARIANTS,
     command_responses,
     normalize_custom_trigger,
     parse_response_lines,
@@ -169,6 +171,79 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
             (await self.database.get_custom_command_by_id(first_id))["trigger"], "Первая"
         )
 
+    async def test_trigger_variants_are_persistent_unique_and_resolve_same_command(self):
+        first_id = await self.database.save_custom_command(
+            1, "Первая", "первая", 5, 100, ["Успех"], [], None, CUSTOM_COMMAND_OWNER_ID,
+        )
+        second_id = await self.database.save_custom_command(
+            1, "Вторая", "вторая", 0, 100, ["Два"], [], None, CUSTOM_COMMAND_OWNER_ID,
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_alias(
+                first_id, "add", trigger="Запустить первую"
+            ), "updated",
+        )
+        aliases = await self.database.list_custom_command_aliases(first_id)
+        alias_id = int(aliases[0]["id"])
+        self.assertEqual(
+            (await self.database.get_custom_command(1, "запустить первую"))["id"], first_id
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_alias(
+                first_id, "add", trigger="ЗАПУСТИТЬ ПЕРВУЮ!!!"
+            ), "exists",
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_alias(first_id, "add", trigger="Вторая"),
+            "exists",
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_alias(second_id, "add", trigger="Запустить первую"),
+            "exists",
+        )
+        self.assertEqual(
+            await self.database.update_custom_command_setting(second_id, "trigger", "Запустить первую"),
+            "exists",
+        )
+        with self.assertRaises(ValueError):
+            await self.database.save_custom_command(
+                1, "Запустить первую", "запустить первую", 0, 100,
+                ["Третий"], [], None, CUSTOM_COMMAND_OWNER_ID,
+            )
+        await self.database.close()
+        await self.database.connect()
+        self.assertEqual(
+            (await self.database.get_custom_command(1, "запустить первую"))["id"], first_id
+        )
+        self.assertEqual(
+            await self.database.modify_custom_command_alias(
+                first_id, "edit", alias_id=alias_id, trigger="Другая фраза"
+            ), "updated",
+        )
+        self.assertIsNone(await self.database.get_custom_command(1, "запустить первую"))
+        self.assertEqual(
+            (await self.database.get_custom_command(1, "другая фраза"))["id"], first_id
+        )
+        self.assertTrue(await self.database.delete_custom_command_by_id(first_id))
+        self.assertIsNone(await self.database.get_custom_command(1, "другая фраза"))
+        self.assertEqual(await self.database.list_custom_command_aliases(first_id), [])
+
+    async def test_trigger_variant_limit(self):
+        command_id = await self.database.save_custom_command(
+            1, "Основная", "основная", 0, 100, ["Успех"], [], None, CUSTOM_COMMAND_OWNER_ID,
+        )
+        for index in range(MAX_TRIGGER_VARIANTS):
+            self.assertEqual(
+                await self.database.modify_custom_command_alias(
+                    command_id, "add", trigger=f"Вариант {index}"
+                ), "updated",
+            )
+        self.assertEqual(
+            await self.database.modify_custom_command_alias(
+                command_id, "add", trigger="Лишний вариант"
+            ), "limit",
+        )
+
     async def test_private_menu_adds_one_response_to_existing_command(self):
         command_id = await self.database.save_custom_command(
             1, "Подарить ламборгини", "подарить ламборгини", 0, 100,
@@ -234,6 +309,100 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         callback.data = f"cc:out:{command_id}:s:0"
         await callback_handler(callback, state, SimpleNamespace())
         self.assertEqual(state.clear.await_count, 2)
+
+    async def test_response_menu_shows_full_text_and_copy_buttons(self):
+        long_response = "Очень длинный ответ " * 35
+        command_id = await self.database.save_custom_command(
+            1, "Тест", "тест", 0, 100,
+            [long_response, "{actor} ответил {target} и {random}"], [], None,
+            CUSTOM_COMMAND_OWNER_ID,
+        )
+        router = create_router(self.database)
+        handler = next(
+            item.callback for item in router.callback_query.handlers
+            if item.callback.__name__ == "custom_command_menu_callback"
+        )
+        menu_message = SimpleNamespace(
+            chat=SimpleNamespace(type="private"), edit_text=AsyncMock(), answer=AsyncMock(),
+        )
+        callback = SimpleNamespace(
+            from_user=User(id=CUSTOM_COMMAND_OWNER_ID, is_bot=False, first_name="Владелец"),
+            message=menu_message, data=f"cc:out:{command_id}:s:0", answer=AsyncMock(),
+        )
+        state = SimpleNamespace(clear=AsyncMock())
+        await handler(callback, state, SimpleNamespace())
+        body = menu_message.edit_text.await_args.args[0]
+        self.assertIn(long_response, body)
+        self.assertIn("{actor}", body)
+        buttons = [button for row in menu_message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard for button in row]
+        self.assertEqual(buttons[0].text, "1")
+        self.assertEqual(buttons[1].text, "2")
+        self.assertEqual(
+            [button.copy_text.text for button in buttons if button.copy_text],
+            ["{actor}", "{target}", "{random}"],
+        )
+
+    async def test_private_menu_adds_launch_variants_one_message_at_a_time(self):
+        command_id = await self.database.save_custom_command(
+            1, "Основная", "основная", 0, 100, ["Успех"], [], None,
+            CUSTOM_COMMAND_OWNER_ID,
+        )
+        router = create_router(self.database)
+        callback_handler = next(
+            item.callback for item in router.callback_query.handlers
+            if item.callback.__name__ == "custom_command_menu_callback"
+        )
+        edit_handler = next(
+            item.callback for item in router.message.handlers
+            if item.callback.__name__ == "custom_command_edit_value"
+        )
+        state = SimpleNamespace(
+            clear=AsyncMock(), set_state=AsyncMock(), update_data=AsyncMock(),
+            get_data=AsyncMock(return_value={
+                "command_id": command_id, "field": "alias", "action": "add", "alias_id": None,
+            }),
+        )
+        menu_message = SimpleNamespace(
+            chat=SimpleNamespace(type="private"), edit_text=AsyncMock(), answer=AsyncMock(),
+        )
+        callback = SimpleNamespace(
+            from_user=User(id=CUSTOM_COMMAND_OWNER_ID, is_bot=False, first_name="Владелец"),
+            message=menu_message, data=f"cc:addalias:{command_id}", answer=AsyncMock(),
+        )
+        await callback_handler(callback, state, SimpleNamespace())
+        state.update_data.assert_awaited_once_with(
+            command_id=command_id, field="alias", action="add", alias_id=None,
+        )
+        response_message = SimpleNamespace(
+            text="Второй запуск", caption=None,
+            chat=SimpleNamespace(type="private"), from_user=callback.from_user,
+            answer=AsyncMock(),
+        )
+        await edit_handler(response_message, state)
+        response_message.text = "Третий запуск"
+        await edit_handler(response_message, state)
+        aliases = await self.database.list_custom_command_aliases(command_id)
+        self.assertEqual([row["trigger"] for row in aliases], ["Второй запуск", "Третий запуск"])
+        callback.data = f"cc:aliases:{command_id}:0"
+        await callback_handler(callback, state, SimpleNamespace())
+        body = menu_message.edit_text.await_args.args[0]
+        self.assertIn("Второй запуск", body)
+        self.assertIn("Третий запуск", body)
+        buttons = menu_message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard
+        self.assertEqual(buttons[0][0].text, "1")
+        self.assertEqual(buttons[1][0].text, "2")
+        callback.data = f"cc:delalias:{command_id}:{aliases[0]['id']}"
+        await callback_handler(callback, state, SimpleNamespace())
+        self.assertEqual(
+            [row["trigger"] for row in await self.database.list_custom_command_aliases(command_id)],
+            ["Третий запуск"],
+        )
+        callback.data = f"cc:editalias:{command_id}:{aliases[1]['id']}"
+        await callback_handler(callback, state, SimpleNamespace())
+        self.assertEqual(state.update_data.await_args.kwargs, {
+            "command_id": command_id, "field": "alias", "action": "edit",
+            "alias_id": int(aliases[1]["id"]),
+        })
 
     async def test_franc_menu_lists_only_available_commands_in_current_chats(self):
         await self.database.save_custom_command(
@@ -344,6 +513,38 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('tg://user?id=20', response)
         self.assertIn('tg://user?id=30', response)
         self.assertEqual(await self.database.franc_balance(1, 10), 40)
+
+    async def test_route_runs_same_command_from_additional_phrase_with_tags(self):
+        await self.database.upsert_user(1, 20, "target", "Цель")
+        command_id = await self.database.save_custom_command(
+            1, "Подарок", "подарок", 0, 100,
+            ["{actor} передал {target} и {random}"], [], None, CUSTOM_COMMAND_OWNER_ID,
+        )
+        await self.database.modify_custom_command_alias(
+            command_id, "add", trigger="Подарить подарок"
+        )
+        await self.database.upsert_user(1, 30, "random", "Случайный")
+        router = create_router(self.database)
+        handler = next(
+            item.callback for item in router.message.handlers
+            if item.callback.__name__ == "run_custom_command"
+        )
+        message = SimpleNamespace(
+            text="ПОДАРИТЬ ПОДАРОК!!!", caption=None,
+            chat=SimpleNamespace(id=1, type="supergroup"),
+            from_user=User(id=10, is_bot=False, first_name="Автор", username="actor"),
+            reply_to_message=SimpleNamespace(
+                from_user=User(id=20, is_bot=False, first_name="Цель", username="target"),
+                sender_chat=None,
+            ),
+            answer=AsyncMock(),
+        )
+        bot = SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status="member")))
+        await handler(message, bot)
+        body = message.answer.await_args.args[0]
+        self.assertIn('tg://user?id=10">@actor', body)
+        self.assertIn('tg://user?id=20">@target', body)
+        self.assertIn('tg://user?id=30">@random', body)
 
     async def test_random_target_skips_user_who_left_and_does_not_charge_without_target(self):
         await self.database.upsert_user(1, 30, "left", "Ушёл")
