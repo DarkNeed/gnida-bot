@@ -1946,7 +1946,8 @@ def create_router(
             )
         buttons.append([InlineKeyboardButton(text="← Меню", callback_data="sm:home")])
         return (
-            "<b>🧰 Подработка</b>\nВыбери предприятие. Одна смена доступна раз в час.",
+            "<b>🧰 Подработка</b>\nВыбери предприятие. Одна смена доступна раз в час. "
+            "Выплата: 20–100 ₣; для рабов действует прежний лимит заработка.",
             InlineKeyboardMarkup(inline_keyboard=buttons),
         )
 

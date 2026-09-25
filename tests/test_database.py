@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from database import (
     BUSINESS_STATS_TZ,
@@ -459,12 +460,14 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.database.franc_balance(1, 10), 24)
         self.assertEqual(await self.database.franc_balance(1, 20), 1)
 
-        result, worker_pay, owner_pay, _ = await self.database.work_at_business(1, 10, 30)
-        self.assertEqual((result, worker_pay, owner_pay), ("worked", 2, 1))
+        with patch("database.random.randint", return_value=60) as draw:
+            result, worker_pay, owner_pay, _ = await self.database.work_at_business(1, 10, 30)
+        draw.assert_called_once_with(20, 100)
+        self.assertEqual((result, worker_pay, owner_pay), ("worked", 60, 1))
         result, *_ = await self.database.work_at_business(1, 10, 30)
         self.assertEqual(result, "cooldown")
         self.assertEqual(await self.database.transfer_francs(1, 10, 30, 3), "transferred")
-        self.assertEqual(await self.database.franc_balance(1, 30), 5)
+        self.assertEqual(await self.database.franc_balance(1, 30), 63)
 
         self.database.connection.execute(
             "UPDATE users SET last_seen=? WHERE chat_id=1 AND user_id=20",
@@ -494,6 +497,23 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.database.connection.commit()
         self.assertEqual(await self.database.buyout_slave(1, 10, 20), "released")
         self.assertIsNone(await self.database.get_owner(1, 20))
+
+    async def test_part_time_shift_pays_random_20_to_100_francs(self):
+        await self.database.force_enslave(1, 20, 10)
+        self.assertEqual(await self.database.create_business(1, 10, "field"), "created")
+        with patch("database.random.randint", return_value=20):
+            result, worker_pay, owner_pay, _ = await self.database.work_at_business(1, 10, 30)
+        self.assertEqual((result, worker_pay, owner_pay), ("worked", 20, 1))
+        self.assertEqual(await self.database.franc_balance(1, 30), 20)
+
+        self.database.connection.execute(
+            "UPDATE business_shift_cooldowns SET cooldown_until=0 WHERE chat_id=1 AND worker_id=30"
+        )
+        self.database.connection.commit()
+        with patch("database.random.randint", return_value=100):
+            result, worker_pay, owner_pay, _ = await self.database.work_at_business(1, 10, 30)
+        self.assertEqual((result, worker_pay, owner_pay), ("worked", 100, 1))
+        self.assertEqual(await self.database.franc_balance(1, 30), 120)
 
     async def test_business_income_periods_and_chat_listing(self):
         await self.database.force_enslave(1, 20, 10)

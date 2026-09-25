@@ -36,6 +36,8 @@ BUSINESS_STATS_TZ = timezone(timedelta(hours=3), name="MSK")
 BUSINESS_ACTIVE_SECONDS = 24 * 60 * 60
 SLAVE_EARNINGS_WEEK_SECONDS = 7 * 24 * 60 * 60
 SLAVE_WEEKLY_EARNINGS_LIMIT = 100
+BUSINESS_SHIFT_WORKER_MIN_FRANCS = 20
+BUSINESS_SHIFT_WORKER_MAX_FRANCS = 100
 BUYOUT_COST_FRANCS = 100
 
 
@@ -56,7 +58,6 @@ BUSINESS_CONFIG = {
         "leader_wage": 1,
         "leader_wage_period_hours": 12,
         "shift_owner": 1,
-        "shift_worker": 2,
     },
     "field": {
         "producer_role": "collector",
@@ -68,7 +69,6 @@ BUSINESS_CONFIG = {
         "leader_wage": 1,
         "leader_wage_period_hours": 12,
         "shift_owner": 1,
-        "shift_worker": 1,
     },
 }
 
@@ -2779,7 +2779,6 @@ class Database:
             if cooldown and int(cooldown["cooldown_until"]) > now:
                 return "cooldown", None, None, int(cooldown["cooldown_until"])
             config = BUSINESS_CONFIG[str(business["business_type"])]
-            worker_pay = int(config["shift_worker"])
             owner_pay = int(config["shift_owner"])
             worker = self.connection.execute(
                 """SELECT o.slave_id, u.last_seen
@@ -2798,6 +2797,10 @@ class Database:
             if inactive_slave:
                 worker_pay = 0
             else:
+                worker_pay = random.randint(
+                    BUSINESS_SHIFT_WORKER_MIN_FRANCS,
+                    BUSINESS_SHIFT_WORKER_MAX_FRANCS,
+                )
                 worker_pay = self._credit_labor_income_locked(
                     chat_id, worker_id, worker_pay, now
                 )
