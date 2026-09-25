@@ -108,6 +108,14 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_users_recent
                 ON users(chat_id, last_seen DESC);
 
+            CREATE TABLE IF NOT EXISTS admin_message_blocks (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                blocked_by INTEGER NOT NULL,
+                blocked_at INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, user_id)
+            );
+
             CREATE TABLE IF NOT EXISTS chats (
                 chat_id INTEGER PRIMARY KEY,
                 title TEXT NOT NULL,
@@ -586,6 +594,41 @@ class Database:
                 "SELECT * FROM users WHERE chat_id=? AND username=? COLLATE NOCASE",
                 (chat_id, username),
             ).fetchone()
+
+    async def users_by_username(self, chat_id: int, username: str) -> list[sqlite3.Row]:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM users WHERE chat_id=? AND username=? COLLATE NOCASE",
+                (chat_id, username.removeprefix("@")),
+            ).fetchall()
+
+    async def block_admin_messages(
+        self, chat_id: int, user_id: int, blocked_by: int
+    ) -> bool:
+        async with self._lock:
+            cursor = self.connection.execute(
+                """INSERT OR IGNORE INTO admin_message_blocks
+                   (chat_id, user_id, blocked_by, blocked_at) VALUES (?, ?, ?, ?)""",
+                (chat_id, user_id, blocked_by, utc_timestamp()),
+            )
+            self.connection.commit()
+            return cursor.rowcount > 0
+
+    async def unblock_admin_messages(self, chat_id: int, user_id: int) -> bool:
+        async with self._lock:
+            cursor = self.connection.execute(
+                "DELETE FROM admin_message_blocks WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            )
+            self.connection.commit()
+            return cursor.rowcount > 0
+
+    async def admin_messages_blocked(self, chat_id: int, user_id: int) -> bool:
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT 1 FROM admin_message_blocks WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            ).fetchone() is not None
 
     async def resolve_users_globally(self, token: str) -> list[sqlite3.Row]:
         token = token.strip()
