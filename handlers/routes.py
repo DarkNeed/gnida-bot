@@ -546,6 +546,10 @@ def is_cheto_neveru(user: User | None) -> bool:
     return bool(user and user.username and user.username.casefold() == "cheto_neveru")
 
 
+def can_manage_basement_ranks(user: User | None) -> bool:
+    return bool(user and (is_cheto_neveru(user) or user.id == CUSTOM_COMMAND_OWNER_ID))
+
+
 def basement_rank_name(rank: int) -> str:
     return BASEMENT_RANKS[rank][1]
 
@@ -4282,7 +4286,7 @@ def create_router(
         if not target:
             return
         target_id, target_name, _ = target
-        if not is_cheto_neveru(message.from_user):
+        if not can_manage_basement_ranks(message.from_user):
             business = await database.get_business(message.chat.id, message.from_user.id)
             if not business:
                 return
