@@ -555,9 +555,11 @@ def basement_rank_name(rank: int) -> str:
 
 
 async def basement_actor_rank(
-    database: Database, chat_id: int, user: User | None
+    database: Database, chat_id: int, user: User | None, *, allow_bot_owner: bool = False
 ) -> int | None:
-    if is_cheto_neveru(user):
+    if is_cheto_neveru(user) or (
+        allow_bot_owner and user and user.id == CUSTOM_COMMAND_OWNER_ID
+    ):
         return BASEMENT_RULER_RANK
     if not user:
         return None
@@ -4466,7 +4468,7 @@ def create_router(
     @router.message(text_or_caption_regexp(SLAP_RE))
     async def basement_slap(message: Message, bot: Bot) -> None:
         sender_rank = await basement_actor_rank(
-            database, message.chat.id, message.from_user
+            database, message.chat.id, message.from_user, allow_bot_owner=True
         )
         if message.chat.type not in GROUP_TYPES or sender_rank is None or sender_rank < 2:
             return
@@ -4533,7 +4535,7 @@ def create_router(
     @router.message(text_or_caption_regexp(TRAIN_RE))
     async def basement_train(message: Message) -> None:
         sender_rank = await basement_actor_rank(
-            database, message.chat.id, message.from_user
+            database, message.chat.id, message.from_user, allow_bot_owner=True
         )
         replied = message.reply_to_message
         target = replied.from_user if replied and not replied.sender_chat else None
@@ -6241,7 +6243,6 @@ def create_router(
             return
         exclusive_user_id = command["exclusive_user_id"]
         if exclusive_user_id is not None and sender.id != int(exclusive_user_id):
-            await message.answer("Эта команда создана эксклюзивно для другого пользователя.")
             return
 
         success = random.randint(1, 100) <= int(command["success_chance"])
