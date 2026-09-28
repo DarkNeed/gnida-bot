@@ -40,6 +40,7 @@ SLAVE_WEEKLY_EARNINGS_LIMIT = 100
 BUSINESS_SHIFT_WORKER_MIN_FRANCS = 20
 BUSINESS_SHIFT_WORKER_MAX_FRANCS = 100
 BUYOUT_COST_FRANCS = 100
+MAX_FRANC_BALANCE = 2**63 - 1
 
 
 class InsufficientFrancStake(ValueError):
@@ -2576,6 +2577,22 @@ class Database:
             )
             self.connection.commit()
             return cursor.rowcount == 1
+
+    async def credit_francs(self, chat_id: int, user_id: int, amount: int) -> int | None:
+        """Credit francs atomically; return the new balance or None on overflow."""
+        if not 0 < amount <= MAX_FRANC_BALANCE:
+            raise ValueError("Franc credit must be a positive SQLite integer")
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            ).fetchone()
+            balance = int(row["balance"]) if row else 0
+            if balance > MAX_FRANC_BALANCE - amount:
+                return None
+            self._add_francs_locked(chat_id, user_id, amount)
+            self.connection.commit()
+            return balance + amount
 
     async def franc_balance(self, chat_id: int, user_id: int) -> int:
         async with self._lock:

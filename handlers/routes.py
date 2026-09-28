@@ -60,6 +60,7 @@ from custom_commands import (
 from database import (
     BUYOUT_COST_FRANCS,
     CHALLENGE_DEADLINE_SECONDS,
+    MAX_FRANC_BALANCE,
     NEWCOMER_CHALLENGE_DEADLINE_SECONDS,
     PIROJOK_USERNAME,
     Database,
@@ -224,9 +225,11 @@ CUSTOM_COMMAND_HELP_RE = re.compile(
 CUSTOM_COMMAND_LIST_RE = re.compile(r"^/команды(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
 FRANC_TRANSFER_RE = re.compile(r"^[!/]перевести(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 ADMIN_FRANC_DEBIT_RE = re.compile(r"^[!/]списать(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+ADMIN_FRANC_CREDIT_RE = re.compile(r"^[!/]начислить(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 ADMIN_SLAVE_TRANSFER_RE = re.compile(
     r"^[!/]админпередать(?:@\w+)?(?:\s|$)", re.IGNORECASE
 )
+ADMIN_SLAVE_RELEASE_RE = re.compile(r"^[!/]освободить(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 BUSINESS_SUMMARY_RE = re.compile(
     r"^[!/]?(?:бордель|хлопковое\s+поле)(?:@\w+)?[!?.\s]*$",
     re.IGNORECASE,
@@ -3564,7 +3567,7 @@ def create_router(
             amount = int(amount_token)
         else:
             amount = 0
-        if amount <= 0 or amount > 2**63 - 1:
+        if amount <= 0 or amount > MAX_FRANC_BALANCE:
             await message.answer("Укажи положительную сумму франков или «всё».")
             return
         if not await database.spend_francs(message.chat.id, target_id, amount):
@@ -3572,6 +3575,43 @@ def create_router(
             return
         await message.answer(
             f"🧾 У {mention(target_id, target_name)} списано <b>{amount} ₣</b>.",
+            parse_mode="HTML",
+        )
+
+    @router.message(text_or_caption_regexp(ADMIN_FRANC_CREDIT_RE))
+    async def admin_credit_francs(message: Message) -> None:
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not message.from_user
+            or message.from_user.id != CUSTOM_COMMAND_OWNER_ID
+        ):
+            return
+        text = message_content(message)
+        match = ADMIN_FRANC_CREDIT_RE.match(text)
+        if not match:
+            return
+        target = await resolve_target(message, database, text[match.end() :].strip())
+        if not target:
+            return
+        target_id, target_name, remainder = target
+        amount_token, extra = split_first(remainder)
+        if extra or not amount_token or not amount_token.isdecimal():
+            await message.answer(
+                "Формат: /начислить @участник 50 (или ответом /начислить 50)."
+            )
+            return
+        amount = int(amount_token)
+        if not 0 < amount <= MAX_FRANC_BALANCE:
+            await message.answer("Укажи положительную сумму франков.")
+            return
+        await database.settle_businesses_for_user(target_id)
+        balance = await database.credit_francs(message.chat.id, target_id, amount)
+        if balance is None:
+            await message.answer("Сумма слишком большая для баланса этого участника.")
+            return
+        await message.answer(
+            f"💰 {mention(target_id, target_name)} начислено <b>{amount} ₣</b>. "
+            f"Баланс: <b>{balance} ₣</b>.",
             parse_mode="HTML",
         )
 
@@ -5079,6 +5119,43 @@ def create_router(
             )
         else:
             await message.answer("Этот участник не ваш раб.")
+
+    @router.message(text_or_caption_regexp(ADMIN_SLAVE_RELEASE_RE))
+    async def admin_release_slave(message: Message) -> None:
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not message.from_user
+            or message.from_user.id != CUSTOM_COMMAND_OWNER_ID
+        ):
+            return
+        text = message_content(message)
+        match = ADMIN_SLAVE_RELEASE_RE.match(text)
+        if not match:
+            return
+        target = await resolve_target(message, database, text[match.end() :].strip())
+        if not target:
+            return
+        target_id, target_name, remainder = target
+        if remainder:
+            await message.answer("Формат: /освободить @раб (или ответом /освободить).")
+            return
+        if await target_is_immune(database, message.chat.id, target_id):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        ownership = await database.get_owner(message.chat.id, target_id)
+        if ownership is None:
+            await message.answer("Этот участник не находится в рабстве.")
+            return
+        released = await database.release_slave(
+            message.chat.id, int(ownership["owner_id"]), target_id
+        )
+        if not released:
+            await message.answer("Владелец изменился. Повтори команду.")
+            return
+        await message.answer(
+            f"🕊 {mention(target_id, target_name)} освобождён по решению модерации.",
+            parse_mode="HTML",
+        )
 
     @router.message(text_or_caption_regexp(ADMIN_SLAVE_TRANSFER_RE))
     async def admin_transfer_slave(message: Message, bot: Bot) -> None:
