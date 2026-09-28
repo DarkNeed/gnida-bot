@@ -223,6 +223,10 @@ CUSTOM_COMMAND_HELP_RE = re.compile(
 )
 CUSTOM_COMMAND_LIST_RE = re.compile(r"^/команды(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
 FRANC_TRANSFER_RE = re.compile(r"^[!/]перевести(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+ADMIN_FRANC_DEBIT_RE = re.compile(r"^[!/]списать(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+ADMIN_SLAVE_TRANSFER_RE = re.compile(
+    r"^[!/]админпередать(?:@\w+)?(?:\s|$)", re.IGNORECASE
+)
 BUSINESS_SUMMARY_RE = re.compile(
     r"^[!/]?(?:бордель|хлопковое\s+поле)(?:@\w+)?[!?.\s]*$",
     re.IGNORECASE,
@@ -3529,6 +3533,48 @@ def create_router(
         else:
             await message.answer("Сумма должна быть больше нуля.")
 
+    @router.message(text_or_caption_regexp(ADMIN_FRANC_DEBIT_RE))
+    async def admin_debit_francs(message: Message) -> None:
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not message.from_user
+            or message.from_user.id != CUSTOM_COMMAND_OWNER_ID
+        ):
+            return
+        text = message_content(message)
+        match = ADMIN_FRANC_DEBIT_RE.match(text)
+        if not match:
+            return
+        target = await resolve_target(message, database, text[match.end() :].strip())
+        if not target:
+            return
+        target_id, target_name, remainder = target
+        amount_token, extra = split_first(remainder)
+        if extra or not amount_token:
+            await message.answer("Формат: /списать @участник 50 (или ответом /списать 50).")
+            return
+        await database.settle_businesses_for_user(target_id)
+        balance = await database.franc_balance(message.chat.id, target_id)
+        if amount_token.casefold() in {"всё", "все"}:
+            if balance == 0:
+                await message.answer("У этого участника нет франков для списания.")
+                return
+            amount = balance
+        elif amount_token.isdecimal():
+            amount = int(amount_token)
+        else:
+            amount = 0
+        if amount <= 0 or amount > 2**63 - 1:
+            await message.answer("Укажи положительную сумму франков или «всё».")
+            return
+        if not await database.spend_francs(message.chat.id, target_id, amount):
+            await message.answer(f"Недостаточно франков: у участника {balance} ₣.")
+            return
+        await message.answer(
+            f"🧾 У {mention(target_id, target_name)} списано <b>{amount} ₣</b>.",
+            parse_mode="HTML",
+        )
+
     @router.message(text_or_caption_regexp(ENTERPRISE_STATS_RE))
     async def enterprise_stats(message: Message) -> None:
         if message.chat.type in GROUP_TYPES:
@@ -5033,6 +5079,89 @@ def create_router(
             )
         else:
             await message.answer("Этот участник не ваш раб.")
+
+    @router.message(text_or_caption_regexp(ADMIN_SLAVE_TRANSFER_RE))
+    async def admin_transfer_slave(message: Message, bot: Bot) -> None:
+        if (
+            message.chat.type not in GROUP_TYPES
+            or not message.from_user
+            or message.from_user.id != CUSTOM_COMMAND_OWNER_ID
+        ):
+            return
+        text = message_content(message)
+        match = ADMIN_SLAVE_TRANSFER_RE.match(text)
+        if not match:
+            return
+        payload = text[match.end() :].strip()
+        slave_token, remainder = split_first(payload)
+        recipient_token, extra = split_first(remainder)
+        replied = message.reply_to_message
+        if replied and replied.sender_chat:
+            await message.answer("Нельзя определить автора сообщения от имени канала.")
+            return
+        if replied and replied.from_user:
+            if not slave_token or remainder:
+                await message.answer(
+                    "Формат ответом на раба: /админпередать @новый_владелец"
+                )
+                return
+            slave_user = replied.from_user
+            slave_id, slave_name = slave_user.id, display_name(slave_user)
+            recipient_token = slave_token
+            await database.upsert_user(
+                message.chat.id, slave_id, slave_user.username, slave_name, touch=False
+            )
+        else:
+            if not slave_token or not recipient_token or extra:
+                await message.answer("Формат: /админпередать @раб @новый_владелец")
+                return
+            slave = await resolve_user_token(message, database, slave_token)
+            if not slave:
+                return
+            slave_id, slave_name = slave
+        if recipient_token.casefold() in {"мне", "себе"}:
+            recipient_id = message.from_user.id
+            recipient_name = display_name(message.from_user)
+        else:
+            recipient = await resolve_user_token(message, database, recipient_token)
+            if not recipient:
+                return
+            recipient_id, recipient_name = recipient
+        if slave_id == bot.id:
+            await message.answer("Нельзя передать бота.")
+            return
+        if recipient_id == bot.id:
+            await message.answer("Бот не может быть владельцем раба.")
+            return
+        if await target_is_immune(database, message.chat.id, slave_id):
+            await message.answer(IMMUNITY_TEXT)
+            return
+        if not await is_chat_participant(bot, message.chat.id, recipient_id):
+            await message.answer("Новый владелец должен состоять в чате.")
+            return
+        ownership = await database.get_owner(message.chat.id, slave_id)
+        if ownership is None:
+            await message.answer("Этот участник не находится в рабстве.")
+            return
+        result = await database.transfer_slave(
+            message.chat.id, int(ownership["owner_id"]), slave_id, recipient_id
+        )
+        if result == "not_owned":
+            await message.answer("Владелец изменился. Повтори команду.")
+        elif result == "same_owner":
+            await message.answer("Этот раб уже принадлежит выбранному владельцу.")
+        elif result == "recipient_is_slave":
+            await message.answer("Раб не может владеть другими рабами.")
+        elif result == "self":
+            await message.answer("Нельзя передать человека самому себе.")
+        elif result == "pirojok_cannot_own":
+            await message.answer("Этот кувшин слишком тесен для вас двоих")
+        else:
+            await message.answer(
+                f"🤝 {mention(slave_id, slave_name)} передан владельцу "
+                f"{mention(recipient_id, recipient_name)} по решению модерации.",
+                parse_mode="HTML",
+            )
 
     @router.message(text_or_caption_regexp(TRANSFER_RE))
     async def transfer_slave(message: Message) -> None:
