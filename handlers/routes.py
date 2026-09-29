@@ -6,6 +6,8 @@ import json
 import logging
 import random
 import re
+import sqlite3
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -240,6 +242,7 @@ ENTERPRISE_STATS_RE = re.compile(
 SLAVES_RE = re.compile(r"^/рабы(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 SLAVE_MENU_RE = re.compile(r"^/(?:меню|menu)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 START_RE = re.compile(r"^/start(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+BACKUP_RE = re.compile(r"^/(?:backup|бэкап)(?:@\w+)?[!?.\s]*$", re.IGNORECASE)
 TOP_DONORS_RE = re.compile(
     r"^/(?:топ(?:@\w+)?\s+донатеров|top_donors(?:@\w+)?)[!?.\s]*$",
     re.IGNORECASE,
@@ -3404,6 +3407,27 @@ def create_router(
                     [InlineKeyboardButton(text="📋 Открыть меню", callback_data="sm:home")]
                 ]),
             )
+
+    @router.message(text_or_caption_regexp(BACKUP_RE))
+    async def owner_backup(message: Message) -> None:
+        if (
+            message.chat.type != "private"
+            or not message.from_user
+            or message.from_user.id != CUSTOM_COMMAND_OWNER_ID
+        ):
+            return
+        try:
+            with tempfile.TemporaryDirectory(prefix="gnidabot-backup-") as temp_dir:
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                backup_path = Path(temp_dir) / f"gnida_bot_{timestamp}.sqlite3"
+                await database.backup_to(backup_path)
+                await message.answer_document(
+                    FSInputFile(backup_path),
+                    caption="Резервная копия базы SQLite. Храни файл приватно: в нём данные участников и франки.",
+                )
+        except (OSError, sqlite3.Error, TelegramAPIError):
+            logging.getLogger(__name__).exception("Could not create or send database backup")
+            await message.answer("Не удалось отправить резервную копию. Попробуй позже и проверь логи бота.")
 
     @router.message(text_or_caption_regexp(TOP_DONORS_RE))
     async def top_donors(message: Message) -> None:

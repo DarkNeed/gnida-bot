@@ -4,6 +4,7 @@ import asyncio
 import json
 import random
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -568,6 +569,15 @@ class Database:
         if self._connection is None:
             raise RuntimeError("Database is not connected")
         return self._connection
+
+    async def backup_to(self, destination: str | Path) -> None:
+        """Create a consistent SQLite snapshot, including committed WAL changes."""
+        async with self._lock:
+            with closing(sqlite3.connect(destination)) as snapshot:
+                self.connection.backup(snapshot)
+                result = snapshot.execute("PRAGMA integrity_check").fetchone()
+                if result is None or result[0] != "ok":
+                    raise sqlite3.DatabaseError(f"Backup integrity check failed: {result}")
 
     async def upsert_user(
         self,
