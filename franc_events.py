@@ -21,6 +21,15 @@ LIST_FIELDS = {
     "failure": "failure_messages_json",
 }
 MAX_LIST_ITEMS = 20
+MAX_LUCK_OUTCOMES = 10
+
+
+def default_choice_outcome() -> dict[str, Any]:
+    return {"reward": 0, "messages": []}
+
+
+def default_luck_outcome(index: int) -> dict[str, Any]:
+    return {"name": f"Исход {index + 1}", "weight": 1, "reward": 0, "messages": []}
 
 
 def normalized_answer(value: str) -> str:
@@ -40,6 +49,10 @@ def event_config(row: sqlite3.Row) -> dict[str, Any]:
         "failure_reward": int(row["failure_reward"]),
         "success_messages": json.loads(row["success_messages_json"]),
         "failure_messages": json.loads(row["failure_messages_json"]),
+        "choice_mode": str(row["choice_mode"]),
+        "choice_outcomes": json.loads(row["choice_outcomes_json"]),
+        "luck_mode": str(row["luck_mode"]),
+        "luck_outcomes": json.loads(row["luck_outcomes_json"]),
     }
 
 
@@ -50,7 +63,20 @@ def config_error(config: dict[str, Any]) -> str | None:
         return "Для выбора нужны хотя бы две кнопки."
     if config["kind"] == "text" and not config["answers"]:
         return "Добавь хотя бы один правильный ответ."
-    if not config["success_messages"] or not config["failure_messages"]:
+    if config["kind"] == "choice" and config.get("choice_mode") == "outcomes":
+        outcomes = config.get("choice_outcomes", [])
+        if len(outcomes) != len(config["options"]) or any(
+            not outcome.get("messages") for outcome in outcomes
+        ):
+            return "Для каждой кнопки добавь хотя бы одну фразу исхода."
+    elif config["kind"] == "luck" and config.get("luck_mode") == "outcomes":
+        outcomes = config.get("luck_outcomes", [])
+        if len(outcomes) < 2 or any(
+            not outcome.get("messages") or int(outcome.get("weight", 0)) < 1
+            for outcome in outcomes
+        ):
+            return "Добавь хотя бы два случайных исхода с фразами и весом."
+    elif not config["success_messages"] or not config["failure_messages"]:
         return "Добавь фразы для успеха и неудачи."
     return None
 
@@ -140,12 +166,13 @@ class FrancEventStore:
                 return "invalid"
         async with self.database._lock:
             row = self.connection.execute(
-                f"SELECT {column}, correct_index FROM franc_event_templates WHERE id=?",
+                f"SELECT {column}, correct_index, choice_outcomes_json FROM franc_event_templates WHERE id=?",
                 (template_id,),
             ).fetchone()
             if row is None:
                 return "missing"
             items = json.loads(row[column])
+            original_count = len(items)
             if action == "add":
                 if len(items) >= (6 if field == "options" else MAX_LIST_ITEMS):
                     return "full"
@@ -162,6 +189,15 @@ class FrancEventStore:
                 else:
                     items.pop(index)
             correct = int(row["correct_index"])
+            choice_outcomes = json.loads(row["choice_outcomes_json"])
+            if field == "options":
+                choice_outcomes = (
+                    choice_outcomes + [default_choice_outcome() for _ in range(original_count)]
+                )[:original_count]
+                if action == "add":
+                    choice_outcomes.append(default_choice_outcome())
+                elif action == "delete" and index is not None and index < len(choice_outcomes):
+                    choice_outcomes.pop(index)
             if field == "options" and action == "delete" and index is not None:
                 if index < correct:
                     correct -= 1
@@ -169,8 +205,9 @@ class FrancEventStore:
                     correct = 0
             self.connection.execute(
                 f"""UPDATE franc_event_templates
-                    SET {column}=?, correct_index=?, updated_at=? WHERE id=?""",
-                (json.dumps(items, ensure_ascii=False), correct, utc_timestamp(), template_id),
+                    SET {column}=?, correct_index=?, choice_outcomes_json=?, updated_at=? WHERE id=?""",
+                (json.dumps(items, ensure_ascii=False), correct,
+                 json.dumps(choice_outcomes, ensure_ascii=False), utc_timestamp(), template_id),
             )
             updated = self.connection.execute(
                 "SELECT * FROM franc_event_templates WHERE id=?", (template_id,)
@@ -185,10 +222,11 @@ class FrancEventStore:
     async def set_correct_option(self, template_id: int, index: int) -> bool:
         async with self.database._lock:
             row = self.connection.execute(
-                "SELECT options_json, kind FROM franc_event_templates WHERE id=?",
+                "SELECT options_json, kind, choice_mode FROM franc_event_templates WHERE id=?",
                 (template_id,),
             ).fetchone()
-            if row is None or row["kind"] != "choice" or not 0 <= index < len(json.loads(row["options_json"])):
+            if (row is None or row["kind"] != "choice" or row["choice_mode"] != "quiz"
+                    or not 0 <= index < len(json.loads(row["options_json"]))):
                 return False
             self.connection.execute(
                 """UPDATE franc_event_templates SET correct_index=?, updated_at=?
@@ -197,6 +235,116 @@ class FrancEventStore:
             )
             self.connection.commit()
             return True
+
+    async def toggle_outcome_mode(self, template_id: int) -> bool:
+        """Switch a choice/luck event without discarding its legacy settings."""
+        async with self.database._lock:
+            row = self.connection.execute(
+                "SELECT * FROM franc_event_templates WHERE id=?", (template_id,)
+            ).fetchone()
+            if row is None or row["kind"] not in {"choice", "luck"}:
+                return False
+            if row["kind"] == "choice":
+                mode = "quiz" if row["choice_mode"] == "outcomes" else "outcomes"
+                outcomes = json.loads(row["choice_outcomes_json"])
+                options = json.loads(row["options_json"])
+                outcomes = (outcomes + [default_choice_outcome() for _ in options])[:len(options)]
+                self.connection.execute(
+                    """UPDATE franc_event_templates SET choice_mode=?, choice_outcomes_json=?,
+                       updated_at=? WHERE id=?""",
+                    (mode, json.dumps(outcomes, ensure_ascii=False), utc_timestamp(), template_id),
+                )
+            else:
+                mode = "binary" if row["luck_mode"] == "outcomes" else "outcomes"
+                outcomes = json.loads(row["luck_outcomes_json"])
+                if not outcomes:
+                    outcomes = [default_luck_outcome(0), default_luck_outcome(1)]
+                self.connection.execute(
+                    """UPDATE franc_event_templates SET luck_mode=?, luck_outcomes_json=?,
+                       updated_at=? WHERE id=?""",
+                    (mode, json.dumps(outcomes, ensure_ascii=False), utc_timestamp(), template_id),
+                )
+            updated = self.connection.execute(
+                "SELECT * FROM franc_event_templates WHERE id=?", (template_id,)
+            ).fetchone()
+            if updated["enabled"] and config_error(event_config(updated)):
+                self.connection.execute(
+                    "UPDATE franc_event_templates SET enabled=0 WHERE id=?", (template_id,)
+                )
+            self.connection.commit()
+            return True
+
+    async def change_outcome(
+        self, template_id: int, kind: str, action: str, *, index: int | None = None,
+        value: str = "", message_index: int | None = None,
+    ) -> str:
+        """Edit a button-specific or weighted-random outcome and its phrases."""
+        if kind not in {"choice", "luck"}:
+            return "invalid"
+        column = "choice_outcomes_json" if kind == "choice" else "luck_outcomes_json"
+        async with self.database._lock:
+            row = self.connection.execute(
+                f"SELECT kind, {column} FROM franc_event_templates WHERE id=?", (template_id,)
+            ).fetchone()
+            if row is None or row["kind"] != kind:
+                return "missing"
+            outcomes = json.loads(row[column])
+            if action == "add" and kind == "luck":
+                if len(outcomes) >= MAX_LUCK_OUTCOMES:
+                    return "full"
+                outcomes.append(default_luck_outcome(len(outcomes)))
+            elif index is None or not 0 <= index < len(outcomes):
+                return "missing"
+            elif action == "delete" and kind == "luck":
+                outcomes.pop(index)
+            elif action in {"reward", "weight"}:
+                if not value.isdecimal():
+                    return "invalid"
+                number = int(value)
+                if not (0 <= number <= 500 if action == "reward" else
+                        kind == "luck" and 1 <= number <= 100):
+                    return "invalid"
+                outcomes[index][action] = number
+            elif action == "name" and kind == "luck":
+                value = value.strip()
+                if not 1 <= len(value) <= 50:
+                    return "invalid"
+                outcomes[index]["name"] = value
+            elif action.startswith("message_"):
+                value = value.strip()
+                messages = outcomes[index]["messages"]
+                if action == "message_add":
+                    if not 1 <= len(value) <= 500:
+                        return "invalid"
+                    if len(messages) >= MAX_LIST_ITEMS:
+                        return "full"
+                    messages.append(value)
+                elif action in {"message_edit", "message_delete"}:
+                    if message_index is None or not 0 <= message_index < len(messages):
+                        return "missing"
+                    if action == "message_edit":
+                        if not 1 <= len(value) <= 500:
+                            return "invalid"
+                        messages[message_index] = value
+                    else:
+                        messages.pop(message_index)
+                else:
+                    return "invalid"
+            else:
+                return "invalid"
+            self.connection.execute(
+                f"UPDATE franc_event_templates SET {column}=?, updated_at=? WHERE id=?",
+                (json.dumps(outcomes, ensure_ascii=False), utc_timestamp(), template_id),
+            )
+            updated = self.connection.execute(
+                "SELECT * FROM franc_event_templates WHERE id=?", (template_id,)
+            ).fetchone()
+            if updated["enabled"] and config_error(event_config(updated)):
+                self.connection.execute(
+                    "UPDATE franc_event_templates SET enabled=0 WHERE id=?", (template_id,)
+                )
+            self.connection.commit()
+            return "updated"
 
     async def toggle_template(self, template_id: int) -> tuple[bool, str | None]:
         async with self.database._lock:
@@ -437,6 +585,7 @@ class FrancEventStore:
                 return {"status": "already"}
             config = json.loads(row["snapshot_json"])
             kind = config["kind"]
+            custom_outcome: dict[str, Any] | None = None
             if kind == "choice":
                 try:
                     selected = int(action)
@@ -444,7 +593,14 @@ class FrancEventStore:
                     return {"status": "invalid"}
                 if not 0 <= selected < len(config["options"]):
                     return {"status": "invalid"}
-                won = selected == config["correct_index"]
+                if config.get("choice_mode") == "outcomes":
+                    outcomes = config.get("choice_outcomes", [])
+                    if selected >= len(outcomes) or not outcomes[selected].get("messages"):
+                        return {"status": "invalid"}
+                    custom_outcome = outcomes[selected]
+                    outcome = f"choice:{selected}"
+                else:
+                    won = selected == config["correct_index"]
             elif kind == "text":
                 won = normalized_answer(action) in {
                     normalized_answer(answer) for answer in config["answers"]
@@ -452,10 +608,28 @@ class FrancEventStore:
             else:
                 if action != "go":
                     return {"status": "invalid"}
-                won = random.randint(1, 100) <= int(config["success_chance"])
-            outcome = "success" if won else "failure"
-            reward = int(config[f"{outcome}_reward"])
-            phrase = random.choice(config[f"{outcome}_messages"])
+                if config.get("luck_mode") == "outcomes":
+                    outcomes = config.get("luck_outcomes", [])
+                    if not outcomes or any(not item.get("messages") for item in outcomes):
+                        return {"status": "invalid"}
+                    selected = random.choices(
+                        range(len(outcomes)),
+                        weights=[int(item["weight"]) for item in outcomes],
+                        k=1,
+                    )[0]
+                    custom_outcome = outcomes[selected]
+                    outcome = f"luck:{selected}"
+                else:
+                    won = random.randint(1, 100) <= int(config["success_chance"])
+            if custom_outcome is None:
+                outcome = "success" if won else "failure"
+                reward = int(config[f"{outcome}_reward"])
+                phrase = random.choice(config[f"{outcome}_messages"])
+                resolved = won or kind == "luck"
+            else:
+                reward = int(custom_outcome["reward"])
+                phrase = random.choice(custom_outcome["messages"])
+                resolved = True
             now = utc_timestamp()
             self.connection.execute(
                 """INSERT INTO franc_event_attempts(event_id, user_id, outcome, reward, created_at)
@@ -464,7 +638,6 @@ class FrancEventStore:
             )
             if reward:
                 self.database._add_francs_locked(int(row["chat_id"]), user_id, reward)
-            resolved = won or kind == "luck"
             if resolved:
                 self.connection.execute(
                     """UPDATE franc_events SET status='resolved', winner_id=?, outcome=?
@@ -473,7 +646,7 @@ class FrancEventStore:
                 )
             self.connection.commit()
             return {
-                "status": outcome,
+                "status": "success" if custom_outcome is not None else outcome,
                 "reward": reward,
                 "phrase": phrase,
                 "resolved": resolved,

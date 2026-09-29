@@ -190,32 +190,60 @@ def create_franc_event_router(database: Database) -> Router:
             f"<b>🎲 Событие №{template_id}</b> · {'🟢 включено' if row['enabled'] else '⚪ выключено'}\n"
             f"Чат: {html.escape(str(row['chat_title'] or row['chat_id']))}\n"
             f"Тип: {KIND_NAMES[config['kind']]}\n"
-            f"Текст: {html.escape(config['prompt'])}\n"
-            f"💰 Успех: {config['success_reward']} ₣ · неудача: {config['failure_reward']} ₣"
+            f"Текст: {html.escape(config['prompt'])}"
         )
-        if config["kind"] == "luck":
-            body += f" · шанс успеха {config['success_chance']}%"
-        body += "\nФразы: {0} успеха / {1} неудачи. Метки: {{user}} — тег участника, " \
-                "{{amount}} — начисленные франки.".format(
-            len(config["success_messages"]), len(config["failure_messages"])
-        )
-        if config["kind"] != "luck" and config["failure_reward"]:
+        custom_choice = config["kind"] == "choice" and config["choice_mode"] == "outcomes"
+        custom_luck = config["kind"] == "luck" and config["luck_mode"] == "outcomes"
+        if custom_choice:
+            body += "\nРежим: исход для каждой кнопки; первое нажатие завершает событие."
+        elif custom_luck:
+            body += "\nРежим: несколько случайных исходов с разными весами и наградами."
+        else:
+            body += (
+                f"\n💰 Успех: {config['success_reward']} ₣ · неудача: {config['failure_reward']} ₣"
+            )
+            if config["kind"] == "luck":
+                body += f" · шанс успеха {config['success_chance']}%"
+            body += "\nФразы: {0} успеха / {1} неудачи.".format(
+                len(config["success_messages"]), len(config["failure_messages"])
+            )
+        body += "\nМетки: {user} — тег участника, {amount} — начисленные франки."
+        if not custom_choice and config["kind"] != "luck" and config["failure_reward"]:
             body += "\n⚠️ Награду за ошибку может получить каждый участник по одному разу."
         rows = [
             [InlineKeyboardButton(text="✏️ Текст события", callback_data=f"evm:field:{template_id}:prompt")],
-            [InlineKeyboardButton(text="💰 Награда за успех", callback_data=f"evm:field:{template_id}:success_reward"),
-             InlineKeyboardButton(text="💸 За неудачу", callback_data=f"evm:field:{template_id}:failure_reward")],
         ]
+        if not (custom_choice or custom_luck):
+            rows.append([
+                InlineKeyboardButton(text="💰 Награда за успех", callback_data=f"evm:field:{template_id}:success_reward"),
+                InlineKeyboardButton(text="💸 За неудачу", callback_data=f"evm:field:{template_id}:failure_reward"),
+            ])
         if config["kind"] == "choice":
+            rows.append([InlineKeyboardButton(
+                text="🎛 Режим: исходы по кнопкам" if custom_choice else "🎛 Режим: викторина",
+                callback_data=f"evm:mode:{template_id}",
+            )])
             rows.append([InlineKeyboardButton(text=f"🔘 Кнопки ({len(config['options'])})", callback_data=f"evm:items:{template_id}:options")])
+            if custom_choice:
+                rows.append([InlineKeyboardButton(text="🎭 Исходы кнопок", callback_data=f"evm:outcomes:{template_id}:choice")])
         elif config["kind"] == "text":
             rows.append([InlineKeyboardButton(text=f"💬 Верные ответы ({len(config['answers'])})", callback_data=f"evm:items:{template_id}:answers")])
         else:
-            rows.append([InlineKeyboardButton(text="🎲 Шанс успеха", callback_data=f"evm:field:{template_id}:success_chance")])
+            rows.append([InlineKeyboardButton(
+                text="🎛 Режим: несколько исходов" if custom_luck else "🎛 Режим: успех / неудача",
+                callback_data=f"evm:mode:{template_id}",
+            )])
+            if custom_luck:
+                rows.append([InlineKeyboardButton(text="🎲 Случайные исходы", callback_data=f"evm:outcomes:{template_id}:luck")])
+            else:
+                rows.append([InlineKeyboardButton(text="🎲 Шанс успеха", callback_data=f"evm:field:{template_id}:success_chance")])
             rows.append([InlineKeyboardButton(text=f"🔘 Кнопка: {config['luck_button'][:25]}", callback_data=f"evm:field:{template_id}:luck_button")])
+        if not (custom_choice or custom_luck):
+            rows.append([
+                InlineKeyboardButton(text="✅ Фразы успеха", callback_data=f"evm:items:{template_id}:success"),
+                InlineKeyboardButton(text="❌ Фразы неудачи", callback_data=f"evm:items:{template_id}:failure"),
+            ])
         rows += [
-            [InlineKeyboardButton(text="✅ Фразы успеха", callback_data=f"evm:items:{template_id}:success"),
-             InlineKeyboardButton(text="❌ Фразы неудачи", callback_data=f"evm:items:{template_id}:failure")],
             [InlineKeyboardButton(text="🚀 Запустить сейчас", callback_data=f"evm:launch_confirm:{template_id}")],
             [InlineKeyboardButton(text="⏯ Включить / выключить", callback_data=f"evm:toggle:{template_id}")],
             [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"evm:delete:{template_id}"),
@@ -223,30 +251,143 @@ def create_franc_event_router(database: Database) -> Router:
         ]
         return body, keyboard(rows)
 
-    async def items_view(template_id: int, field: str) -> tuple[str, InlineKeyboardMarkup] | None:
+    async def items_view(template_id: int, field: str, page: int = 0) -> tuple[str, InlineKeyboardMarkup] | None:
         row = await store.get_template(template_id)
         if row is None or field not in LIST_NAMES:
             return None
         config = event_config(row)
         items = config[field if field in {"options", "answers"} else f"{field}_messages"]
+        page_count = max(1, (len(items) + 3) // 4)
+        page = max(0, min(page, page_count - 1))
         rows = []
-        for index, item in enumerate(items):
-            prefix = "✅ " if field == "options" and index == config["correct_index"] else ""
+        lines = [f"<b>{LIST_NAMES[field]}</b> · событие №{template_id} · стр. {page + 1}/{page_count}"]
+        for index in range(page * 4, min((page + 1) * 4, len(items))):
+            item = items[index]
+            quiz_option = field == "options" and config["choice_mode"] == "quiz"
+            prefix = "✅ " if quiz_option and index == config["correct_index"] else ""
+            lines.append(f"{prefix}{index + 1}. {html.escape(item)}")
             rows.append([
-                InlineKeyboardButton(text=f"{prefix}{index + 1}. {item[:28]}", callback_data=f"evm:edit:{template_id}:{field}:{index}"),
+                InlineKeyboardButton(text=str(index + 1), callback_data=f"evm:edit:{template_id}:{field}:{index}"),
                 InlineKeyboardButton(text="🗑", callback_data=f"evm:del:{template_id}:{field}:{index}"),
             ])
-            if field == "options" and index != config["correct_index"]:
+            if quiz_option and index != config["correct_index"]:
                 rows.append([InlineKeyboardButton(text=f"☑️ Сделать кнопку {index + 1} правильной", callback_data=f"evm:correct:{template_id}:{index}")])
+        navigation = []
+        if page > 0:
+            navigation.append(InlineKeyboardButton(text="←", callback_data=f"evm:items:{template_id}:{field}:{page - 1}"))
+        if page + 1 < page_count:
+            navigation.append(InlineKeyboardButton(text="→", callback_data=f"evm:items:{template_id}:{field}:{page + 1}"))
+        if navigation:
+            rows.append(navigation)
         rows += [
             [InlineKeyboardButton(text="➕ Добавить вариант", callback_data=f"evm:add:{template_id}:{field}")],
             [InlineKeyboardButton(text="← Событие", callback_data=f"evm:detail:{template_id}")],
         ]
-        body = f"<b>{LIST_NAMES[field]}</b> · событие №{template_id}\n"
-        body += "Нажми на вариант, чтобы изменить. Добавление — по одному сообщению."
-        if field == "options":
+        body = "\n".join(lines) + "\nНажми номер, чтобы изменить. Добавление — по одному сообщению."
+        if field == "options" and config["choice_mode"] == "quiz":
             body += "\n✅ отмечена правильная кнопка."
+        elif field == "options":
+            body += "\nНастрой отдельный исход для каждой кнопки в карточке события."
         return body, keyboard(rows)
+
+    async def outcomes_view(template_id: int, kind: str) -> tuple[str, InlineKeyboardMarkup] | None:
+        row = await store.get_template(template_id)
+        if row is None or kind not in {"choice", "luck"} or row["kind"] != kind:
+            return None
+        config = event_config(row)
+        outcomes = config[f"{kind}_outcomes"]
+        total_weight = sum(int(item["weight"]) for item in outcomes) if kind == "luck" else 0
+        lines = [f"<b>🎭 Исходы события №{template_id}</b>"]
+        rows = []
+        for index, outcome in enumerate(outcomes):
+            name = config["options"][index] if kind == "choice" else outcome["name"]
+            extra = (
+                f" · вес {outcome['weight']} (≈{100 * int(outcome['weight']) / total_weight:.1f}%)"
+                if kind == "luck" and total_weight else ""
+            )
+            lines.append(
+                f"{index + 1}. {html.escape(name)} — {outcome['reward']} ₣{extra}; "
+                f"фраз: {len(outcome['messages'])}"
+            )
+            rows.append([InlineKeyboardButton(
+                text=str(index + 1), callback_data=f"evm:outcome:{template_id}:{kind}:{index}"
+            )])
+        if kind == "luck":
+            rows.append([InlineKeyboardButton(
+                text="➕ Добавить исход", callback_data=f"evm:oaddnew:{template_id}:luck"
+            )])
+        rows.append([InlineKeyboardButton(text="← Событие", callback_data=f"evm:detail:{template_id}")])
+        lines.append("Нажми номер, чтобы настроить награду, вес и фразы.")
+        return "\n".join(lines), keyboard(rows)
+
+    async def outcome_view(
+        template_id: int, kind: str, index: int, page: int = 0,
+    ) -> tuple[str, InlineKeyboardMarkup] | None:
+        row = await store.get_template(template_id)
+        if row is None or kind not in {"choice", "luck"} or row["kind"] != kind:
+            return None
+        config = event_config(row)
+        outcomes = config[f"{kind}_outcomes"]
+        if not 0 <= index < len(outcomes):
+            return None
+        outcome = outcomes[index]
+        name = config["options"][index] if kind == "choice" else outcome["name"]
+        messages = outcome["messages"]
+        page_count = max(1, (len(messages) + 3) // 4)
+        page = max(0, min(page, page_count - 1))
+        lines = [
+            f"<b>🎭 Исход {index + 1}: {html.escape(name)}</b>",
+            f"Награда: {outcome['reward']} ₣"
+            + (f" · вес: {outcome['weight']}" if kind == "luck" else ""),
+            f"Фразы · стр. {page + 1}/{page_count}:",
+        ]
+        rows = []
+        for message_index in range(page * 4, min((page + 1) * 4, len(messages))):
+            lines.append(f"{message_index + 1}. {html.escape(messages[message_index])}")
+            rows.append([
+                InlineKeyboardButton(
+                    text=str(message_index + 1),
+                    callback_data=f"evm:oedit:{template_id}:{kind}:{index}:{message_index}",
+                ),
+                InlineKeyboardButton(
+                    text="🗑", callback_data=f"evm:odel:{template_id}:{kind}:{index}:{message_index}"
+                ),
+            ])
+        if not messages:
+            lines.append("Пока нет фраз — добавь хотя бы одну.")
+        navigation = []
+        if page > 0:
+            navigation.append(InlineKeyboardButton(
+                text="←", callback_data=f"evm:outcome:{template_id}:{kind}:{index}:{page - 1}"
+            ))
+        if page + 1 < page_count:
+            navigation.append(InlineKeyboardButton(
+                text="→", callback_data=f"evm:outcome:{template_id}:{kind}:{index}:{page + 1}"
+            ))
+        if navigation:
+            rows.append(navigation)
+        fields = [InlineKeyboardButton(
+            text="💰 Награда", callback_data=f"evm:ofield:{template_id}:{kind}:{index}:reward"
+        )]
+        if kind == "luck":
+            fields.append(InlineKeyboardButton(
+                text="🎲 Вес", callback_data=f"evm:ofield:{template_id}:{kind}:{index}:weight"
+            ))
+            rows.append([InlineKeyboardButton(
+                text="✏️ Название", callback_data=f"evm:ofield:{template_id}:{kind}:{index}:name"
+            )])
+        rows.append(fields)
+        rows.append([InlineKeyboardButton(
+            text="➕ Добавить фразу", callback_data=f"evm:oadd:{template_id}:{kind}:{index}"
+        )])
+        if kind == "luck":
+            rows.append([InlineKeyboardButton(
+                text="🗑 Удалить исход", callback_data=f"evm:odelconfirm:{template_id}:{kind}:{index}"
+            )])
+        rows.append([InlineKeyboardButton(
+            text="← Все исходы", callback_data=f"evm:outcomes:{template_id}:{kind}"
+        )])
+        return "\n".join(lines), keyboard(rows)
 
     async def edit_or_send(callback: CallbackQuery, view: tuple[str, InlineKeyboardMarkup]) -> None:
         try:
@@ -308,7 +449,7 @@ def create_franc_event_router(database: Database) -> Router:
         view = None
         notice = None
         try:
-            if action not in {"field", "add", "edit"}:
+            if action not in {"field", "add", "edit", "ofield", "oadd", "oedit"}:
                 await state.clear()
             if action == "list":
                 view = await template_list_view(int(parts[2]) if len(parts) > 2 else 0)
@@ -331,7 +472,83 @@ def create_franc_event_router(database: Database) -> Router:
             elif action == "detail":
                 view = await detail_view(int(parts[2]))
             elif action == "items":
-                view = await items_view(int(parts[2]), parts[3])
+                view = await items_view(
+                    int(parts[2]), parts[3], int(parts[4]) if len(parts) > 4 else 0
+                )
+            elif action == "mode":
+                template_id = int(parts[2])
+                if not await store.toggle_outcome_mode(template_id):
+                    raise ValueError
+                view = await detail_view(template_id)
+                notice = "Режим изменён. Проверь исходы перед запуском."
+            elif action == "outcomes":
+                view = await outcomes_view(int(parts[2]), parts[3])
+            elif action == "outcome":
+                view = await outcome_view(
+                    int(parts[2]), parts[3], int(parts[4]),
+                    int(parts[5]) if len(parts) > 5 else 0,
+                )
+            elif action == "oaddnew":
+                template_id, kind = int(parts[2]), parts[3]
+                result = await store.change_outcome(template_id, kind, "add")
+                notice = "Исход добавлен." if result == "updated" else "Достигнут лимит исходов."
+                view = await outcomes_view(template_id, kind)
+            elif action == "odelconfirm":
+                template_id, kind, index = int(parts[2]), parts[3], int(parts[4])
+                if await outcome_view(template_id, kind, index) is None or kind != "luck":
+                    raise ValueError
+                view = (
+                    f"Удалить случайный исход №{index + 1}?",
+                    keyboard([
+                        [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"evm:odeloutcome:{template_id}:{kind}:{index}")],
+                        [InlineKeyboardButton(text="← Отмена", callback_data=f"evm:outcome:{template_id}:{kind}:{index}")],
+                    ]),
+                )
+            elif action == "odeloutcome":
+                template_id, kind, index = int(parts[2]), parts[3], int(parts[4])
+                result = await store.change_outcome(template_id, kind, "delete", index=index)
+                notice = "Исход удалён." if result == "updated" else "Исход уже недоступен."
+                view = await outcomes_view(template_id, kind)
+            elif action == "odel":
+                template_id, kind, index, message_index = (
+                    int(parts[2]), parts[3], int(parts[4]), int(parts[5])
+                )
+                result = await store.change_outcome(
+                    template_id, kind, "message_delete", index=index,
+                    message_index=message_index,
+                )
+                notice = "Фраза удалена." if result == "updated" else "Фраза уже недоступна."
+                view = await outcome_view(template_id, kind, index, message_index // 4)
+            elif action in {"ofield", "oadd", "oedit"}:
+                template_id, kind, index = int(parts[2]), parts[3], int(parts[4])
+                if await outcome_view(template_id, kind, index) is None:
+                    raise ValueError
+                operation = (
+                    parts[5] if action == "ofield" else
+                    "message_add" if action == "oadd" else "message_edit"
+                )
+                message_index = int(parts[5]) if action == "oedit" else None
+                if operation not in {"reward", "weight", "name", "message_add", "message_edit"}:
+                    raise ValueError
+                if kind == "choice" and operation in {"weight", "name"}:
+                    raise ValueError
+                await state.clear()
+                await state.set_state(EventInput.value)
+                await state.update_data(
+                    template_id=template_id, kind=kind, index=index,
+                    message_index=message_index, operation=operation, action="outcome",
+                )
+                prompts = {
+                    "reward": "Награда за этот исход: от 0 до 500 ₣.",
+                    "weight": "Вес исхода: от 1 до 100. Шанс пропорционален сумме весов.",
+                    "name": "Название исхода (до 50 символов; видно только в конструкторе).",
+                }
+                await callback.message.answer(
+                    prompts.get(operation, "Пришли одну фразу исхода (до 500 символов).")
+                    + "\nМетки: {user} и {amount}. /отмена — отменить ввод."
+                )
+                await callback.answer()
+                return
             elif action in {"field", "add", "edit"}:
                 template_id = int(parts[2])
                 if not await store.get_template(template_id):
@@ -359,12 +576,12 @@ def create_franc_event_router(database: Database) -> Router:
             elif action == "del":
                 template_id, field, index = int(parts[2]), parts[3], int(parts[4])
                 notice = await store.change_list(template_id, field, "delete", index=index)
-                view = await items_view(template_id, field)
+                view = await items_view(template_id, field, index // 4)
             elif action == "correct":
                 template_id, index = int(parts[2]), int(parts[3])
                 if not await store.set_correct_option(template_id, index):
                     raise ValueError
-                view = await items_view(template_id, "options")
+                view = await items_view(template_id, "options", index // 4)
             elif action == "toggle":
                 template_id = int(parts[2])
                 enabled, error = await store.toggle_template(template_id)
@@ -425,10 +642,25 @@ def create_franc_event_router(database: Database) -> Router:
             return
         data = await state.get_data()
         template_id = int(data["template_id"])
-        field = str(data["field"])
+        field = str(data.get("field", ""))
         action = str(data["action"])
         try:
-            if action == "field":
+            if action == "outcome":
+                kind = str(data["kind"])
+                index = int(data["index"])
+                operation = str(data["operation"])
+                result = await store.change_outcome(
+                    template_id, kind, operation, index=index, value=value,
+                    message_index=data.get("message_index"),
+                )
+                if result != "updated":
+                    await message.answer({
+                        "invalid": "Некорректное значение или длина.",
+                        "full": "Список фраз заполнен.",
+                    }.get(result, "Исход уже недоступен."))
+                    return
+                view = await outcome_view(template_id, kind, index)
+            elif action == "field":
                 result = await store.update_scalar(template_id, field, value)
                 if not result:
                     raise ValueError
@@ -444,7 +676,10 @@ def create_franc_event_router(database: Database) -> Router:
                         "duplicate": "Такой ответ уже есть.",
                     }.get(result, "Вариант уже недоступен."))
                     return
-                view = await items_view(template_id, field)
+                view = await items_view(
+                    template_id, field,
+                    int(data["index"]) // 4 if data.get("index") is not None else 0,
+                )
         except ValueError:
             await message.answer("Некорректное значение. Проверь диапазон или длину.")
             return

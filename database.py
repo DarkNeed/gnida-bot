@@ -300,6 +300,10 @@ class Database:
                 failure_reward INTEGER NOT NULL DEFAULT 0,
                 success_messages_json TEXT NOT NULL DEFAULT '["Удача на твоей стороне!"]',
                 failure_messages_json TEXT NOT NULL DEFAULT '["В этот раз не получилось."]',
+                choice_mode TEXT NOT NULL DEFAULT 'quiz',
+                choice_outcomes_json TEXT NOT NULL DEFAULT '[]',
+                luck_mode TEXT NOT NULL DEFAULT 'binary',
+                luck_outcomes_json TEXT NOT NULL DEFAULT '[]',
                 enabled INTEGER NOT NULL DEFAULT 0,
                 last_used_at INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
@@ -498,6 +502,10 @@ class Database:
             "ownership", "transfer_priority", "INTEGER NOT NULL DEFAULT 0"
         )
         self._ensure_column("captchas", "join_message_id", "INTEGER")
+        self._ensure_column("franc_event_templates", "choice_mode", "TEXT NOT NULL DEFAULT 'quiz'")
+        self._ensure_column("franc_event_templates", "choice_outcomes_json", "TEXT NOT NULL DEFAULT '[]'")
+        self._ensure_column("franc_event_templates", "luck_mode", "TEXT NOT NULL DEFAULT 'binary'")
+        self._ensure_column("franc_event_templates", "luck_outcomes_json", "TEXT NOT NULL DEFAULT '[]'")
         self._ensure_column(
             "basement_members", "rank", "INTEGER NOT NULL DEFAULT 1"
         )
