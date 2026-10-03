@@ -25,6 +25,8 @@ class FrancEventTests(unittest.IsolatedAsyncioTestCase):
         await self.db.connect()
         await self.db.upsert_chat(-100, "Карагассия")
         await self.db.upsert_user(-100, 3, "guest", "Участник")
+        await self.db.select_menu_chat(CUSTOM_COMMAND_OWNER_ID, -100)
+        self.menu_bot = SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status="member")))
         self.store = FrancEventStore(self.db)
 
     async def asyncTearDown(self):
@@ -176,7 +178,10 @@ class FrancEventTests(unittest.IsolatedAsyncioTestCase):
             item.callback for item in router.message.handlers
             if item.callback.__name__ == "event_manual_command"
         )
-        bot = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(message_id=501)))
+        bot = SimpleNamespace(
+            send_message=AsyncMock(return_value=SimpleNamespace(message_id=501)),
+            get_chat_member=AsyncMock(return_value=SimpleNamespace(status="member")),
+        )
         state = SimpleNamespace(clear=AsyncMock())
         message = SimpleNamespace(
             text=f"/event {template_id}", chat=SimpleNamespace(type="private"),
@@ -300,13 +305,13 @@ class FrancEventTests(unittest.IsolatedAsyncioTestCase):
             from_user=User(id=CUSTOM_COMMAND_OWNER_ID, is_bot=False, first_name="Владелец"),
             message=private_message, answer=AsyncMock(),
         )
-        await handler(callback, state, SimpleNamespace())
+        await handler(callback, state, self.menu_bot)
         body = private_message.edit_text.await_args.args[0]
         self.assertIn("Выбор кнопки", body)
         self.assertIn("Фразы:", body)
         private_message.edit_text.reset_mock()
         callback.from_user = User(id=99, is_bot=False, first_name="Чужой")
-        await handler(callback, state, SimpleNamespace())
+        await handler(callback, state, self.menu_bot)
         private_message.edit_text.assert_not_awaited()
 
     async def test_scheduler_sends_due_event_once(self):

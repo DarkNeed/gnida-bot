@@ -22,6 +22,8 @@ class EventOutcomeTests(unittest.IsolatedAsyncioTestCase):
         self.database = Database(Path(self.folder.name) / "events.sqlite3")
         await self.database.connect()
         await self.database.upsert_chat(-100, "Тест")
+        await self.database.select_menu_chat(CUSTOM_COMMAND_OWNER_ID, -100)
+        self.menu_bot = SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status="member")))
         self.store = FrancEventStore(self.database)
 
     async def asyncTearDown(self):
@@ -142,19 +144,19 @@ class EventOutcomeTests(unittest.IsolatedAsyncioTestCase):
             from_user=actor, message=private_message, answer=AsyncMock(),
             data=f"evm:mode:{template_id}",
         )
-        await callback_handler(callback, state, SimpleNamespace())
+        await callback_handler(callback, state, self.menu_bot)
         self.assertIn("исход для каждой кнопки", private_message.edit_text.await_args.args[0])
         callback.data = f"evm:outcome:{template_id}:choice:1"
-        await callback_handler(callback, state, SimpleNamespace())
+        await callback_handler(callback, state, self.menu_bot)
         self.assertIn("Правая дверь", private_message.edit_text.await_args.args[0])
         callback.data = f"evm:ofield:{template_id}:choice:1:reward"
-        await callback_handler(callback, state, SimpleNamespace())
+        await callback_handler(callback, state, self.menu_bot)
         self.assertIn("Награда", private_message.answer.await_args.args[0])
         input_message = SimpleNamespace(
             text="-35", chat=SimpleNamespace(type="private"), from_user=actor,
             answer=AsyncMock(),
         )
-        await input_handler(input_message, state)
+        await input_handler(input_message, state, self.menu_bot)
         config = event_config(await self.store.get_template(template_id))
         self.assertEqual(config["choice_outcomes"][1]["reward"], -35)
 

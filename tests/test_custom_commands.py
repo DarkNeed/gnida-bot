@@ -54,6 +54,8 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await self.database.connect()
         await self.database.upsert_chat(1, "Тест")
         await self.database.upsert_user(1, 10, "actor", "Автор")
+        await self.database.select_menu_chat(CUSTOM_COMMAND_OWNER_ID, 1)
+        self.menu_bot = SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status="member")))
 
     async def asyncTearDown(self):
         await self.database.close()
@@ -274,7 +276,7 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
             message=menu_message, data=f"cc:add:{command_id}:s", answer=AsyncMock(),
         )
 
-        await callback_handler(callback, state, SimpleNamespace())
+        await callback_handler(callback, state, self.menu_bot)
 
         state.update_data.assert_awaited_once_with(
             command_id=command_id, field="response", outcome="success",
@@ -287,7 +289,7 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
             from_user=callback.from_user, answer=AsyncMock(),
         )
 
-        await edit_handler(response_message, state)
+        await edit_handler(response_message, state, self.menu_bot)
 
         row = await self.database.get_custom_command_by_id(command_id)
         self.assertEqual(
@@ -298,7 +300,7 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.clear.await_count, 1)
 
         response_message.text = "Третий вариант"
-        await edit_handler(response_message, state)
+        await edit_handler(response_message, state, self.menu_bot)
         row = await self.database.get_custom_command_by_id(command_id)
         self.assertEqual(
             command_responses(row, "success_responses"),
@@ -307,7 +309,7 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.clear.await_count, 1)
 
         callback.data = f"cc:out:{command_id}:s:0"
-        await callback_handler(callback, state, SimpleNamespace())
+        await callback_handler(callback, state, self.menu_bot)
         self.assertEqual(state.clear.await_count, 2)
 
     async def test_response_menu_shows_full_text_and_copy_buttons(self):
@@ -330,7 +332,7 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
             message=menu_message, data=f"cc:out:{command_id}:s:0", answer=AsyncMock(),
         )
         state = SimpleNamespace(clear=AsyncMock())
-        await handler(callback, state, SimpleNamespace())
+        await handler(callback, state, self.menu_bot)
         body = menu_message.edit_text.await_args.args[0]
         self.assertIn(long_response, body)
         self.assertIn("{actor}", body)
@@ -369,7 +371,7 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
             from_user=User(id=CUSTOM_COMMAND_OWNER_ID, is_bot=False, first_name="Владелец"),
             message=menu_message, data=f"cc:addalias:{command_id}", answer=AsyncMock(),
         )
-        await callback_handler(callback, state, SimpleNamespace())
+        await callback_handler(callback, state, self.menu_bot)
         state.update_data.assert_awaited_once_with(
             command_id=command_id, field="alias", action="add", alias_id=None,
         )
@@ -378,13 +380,13 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
             chat=SimpleNamespace(type="private"), from_user=callback.from_user,
             answer=AsyncMock(),
         )
-        await edit_handler(response_message, state)
+        await edit_handler(response_message, state, self.menu_bot)
         response_message.text = "Третий запуск"
-        await edit_handler(response_message, state)
+        await edit_handler(response_message, state, self.menu_bot)
         aliases = await self.database.list_custom_command_aliases(command_id)
         self.assertEqual([row["trigger"] for row in aliases], ["Второй запуск", "Третий запуск"])
         callback.data = f"cc:aliases:{command_id}:0"
-        await callback_handler(callback, state, SimpleNamespace())
+        await callback_handler(callback, state, self.menu_bot)
         body = menu_message.edit_text.await_args.args[0]
         self.assertIn("Второй запуск", body)
         self.assertIn("Третий запуск", body)
@@ -392,13 +394,13 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(buttons[0][0].text, "1")
         self.assertEqual(buttons[1][0].text, "2")
         callback.data = f"cc:delalias:{command_id}:{aliases[0]['id']}"
-        await callback_handler(callback, state, SimpleNamespace())
+        await callback_handler(callback, state, self.menu_bot)
         self.assertEqual(
             [row["trigger"] for row in await self.database.list_custom_command_aliases(command_id)],
             ["Третий запуск"],
         )
         callback.data = f"cc:editalias:{command_id}:{aliases[1]['id']}"
-        await callback_handler(callback, state, SimpleNamespace())
+        await callback_handler(callback, state, self.menu_bot)
         self.assertEqual(state.update_data.await_args.kwargs, {
             "command_id": command_id, "field": "alias", "action": "edit",
             "alias_id": int(aliases[1]["id"]),
