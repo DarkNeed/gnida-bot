@@ -1185,6 +1185,7 @@ def create_router(
 
     def slave_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
         buttons = [
+            [InlineKeyboardButton(text="🔄 Сменить чат", callback_data="sm:chats")],
             [
                 InlineKeyboardButton(text="👥 Мои рабы", callback_data="sm:slaves"),
                 InlineKeyboardButton(text="⭐ Приоритет", callback_data="sm:priority"),
@@ -1412,6 +1413,98 @@ def create_router(
             inline_keyboard=[[InlineKeyboardButton(text="← Меню", callback_data="sm:home")]]
         )
 
+    async def menu_member(bot: Bot, chat_id: int, user_id: int) -> bool:
+        # Fail closed if Telegram cannot confirm membership.
+        try:
+            return await is_chat_participant(bot, chat_id, user_id)
+        except (TelegramAPIError, asyncio.TimeoutError):
+            return False
+
+    async def available_menu_chats(user_id: int, bot: Bot) -> list:
+        chats = await database.list_menu_chats()
+        semaphore = asyncio.Semaphore(5)
+
+        async def present(row) -> bool:
+            async with semaphore:
+                return await menu_member(bot, int(row["chat_id"]), user_id)
+
+        membership = await asyncio.gather(*(present(row) for row in chats))
+        return [row for row, allowed in zip(chats, membership) if allowed]
+
+    async def menu_chat_picker(user_id: int, bot: Bot, page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
+        chats = await available_menu_chats(user_id, bot)
+        selected = await database.selected_menu_chat(user_id)
+        page_count = max(1, (len(chats) + 7) // 8)
+        page = max(0, min(page, page_count - 1))
+        buttons = [[InlineKeyboardButton(
+            text=("✅ " if int(row["chat_id"]) == selected else "💬 ") + str(row["title"])[:55],
+            callback_data=f"sm:select:{row['chat_id']}",
+        )] for row in chats[page * 8:(page + 1) * 8]]
+        navigation = []
+        if page > 0:
+            navigation.append(InlineKeyboardButton(text="←", callback_data=f"sm:chats:{page - 1}"))
+        if page + 1 < page_count:
+            navigation.append(InlineKeyboardButton(text="→", callback_data=f"sm:chats:{page + 1}"))
+        if navigation:
+            buttons.append(navigation)
+        if chats:
+            text = "<b>💬 Выбери чат</b>\nПоказываю только чаты, в которых ты состоишь. Баланс и остальные данные остаются раздельными."
+        else:
+            text = (
+                "<b>💬 Нет доступных чатов</b>\nЯ не смог подтвердить твоё участие ни в одном известном мне чате. "
+                "Напиши сообщение в группе с ботом и попробуй снова. Для проверки участников боту нужны права администратора."
+            )
+        buttons.extend([
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data="sm:chats")],
+            [InlineKeyboardButton(text="📖 Гайд", callback_data="sm:guide"),
+             InlineKeyboardButton(text="💜 Поддержать", callback_data="sm:support")],
+        ])
+        if user_id == CUSTOM_COMMAND_OWNER_ID:
+            buttons.append([InlineKeyboardButton(text="⚙️ Кастомные команды", callback_data="sm:custom")])
+            buttons.append([InlineKeyboardButton(text="🎲 Конструктор событий", callback_data="evm:list")])
+        return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    async def current_menu_chat(user_id: int, bot: Bot):
+        selected = await database.selected_menu_chat(user_id)
+        chats = await database.list_menu_chats()
+        row = next((row for row in chats if int(row["chat_id"]) == selected), None)
+        if row is not None and await menu_member(bot, selected, user_id):
+            return row
+        available = await available_menu_chats(user_id, bot)
+        if not available:
+            return None
+        row = available[0]
+        await database.select_menu_chat(user_id, int(row["chat_id"]))
+        return row
+
+    def scoped_menu_view(view: tuple[str, InlineKeyboardMarkup], chat) -> tuple[str, InlineKeyboardMarkup]:
+        body, markup = view
+        chat_id = int(chat["chat_id"])
+        rows = []
+        for row in markup.inline_keyboard:
+            buttons = []
+            for button in row:
+                data = button.callback_data
+                if data and data.startswith("sm:") and data not in {"sm:chats", "sm:guide", "sm:support", "sm:custom"} and not data.startswith(("sm:chats:", "sm:select:", "sm:c:", "sm:donate:")):
+                    button = button.model_copy(update={"callback_data": f"sm:c:{chat_id}:{data[3:]}"})
+                buttons.append(button)
+            rows.append(buttons)
+        if not any(button.callback_data == "sm:chats" for row in rows for button in row):
+            rows.append([InlineKeyboardButton(text="🔄 Сменить чат", callback_data="sm:chats")])
+        return (
+            f"📍 <b>Чат: {html.escape(str(chat['title']))}</b>\n\n{body}",
+            InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    async def private_menu_view(user: User, bot: Bot, section: str = "home") -> tuple[str, InlineKeyboardMarkup]:
+        chat = await current_menu_chat(user.id, bot)
+        if chat is None:
+            return await menu_chat_picker(user.id, bot)
+        chat_id = int(chat["chat_id"])
+        await database.upsert_user(chat_id, user.id, user.username, user.full_name, touch=False)
+        views = {"home": slave_menu_home, "francs": slave_menu_francs, "slaves": slave_menu_slaves}
+        return scoped_menu_view(await views[section](user.id, chat_id), chat)
+
     def slave_menu_support() -> tuple[str, InlineKeyboardMarkup]:
         return (
             "<b>💜 Поддержать Гнида-бота</b>\n"
@@ -1537,12 +1630,14 @@ def create_router(
                 logging.getLogger(__name__).exception("Donation sync failed")
             await asyncio.sleep(120)
 
-    async def slave_menu_home(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    async def slave_menu_home(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         await database.settle_businesses_for_user(user_id)
         slaves, owners = await asyncio.gather(
             database.list_slaves_globally(user_id),
             database.list_owners_globally(user_id),
         )
+        slaves = [row for row in slaves if int(row["ownership_chat_id"]) == chat_id]
+        owners = [row for row in owners if int(row["chat_id"]) == chat_id]
         if slaves and owners:
             status = "раб и рабовладелец"
         elif slaves:
@@ -1557,8 +1652,7 @@ def create_router(
             for row in owners[:5]
         )
         owner_text = f"\nВладельцы:\n{owner_lines}" if owner_lines else ""
-        balances = await database.list_franc_balances(user_id)
-        francs = sum(int(row["balance"]) for row in balances)
+        francs = await database.franc_balance(chat_id, user_id)
         return (
             "<b>Рабовладение</b>\n"
             f"Статус: <b>{status}</b>\n"
@@ -1568,8 +1662,9 @@ def create_router(
             slave_menu_keyboard(user_id),
         )
 
-    async def slave_menu_slaves(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    async def slave_menu_slaves(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         rows = await database.list_slaves_globally(user_id)
+        rows = [row for row in rows if int(row["ownership_chat_id"]) == chat_id]
         grouped: dict[int, tuple[str, list]] = {}
         for row in rows:
             chat_id = int(row["ownership_chat_id"])
@@ -1580,8 +1675,9 @@ def create_router(
             slave_menu_back_keyboard(),
         )
 
-    async def slave_menu_priority(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    async def slave_menu_priority(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         rows = await database.list_slaves_globally(user_id)
+        rows = [row for row in rows if int(row["ownership_chat_id"]) == chat_id]
         if not rows:
             return "<b>Приоритет рабов</b>\nРабов нет.", slave_menu_back_keyboard()
         buttons: list[list[InlineKeyboardButton]] = []
@@ -1607,8 +1703,8 @@ def create_router(
             InlineKeyboardMarkup(inline_keyboard=buttons),
         )
 
-    async def slave_menu_games(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
-        stats = await database.game_stats_for_user(user_id)
+    async def slave_menu_games(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+        stats = await database.game_stats_for_user(user_id, chat_id)
         return (
             "<b>Статистика мини-игр</b>\n"
             f"Всего: {stats['total'] or 0} · завершено: {stats['finished'] or 0} · активно: {stats['active'] or 0}\n"
@@ -1628,33 +1724,22 @@ def create_router(
             slave_menu_back_keyboard(),
         )
 
-    async def slave_menu_francs(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    async def slave_menu_francs(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         await database.settle_businesses_for_user(user_id)
-        balances = await database.list_franc_balances(user_id)
-        if not balances:
-            text = "<b>💰 Франки</b>\nУ тебя пока 0 ₣. Подработай в предприятии или заведи рабов."
-        else:
-            total = sum(int(row["balance"]) for row in balances)
-            lines = [f"<b>💰 Франки</b>\nВсего: <b>{total} ₣</b>"]
-            for row in balances[:10]:
-                title = html.escape(row["chat_title"] or f"Чат {row['chat_id']}")
-                lines.append(f"• {title}: {int(row['balance'])} ₣")
-            text = "\n".join(lines)
+        balance = await database.franc_balance(chat_id, user_id)
+        text = f"<b>💰 Франки</b>\nТвой баланс: <b>{balance} ₣</b>"
+        if not balance:
+            text += "\nПодработай на предприятии или заведи рабов."
         return text, InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🎭 Доступные команды", callback_data="sm:offers:0")],
             [InlineKeyboardButton(text="← Меню", callback_data="sm:home")],
         ])
 
     async def slave_menu_custom_offers(
-        user_id: int, bot: Bot, page: int = 0
+        user_id: int, chat_id: int, page: int = 0
     ) -> tuple[str, InlineKeyboardMarkup]:
         rows = await database.list_available_custom_commands(user_id)
-        membership: dict[int, bool] = {}
-        for row in rows:
-            chat_id = int(row["chat_id"])
-            if chat_id not in membership:
-                membership[chat_id] = await is_chat_participant(bot, chat_id, user_id)
-        available = [row for row in rows if membership[int(row["chat_id"])]]
+        available = [row for row in rows if int(row["chat_id"]) == chat_id]
         page_size = 8
         page_count = max(1, (len(available) + page_size - 1) // page_size)
         page = max(0, min(page, page_count - 1))
@@ -1693,12 +1778,15 @@ def create_router(
         buttons.append([InlineKeyboardButton(text="← Франки", callback_data="sm:francs")])
         return body, InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    async def slave_menu_businesses(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    async def slave_menu_businesses(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         await database.settle_businesses_for_user(user_id)
         businesses, slaves = await asyncio.gather(
             database.list_owned_businesses(user_id),
             database.list_slaves_globally(user_id),
         )
+        has_business = bool(businesses)
+        businesses = [row for row in businesses if int(row["chat_id"]) == chat_id]
+        slaves = [row for row in slaves if int(row["ownership_chat_id"]) == chat_id]
         buttons: list[list[InlineKeyboardButton]] = []
         for business in businesses:
             meta = BUSINESS_META[str(business["business_type"])]
@@ -1712,7 +1800,7 @@ def create_router(
                 ]
             )
         creation_chats: dict[int, str] = {}
-        if not businesses:
+        if not has_business:
             for slave in slaves:
                 chat_id = int(slave["ownership_chat_id"])
                 creation_chats[chat_id] = slave["chat_title"] or f"Чат {chat_id}"
@@ -1730,6 +1818,8 @@ def create_router(
             text = "<b>🏢 Твои предприятия</b>\nВыбери предприятие для управления."
         elif creation_chats:
             text = "<b>🏢 Предприятия</b>\nВыбери чат и открой первое предприятие."
+        elif has_business:
+            text = "<b>🏢 Предприятия</b>\nТвоё предприятие открыто в другом чате. Пока можно иметь только одно предприятие."
         else:
             text = "<b>🏢 Предприятия</b>\nДля открытия предприятия нужен хотя бы один раб."
         return text, InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -1763,7 +1853,7 @@ def create_router(
         await database.settle_business(chat_id, user_id)
         business = await database.get_business(chat_id, user_id)
         if not business:
-            return await slave_menu_businesses(user_id)
+            return await slave_menu_businesses(user_id, chat_id)
         workers = await database.list_business_slaves(chat_id, user_id)
         meta = BUSINESS_META[str(business["business_type"])]
         producer_role = "courtesan" if business["business_type"] == "brothel" else "collector"
@@ -1907,7 +1997,7 @@ def create_router(
     ) -> tuple[str, InlineKeyboardMarkup]:
         business = await database.get_business(chat_id, user_id)
         if not business:
-            return await slave_menu_businesses(user_id)
+            return await slave_menu_businesses(user_id, chat_id)
         meta = BUSINESS_META[str(business["business_type"])]
         role_labels = {
             None: "➖ Не назначен",
@@ -1941,7 +2031,7 @@ def create_router(
         workers = await database.list_business_slaves(chat_id, user_id)
         worker = next((row for row in workers if int(row["user_id"]) == worker_id), None)
         if not business or not worker:
-            return await slave_menu_businesses(user_id)
+            return await slave_menu_businesses(user_id, chat_id)
         meta = BUSINESS_META[str(business["business_type"])]
         producer_role = "courtesan" if business["business_type"] == "brothel" else "collector"
         leader_role = "manager" if business["business_type"] == "brothel" else "overseer"
@@ -1970,8 +2060,9 @@ def create_router(
             InlineKeyboardMarkup(inline_keyboard=buttons),
         )
 
-    async def slave_menu_work(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    async def slave_menu_work(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         businesses = await database.list_available_businesses(user_id)
+        businesses = [row for row in businesses if int(row["chat_id"]) == chat_id]
         if not businesses:
             return "<b>🧰 Подработка</b>\nПодходящих предприятий пока нет.", slave_menu_back_keyboard()
         buttons: list[list[InlineKeyboardButton]] = []
@@ -1993,9 +2084,10 @@ def create_router(
             InlineKeyboardMarkup(inline_keyboard=buttons),
         )
 
-    async def slave_menu_buyout(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    async def slave_menu_buyout(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         await database.settle_businesses_for_user(user_id)
         owners = await database.list_owners_globally(user_id)
+        owners = [row for row in owners if int(row["chat_id"]) == chat_id]
         if not owners:
             return "<b>🔓 Выкуп</b>\nТы свободен.", slave_menu_back_keyboard()
         buttons: list[list[InlineKeyboardButton]] = []
@@ -3499,18 +3591,18 @@ def create_router(
         await message.answer(body, parse_mode="HTML")
 
     @router.message(text_or_caption_regexp(SLAVE_MENU_RE))
-    async def slave_menu(message: Message) -> None:
+    async def slave_menu(message: Message, bot: Bot) -> None:
         if message.chat.type != "private" or not message.from_user:
             return
-        body, keyboard = await slave_menu_home(message.from_user.id)
+        body, keyboard = await private_menu_view(message.from_user, bot)
         await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
 
     @router.message(text_or_caption_regexp(FRANCS_RE))
-    async def francs(message: Message) -> None:
+    async def francs(message: Message, bot: Bot) -> None:
         if not message.from_user:
             return
         if message.chat.type == "private":
-            body, keyboard = await slave_menu_francs(message.from_user.id)
+            body, keyboard = await private_menu_view(message.from_user, bot, "francs")
             await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
             return
         if message.chat.type not in GROUP_TYPES:
@@ -3520,23 +3612,29 @@ def create_router(
         await message.answer(f"💰 Твой баланс: <b>{balance} ₣</b>", parse_mode="HTML")
 
     @router.message(text_or_caption_regexp(BUSINESS_SUMMARY_RE))
-    async def business_summary(message: Message) -> None:
+    async def business_summary(message: Message, bot: Bot) -> None:
         """Show a compact public summary of the sender's enterprise in this chat."""
         if not message.from_user:
             return
         text = message_content(message)
         requested_type = "brothel" if "бордель" in text.casefold() else "field"
         if message.chat.type == "private":
+            chat = await current_menu_chat(message.from_user.id, bot)
+            if chat is None:
+                body, keyboard = await menu_chat_picker(message.from_user.id, bot)
+                await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+                return
+            chat_id = int(chat["chat_id"])
             businesses = await database.list_owned_businesses(message.from_user.id)
             business = next(
-                (row for row in businesses if row["business_type"] == requested_type), None
+                (row for row in businesses if row["business_type"] == requested_type and int(row["chat_id"]) == chat_id), None
             )
             if not business:
                 await message.answer("Такого предприятия у тебя пока нет.")
                 return
-            body, keyboard = await slave_menu_business_detail(
-                message.from_user.id, int(business["chat_id"])
-            )
+            body, keyboard = scoped_menu_view(await slave_menu_business_detail(
+                message.from_user.id, chat_id
+            ), chat)
             await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
             return
         if message.chat.type not in GROUP_TYPES:
@@ -3677,11 +3775,15 @@ def create_router(
         )
 
     @router.message(text_or_caption_regexp(ENTERPRISE_STATS_RE))
-    async def enterprise_stats(message: Message) -> None:
+    async def enterprise_stats(message: Message, bot: Bot) -> None:
         if message.chat.type in GROUP_TYPES:
             body, keyboard = await enterprise_stats_list(message.chat.id)
         elif message.chat.type == "private" and message.from_user:
-            body, keyboard = await enterprise_stats_list_for_user(message.from_user.id)
+            chat = await current_menu_chat(message.from_user.id, bot)
+            if chat is None:
+                body, keyboard = await menu_chat_picker(message.from_user.id, bot)
+            else:
+                body, keyboard = scoped_menu_view(await enterprise_stats_list(int(chat["chat_id"])), chat)
         else:
             return
         await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
@@ -3802,6 +3904,15 @@ def create_router(
             parse_mode="HTML",
         )
 
+    async def edit_menu_callback(callback: CallbackQuery, view: tuple[str, InlineKeyboardMarkup], notice: str = "") -> None:
+        body, keyboard = view
+        try:
+            await callback.message.edit_text(body, reply_markup=keyboard, parse_mode="HTML")
+        except TelegramBadRequest as error:
+            if "message is not modified" not in str(error).casefold():
+                await callback.message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+        await callback.answer(notice)
+
     @router.callback_query(F.data.startswith("sm:"))
     async def slave_menu_callback(callback: CallbackQuery, bot: Bot) -> None:
         if (
@@ -3815,17 +3926,68 @@ def create_router(
 
         action = callback.data[3:]
         user_id = callback.from_user.id
+        scoped_chat_id: int | None = None
+        if action.startswith("c:"):
+            try:
+                _, raw_chat_id, action = action.split(":", 2)
+                scoped_chat_id = int(raw_chat_id)
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+        if action == "chats" or action.startswith("chats:"):
+            try:
+                page = int(action.split(":", 1)[1]) if ":" in action else 0
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            await edit_menu_callback(callback, await menu_chat_picker(user_id, bot, page))
+            return
+        selecting = action.startswith("select:")
+        if selecting:
+            try:
+                scoped_chat_id = int(action.split(":", 1)[1])
+            except ValueError:
+                await callback.answer("Некорректная кнопка.", show_alert=True)
+                return
+            action = "home"
+        global_action = action in {"guide", "support", "custom"} or action.startswith("donate:")
+        menu_chat = None
+        if not global_action:
+            if scoped_chat_id is None:
+                menu_chat = await current_menu_chat(user_id, bot)
+            else:
+                chats = await database.list_menu_chats()
+                menu_chat = next((row for row in chats if int(row["chat_id"]) == scoped_chat_id), None)
+                if menu_chat is not None and not await menu_member(bot, scoped_chat_id, user_id):
+                    menu_chat = None
+            if menu_chat is None:
+                await edit_menu_callback(callback, await menu_chat_picker(user_id, bot), "Чат недоступен. Выбери другой.")
+                return
+            menu_chat_id = int(menu_chat["chat_id"])
+            if selecting:
+                await database.select_menu_chat(user_id, menu_chat_id)
+            # Payloads from old messages must not mutate a different chat.
+            if action.split(":", 1)[0] in {"bc", "bn", "bd", "bw", "bs", "br", "job", "buy", "p"}:
+                try:
+                    target_chat_id = int(action.split(":")[1])
+                except (ValueError, IndexError):
+                    await callback.answer("Некорректная кнопка.", show_alert=True)
+                    return
+                if target_chat_id != menu_chat_id:
+                    await callback.answer("Кнопка относится к другому чату. Открой его через «Сменить чат».", show_alert=True)
+                    return
+            await database.upsert_user(menu_chat_id, user_id, callback.from_user.username, callback.from_user.full_name, touch=False)
         notice: str | None = None
         if action == "home":
-            body, keyboard = await slave_menu_home(user_id)
+            body, keyboard = await slave_menu_home(user_id, menu_chat_id)
         elif action == "custom" and user_id == CUSTOM_COMMAND_OWNER_ID:
             body, keyboard = await custom_commands_menu()
         elif action == "slaves":
-            body, keyboard = await slave_menu_slaves(user_id)
+            body, keyboard = await slave_menu_slaves(user_id, menu_chat_id)
         elif action == "priority":
-            body, keyboard = await slave_menu_priority(user_id)
+            body, keyboard = await slave_menu_priority(user_id, menu_chat_id)
         elif action == "games":
-            body, keyboard = await slave_menu_games(user_id)
+            body, keyboard = await slave_menu_games(user_id, menu_chat_id)
         elif action == "guide":
             body, keyboard = slave_menu_guide()
         elif action == "support":
@@ -3863,16 +4025,16 @@ def create_router(
                     ]
                 )
         elif action == "francs":
-            body, keyboard = await slave_menu_francs(user_id)
+            body, keyboard = await slave_menu_francs(user_id, menu_chat_id)
         elif action.startswith("offers:"):
             try:
                 page = int(action.split(":", 1)[1])
             except ValueError:
                 await callback.answer("Некорректная кнопка.", show_alert=True)
                 return
-            body, keyboard = await slave_menu_custom_offers(user_id, bot, page)
+            body, keyboard = await slave_menu_custom_offers(user_id, menu_chat_id, page)
         elif action == "business":
-            body, keyboard = await slave_menu_businesses(user_id)
+            body, keyboard = await slave_menu_businesses(user_id, menu_chat_id)
         elif action.startswith("bc:"):
             try:
                 _, raw_chat_id = action.split(":", 1)
@@ -3896,10 +4058,11 @@ def create_router(
                 notice = "Предприятие открыто."
                 body, keyboard = await slave_menu_business_detail(user_id, chat_id)
             elif result == "exists":
-                body, keyboard = await slave_menu_business_detail(user_id, chat_id)
+                notice = "У тебя уже есть предприятие. Пока можно иметь только одно."
+                body, keyboard = await slave_menu_businesses(user_id, menu_chat_id)
             else:
                 notice = "Для предприятия нужен хотя бы один раб."
-                body, keyboard = await slave_menu_businesses(user_id)
+                body, keyboard = await slave_menu_businesses(user_id, menu_chat_id)
         elif action.startswith("bd:"):
             try:
                 _, raw_chat_id = action.split(":", 1)
@@ -3942,7 +4105,7 @@ def create_router(
                 notice = "Этот раб или предприятие больше недоступны."
             body, keyboard = await slave_menu_business_worker(user_id, chat_id, worker_id)
         elif action == "work":
-            body, keyboard = await slave_menu_work(user_id)
+            body, keyboard = await slave_menu_work(user_id, menu_chat_id)
         elif action.startswith("job:"):
             try:
                 _, raw_chat_id, raw_owner_id = action.split(":", 2)
@@ -3954,7 +4117,7 @@ def create_router(
             result, worker_pay, owner_pay, cooldown_until = await database.work_at_business(
                 chat_id, owner_id, user_id
             )
-            body, keyboard = await slave_menu_work(user_id)
+            body, keyboard = await slave_menu_work(user_id, menu_chat_id)
             if result == "worked":
                 notice = f"Смена завершена: +{worker_pay} ₣."
             elif result == "inactive_slave":
@@ -3971,7 +4134,7 @@ def create_router(
             else:
                 notice = "Предприятие больше недоступно."
         elif action == "buyout":
-            body, keyboard = await slave_menu_buyout(user_id)
+            body, keyboard = await slave_menu_buyout(user_id, menu_chat_id)
         elif action.startswith("buy:"):
             try:
                 _, raw_chat_id, raw_owner_id = action.split(":", 2)
@@ -3981,7 +4144,7 @@ def create_router(
                 return
             await database.settle_businesses_for_user(user_id)
             result = await database.buyout_slave(chat_id, owner_id, user_id)
-            body, keyboard = await slave_menu_buyout(user_id)
+            body, keyboard = await slave_menu_buyout(user_id, menu_chat_id)
             if result == "released":
                 notice = "Выкуп успешен. Ты свободен."
                 body = f"✅ <b>Свобода за {BUYOUT_COST_FRANCS} ₣</b>\n\n{body}"
@@ -4006,20 +4169,16 @@ def create_router(
                 notice = "Приоритет включён." if enabled else "Приоритет снят."
             else:
                 notice = "Список уже изменился, обновлён."
-            body, keyboard = await slave_menu_priority(user_id)
+            body, keyboard = await slave_menu_priority(user_id, menu_chat_id)
         else:
             await callback.answer("Неизвестный раздел.", show_alert=True)
             return
 
-        try:
-            await callback.message.edit_text(body, reply_markup=keyboard, parse_mode="HTML")
-        except TelegramBadRequest as error:
-            if "message is not modified" not in str(error).casefold():
-                await callback.message.answer(body, reply_markup=keyboard, parse_mode="HTML")
-        await callback.answer(notice or "")
+        view = scoped_menu_view((body, keyboard), menu_chat) if menu_chat is not None else (body, keyboard)
+        await edit_menu_callback(callback, view, notice or "")
 
     @router.callback_query(F.data.startswith("es:"))
-    async def enterprise_stats_callback(callback: CallbackQuery) -> None:
+    async def enterprise_stats_callback(callback: CallbackQuery, bot: Bot) -> None:
         if not callback.data or not callback.message or not callback.from_user:
             await callback.answer()
             return
@@ -4037,14 +4196,11 @@ def create_router(
         if is_group and chat_id != callback.message.chat.id:
             await callback.answer("Эта статистика относится к другому чату.", show_alert=True)
             return
-        if is_private and not await database.user_knows_chat(callback.from_user.id, chat_id):
+        if is_private and not await menu_member(bot, chat_id, callback.from_user.id):
             await callback.answer("Этот чат недоступен в твоей статистике.", show_alert=True)
             return
         if raw_owner_id == "list":
-            if is_group:
-                body, keyboard = await enterprise_stats_list(chat_id)
-            else:
-                body, keyboard = await enterprise_stats_list_for_user(callback.from_user.id)
+            body, keyboard = await enterprise_stats_list(chat_id)
         else:
             try:
                 owner_id = int(raw_owner_id)
@@ -4056,6 +4212,13 @@ def create_router(
                 await callback.answer("Предприятие больше не существует.", show_alert=True)
                 return
             body, keyboard = result
+        if is_private:
+            chats = await database.list_menu_chats()
+            chat = next((row for row in chats if int(row["chat_id"]) == chat_id), None)
+            if chat is None:
+                await callback.answer("Чат недоступен.", show_alert=True)
+                return
+            body, keyboard = scoped_menu_view((body, keyboard), chat)
         try:
             await callback.message.edit_text(body, reply_markup=keyboard, parse_mode="HTML")
         except TelegramBadRequest as error:
@@ -5117,19 +5280,21 @@ def create_router(
             )
         elif message.chat.type == "private":
             if not payload:
-                rows = await database.list_slaves_globally(message.from_user.id)
-                grouped: dict[int, tuple[str, list]] = {}
-                for row in rows:
-                    chat_id = int(row["ownership_chat_id"])
-                    title = row["chat_title"] or f"Чат {chat_id}"
-                    grouped.setdefault(chat_id, (title, []))[1].append(row)
-                body = "Твои рабы:\n" + slave_report(list(grouped.values()))
+                body, keyboard = await private_menu_view(message.from_user, bot, "slaves")
+                await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+                return
             else:
                 token, _ = split_first(payload)
                 if not looks_like_user_token(token):
                     await message.answer("Используйте: /рабы @username или /рабы ID")
                     return
-                candidates = await database.resolve_users_globally(token)
+                chat = await current_menu_chat(message.from_user.id, bot)
+                if chat is None:
+                    body, keyboard = await menu_chat_picker(message.from_user.id, bot)
+                    await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+                    return
+                candidates = [row for row in await database.resolve_users_globally(token)
+                              if int(row["chat_id"]) == int(chat["chat_id"])]
                 allowed_sections: list[tuple[str, list]] = []
                 owner_name = token
                 seen_chats: set[int] = set()
@@ -5156,6 +5321,7 @@ def create_router(
                 body = f"Рабы пользователя {html.escape(owner_name)}:\n" + slave_report(
                     allowed_sections
                 )
+                body = f"📍 <b>Чат: {html.escape(str(chat['title']))}</b>\n\n{body}"
         else:
             return
         try:
@@ -5379,7 +5545,7 @@ def create_router(
             )
 
     @router.message(text_or_caption_regexp(SLAVE_PRIORITY_RE))
-    async def set_slave_priority(message: Message) -> None:
+    async def set_slave_priority(message: Message, bot: Bot) -> None:
         if not message.from_user:
             return
         text = message_content(message)
@@ -5392,7 +5558,13 @@ def create_router(
             if not token or extra:
                 await message.answer("В личке: /приоритет @раб или /снять приоритет @раб.")
                 return
-            candidates = await database.resolve_users_globally(token)
+            chat = await current_menu_chat(message.from_user.id, bot)
+            if chat is None:
+                body, keyboard = await menu_chat_picker(message.from_user.id, bot)
+                await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+                return
+            candidates = [row for row in await database.resolve_users_globally(token)
+                          if int(row["chat_id"]) == int(chat["chat_id"])]
             updated = 0
             unchanged = 0
             for candidate in candidates:
@@ -5410,7 +5582,7 @@ def create_router(
                     unchanged += 1
             if updated:
                 state = "выставлен" if enabled else "снят"
-                await message.answer(f"Приоритет {state} в чатах: {updated}.")
+                await message.answer(f"Приоритет {state}. Чат: {chat['title']}.")
             elif unchanged:
                 await message.answer("Приоритет уже установлен." if enabled else "Приоритет уже снят.")
             else:

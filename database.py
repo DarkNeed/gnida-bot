@@ -125,6 +125,11 @@ class Database:
                 updated_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS private_menu_chats (
+                user_id INTEGER PRIMARY KEY,
+                chat_id INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS actions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER NOT NULL,
@@ -612,6 +617,29 @@ class Database:
                    ON CONFLICT(chat_id) DO UPDATE SET
                        title=excluded.title, updated_at=excluded.updated_at""",
                 (chat_id, title, utc_timestamp()),
+            )
+            self.connection.commit()
+
+    async def list_menu_chats(self) -> list[sqlite3.Row]:
+        """Known group chats; callers must verify current Telegram membership."""
+        async with self._lock:
+            return self.connection.execute(
+                "SELECT chat_id, title FROM chats ORDER BY title, chat_id"
+            ).fetchall()
+
+    async def selected_menu_chat(self, user_id: int) -> int | None:
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT chat_id FROM private_menu_chats WHERE user_id=?", (user_id,)
+            ).fetchone()
+            return int(row["chat_id"]) if row else None
+
+    async def select_menu_chat(self, user_id: int, chat_id: int) -> None:
+        async with self._lock:
+            self.connection.execute(
+                """INSERT INTO private_menu_chats(user_id, chat_id) VALUES (?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET chat_id=excluded.chat_id""",
+                (user_id, chat_id),
             )
             self.connection.commit()
 
@@ -3142,8 +3170,8 @@ class Database:
                 (slave_id,),
             ).fetchall()
 
-    async def game_stats_for_user(self, user_id: int) -> sqlite3.Row:
-        """Return a compact cross-chat summary of a user's recorded mini-games."""
+    async def game_stats_for_user(self, user_id: int, chat_id: int | None = None) -> sqlite3.Row:
+        """Return mini-game stats globally or for one selected chat."""
         async with self._lock:
             return self.connection.execute(
                 """SELECT
@@ -3158,8 +3186,8 @@ class Database:
                        SUM(CASE WHEN game_type='blackjack' THEN 1 ELSE 0 END) AS blackjack,
                        SUM(CASE WHEN game_type='checkers' THEN 1 ELSE 0 END) AS checkers
                    FROM challenges
-                   WHERE challenger_id=? OR opponent_id=?""",
-                (user_id, user_id, user_id, user_id),
+                   WHERE (challenger_id=? OR opponent_id=?) AND (? IS NULL OR chat_id=?)""",
+                (user_id, user_id, user_id, user_id, chat_id, chat_id),
             ).fetchone()
 
     async def set_slave_priority(
