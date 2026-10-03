@@ -151,12 +151,12 @@ class EventOutcomeTests(unittest.IsolatedAsyncioTestCase):
         await callback_handler(callback, state, SimpleNamespace())
         self.assertIn("Награда", private_message.answer.await_args.args[0])
         input_message = SimpleNamespace(
-            text="35", chat=SimpleNamespace(type="private"), from_user=actor,
+            text="-35", chat=SimpleNamespace(type="private"), from_user=actor,
             answer=AsyncMock(),
         )
         await input_handler(input_message, state)
         config = event_config(await self.store.get_template(template_id))
-        self.assertEqual(config["choice_outcomes"][1]["reward"], 35)
+        self.assertEqual(config["choice_outcomes"][1]["reward"], -35)
 
 
 if __name__ == "__main__":

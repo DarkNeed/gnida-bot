@@ -207,8 +207,11 @@ def create_franc_event_router(database: Database) -> Router:
             body += "\nФразы: {0} успеха / {1} неудачи.".format(
                 len(config["success_messages"]), len(config["failure_messages"])
             )
-        body += "\nМетки: {user} — тег участника, {amount} — начисленные франки."
-        if not custom_choice and config["kind"] != "luck" and config["failure_reward"]:
+        body += (
+            "\nСумма с минусом списывает франки, без минуса — начисляет. Списание — не ниже нуля."
+            "\nМетки: {user} — тег участника, {amount} — фактическое изменение франков со знаком."
+        )
+        if not custom_choice and config["kind"] != "luck" and config["failure_reward"] > 0:
             body += "\n⚠️ Награду за ошибку может получить каждый участник по одному разу."
         rows = [
             [InlineKeyboardButton(text="✏️ Текст события", callback_data=f"evm:field:{template_id}:prompt")],
@@ -539,7 +542,7 @@ def create_franc_event_router(database: Database) -> Router:
                     message_index=message_index, operation=operation, action="outcome",
                 )
                 prompts = {
-                    "reward": "Награда за этот исход: от 0 до 500 ₣.",
+                    "reward": "Награда за этот исход: от -500 до 500 ₣. Например, -50 спишет 50 ₣ (не ниже нуля).",
                     "weight": "Вес исхода: от 1 до 100. Шанс пропорционален сумме весов.",
                     "name": "Название исхода (до 50 символов; видно только в конструкторе).",
                 }
@@ -566,8 +569,8 @@ def create_franc_event_router(database: Database) -> Router:
                     "prompt": "Напиши текст события (до 500 символов).",
                     "luck_button": "Напиши текст кнопки (до 50 символов).",
                     "success_chance": "Напиши шанс успеха от 0 до 100.",
-                    "success_reward": "Напиши награду за успех от 0 до 500 ₣.",
-                    "failure_reward": "Напиши награду за неудачу от 0 до 20 ₣.",
+                    "success_reward": "Напиши сумму за успех от -500 до 500 ₣. Минус — списание (не ниже нуля).",
+                    "failure_reward": "Напиши сумму за неудачу от -500 до 20 ₣. Минус — списание (не ниже нуля).",
                 }
                 prompt = prompts.get(field, "Пришли один вариант текстом (до 500 символов; кнопка — до 50).")
                 await callback.message.answer(prompt + "\n/отмена — отменить ввод.")

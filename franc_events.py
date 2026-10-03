@@ -1,4 +1,4 @@
-"""Persistent, owner-configurable chat events that award francs."""
+"""Persistent, owner-configurable chat events that award or debit francs."""
 
 from __future__ import annotations
 
@@ -123,8 +123,8 @@ class FrancEventStore:
             "prompt": (1, 500),
             "luck_button": (1, 50),
             "success_chance": (0, 100),
-            "success_reward": (0, 500),
-            "failure_reward": (0, 20),
+            "success_reward": (-500, 500),
+            "failure_reward": (-500, 20),
         }
         if field not in bounds:
             raise ValueError("Unsupported field")
@@ -298,10 +298,11 @@ class FrancEventStore:
             elif action == "delete" and kind == "luck":
                 outcomes.pop(index)
             elif action in {"reward", "weight"}:
-                if not value.isdecimal():
+                try:
+                    number = int(value.strip())
+                except ValueError:
                     return "invalid"
-                number = int(value)
-                if not (0 <= number <= 500 if action == "reward" else
+                if not (-500 <= number <= 500 if action == "reward" else
                         kind == "luck" and 1 <= number <= 100):
                     return "invalid"
                 outcomes[index][action] = number
@@ -631,13 +632,27 @@ class FrancEventStore:
                 phrase = random.choice(custom_outcome["messages"])
                 resolved = True
             now = utc_timestamp()
+            chat_id = int(row["chat_id"])
+            if reward < 0:
+                balance_row = self.connection.execute(
+                    "SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?",
+                    (chat_id, user_id),
+                ).fetchone()
+                balance = int(balance_row["balance"]) if balance_row else 0
+                reward = -min(balance, -reward)
+                if reward:
+                    self.connection.execute(
+                        """UPDATE franc_balances SET balance=balance+?, updated_at=?
+                           WHERE chat_id=? AND user_id=?""",
+                        (reward, now, chat_id, user_id),
+                    )
+            elif reward > 0:
+                self.database._add_francs_locked(chat_id, user_id, reward)
             self.connection.execute(
                 """INSERT INTO franc_event_attempts(event_id, user_id, outcome, reward, created_at)
                    VALUES (?, ?, ?, ?, ?)""",
                 (event_id, user_id, outcome, reward, now),
             )
-            if reward:
-                self.database._add_francs_locked(int(row["chat_id"]), user_id, reward)
             if resolved:
                 self.connection.execute(
                     """UPDATE franc_events SET status='resolved', winner_id=?, outcome=?
