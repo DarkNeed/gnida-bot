@@ -1008,6 +1008,19 @@ class Database:
                 "SELECT * FROM challenges WHERE id=?", (challenge_id,)
             ).fetchone()
 
+    async def blocking_challenges(self, chat_id: int, user_ids: tuple[int, ...]) -> list[sqlite3.Row]:
+        """Find invitations and games occupying a participant's challenge slot."""
+        if not user_ids:
+            return []
+        placeholders = ",".join("?" for _ in user_ids)
+        async with self._lock:
+            return self.connection.execute(
+                """SELECT * FROM challenges WHERE chat_id=?
+                   AND status IN ('pending', 'betting', 'active')"""
+                + f" AND (challenger_id IN ({placeholders}) OR opponent_id IN ({placeholders}))",
+                (chat_id, *user_ids, *user_ids),
+            ).fetchall()
+
     async def get_blackjack_game(self, challenge_id: int) -> sqlite3.Row | None:
         async with self._lock:
             return self.connection.execute(

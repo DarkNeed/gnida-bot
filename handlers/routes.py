@@ -253,6 +253,10 @@ CHALLENGE_RE = re.compile(
     r"^вызов(?:\s+(кнб|бл[еэ]кджек|шашки))?"
     r"(?:\s+(\d+)(?:\s+франк(?:ов|а)?)?)?[!?.\s]*$", re.IGNORECASE
 )
+CANCEL_CHALLENGE_RE = re.compile(
+    r"^[!/]?отменить\s+вызов[!?.\s]*$|^/cancel_challenge(?:@\w+)?[!?.\s]*$",
+    re.IGNORECASE,
+)
 GAME_RE = re.compile(
     r"^игра\s+(кнб|бл[еэ]кджек|шашки|рандом)"
     r"(?:\s+(\d+)(?:\s+франк(?:ов|а)?)?)?[!?.\s]*$", re.IGNORECASE
@@ -1165,7 +1169,7 @@ def create_router(
     router.message.outer_middleware(TrackingMiddleware(database))
     joke_cooldowns: dict[tuple[int, str], float] = {}
     leg_tasks: set[asyncio.Task[None]] = set()
-    challenge_tasks: set[asyncio.Task[None]] = set()
+    challenge_tasks: dict[int, asyncio.Task[None]] = {}
     jug_tasks: set[asyncio.Task[None]] = set()
     captcha_tasks: set[asyncio.Task[None]] = set()
     death_note_tasks: set[asyncio.Task[None]] = set()
@@ -1382,6 +1386,26 @@ def create_router(
                 )
 
         task.add_done_callback(finish_task)
+
+    async def recover_blocking_challenges(chat_id: int, user_ids: tuple[int, ...], bot: Bot) -> int:
+        recovered = 0
+        for challenge in await database.blocking_challenges(chat_id, user_ids):
+            challenge_id = int(challenge["id"])
+            unpublished = not challenge["message_id"] and not challenge["inline_message_id"]
+            if unpublished and int(challenge["created_at"]) <= utc_timestamp() - 60:
+                # Give an in-flight send a minute to save its message ID.
+                if challenge["status"] == "pending":
+                    closed = await database.cancel_challenge_offer(
+                        challenge_id, int(challenge["challenger_id"])
+                    )
+                else:
+                    closed = await database.finish_challenge(challenge_id, "failed")
+                recovered += int(closed)
+            elif challenge["status"] in {"pending", "active"} and int(challenge["deadline"]) <= utc_timestamp():
+                if await database.claim_expired_challenge(challenge_id):
+                    recovered += 1
+                    schedule_challenge(challenge_id, bot)
+        return recovered
 
     def slave_menu_back_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
@@ -2582,11 +2606,15 @@ def create_router(
             )
 
     def schedule_challenge(challenge_id: int, bot: Bot) -> None:
+        existing = challenge_tasks.get(challenge_id)
+        if existing is not None and not existing.done():
+            return
         task = asyncio.create_task(enforce_challenge_deadline(challenge_id, bot))
-        challenge_tasks.add(task)
+        challenge_tasks[challenge_id] = task
 
         def finish_task(completed: asyncio.Task[None]) -> None:
-            challenge_tasks.discard(completed)
+            if challenge_tasks.get(challenge_id) is completed:
+                challenge_tasks.pop(challenge_id, None)
             if completed.cancelled():
                 return
             try:
@@ -2608,7 +2636,16 @@ def create_router(
         for entry in await database.pending_death_note_entries():
             schedule_death_note(int(entry["id"]), bot)
         for challenge in await database.pending_challenges():
-            schedule_challenge(int(challenge["id"]), bot)
+            challenge_id = int(challenge["id"])
+            if not (challenge["message_id"] or challenge["inline_message_id"]):
+                if challenge["status"] == "pending":
+                    await database.cancel_challenge_offer(
+                        challenge_id, int(challenge["challenger_id"])
+                    )
+                else:
+                    await database.mark_challenge_unavailable(challenge_id)
+            else:
+                schedule_challenge(challenge_id, bot)
         for competition in await database.betting_competitions():
             schedule_competition(int(competition["challenge_id"]), bot)
         for competition in await database.playing_competitions():
@@ -2638,7 +2675,7 @@ def create_router(
     async def stop_leg_timers() -> None:
         for task in tuple(leg_tasks):
             task.cancel()
-        for task in tuple(challenge_tasks):
+        for task in tuple(challenge_tasks.values()):
             task.cancel()
         for task in tuple(jug_tasks):
             task.cancel()
@@ -5583,6 +5620,9 @@ def create_router(
         if user_is_immune(opponent):
             await callback.answer(IMMUNITY_TEXT, show_alert=True)
             return
+        await recover_blocking_challenges(
+            kargassia_chat_id, (challenger_id, opponent.id), bot
+        )
         block_reason = await slavery_challenge_block_reason(
             database, kargassia_chat_id, challenger_id, opponent.id
         )
@@ -5640,6 +5680,32 @@ def create_router(
             return
         schedule_challenge(challenge_id, bot)
         await callback.answer("Вызов принят")
+
+    @router.message(text_or_caption_regexp(CANCEL_CHALLENGE_RE))
+    async def cancel_own_challenge(message: Message, bot: Bot) -> None:
+        if not message.from_user or message.chat.type not in {*GROUP_TYPES, "private"}:
+            return
+        chat_id = kargassia_chat_id if message.chat.type == "private" else message.chat.id
+        if chat_id is None:
+            await message.answer("Отправь команду в чат, где был вызов.")
+            return
+        recovered = await recover_blocking_challenges(chat_id, (message.from_user.id,), bot)
+        cancelled = 0
+        for challenge in await database.blocking_challenges(chat_id, (message.from_user.id,)):
+            if await database.cancel_challenge_offer(int(challenge["id"]), message.from_user.id):
+                cancelled += 1
+                await edit_challenge(
+                    challenge, bot,
+                    f"↩ {html.escape(display_name(message.from_user))} отменил вызов.",
+                )
+        if cancelled:
+            await message.answer("↩ Вызов отменён. Если был взнос, он возвращён.")
+        elif recovered:
+            await message.answer("⌛ Зависший или просроченный вызов закрыт. Можно отправить новый.")
+        elif await database.blocking_challenges(chat_id, (message.from_user.id,)):
+            await message.answer("Отменить можно свой непринятый вызов. Начатую игру завершай её кнопками.")
+        else:
+            await message.answer("У тебя нет активного вызова.")
 
     @router.message(
         text_or_caption_regexp(CHALLENGE_RE)
@@ -5724,6 +5790,9 @@ def create_router(
         await database.upsert_user(
             message.chat.id, opponent.id, opponent.username, display_name(opponent), touch=False
         )
+        await recover_blocking_challenges(
+            message.chat.id, (message.from_user.id, opponent.id), bot
+        )
         if not friendly:
             block_reason = await slavery_challenge_block_reason(
                 database, message.chat.id, message.from_user.id, opponent.id
@@ -5766,16 +5835,21 @@ def create_router(
         if challenge_id is None:
             await message.answer("У одного из участников уже есть активный вызов.")
             return
-        row = await database.get_challenge(challenge_id)
-        prefix = {"rps": "rps", "blackjack": "bj", "checkers": "ck"}[game_type]
-        body = await challenge_offer_text(database, row)
-        keyboard = challenge_offer_keyboard(challenge_id, prefix)
-        sent = await message.answer(
-            body,
-            reply_markup=keyboard,
-            parse_mode="HTML",
-        )
-        await database.set_challenge_message(challenge_id, sent.message_id)
+        try:
+            row = await database.get_challenge(challenge_id)
+            prefix = {"rps": "rps", "blackjack": "bj", "checkers": "ck"}[game_type]
+            body = await challenge_offer_text(database, row)
+            keyboard = challenge_offer_keyboard(challenge_id, prefix)
+            sent = await message.answer(
+                body,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+            await database.set_challenge_message(challenge_id, sent.message_id)
+        except BaseException:
+            # A failed send or cancelled handler must release the creator's slot.
+            await database.cancel_challenge_offer(challenge_id, message.from_user.id)
+            raise
         schedule_challenge(challenge_id, bot)
 
     @router.message(F.text.regexp(BET_RE))
