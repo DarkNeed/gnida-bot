@@ -204,9 +204,19 @@ function startDemo(){
   const side=(name,classId,level)=>({name,class_name:classId==="nerd"?"Задрот":"Оборванец",sprite:classId,class_id:classId,level,hp:60,resource:100,stats:{max_hp:60,resource_max:100},resource_name:classId==="nerd"?"Энергосы":"Выносливость",controller_id:1,controlled:false,loadout:["bum_punch"],cooldowns:{},potion_used:false,skill_details:[skill("bum_punch","Удар бомжа","physical",0),skill("humiliate","Унизить","magic",20),skill("dust","Пыль в глаза",null,20),skill("store","Сходить в магаз",null,0)]});
   battleScreen({token:"demo",chat_id:-1,mode:"personal",status:"active",revision:0,stake:50,actor_id:1,own_side:"a",state:{turn:1,active_side:"a",finished:false,sides:{a:side("Мистер Недосып","nerd",7),b:side("Пустошь","ragamuffin",7)},log:[]}});
 }
-async function boot(){
+function configureViewport(){
   tg?.ready();tg?.expand();
-  try{if(tg?.isVersionAtLeast("8.0"))tg.requestFullscreen();tg?.setHeaderColor("#0c1324");tg?.setBackgroundColor("#0c1324");}catch{}
+  try{
+    if(tg?.isVersionAtLeast?.("8.0")){
+      const mobile=tg.platform==="android"||tg.platform==="ios";
+      if(mobile&&!tg.isFullscreen)tg.requestFullscreen?.();
+      else if(!mobile&&tg.isFullscreen)tg.exitFullscreen?.();
+    }
+  }catch{}
+  try{tg?.setHeaderColor("#0c1324");tg?.setBackgroundColor("#0c1324");}catch{}
+}
+async function boot(){
+  configureViewport();
   if(demo){startDemo();return;}
   const start=tg?.initDataUnsafe?.start_param||new URLSearchParams(location.search).get("tgWebAppStartParam")||"";
   try{
