@@ -1180,6 +1180,7 @@ def create_router(
     yookassa_shop_id: str | None = None,
     yookassa_secret_key: str | None = None,
     yookassa_return_url: str | None = None,
+    arena_username: str | None = None,
 ) -> Router:
     router = Router(name="gnida-bot")
     router.message.outer_middleware(TrackingMiddleware(database))
@@ -1219,6 +1220,7 @@ def create_router(
                 InlineKeyboardButton(text="🔓 Выкупиться", callback_data="sm:buyout"),
             ],
             [InlineKeyboardButton(text="💜 Поддержать", callback_data="sm:support")],
+            [InlineKeyboardButton(text="⚔️ Арена", callback_data="sm:arena")],
         ]
         if user_id == CUSTOM_COMMAND_OWNER_ID:
             buttons.append(
@@ -4031,6 +4033,15 @@ def create_router(
         notice: str | None = None
         if action == "home":
             body, keyboard = await slave_menu_home(user_id, menu_chat_id)
+        elif action == "arena":
+            from arena_links import arena_link
+            body = "⚔️ Арена\nЛичный персонаж, бои рабов и этажи Пустоши. Один навык — одно нажатие."
+            buttons = [[InlineKeyboardButton(text="⬅️ Меню", callback_data="sm:home")]]
+            if arena_username:
+                buttons.insert(0, [InlineKeyboardButton(text="⚔️ Открыть арену", url=arena_link(arena_username, f"menu_{menu_chat_id}"))])
+            else:
+                body += "\nАрена отключена: владелец бота ещё не настроил WEBAPP_URL."
+            keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
         elif action == "custom" and user_id == CUSTOM_COMMAND_OWNER_ID:
             chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
             body, keyboard = await custom_commands_menu() if chat is not None else choose_chat_view()

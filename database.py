@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from blackjack import compare_stood_hands, hand_total, shuffled_deck
+from arena_store import ArenaMixin
 from checkers import (
     BLACK,
     WHITE,
@@ -89,7 +90,7 @@ def utc_timestamp() -> int:
     return int(datetime.now(timezone.utc).timestamp())
 
 
-class Database:
+class Database(ArenaMixin):
     """Small async-friendly SQLite repository for one aiogram process."""
 
     def __init__(self, path: str | Path) -> None:
@@ -586,6 +587,8 @@ class Database:
                )"""
         )
         self._connection.commit()
+
+        self._connect_arena()
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {
@@ -1852,6 +1855,7 @@ class Database:
             ).fetchone()
             if winner_owner:
                 if int(winner_owner["owner_id"]) == loser_id:
+                    self._settle_materials_locked(chat_id, loser_id)
                     self.connection.execute(
                         "DELETE FROM ownership WHERE chat_id=? AND slave_id=?",
                         (chat_id, winner_id),
@@ -1890,6 +1894,8 @@ class Database:
                    ORDER BY transfer_priority ASC, RANDOM() LIMIT 1""",
                 (chat_id, loser_id, winner_id),
             ).fetchone()
+            self._settle_materials_locked(chat_id, winner_id)
+            self._settle_materials_locked(chat_id, loser_id)
             if owned:
                 slave_id = int(owned["slave_id"])
                 self.connection.execute(
@@ -1917,6 +1923,8 @@ class Database:
                     (chat_id, slave_id, winner_id, utc_timestamp()),
                 )
                 outcome = "enslaved"
+            self._ensure_slave_profile_locked(chat_id, slave_id)
+            self._refresh_owner_record_locked(chat_id, winner_id)
             self.connection.commit()
             return outcome, slave_id
 
@@ -1975,6 +1983,8 @@ class Database:
             ).fetchone()
             if recipient_is_slave:
                 return "recipient_is_slave"
+            self._settle_materials_locked(chat_id, current_owner_id)
+            self._settle_materials_locked(chat_id, new_owner_id)
             self.connection.execute(
                 "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
                 (chat_id, slave_id),
@@ -1985,6 +1995,7 @@ class Database:
                    WHERE chat_id=? AND slave_id=?""",
                 (new_owner_id, utc_timestamp(), chat_id, slave_id),
             )
+            self._refresh_owner_record_locked(chat_id, new_owner_id)
             self.connection.commit()
             return "transferred"
 
@@ -2008,6 +2019,15 @@ class Database:
             ).fetchone()
             if owner_is_slave:
                 return "owner_is_slave"
+            previous_owner = self.connection.execute(
+                "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
+                (chat_id, slave_id),
+            ).fetchone()
+            affected_owners = {owner_id, slave_id}
+            if previous_owner:
+                affected_owners.add(int(previous_owner["owner_id"]))
+            for affected_owner in affected_owners:
+                self._settle_materials_locked(chat_id, affected_owner)
             self.connection.execute(
                 "DELETE FROM ownership WHERE chat_id=? AND owner_id=?",
                 (chat_id, slave_id),
@@ -2031,11 +2051,14 @@ class Database:
                        transfer_priority=0""",
                 (chat_id, slave_id, owner_id, utc_timestamp()),
             )
+            self._ensure_slave_profile_locked(chat_id, slave_id)
+            self._refresh_owner_record_locked(chat_id, owner_id)
             self.connection.commit()
             return "enslaved"
 
     async def release_all_slaves(self, chat_id: int, owner_id: int) -> int:
         async with self._lock:
+            self._settle_materials_locked(chat_id, owner_id)
             cursor = self.connection.execute(
                 "DELETE FROM ownership WHERE chat_id=? AND owner_id=?",
                 (chat_id, owner_id),
@@ -3069,6 +3092,7 @@ class Database:
                    WHERE chat_id=? AND user_id=?""",
                 (BUYOUT_COST_FRANCS, now, chat_id, slave_id),
             )
+            self._settle_materials_locked(chat_id, owner_id)
             self.connection.execute(
                 "DELETE FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?",
                 (chat_id, owner_id, slave_id),
@@ -3263,6 +3287,7 @@ class Database:
 
     async def release_slave(self, chat_id: int, owner_id: int, slave_id: int) -> bool:
         async with self._lock:
+            self._settle_materials_locked(chat_id, owner_id)
             cursor = self.connection.execute(
                 "DELETE FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?",
                 (chat_id, owner_id, slave_id),

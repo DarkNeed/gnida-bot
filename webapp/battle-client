@@ -1,0 +1,220 @@
+"use strict";
+// Browser code, intentionally extensionless: never a Node.js startup file.
+const tg=window.Telegram?.WebApp;
+const app=document.getElementById("app");
+let current=null, menu=null, busy=false, lastSeq=0, polling=false, token="", chat=null, page="personal", profileId=null, near="a";
+const demo=new URLSearchParams(location.search).get("demo")==="1" && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const adminDraft={};
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,reduced?Math.min(50,ms):ms));
+const sprite=c=>"/static/assets/"+(c||"ragamuffin")+".png";
+function toast(text){const box=document.getElementById("toast");box.textContent=text;box.hidden=false;setTimeout(()=>box.hidden=true,3500);}
+function button(label,id,cls=""){return '<button class="'+cls+'" data-do="'+id+'">'+label+"</button>";}
+function top(title,tag,right){return '<header class="top"><div><div class="eyebrow">'+tag+'</div><h1>'+title+'</h1></div>'+right+"</header>";}
+async function api(path,body){
+  const response=await fetch(path,{method:body?"POST":"GET",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":tg?.initData||""},body:body?JSON.stringify(body):undefined,cache:"no-store"});
+  const data=await response.json();
+  if(!response.ok)throw new Error(data.error||"Сервер недоступен.");
+  return data;
+}
+function hud(s,key){
+  return '<div class="hud '+(key===near?"player":"enemy")+'"><div class="row"><div class="name">'+esc(s.name)+'</div><span class="badge">Lv.'+s.level+'</span></div><div class="meta">'+esc(s.class_name)+(s.controlled?" · контроль −20%":"")+'</div><div class="barline"><span>HP</span><span id="hp-'+key+'">'+s.hp+" / "+s.stats.max_hp+'</span></div><div class="bar" id="health-'+key+'"><i style="width:'+100*s.hp/s.stats.max_hp+'%"></i></div><div class="barline"><span>'+esc(s.resource_name)+'</span><span id="mp-'+key+'">'+s.resource+" / "+s.stats.resource_max+'</span></div><div class="bar mana" id="mana-'+key+'"><i style="width:'+100*s.resource/s.stats.resource_max+'%"></i></div></div>';
+}
+function battleScreen(data){
+  current=data; token=data.token; chat=data.chat_id;
+  if(!data.state||!["active","finished"].includes(data.status)){setupScreen(data);return;}
+  near=(data.own_side==="b"||(!data.own_side&&(data.state.sides.b.controller_id===data.actor_id||data.consent_side==="b")))?"b":"a";
+  const far=near==="a"?"b":"a",a=data.state.sides[near],b=data.state.sides[far];
+  app.innerHTML='<section class="battle">'+top("Арена",data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":"БЕЗ СТАВКИ")+'</span>')+
+    '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div><img class="sprite enemy" id="sprite-'+far+'" src="'+sprite(b.sprite)+'" alt="'+esc(b.class_name)+'"><div class="podium player"></div><img class="sprite player" id="sprite-'+near+'" src="'+sprite(a.sprite)+'" alt="'+esc(a.class_name)+'">'+hud(a,near)+'</div><div class="turnbanner" id="turn"></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+button("В меню","menu","small")+'</footer></section>';
+  renderActions();
+}
+function renderActions(){
+  if(!current?.state||!document.getElementById("panel"))return;
+  const st=current.state,side=st.sides[st.active_side],mine=side.controller_id===current.actor_id;
+  document.getElementById("round").textContent="ХОД "+st.turn;
+  document.getElementById("turn").textContent=st.finished?"Бой завершён":mine?"Твой ход · выбери навык":side.name+" выбирает навык";
+  const panel=document.getElementById("panel");
+  if(st.finished){
+    const winner=st.winner?st.sides[st.winner].name:"";
+    panel.innerHTML='<div class="battlelog">'+(winner?"Победа: "+esc(winner):"Ничья")+'<div class="muted">Опыт: '+Object.values(st.rewards||{}).join(" / ")+' XP'+(st.payout?" · Приз "+st.payout+" ₣":"")+'</div></div>'+
+      (current.mode==="wasteland"&&st.winner==="a"?button("Следующий этаж","next","primary"):"");
+    for(const k of ["a","b"])document.getElementById("sprite-"+k).classList.toggle("defeated",st.sides[k].hp===0);
+  }else if(mine){
+    panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>'<button class="skill" data-skill="'+esc(skill.skill_id)+'" '+(side.resource<skill.cost||side.cooldowns[skill.skill_id]?"disabled":"")+'><span class="type">'+(skill.damage_type==="magic"?"МАГИЯ":skill.damage_type==="physical"?"АТАКА":"ЭФФЕКТ")+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?" · ещё "+side.cooldowns[skill.skill_id]+" х.":"")+"</span></button>").join("")+'</div>';
+    panel.innerHTML+='<div class="row" style="margin-top:8px">'+(side.controlled&&!side.potion_used?button("Зелье · 30% HP","potion","small"):"<span></span>")+button("Сдаться","surrender","small danger")+'</div>';
+  }else{
+    panel.innerHTML='<div class="battlelog">'+(current.own_side||current.consent_side?"Ход соперника…":"Ты наблюдаешь за боем.")+'<div class="muted">'+esc(st.log.at(-1)?.text||"Первый ход скоро начнётся.")+'</div></div>';
+  }
+}
+function setupScreen(data){
+  const status={cancelled:"Вызов отменён",expired:"Время вызова истекло",refused:"Вызов отклонён"};
+  app.innerHTML='<section class="menu">'+top("Подготовка боя","АРЕНА",button("Меню","menu","small"))+'<div class="content"><div class="card"><h2>'+esc(data.names.a_owner)+' × '+esc(data.names.b_owner)+'</h2><p class="muted">'+(status[data.status]||"Соперник принимает вызов, каждый владелец выбирает своего бойца.")+'</p><div id="setup" class="stack"></div></div></div></section>';
+  const box=document.getElementById("setup");if(data.status!=="pending")return;
+  if(data.own_side==="b"&&!data.b_accepted)box.innerHTML+=button("Принять"+(data.stake?" · "+data.stake+" ₣":""),"accept","primary")+button("Отклонить","refuse");
+  if(data.mode==="slaves"&&data.own_side){
+    const key=data.own_side;
+    box.innerHTML+='<label class="check"><input type="checkbox" id="control" checked> Управлять самому · все характеристики −20%</label><div class="muted">Без контроля раб должен согласиться и самостоятельно выбирать навыки.</div>';
+    box.innerHTML+=data.available.map(s=>button(esc(s.name)+" · Lv."+s.level,(s.id===data[key+"_fighter"]?"selected:":"select:")+s.id,s.id===data[key+"_fighter"]?"primary":"")).join("");
+  }
+  if(data.consent_side&&!data[data.consent_side+"_consent"])box.innerHTML+=button("Согласен сражаться сам","consent","primary");
+  if(data.own_side==="a")box.innerHTML+=button("Отменить вызов","cancel","danger");
+  box.innerHTML+='<div class="muted">Бой начнётся после принятия вызова и выбора обоих бойцов. Никаких подтверждений навыков в бою.</div>';
+}
+async function animateEvent(event){
+  const panel=document.getElementById("panel"); if(!panel)return;
+  const userTurn=current.state.sides[event.side]?.controller_id===current.actor_id;
+  document.getElementById("turn").textContent=userTurn?"Твой ход":"Ход: "+current.state.sides[event.side].name;
+  document.getElementById("round").textContent="ХОД "+event.seq;
+  panel.innerHTML='<div class="battlelog">'+esc(event.skill_name||event.text)+'</div>';
+  const attacker=document.getElementById("sprite-"+event.side);
+  const other=event.side==="a"?"b":"a",target=document.getElementById("sprite-"+other);
+  attacker?.classList.add("attack");
+  if(event.damage_type==="magic"){
+    const projectile=document.createElement("div");projectile.className="projectile";projectile.style.animation=(event.side===near?"projectile":"enemyProjectile")+" .5s forwards";
+    document.querySelector(".field").append(projectile);setTimeout(()=>projectile.remove(),600);
+  }
+  await sleep(430);attacker?.classList.remove("attack");
+  if(event.hit&&event.damage){target?.classList.add("hurt");const number=document.createElement("div");number.className="damage";number.textContent="−"+event.damage;if(other===near){number.style.left="23%";number.style.top="65%";}document.querySelector(".field").append(number);setTimeout(()=>number.remove(),1000);}
+  if(event.after)for(const key of ["a","b"]){
+    const s=current.state.sides[key],values=event.after[key];
+    document.getElementById("health-"+key).firstElementChild.style.width=100*values.hp/s.stats.max_hp+"%";
+    document.getElementById("health-"+key).classList.toggle("low",values.hp/s.stats.max_hp<.3);
+    document.getElementById("hp-"+key).textContent=values.hp+" / "+s.stats.max_hp;
+    document.getElementById("mana-"+key).firstElementChild.style.width=100*values.resource/s.stats.resource_max+"%";
+    document.getElementById("mp-"+key).textContent=values.resource+" / "+s.stats.resource_max;
+  }
+  await sleep(450);target?.classList.remove("hurt");panel.innerHTML='<div class="battlelog">'+esc(event.text)+'</div>';await sleep(700);
+}
+async function applyBattle(data,animate=true){
+  if(current&&data.token===current.token&&data.revision<current.revision)return;
+  const events=data.state?.log.filter(e=>e.seq>lastSeq)||[];
+  if(!current?.state||!data.state){lastSeq=data.state?.log.at(-1)?.seq||0;battleScreen(data);return;}
+  current=data;
+  if(animate){
+    for(const event of events){await animateEvent(event);lastSeq=event.seq;}
+  }else lastSeq=data.state.log.at(-1)?.seq||0;
+  battleScreen(data);
+}
+async function action(action,extra={}){
+  if(busy)return;busy=true;
+  document.querySelectorAll("#panel button,#setup button").forEach(b=>b.disabled=true);
+  try{
+    let data;
+    if(demo){
+      const key=current.state.active_side,other=key==="a"?"b":"a",s=current.state.sides;
+      const used=s[key].skill_details.find(x=>x.skill_id===extra.skill)||s[key].skill_details[0];
+      s[other].hp=Math.max(0,s[other].hp-12);
+      current.state.log.push({seq:current.state.turn++,side:key,skill_name:used.name,damage_type:used.damage_type,text:"Попадание · −12 HP",hit:true,damage:12,after:{a:{hp:s.a.hp,resource:s.a.resource},b:{hp:s.b.hp,resource:s.b.resource}}});
+      current.state.active_side=other;current.revision++;data=current;
+      if(!current.state.finished){
+        const enemyMove=s[other].skill_details[0];s[key].hp=Math.max(0,s[key].hp-8);
+        current.state.log.push({seq:current.state.turn++,side:other,skill_name:enemyMove.name,damage_type:"physical",text:"Ответ противника · −8 HP",hit:true,damage:8,after:{a:{hp:s.a.hp,resource:s.a.resource},b:{hp:s.b.hp,resource:s.b.resource}}});
+        current.state.active_side=key;
+      }
+    }else data=await api("/api/battle/"+token,{action,revision:current.revision,...extra});
+    await applyBattle(data);
+  }catch(error){toast(error.message);if(!demo)try{await applyBattle(await api("/api/battle/"+token),false);}catch{}}
+  finally{busy=false;renderActions();}
+}
+function profileCard(p,title){
+  const progress=p.progress||[p.level,0,10];
+  return '<div class="card"><div class="profile"><img src="'+sprite(p.sprite)+'" alt=""><div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+progress[1]+' / '+progress[2]+' XP</span></div><div class="bar"><i style="width:'+100*progress[1]/progress[2]+'%"></i></div></div></div></div><div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary")+button("Класс и навыки","profile:"+p.user_id)+'</div></div>';
+}
+function activeProfile(){return [...(menu?.slaves||[]),menu?.self_slave,menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
+function menuScreen(data){
+  menu=data;chat=data.chat_id;token="";
+  let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+button("Рабы","tab:slaves",page==="slaves"?"selected":"")+button("Владелец","tab:owner",page==="owner"?"selected":"")+'</div>';
+  if(page==="personal")body+=profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Для дуэли: <b>/дуэль @участник 50</b> или ответом на сообщение. Ставка необязательна. Бои здесь не передают рабов.</div>';
+  else if(page==="slaves"){
+    body+=data.slaves.length?data.slaves.map(p=>profileCard(p,"ТВОЙ БОЕЦ")).join(""):'<div class="card"><h2>Пока нет рабов</h2><p class="muted">Личный персонаж доступен всем.</p></div>';
+    if(data.self_slave)body+=profileCard(data.self_slave,"ТВОЙ ПЕРСОНАЖ-РАБ");
+    body+='<div class="note">Ответь владельцу <b>/бой</b> или напиши <b>Я выбираю тебя @раб</b>. Каждый владелец выберет своего бойца. Без контроля раб должен согласиться; контроль доступен с 1 уровня.</div>';
+  }else if(page==="owner"){
+    const o=data.owner;
+    body+='<div class="card"><h2>Владелец · Lv.'+o.level+'</h2><p class="muted">Опыт: '+o.xp+' XP · Рабов: '+data.slaves.length+'<br>Сырьё: '+o.raw_material+' / '+(o.level<5?0:100+(o.level-5)*2)+'<br>Зелья: '+o.healing_potions+' · Конфеты: '+o.candies+'</p><div class="stack">'+button("Зелье · 50 сырья · Lv.5","craft:potion")+button("Конфета · 100 сырья · Lv.7","craft:candy")+'</div></div><div class="note">С 5 уровня: 1 сырьё/час за раба. Зелье лечит 30% HP, одно на бой. Конфета с 7 уровня даёт 30 XP. Владелец получает опыт за победы рабов и новые рекорды их количества.</div>';
+    if(data.admin)body+=button("Авторские классы и навыки","admin");
+  }else if(page==="admin"){
+    body+='<div class="card"><h2>Авторский контент</h2><p class="muted">Создание и выдача доступны только тебе. Формат JSON описан в ARENA.md.</p><div class="form"><select id="content-type"><option value="skill">Навык</option><option value="class">Класс + пассивки</option></select><input id="content-id" placeholder="Уникальный ID, например fire_ball"><textarea id="content-json" placeholder=\'{"name":"Огненный шар","damage_type":"magic","power":15,"cost":20}\'></textarea>'+button("Создать","create_content","primary")+'<input id="content-user" type="number" placeholder="Telegram ID получателя">'+button("Выдать выбранный ID участнику","grant_content")+'</div></div>';
+  }else {
+    const p=activeProfile();
+    if(!p){page="personal";menuScreen(data);return;}
+    body+='<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p class="muted">Навыки открываются с уровнем. До четырёх навыков на бой; обычный удар доступен бесплатно.</p>';
+    if(p.level>=5&&p.class_id==="ragamuffin")body+='<div class="stack">'+p.classes.map(c=>button(esc(c.name),"class:"+c.id)).join("")+'<input id="hidden-class" placeholder="Название скрытого класса">'+button("Выбрать скрытый класс","hidden")+'</div>';
+    body+='<h3 style="margin-top:20px">Активные навыки</h3><div class="stack">'+p.skills.map(s=>button(esc(s.name)+'<div class="muted">'+s.cost+' · перезарядка '+s.cooldown+' х.</div>',"toggle:"+s.skill_id,p.loadout.includes(s.skill_id)?"selected-skill":"")).join("")+button("Сохранить навыки","save","primary")+'</div>';
+    if(!p.personal&&p.user_id!==tg?.initDataUnsafe?.user?.id)body+='<p class="muted">Владелец может выбирать класс и навыки за раба после 48 часов ожидания.</p>'+button("Дать конфету · 30 XP","candy");
+    body+='</div>';
+  }
+  if(data.active?.length)body+='<div class="card"><h3>Текущие бои</h3><div class="stack">'+data.active.map(b=>button((b.mode==="wasteland"?"Пустошь":"Бой")+" · "+b.status,"battle:"+b.token)).join("")+'</div></div>';
+  app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content">'+body+'</div></section>';
+  if(page==="admin"){
+    document.querySelector(".form").insertAdjacentHTML("beforeend",'<label class="check"><input id="grant-personal" type="checkbox"> Выдать класс личному персонажу (иначе — персонажу-рабу)</label>');
+    for(const [id,value] of Object.entries(adminDraft)){const field=document.getElementById(id);if(field){if(field.type==="checkbox")field.checked=value;else field.value=value;}}
+  }
+}
+async function openMenu(){
+  if(!chat)return;lastSeq=0;current=null;token="";
+  try{menuScreen(await api("/api/menu/"+chat));}catch(error){toast(error.message);}
+}
+async function menuAction(action,extra={}){
+  if(busy)return;busy=true;
+  try{
+    const response=await api("/api/menu/"+chat,{action,...extra});
+    if(response.token){token=response.token;current=null;lastSeq=0;battleScreen(await api("/api/battle/"+token));}
+    else{toast(({crafted:"Создано.",low_level:"Недостаточный уровень.",not_enough_material:"Не хватает сырья.",no_candy:"Нет конфет.",given:"Конфета выдана.",created:"Создано.",granted:"Выдано.",invalid_definition:"Некорректное описание.",exists:"Такой ID уже есть."})[response.notice]||response.notice);menuScreen(response.menu);}
+  }catch(error){toast(error.message);}finally{busy=false;}
+}
+app.addEventListener("click",async event=>{
+  const b=event.target.closest("button");if(!b||b.disabled||busy)return;
+  if(b.dataset.skill){await action("skill",{skill:b.dataset.skill});return;}
+  const id=b.dataset.do||"",[cmd,arg]=id.split(":");
+  if(["accept","cancel","refuse","consent"].includes(cmd)){await action(cmd);return;}
+  if(cmd==="select"||cmd==="selected"){await action("select",{fighter:Number(arg),controlled:document.getElementById("control").checked});return;}
+  if(cmd==="potion"||cmd==="surrender"){await action("skill",{skill:cmd});return;}
+  if(cmd==="menu"||cmd==="refresh"){if(demo){toast("Демо интерфейса. В Telegram здесь откроется меню.");return;}await openMenu();return;}
+  if(cmd==="tab"){page=arg;menuScreen(menu);return;}
+  if(cmd==="profile"){profileId=Number(arg);page=page==="personal"?"personalProfile":"slaveProfile";menuScreen(menu);return;}
+  if(cmd==="admin"){page="admin";menuScreen(menu);return;}
+  if(cmd==="battle"){token=arg;current=null;lastSeq=0;battleScreen(await api("/api/battle/"+token));return;}
+  if(cmd==="waste"){await menuAction("wasteland",{fighter:Number(arg),personal:page==="personal"});return;}
+  if(cmd==="next"){await menuAction("wasteland",{fighter:current.a_fighter,previous:token});return;}
+  if(cmd==="craft"){await menuAction("craft",{item:arg});return;}
+  const p=activeProfile();
+  if(cmd==="class"||cmd==="hidden"){await menuAction("class",{user:p.user_id,personal:p.personal,value:cmd==="hidden"?document.getElementById("hidden-class").value:arg});return;}
+  if(cmd==="toggle"){if(p.loadout.includes(arg))p.loadout=p.loadout.filter(k=>k!==arg);else if(p.loadout.length<4)p.loadout.push(arg);else toast("Не больше четырёх навыков.");menuScreen(menu);return;}
+  if(cmd==="save"){await menuAction("loadout",{user:p.user_id,personal:p.personal,value:p.loadout});return;}
+  if(cmd==="candy"){await menuAction("candy",{user:p.user_id});return;}
+  if(cmd==="create_content"||cmd==="grant_content"){
+    let definition={};try{if(cmd==="create_content")definition=JSON.parse(document.getElementById("content-json").value);}catch{toast("Не удалось разобрать JSON.");return;}
+    await menuAction(cmd,{type:document.getElementById("content-type").value,id:document.getElementById("content-id").value,definition,user:Number(document.getElementById("content-user").value),personal:document.getElementById("grant-personal").checked});
+  }
+});
+app.addEventListener("input",event=>{if(page==="admin"&&event.target.id)adminDraft[event.target.id]=event.target.type==="checkbox"?event.target.checked:event.target.value;});
+async function poll(){
+  if(polling||busy||!token||demo||document.hidden||current?.status!=="active"&&current?.status!=="pending")return;
+  polling=true;
+  try{
+    const data=await api("/api/battle/"+token);
+    if(!busy&&token===data.token&&(!current||data.revision>current.revision)){busy=true;try{await applyBattle(data);}finally{busy=false;}}
+  }catch(error){toast(error.message);}finally{polling=false;}
+}
+function startDemo(){
+  const skill=(id,name,type,cost)=>({skill_id:id,name,damage_type:type,cost});
+  const side=(name,classId,level)=>({name,class_name:classId==="nerd"?"Задрот":"Оборванец",sprite:classId,class_id:classId,level,hp:60,resource:100,stats:{max_hp:60,resource_max:100},resource_name:classId==="nerd"?"Энергосы":"Выносливость",controller_id:1,controlled:false,loadout:["bum_punch"],cooldowns:{},potion_used:false,skill_details:[skill("bum_punch","Удар бомжа","physical",0),skill("humiliate","Унизить","magic",20),skill("dust","Пыль в глаза",null,20),skill("store","Сходить в магаз",null,0)]});
+  battleScreen({token:"demo",chat_id:-1,mode:"personal",status:"active",revision:0,stake:50,actor_id:1,own_side:"a",state:{turn:1,active_side:"a",finished:false,sides:{a:side("Мистер Недосып","nerd",7),b:side("Пустошь","ragamuffin",7)},log:[]}});
+}
+async function boot(){
+  tg?.ready();tg?.expand();
+  try{if(tg?.isVersionAtLeast("8.0"))tg.requestFullscreen();tg?.setHeaderColor("#0c1324");tg?.setBackgroundColor("#0c1324");}catch{}
+  if(demo){startDemo();return;}
+  const start=tg?.initDataUnsafe?.start_param||new URLSearchParams(location.search).get("tgWebAppStartParam")||"";
+  try{
+    if(start.startsWith("b_")){token=start.slice(2);const data=await api("/api/battle/"+token);lastSeq=data.state?.log.at(-1)?.seq||0;battleScreen(data);}
+    else if(/^menu_-?\d+$/.test(start)){chat=Number(start.slice(5));await openMenu();}
+    else app.innerHTML='<div class="loading"><h2>Открой арену из бота</h2><p class="muted">Кнопка «Арена» в /menu или «Открыть бой» под вызовом в чате.</p></div>';
+  }catch(error){app.innerHTML='<div class="loading"><h2>Не удалось открыть арену</h2><p>'+esc(error.message)+'</p></div>';}
+}
+setInterval(poll,1800);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)poll();});
+boot();

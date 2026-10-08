@@ -1,0 +1,19 @@
+# Arena sprite assets
+
+Generated with the built-in image generation tool, transparent PNG. These are single idle poses animated in the browser using transforms, not sprite-sheet frame animations. Replace the class PNGs with your drawings without changing combat logic.
+
+## ragamuffin
+
+Use case: stylized-concept. Asset type: transparent 2D battle character sprite for a Telegram RPG. Primary request: one original full-body scruffy adult street fighter with messy dark hair, short beard, worn brown hooded jacket, patched trousers and scuffed sneakers, fists ready. Style: polished hand-drawn 2D anime RPG sprite, bold clean dark outline, simple cel shading, readable silhouette, mildly exaggerated adult proportions, consistent with a cohesive four-class roster. Composition: whole character including feet, centered, looking and facing slightly right in three-quarter view, generous transparent margin around every edge, no cropping. Background: genuinely transparent alpha. No ground, no scenery, no text, no UI, no watermark, no emojis, no extra characters. Fully clothed nonsexual character. Single idle battle pose suitable for animating with transforms.
+
+## cutie
+
+Use case: stylized-concept. Asset type: transparent 2D battle character sprite for a Telegram RPG. Primary request: one original full-body androgynous adult male cute fighter with lavender hair, pink oversized cat-ear hoodie, dark shorts over opaque leggings and chunky boots, charming confident battle stance. Style: polished hand-drawn 2D anime RPG sprite, bold clean dark outline, simple cel shading, readable silhouette, mildly exaggerated adult proportions, consistent with a cohesive four-class roster. Composition: whole character including feet, centered, looking and facing slightly right in three-quarter view, generous transparent margin around every edge, no cropping. Background: genuinely transparent alpha. No ground, no scenery, no text, no UI, no watermark, no emojis, no extra characters. Fully clothed nonsexual character. Single idle battle pose suitable for animating with transforms.
+
+## jock
+
+Use case: stylized-concept. Asset type: transparent 2D battle character sprite for a Telegram RPG. Primary request: one original full-body muscular adult male athlete with orange sleeveless sports shirt, dark tracksuit trousers, boxing wraps and trainers, strong confident battle stance. Style: polished hand-drawn 2D anime RPG sprite, bold clean dark outline, simple cel shading, readable silhouette, mildly exaggerated adult proportions, consistent with a cohesive four-class roster. Composition: whole character including feet, centered, looking and facing slightly right in three-quarter view, generous transparent margin around every edge, no cropping. Background: genuinely transparent alpha. No ground, no scenery, no text, no UI, no watermark, no emojis, no extra characters. Fully clothed nonsexual character. Single idle battle pose suitable for animating with transforms.
+
+## nerd
+
+Use case: stylized-concept. Asset type: transparent 2D battle character sprite for a Telegram RPG. Primary request: one original full-body adult male gamer mage with square glasses, teal tousled hair, dark blue hoodie, jeans, sneakers and a glowing turquoise energy-drink can, tactical battle stance. Style: polished hand-drawn 2D anime RPG sprite, bold clean dark outline, simple cel shading, readable silhouette, mildly exaggerated adult proportions, consistent with a cohesive four-class roster. Composition: whole character including feet, centered, looking and facing slightly right in three-quarter view, generous transparent margin around every edge, no cropping. Background: genuinely transparent alpha. No ground, no scenery, no text, no UI, no watermark, no emojis, no extra characters. Fully clothed nonsexual character. Single idle battle pose suitable for animating with transforms.
