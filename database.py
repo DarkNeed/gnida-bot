@@ -44,6 +44,15 @@ BUYOUT_COST_FRANCS = 100
 MAX_FRANC_BALANCE = 2**63 - 1
 
 
+def business_income_tax(gross_income: int) -> int:
+    """Cumulative daily progressive tax; each rate applies only to its bracket."""
+    return (
+        min(max(gross_income - 300, 0), 700) * 15
+        + min(max(gross_income - 1000, 0), 2000) * 35
+        + max(gross_income - 3000, 0) * 60
+    ) // 100
+
+
 class InsufficientFrancStake(ValueError):
     def __init__(self, user_id: int):
         self.user_id = user_id
@@ -442,6 +451,15 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_business_income_daily_period
                 ON business_income_daily(chat_id, income_day);
 
+            CREATE TABLE IF NOT EXISTS business_tax_daily (
+                chat_id INTEGER NOT NULL,
+                owner_id INTEGER NOT NULL,
+                income_day TEXT NOT NULL,
+                gross_income INTEGER NOT NULL DEFAULT 0,
+                tax_paid INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (chat_id, owner_id, income_day)
+            );
+
             CREATE TABLE IF NOT EXISTS business_workers (
                 chat_id INTEGER NOT NULL,
                 owner_id INTEGER NOT NULL,
@@ -504,6 +522,7 @@ class Database:
         )
         self._ensure_column("ownership", "last_forced_at", "INTEGER")
         self._ensure_column("business_workers", "wage_hours", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("businesses", "income_remainder", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column(
             "ownership", "transfer_priority", "INTEGER NOT NULL DEFAULT 0"
         )
@@ -532,6 +551,20 @@ class Database:
         self._ensure_column("challenges", "winner_id", "INTEGER")
         self._ensure_column(
             "challenges", "result_recorded", "INTEGER NOT NULL DEFAULT 0"
+        )
+        # Unaccepted legacy checkers offers must not consume a forced-owner attempt.
+        self._connection.execute(
+            """UPDATE ownership SET last_forced_at=NULL WHERE EXISTS (
+                   SELECT 1 FROM challenges c WHERE c.chat_id=ownership.chat_id
+                   AND c.challenger_id=ownership.slave_id AND c.opponent_id=ownership.owner_id
+                   AND c.game_type='checkers' AND c.forced=1 AND c.status='pending'
+                   AND c.created_at=ownership.last_forced_at)"""
+        )
+        self._connection.execute(
+            """UPDATE challenges SET forced=0, opponent_newcomer=0,
+                   deadline=CASE WHEN status='pending' THEN created_at + ? ELSE deadline END
+               WHERE game_type='checkers' AND (forced=1 OR opponent_newcomer=1)""",
+            (CHALLENGE_DEADLINE_SECONDS,),
         )
         self._connection.execute(
             """UPDATE challenges
@@ -838,7 +871,7 @@ class Database:
             raise ValueError("Invalid player stake")
         if player_stake and not friendly:
             raise ValueError("A wager must be a friendly game")
-        if friendly:
+        if friendly or game_type == "checkers":
             forced = False
             opponent_newcomer = False
         async with self._lock:
@@ -2137,6 +2170,37 @@ class Database:
         active_end = min(end, last_seen + BUSINESS_ACTIVE_SECONDS)
         return max(0, (active_end - start) // BUSINESS_HOUR_SECONDS)
 
+    def _credit_business_income_locked(
+        self, chat_id: int, owner_id: int, day: str, gross_income: int
+    ) -> tuple[int, int]:
+        """Record gross/net income and withhold incremental tax under the DB lock."""
+        if gross_income <= 0:
+            return 0, 0
+        previous = self.connection.execute(
+            """SELECT gross_income, tax_paid FROM business_tax_daily
+               WHERE chat_id=? AND owner_id=? AND income_day=?""",
+            (chat_id, owner_id, day),
+        ).fetchone()
+        daily_gross = (int(previous["gross_income"]) if previous else 0) + gross_income
+        daily_tax = business_income_tax(daily_gross)
+        tax = daily_tax - (int(previous["tax_paid"]) if previous else 0)
+        net_income = gross_income - tax
+        self.connection.execute(
+            """INSERT INTO business_tax_daily(chat_id, owner_id, income_day, gross_income, tax_paid)
+               VALUES (?, ?, ?, ?, ?) ON CONFLICT(chat_id, owner_id, income_day)
+               DO UPDATE SET gross_income=excluded.gross_income, tax_paid=excluded.tax_paid""",
+            (chat_id, owner_id, day, daily_gross, daily_tax),
+        )
+        self.connection.execute(
+            """INSERT INTO business_income_daily(chat_id, owner_id, income_day, owner_income)
+               VALUES (?, ?, ?, ?) ON CONFLICT(chat_id, owner_id, income_day)
+               DO UPDATE SET owner_income=owner_income + excluded.owner_income""",
+            (chat_id, owner_id, day, net_income),
+        )
+        if net_income:
+            self._add_francs_locked(chat_id, owner_id, net_income)
+        return net_income, tax
+
     def _record_business_income_locked(
         self,
         chat_id: int,
@@ -2146,12 +2210,10 @@ class Database:
         producers: list[sqlite3.Row],
         config: dict[str, int | str],
         bonus_percent: int,
-        owner_income: int,
-    ) -> None:
-        """Split settled owner income across Moscow calendar days for public stats."""
-        if owner_income <= 0:
-            return
-        weights: dict[str, int] = {}
+        remainder: int,
+    ) -> tuple[int, int, int]:
+        """Accrue exact hourly income by Moscow day, carrying fractional francs."""
+        daily_income: dict[str, int] = {}
         for offset in range(hours):
             hour_end = start + (offset + 1) * BUSINESS_HOUR_SECONDS
             active = sum(
@@ -2160,34 +2222,24 @@ class Database:
                 for worker in producers
             )
             inactive = len(producers) - active
-            hourly_income = (
-                active * int(config["owner_per_producer"]) * (100 + bonus_percent) // 100
-                + inactive * int(config["inactive_owner_per_producer"])
+            numerator = (
+                active * int(config["owner_per_producer"]) * (100 + bonus_percent)
+                + inactive * int(config["inactive_owner_per_producer"]) * 100
+                + remainder
             )
+            hourly_income, remainder = divmod(numerator, 100)
             day = datetime.fromtimestamp(hour_end - 1, BUSINESS_STATS_TZ).date().isoformat()
-            weights[day] = weights.get(day, 0) + hourly_income
-        weight_total = sum(weights.values())
-        if weight_total <= 0:
-            return
-        remaining = owner_income
-        days = sorted(weights)
-        for day in days[:-1]:
-            allocated = owner_income * weights[day] // weight_total
-            remaining -= allocated
-            self.connection.execute(
-                """INSERT INTO business_income_daily(chat_id, owner_id, income_day, owner_income)
-                   VALUES (?, ?, ?, ?)
-                   ON CONFLICT(chat_id, owner_id, income_day) DO UPDATE SET
-                       owner_income=owner_income + excluded.owner_income""",
-                (chat_id, owner_id, day, allocated),
-            )
+            daily_income[day] = daily_income.get(day, 0) + hourly_income
         self.connection.execute(
-            """INSERT INTO business_income_daily(chat_id, owner_id, income_day, owner_income)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(chat_id, owner_id, income_day) DO UPDATE SET
-                   owner_income=owner_income + excluded.owner_income""",
-            (chat_id, owner_id, days[-1], remaining),
+            "UPDATE businesses SET income_remainder=? WHERE chat_id=? AND owner_id=?",
+            (remainder, chat_id, owner_id),
         )
+        net_income = tax = 0
+        for day, gross in daily_income.items():
+            paid, withheld = self._credit_business_income_locked(chat_id, owner_id, day, gross)
+            net_income += paid
+            tax += withheld
+        return net_income, sum(daily_income.values()), tax
 
     def _settle_business_locked(
         self, chat_id: int, owner_id: int, now: int
@@ -2200,7 +2252,7 @@ class Database:
             return None
         hours = max(0, (now - int(business["last_accrued"])) // BUSINESS_HOUR_SECONDS)
         if hours == 0:
-            return {"hours": 0, "owner_income": 0, "business_type": business["business_type"]}
+            return {"hours": 0, "owner_income": 0, "gross_income": 0, "tax": 0, "business_type": business["business_type"]}
         config = BUSINESS_CONFIG[str(business["business_type"])]
         interval_start = int(business["last_accrued"])
         interval_end = interval_start + hours * BUSINESS_HOUR_SECONDS
@@ -2218,31 +2270,10 @@ class Database:
         leaders = [worker for worker in workers if worker["role"] == config["leader_role"]]
         # The next manager contributes half the previous bonus: 20%, 10%, 5%, 2%, 1%.
         bonus_percent = sum(20 // (2**index) for index in range(min(len(leaders), 5)))
-        active_producer_hours = sum(
-            self._active_hours_in_interval(
-                int(worker["last_seen"]) if worker["last_seen"] is not None else None,
-                interval_start,
-                interval_end,
-            )
-            for worker in producers
+        owner_income, gross_income, tax = self._record_business_income_locked(
+            chat_id, owner_id, interval_start, hours, producers, config,
+            bonus_percent, int(business["income_remainder"]),
         )
-        inactive_producer_hours = len(producers) * hours - active_producer_hours
-        owner_income = (
-            active_producer_hours * int(config["owner_per_producer"]) * (100 + bonus_percent) // 100
-            + inactive_producer_hours * int(config["inactive_owner_per_producer"])
-        )
-        if owner_income:
-            self._record_business_income_locked(
-                chat_id,
-                owner_id,
-                interval_start,
-                hours,
-                producers,
-                config,
-                bonus_percent,
-                owner_income,
-            )
-            self._add_francs_locked(chat_id, owner_id, owner_income)
         for worker in workers:
             active_hours = self._active_hours_in_interval(
                 int(worker["last_seen"]) if worker["last_seen"] is not None else None,
@@ -2274,6 +2305,8 @@ class Database:
         return {
             "hours": hours,
             "owner_income": owner_income,
+            "gross_income": gross_income,
+            "tax": tax,
             "business_type": str(business["business_type"]),
         }
 
@@ -2852,6 +2885,21 @@ class Database:
         week_income = sum(int(row["owner_income"]) for row in rows)
         return yesterday_income, week_income
 
+    async def business_tax_periods(self, chat_id: int, owner_id: int) -> tuple[int, int]:
+        today = datetime.now(BUSINESS_STATS_TZ).date()
+        yesterday = today - timedelta(days=1)
+        week_start = today - timedelta(days=7)
+        async with self._lock:
+            rows = self.connection.execute(
+                """SELECT income_day, tax_paid FROM business_tax_daily
+                   WHERE chat_id=? AND owner_id=? AND income_day>=? AND income_day<=?""",
+                (chat_id, owner_id, week_start.isoformat(), yesterday.isoformat()),
+            ).fetchall()
+        return (
+            sum(int(row["tax_paid"]) for row in rows if row["income_day"] == yesterday.isoformat()),
+            sum(int(row["tax_paid"]) for row in rows),
+        )
+
     async def list_available_businesses(self, user_id: int) -> list[sqlite3.Row]:
         async with self._lock:
             return self.connection.execute(
@@ -2982,7 +3030,8 @@ class Database:
                 worker_pay = self._credit_labor_income_locked(
                     chat_id, worker_id, worker_pay, now
                 )
-            self._add_francs_locked(chat_id, owner_id, owner_pay)
+            income_day = datetime.fromtimestamp(now, BUSINESS_STATS_TZ).date().isoformat()
+            owner_pay, _ = self._credit_business_income_locked(chat_id, owner_id, income_day, owner_pay)
             cooldown_until = now + BUSINESS_HOUR_SECONDS
             self.connection.execute(
                 """INSERT INTO business_shift_cooldowns(chat_id, worker_id, cooldown_until)

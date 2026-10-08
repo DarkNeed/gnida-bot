@@ -1061,16 +1061,19 @@ async def challenge_offer_text(database: Database, challenge) -> str:
         "blackjack": "мини-блэкджек",
         "checkers": "шашки",
     }[str(challenge["game_type"])]
-    deadline_text = "5 минут" if challenge["opponent_newcomer"] else "3 часа"
+    deadline_text = (
+        "5 минут" if challenge["opponent_newcomer"] and challenge["game_type"] != "checkers"
+        else "3 часа"
+    )
     forced_text = (
         "\n🔒 Принудительный вызов: владелец не может отказаться."
-        if challenge["forced"]
+        if challenge["forced"] and challenge["game_type"] != "checkers"
         else ""
     )
     newcomer_text = (
         "\n⏳ Новичок не может отказаться; если не примет вызов за 5 минут, "
         "станет рабом вызывающего."
-        if challenge["opponent_newcomer"]
+        if challenge["opponent_newcomer"] and challenge["game_type"] != "checkers"
         else ""
     )
     friendly_text = (
@@ -1085,6 +1088,22 @@ async def challenge_offer_text(database: Database, challenge) -> str:
         f"На ответ даётся {deadline_text}."
         f"{forced_text}{newcomer_text}{friendly_text}"
         f"{await challenge_wager_text(database, challenge)}"
+        f"{await blackjack_beginner_guide(database, challenge)}"
+    )
+
+
+async def blackjack_beginner_guide(database: Database, challenge) -> str:
+    if challenge["game_type"] != "blackjack":
+        return ""
+    newcomer = bool(challenge["opponent_newcomer"]) or await database.is_vulnerable(
+        int(challenge["chat_id"]), int(challenge["opponent_id"])
+    )
+    if not newcomer:
+        return ""
+    return (
+        "\n\n📖 Блэкджек: набери больше соперника, но не больше 21 — перебор означает проигрыш. "
+        "«➕ Ещё» берёт карту, «✋ Хватит» завершает набор, «👁 Мои карты» показывает твою сумму. "
+        "J/Q/K = 10, туз = 11 или 1. Ходите по очереди."
     )
 
 
@@ -1119,6 +1138,7 @@ async def blackjack_text(database: Database, challenge, game) -> str:
         f"{state(int(challenge['opponent_id']), bool(game['opponent_stood']))}\n\n"
         f"Свою скрытую карту можно посмотреть кнопкой. На игру даётся {deadline_text}."
         f"{forced_text}{friendly_text}{await challenge_wager_text(database, challenge)}"
+        f"{await blackjack_beginner_guide(database, challenge)}"
     )
 
 
@@ -1128,11 +1148,6 @@ async def checkers_text(database: Database, challenge, game) -> str:
     turn_id = int(game["turn_user_id"])
     turn = challenger if turn_id == int(challenge["challenger_id"]) else opponent
     turn_symbol = "⚫" if turn_id == int(challenge["challenger_id"]) else "⚪"
-    forced_text = (
-        "\n🔒 Принудительный вызов: владелец не может отказаться."
-        if challenge["forced"]
-        else ""
-    )
     chain_text = (
         "\n⚔️ Нужно продолжить взятие выбранной шашкой."
         if game["chain_square"] is not None
@@ -1153,7 +1168,7 @@ async def checkers_text(database: Database, challenge, game) -> str:
         f"Играют: {plain_name(challenger)} ⚫ · {plain_name(opponent)} ⚪\n"
         f"Ходит: {plain_name(turn)} {turn_symbol}\n"
         "На ход даётся 3 часа."
-        f"{chain_text}{forced_text}{friendly_text}"
+        f"{chain_text}{friendly_text}"
         f"{await challenge_wager_text(database, challenge)}"
     )
 
@@ -1720,6 +1735,7 @@ def create_router(
             "• «Вызов» ответом на сообщение запускает игру с последствиями; «Игра …» — без рабства.\n"
             "• Проигравший без рабов становится рабом победителя. Если у проигравшего есть рабы, передаётся один из них.\n"
             "• ⭐ Приоритетный раб передаётся последним. Это не делает его неуязвимым.\n"
+            "• Шашки всегда добровольные: можно отклонить вызов, даже новичку или хозяину.\n"
             "• Раб не может иметь рабов и может вызывать только своего владельца. Победа над владельцем освобождает раба.\n"
             "• /рабы в личке показывает список, а /приоритет @юзер меняет приоритет текстовой командой.",
             slave_menu_back_keyboard(),
@@ -1871,6 +1887,9 @@ def create_router(
             "Владелец получает доход каждый час. Активные работники получают 1 ₣ "
             "раз в 6 часов, управляющие и надзиратели — раз в 12 часов. "
             "Неактивные больше суток не получают зарплату, но дают пониженный доход."
+            "\n\nНалог владельца за сутки по МСК: первые 300 ₣ — 0%; "
+            "следующие 700 ₣ — 15%; следующие 2000 ₣ — 35%; "
+            "свыше 3000 ₣ — 60%. Каждая ставка применяется только к своей части дохода."
         )
         return (
             text,
@@ -1961,11 +1980,13 @@ def create_router(
         business = await database.get_business(chat_id, owner_id)
         if not business:
             return None
-        workers, periods = await asyncio.gather(
+        workers, periods, tax_periods = await asyncio.gather(
             database.list_business_slaves(chat_id, owner_id),
             database.business_income_periods(chat_id, owner_id),
+            database.business_tax_periods(chat_id, owner_id),
         )
         yesterday_income, week_income = periods
+        yesterday_tax, week_tax = tax_periods
         business_type = str(business["business_type"])
         meta = BUSINESS_META[business_type]
         producer_role = "courtesan" if business_type == "brothel" else "collector"
@@ -1983,8 +2004,10 @@ def create_router(
             f"Владелец: {owner_name}\n"
             f"{meta['producer']}: <b>{producers}</b> · {meta['leader']}: <b>{leaders}</b>\n"
             f"Не назначены: {unassigned}\n\n"
-            f"💰 Доход владельца вчера: <b>{yesterday_income} ₣</b>\n"
-            f"📈 Доход владельца за 7 завершённых дней: <b>{week_income} ₣</b>\n\n"
+            f"💰 Доход после налога вчера: <b>{yesterday_income} ₣</b> "
+            f"(налог {yesterday_tax} ₣)\n"
+            f"📈 Доход после налога за 7 завершённых дней: <b>{week_income} ₣</b> "
+            f"(налог {week_tax} ₣)\n\n"
             "История доходов считается с момента подключения этой статистики.",
             InlineKeyboardMarkup(
                 inline_keyboard=[
@@ -2474,13 +2497,13 @@ def create_router(
         if utc_timestamp() >= int(challenge["deadline"]):
             await callback.answer("Время на принятие уже истекло.", show_alert=True)
             return False
-        if challenge["forced"]:
+        if challenge["forced"] and challenge["game_type"] != "checkers":
             await callback.answer(
                 "Это принудительный вызов — владелец не может отказаться.",
                 show_alert=True,
             )
             return False
-        if challenge["opponent_newcomer"]:
+        if challenge["opponent_newcomer"] and challenge["game_type"] != "checkers":
             await callback.answer("Первые 5 минут после входа отказаться нельзя.", show_alert=True)
             return False
         if await database.finish_challenge(int(challenge["id"]), "refused"):
@@ -2646,7 +2669,7 @@ def create_router(
             if challenge:
                 break
         if challenge["status"] in {"pending", "pending_deadline"}:
-            if challenge["opponent_newcomer"]:
+            if challenge["opponent_newcomer"] and challenge["game_type"] != "checkers":
                 chat_id = int(challenge["chat_id"])
                 challenger_id = int(challenge["challenger_id"])
                 opponent_id = int(challenge["opponent_id"])
@@ -6004,6 +6027,7 @@ def create_router(
         owner = await database.get_owner(message.chat.id, message.from_user.id)
         forced = bool(
             not friendly
+            and game_type != "checkers"
             and owner
             and int(owner["owner_id"]) == opponent.id
             and await database.can_force_owner(
@@ -6011,7 +6035,7 @@ def create_router(
             )
         )
         opponent_newcomer = bool(
-            not friendly and await database.is_vulnerable(message.chat.id, opponent.id)
+            not friendly and game_type != "checkers" and await database.is_vulnerable(message.chat.id, opponent.id)
         )
         if player_stake:
             await database.settle_businesses_for_user(message.from_user.id)
@@ -6390,20 +6414,6 @@ def create_router(
             if int(game["move_count"]) > 0:
                 await callback.answer(
                     "После первого хода можно только сдаться.", show_alert=True
-                )
-                return
-            is_opponent = callback.from_user.id == challenge["opponent_id"]
-            if is_opponent and challenge["forced"]:
-                await callback.answer(
-                    "Это принудительный вызов — владелец не может отказаться.",
-                    show_alert=True,
-                )
-                return
-            if is_opponent and await database.is_vulnerable(
-                challenge["chat_id"], callback.from_user.id
-            ):
-                await callback.answer(
-                    "Первые 5 минут после входа отказаться нельзя.", show_alert=True
                 )
                 return
             if await database.finish_challenge(challenge_id, "refused"):
