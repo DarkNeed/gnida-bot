@@ -23,7 +23,7 @@ from handlers.routes import (
 )
 
 OFFER_RE = re.compile(
-    r"^\s*(?:(?P<slave>/бой(?:@\w+)?|!бой|я\s+выбираю\s+тебя)|(?P<personal>/дуэль(?:@\w+)?|!дуэль|дуэль))\b\s*(?P<payload>.*)$",
+    r"^\s*(?:(?P<slave>(?:/бой(?:@\w+)?|!бой|бой)\s+раб(?:ами|ы)|я\s+выбираю\s+тебя)|(?P<personal>/бой(?:@\w+)?|!бой|бой|/дуэль(?:@\w+)?|!дуэль|дуэль))\b\s*(?P<payload>.*)$",
     re.I | re.S,
 )
 MENU_RE = re.compile(r"^\s*/(?:арена|arena)(?:@\w+)?\s*$", re.I)
@@ -213,13 +213,20 @@ def create_arena_router(db, bot, username, enabled, publisher):
                 amount = re.fullmatch(r"(\d+)\s*(?:франк(?:ов|а)?|₣)?", rest, re.I)
                 if not amount:
                     raise ValueError(
-                        "Сумма: /дуэль @участник 50 франков. /бой — ответом владельцу."
+                        "Личный бой: /бой @участник 50 франков или ответом /бой. Для рабов: /бой рабами."
                     )
                 stake = int(amount[1])
             # 'Я выбираю тебя @мой_раб' chooses the fighter, then an opposing owner.
             if mode == "slaves" and await db.get_owner(message.chat.id, target_id):
                 owner = await db.get_owner(message.chat.id, target_id)
                 if owner["owner_id"] == message.from_user.id:
+                    equipped = await db.arena_combat_slaves(
+                        message.chat.id, message.from_user.id
+                    )
+                    if not any(s["user_id"] == target_id for s in equipped):
+                        raise ValueError(
+                            "Сначала экипируйте этого раба в меню арены. Он будет снят с работы."
+                        )
                     async with db._lock:
                         owners = db.connection.execute(
                             """SELECT DISTINCT o.owner_id,u.display_name FROM ownership o LEFT JOIN users u
@@ -279,8 +286,12 @@ def create_arena_router(db, bot, username, enabled, publisher):
         try:
             row = await db.arena_get(token)
             await require_member(bot, row["chat_id"], callback.from_user.id)
-            await db.arena_setup(token, callback.from_user.id, action)
-            await callback.answer("Готово. Выбери бойца через «Открыть бой».")
+            row = await db.arena_setup(token, callback.from_user.id, action)
+            await callback.answer(
+                "Готово. Выбери бойца через «Открыть бой»."
+                if row["mode"] == "slaves" and row["status"] == "pending"
+                else "Готово."
+            )
             await publisher.changed(token)
         except ValueError as error:
             await callback.answer(str(error), show_alert=True)

@@ -100,3 +100,87 @@ process.stdout.write(JSON.stringify(calls));
 
     def test_browser_without_telegram(self):
         self.assertEqual(self.viewport_calls(noTelegram=True), [])
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is needed for client tests")
+class ArenaRosterClientTests(unittest.TestCase):
+    def render(self, slaves, page="slaves"):
+        source = (
+            Path(__file__).resolve().parents[1] / "webapp" / "battle-client"
+        ).read_text(encoding="utf-8")
+        code = source.split("function profileCard(", 1)[1].split(
+            "\nasync function openMenu(", 1
+        )[0]
+        script = """
+const vm = require('node:vm');
+const data = JSON.parse(process.argv[1]);
+const app = {innerHTML: ''};
+const context = {
+  app, page: process.argv[3], menu: null, chat: null, token: '', tg: undefined,
+  esc: value => String(value ?? ''), sprite: () => '', top: () => '',
+  button: (label, id, cls = '', disabled = false) => `<button data-do="${id}"${disabled ? ' disabled' : ''}>${label}</button>`
+};
+vm.runInNewContext(process.argv[2] + '\\nmenuScreen(' + JSON.stringify(data) + ');', context);
+process.stdout.write(app.innerHTML);
+"""
+        data = {
+            "chat_id": 1,
+            "combat_count": sum(bool(s.get("combat_slot")) for s in slaves),
+            "combat_capacity": 5,
+            "slaves": slaves,
+            "active": [],
+            "personal": {
+                "user_id": 10,
+                "personal": True,
+                "level": 1,
+                "class_name": "Оборванец",
+            },
+        }
+        return subprocess.run(
+            [
+                shutil.which("node"),
+                "-e",
+                script,
+                json.dumps(data),
+                "function profileCard(" + code,
+                page,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout
+
+    def test_five_empty_slots(self):
+        body = self.render([])
+        self.assertEqual(body.count("· свободен"), 5)
+        self.assertIn("Боевой отряд · 0 / 5", body)
+
+    def test_equipped_and_working_cards(self):
+        profile = {
+            "user_id": 30,
+            "level": 1,
+            "class_name": "Оборванец",
+            "personal": False,
+        }
+        body = self.render(
+            [
+                {**profile, "combat_slot": 2, "in_battle": True},
+                {
+                    **profile,
+                    "user_id": 40,
+                    "working_role": "collector",
+                    "combat_slot": None,
+                },
+            ]
+        )
+        self.assertEqual(body.count("· свободен"), 4)
+        self.assertIn('data-do="unequip:30" disabled', body)
+        self.assertIn('data-do="equip:40"', body)
+        self.assertIn('data-do="waste:40" disabled', body)
+        self.assertIn("Экипировать и снять с работы", body)
+
+    def test_personal_fighter_does_not_need_equipment(self):
+        body = self.render([], "personal")
+        self.assertIn('data-do="waste:10">', body)
+        self.assertIn("/бой @участник", body)

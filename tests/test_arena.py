@@ -20,7 +20,7 @@ from arena_engine import (
 )
 from arena_web import validate_init_data, create_arena_app, battle_view, menu_view
 from database import Database
-from handlers.arena import OFFER_RE
+from handlers.arena import OFFER_RE, ArenaPublisher, create_arena_router
 
 TOKEN = "123456:unit-test"
 
@@ -64,6 +64,22 @@ class ArenaAuthTests(unittest.TestCase):
         ):
             self.assertIsNotNone(OFFER_RE.match(text), text)
         self.assertIsNone(OFFER_RE.match("/бойня @user"))
+
+    def test_personal_battle_commands(self):
+        for text in (
+            "/бой",
+            "!бой @user",
+            "бой @user",
+            "/бой@GnidoBot @user 50",
+            "/дуэль @user",
+        ):
+            match = OFFER_RE.match(text)
+            self.assertTrue(match["personal"], text)
+            self.assertFalse(match["slave"], text)
+        for text in ("/бой рабами @user", "!бой рабы @user", "Я выбираю тебя @user"):
+            match = OFFER_RE.match(text)
+            self.assertTrue(match["slave"], text)
+            self.assertEqual(match["payload"], "@user")
 
 
 class ArenaEngineTests(unittest.TestCase):
@@ -120,6 +136,40 @@ class ArenaEngineTests(unittest.TestCase):
     def test_xp(self):
         self.assertEqual(level_from_total_xp(72), 5)
 
+    def test_skill_cost_is_not_refunded_even_in_legacy_battle(self):
+        state = self.state(level=3)
+        side = state["sides"]["a"]
+        side["stats"]["resource_regen"] = 15  # Old persisted battles.
+        event = resolve_skill(state, "a", "dust_in_eyes", rng=random.Random(1))
+        self.assertEqual(side["resource"], 80)
+        self.assertEqual(
+            event["before"]["a"]["resource"] - event["after"]["a"]["resource"], 20
+        )
+
+    def test_repeated_skill_costs_and_explicit_recovery(self):
+        from dataclasses import replace
+
+        state = self.state("nerd", 9)
+        state["sides"]["a"]["loadout"] = ["dust_in_eyes", "go_to_store"]
+        skills = dict(
+            BUILTIN_SKILLS,
+            dust_in_eyes=replace(BUILTIN_SKILLS["dust_in_eyes"], cooldown=0),
+        )
+        for expected in (80, 60, 40, 20, 0):
+            resolve_skill(state, "a", "dust_in_eyes", skills, rng=random.Random(1))
+            self.assertEqual(state["sides"]["a"]["resource"], expected)
+            resolve_skill(state, "b", "dust_in_eyes", skills, rng=random.Random(1))
+        with self.assertRaises(ValueError):
+            resolve_skill(state, "a", "dust_in_eyes", skills)
+        resolve_skill(state, "a", "go_to_store", skills, rng=random.Random(1))
+        self.assertEqual(state["sides"]["a"]["resource"], 55)
+
+    def test_miss_still_consumes_full_energy(self):
+        state = self.state(level=3)
+        event = resolve_skill(state, "a", "dust_in_eyes", rng=random.Random(0))
+        self.assertFalse(event["hit"])
+        self.assertEqual(state["sides"]["a"]["resource"], 80)
+
 
 class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_small_stake_display_matches_credit(self):
@@ -140,6 +190,8 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
             await self.db.upsert_user(1, user, str(user), "User " + str(user))
         await self.db.force_enslave(1, 30, 10)
         await self.db.force_enslave(1, 40, 20)
+        await self.db.arena_equip_slave(1, 10, 30, True)
+        await self.db.arena_equip_slave(1, 20, 40, True)
         self.bot = SimpleNamespace(
             get_chat_member=AsyncMock(
                 return_value=SimpleNamespace(
@@ -171,6 +223,188 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["personal"]["level"], 1)
         self.assertEqual(data["slaves"][0]["user_id"], 30)
         self.assertEqual(data["owner"]["level"], 1)
+
+    async def test_personal_duel_needs_no_slaves(self):
+        await self.db.release_all_slaves(1, 10)
+        await self.db.release_all_slaves(1, 20)
+        row = await self.duel()
+        self.assertEqual(row["status"], "active")
+        state = json.loads(row["state_json"])
+        self.assertEqual(state["sides"]["a"]["slave_id"], 10)
+        self.assertEqual(state["sides"]["a"]["controller_id"], 10)
+
+    async def test_personal_command_handler_reply_and_tag_without_slaves(self):
+        from aiogram.types import User
+
+        await self.db.release_all_slaves(1, 10)
+        await self.db.release_all_slaves(1, 20)
+        publisher = ArenaPublisher(self.db, self.bot, "GnidoBot")
+        router = create_arena_router(self.db, self.bot, "GnidoBot", True, publisher)
+        handler = next(
+            h.callback
+            for h in router.message.handlers
+            if h.callback.__name__ == "battle_offer"
+        )
+        target = User(id=20, is_bot=False, first_name="User 20", username="20")
+        for text, reply in (
+            ("/бой", SimpleNamespace(from_user=target, sender_chat=None)),
+            ("!бой @20", None),
+        ):
+            message = SimpleNamespace(
+                from_user=User(id=10, is_bot=False, first_name="User 10"),
+                chat=SimpleNamespace(id=1, type="supergroup"),
+                text=text,
+                caption=None,
+                reply_to_message=reply,
+                answer=AsyncMock(return_value=SimpleNamespace(message_id=99)),
+            )
+            await handler(message)
+            row = dict(
+                self.db.connection.execute(
+                    "SELECT * FROM arena_battles ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            )
+            self.assertEqual(row["mode"], "personal")
+            self.assertEqual(row["a_fighter"], 10)
+            self.assertEqual(row["b_fighter"], 20)
+            self.assertEqual(row["message_id"], 99)
+            await self.db.arena_setup(row["token"], 10, "cancel")
+
+    async def test_equipment_limit_and_no_work_loss_on_sixth(self):
+        await self.db.create_business(1, 10, "field")
+        for user in (50, 60, 70, 80, 90):
+            await self.db.force_enslave(1, user, 10)
+        for user in (50, 60, 70, 80):
+            await self.db.arena_equip_slave(1, 10, user, True)
+        await self.db.set_business_worker_role(1, 10, 90, "collector")
+        with self.assertRaisesRegex(ValueError, "5 боевых"):
+            await self.db.arena_equip_slave(1, 10, 90, True)
+        self.assertEqual(await self.db.business_worker_role(1, 10, 90), "collector")
+        data = await self.db.arena_menu(1, 10)
+        self.assertEqual(data["combat_count"], 5)
+        self.assertEqual(data["combat_capacity"], 5)
+        self.assertEqual(
+            len({s["combat_slot"] for s in data["slaves"] if s["combat_slot"]}), 5
+        )
+        await self.db.arena_equip_slave(1, 10, 30, False)
+        await self.db.arena_equip_slave(1, 10, 90, True)
+        self.assertIsNone(await self.db.business_worker_role(1, 10, 90))
+
+    async def test_equipment_settles_income_and_blocks_work(self):
+        await self.db.arena_equip_slave(1, 10, 30, False)
+        await self.db.create_business(1, 10, "field")
+        await self.db.set_business_worker_role(1, 10, 30, "collector")
+        business = await self.db.get_business(1, 10)
+        with patch(
+            "arena_store.utc_timestamp", return_value=business["last_accrued"] + 3600
+        ):
+            await self.db.arena_equip_slave(1, 10, 30, True)
+        self.assertEqual(self.balance(10), 3)
+        self.assertIsNone(await self.db.business_worker_role(1, 10, 30))
+        self.assertEqual(
+            await self.db.set_business_worker_role(1, 10, 30, "collector"),
+            "combat_equipped",
+        )
+        await self.db.arena_equip_slave(1, 10, 30, False)
+        self.assertEqual(
+            await self.db.set_business_worker_role(1, 10, 30, "collector"), "updated"
+        )
+
+    async def test_equipment_and_work_race(self):
+        await self.db.arena_equip_slave(1, 10, 30, False)
+        await self.db.create_business(1, 10, "field")
+        await asyncio.gather(
+            self.db.set_business_worker_role(1, 10, 30, "collector"),
+            self.db.arena_equip_slave(1, 10, 30, True),
+        )
+        self.assertIsNone(await self.db.business_worker_role(1, 10, 30))
+        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 1)
+
+    async def test_equipment_forbidden_for_other_owners(self):
+        with self.assertRaises(ValueError):
+            await self.db.arena_equip_slave(1, 20, 30, False)
+        with self.assertRaises(ValueError):
+            await self.db.arena_equip_slave(1, 50, 30, True)
+        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 1)
+
+    async def test_equipment_survives_restart_and_transfer_clears_it(self):
+        await self.db.grant_slave_xp(1, 30, 20)
+        await self.db.close()
+        self.db = Database(Path(self.temp.name) / "bot.sqlite3")
+        await self.db.connect()
+        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 1)
+        await self.db.force_enslave(1, 30, 20)
+        await self.db.force_enslave(1, 30, 10)
+        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 0)
+        self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 20)
+
+    async def test_release_clears_equipment(self):
+        await self.db.release_slave(1, 10, 30)
+        self.assertEqual(
+            self.db.connection.execute(
+                "SELECT COUNT(*) FROM arena_combat_slots WHERE slave_id=30"
+            ).fetchone()[0],
+            0,
+        )
+
+    async def test_unprepared_slave_cannot_be_selected_or_farm(self):
+        await self.db.arena_equip_slave(1, 10, 30, False)
+        row = await self.db.arena_offer(1, 10, 20)
+        with self.assertRaisesRegex(ValueError, "экипируйте"):
+            await self.db.arena_setup(row["token"], 10, "select", 30)
+        self.assertEqual((await battle_view(self.db, row, 10))["available"], [])
+        await self.db.arena_setup(row["token"], 10, "cancel")
+        with self.assertRaisesRegex(ValueError, "экипируйте"):
+            await self.db.arena_wasteland(1, 10, 30, personal=False)
+        with self.assertRaisesRegex(ValueError, "экипируйте"):
+            await self.db.arena_wasteland(1, 30, 30, personal=False)
+
+    async def test_selected_slave_cannot_be_unequipped(self):
+        row = await self.db.arena_offer(1, 10, 20)
+        await self.db.arena_setup(row["token"], 10, "select", 30)
+        with self.assertRaisesRegex(ValueError, "текущего боя"):
+            await self.db.arena_equip_slave(1, 10, 30, False)
+        await self.db.arena_setup(row["token"], 10, "cancel")
+        await self.db.arena_equip_slave(1, 10, 30, False)
+        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 0)
+
+    async def test_equipment_is_scoped_to_chat(self):
+        await self.db.upsert_chat(2, "Другой чат")
+        await self.db.force_enslave(2, 30, 10)
+        self.assertEqual((await self.db.arena_menu(2, 10))["combat_count"], 0)
+        await self.db.arena_equip_slave(2, 10, 30, True)
+        await self.db.release_slave(2, 10, 30)
+        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 1)
+
+    async def test_equipment_http_validation(self):
+        import time
+
+        client = TestClient(TestServer(create_arena_app(self.db, self.bot, TOKEN)))
+        await client.start_server()
+        headers = {"X-Telegram-Init-Data": signed(10, int(time.time()))}
+        try:
+            response = await client.post(
+                "/api/menu/1",
+                headers=headers,
+                json={"action": "equipment", "user": 30, "equipped": False},
+            )
+            self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual((await response.json())["menu"]["combat_count"], 0)
+            response = await client.post(
+                "/api/menu/1",
+                headers=headers,
+                json={"action": "equipment", "user": 30, "equipped": "false"},
+            )
+            self.assertEqual(response.status, 400)
+            self.bot.get_chat_member.return_value = SimpleNamespace(status="left")
+            response = await client.post(
+                "/api/menu/1",
+                headers=headers,
+                json={"action": "equipment", "user": 30, "equipped": True},
+            )
+            self.assertEqual(response.status, 400)
+        finally:
+            await client.close()
 
     async def test_slave_selection_and_consent(self):
         r = await self.db.arena_offer(1, 10, 20)

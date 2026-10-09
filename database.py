@@ -2973,6 +2973,10 @@ class Database(ArenaMixin):
             ).fetchone()
             if owned is None:
                 return "not_owned"
+            if role is not None and self._arena_combat_slot_locked(
+                chat_id, owner_id, worker_id
+            ):
+                return "combat_equipped"
             if role is None:
                 self.connection.execute(
                     """DELETE FROM business_workers

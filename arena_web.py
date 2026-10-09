@@ -109,13 +109,13 @@ async def battle_view(db, row: dict, actor: int) -> dict:
     )
     available = []
     if row["status"] == "pending" and own_side and row["mode"] == "slaves":
-        for slave in await db.list_slaves(row["chat_id"], actor):
-            profile = await db.get_slave_profile(row["chat_id"], slave["user_id"])
+        for slave in await db.arena_combat_slaves(row["chat_id"], actor):
             available.append(
                 dict(
                     id=slave["user_id"],
-                    name=slave["display_name"],
-                    level=profile["level"],
+                    name=slave["name"],
+                    level=slave["level"],
+                    slot=slave["combat_slot"],
                 )
             )
     consent = next(
@@ -159,11 +159,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
     result = await db.arena_menu(chat, actor)
     classes, skills = await db.get_fighter_catalog()
     profiles = [(result["personal"], True), *((p, False) for p in result["slaves"])]
-    own_slave = await db.get_owner(chat, actor)
-    if own_slave:
-        result["self_slave"] = dict(await db.get_slave_profile(chat, actor))
-        result["self_slave"]["loadout"] = json.loads(result["self_slave"]["loadout"])
-        result["self_slave"]["name"] = "Мой персонаж-раб"
+    if result["self_slave"]:
         profiles.append((result["self_slave"], False))
     for profile, personal in profiles:
         profile["personal"] = personal
@@ -321,7 +317,15 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
                 chat, actor, fighter, str(body.get("previous", "")), personal
             )
             return web.json_response({"token": row["token"]})
-        if action in {"class", "loadout"}:
+        if action == "equipment":
+            fighter = int_field(body, "user")
+            equipped = body.get("equipped")
+            if type(equipped) is not bool:
+                raise ValueError("Некорректный режим экипировки.")
+            if equipped:
+                await require_member(bot, chat, fighter)
+            notice = await db.arena_equip_slave(chat, actor, fighter, equipped)
+        elif action in {"class", "loadout"}:
             personal = body.get("personal", False)
             if type(personal) is not bool:
                 raise ValueError("Некорректный персонаж.")

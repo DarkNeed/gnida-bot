@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 BASE_RESOURCE = 100
-BASE_RESOURCE_REGEN = 15
+BASE_RESOURCE_REGEN = 0
 CONTROL_PENALTY = 0.8
 MAX_ACTIVE_SKILLS = 4
 CLASS_SELECTION_LEVEL = 5
@@ -635,10 +635,8 @@ def _tick(side: dict) -> None:
         if e["duration"] > 1
     ]
     side["cooldowns"] = {k: v - 1 for k, v in side["cooldowns"].items() if v > 1}
-    side["resource"] = min(
-        side["stats"]["resource_max"],
-        side["resource"] + side["stats"]["resource_regen"],
-    )
+    # No automatic refund after a skill, including battles saved by older code.
+    # Resource can still be restored by skills with an explicit resource effect.
 
 
 def resolve_skill(

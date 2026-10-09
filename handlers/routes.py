@@ -3871,6 +3871,11 @@ def create_router(
         result = await database.set_business_worker_role(
             message.chat.id, sender.id, target_id, producer_role
         )
+        if result == "combat_equipped":
+            await message.answer(
+                "Сначала снимите раба с боевого слота в арене, затем назначьте на работу."
+            )
+            return
         if result != "updated":
             await message.answer("В предприятие можно назначить только своего раба.")
             return
@@ -4164,6 +4169,8 @@ def create_router(
                 notice = "Роль обновлена."
             elif result == "removed":
                 notice = "Раб снят с работы."
+            elif result == "combat_equipped":
+                notice = "Сначала снимите раба с боевого слота в арене."
             else:
                 notice = "Этот раб или предприятие больше недоступны."
             body, keyboard = await slave_menu_business_worker(user_id, chat_id, worker_id)
@@ -4694,6 +4701,9 @@ def create_router(
             result = await database.set_business_worker_role(
                 message.chat.id, message.from_user.id, target_id, next_role
             )
+            if result == "combat_equipped":
+                await message.answer("Сначала снимите раба с боевого слота в арене.")
+                return
             if result not in {"updated", "removed"}:
                 await message.answer(
                     "Повышать и понижать можно только собственных рабов этого предприятия."

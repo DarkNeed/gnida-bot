@@ -10,7 +10,7 @@ const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,reduced?Math.min(50,ms):ms));
 const sprite=c=>"/static/assets/"+(c||"ragamuffin")+".png";
 function toast(text){const box=document.getElementById("toast");box.textContent=text;box.hidden=false;setTimeout(()=>box.hidden=true,3500);}
-function button(label,id,cls=""){return '<button class="'+cls+'" data-do="'+id+'">'+label+"</button>";}
+function button(label,id,cls="",disabled=false){return '<button class="'+cls+'" data-do="'+id+'"'+(disabled?' disabled':'')+'>'+label+"</button>";}
 function top(title,tag,right){return '<header class="top"><div><div class="eyebrow">'+tag+'</div><h1>'+title+'</h1></div>'+right+"</header>";}
 async function api(path,body){
   const response=await fetch(path,{method:body?"POST":"GET",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":tg?.initData||""},body:body?JSON.stringify(body):undefined,cache:"no-store"});
@@ -50,17 +50,18 @@ function renderActions(){
 }
 function setupScreen(data){
   const status={cancelled:"Вызов отменён",expired:"Время вызова истекло",refused:"Вызов отклонён"};
-  app.innerHTML='<section class="menu">'+top("Подготовка боя","АРЕНА",button("Меню","menu","small"))+'<div class="content"><div class="card"><h2>'+esc(data.names.a_owner)+' × '+esc(data.names.b_owner)+'</h2><p class="muted">'+(status[data.status]||"Соперник принимает вызов, каждый владелец выбирает своего бойца.")+'</p><div id="setup" class="stack"></div></div></div></section>';
+  app.innerHTML='<section class="menu">'+top("Подготовка боя","АРЕНА",button("Меню","menu","small"))+'<div class="content"><div class="card"><h2>'+esc(data.names.a_owner)+' × '+esc(data.names.b_owner)+'</h2><p class="muted">'+(status[data.status]||(data.mode==="personal"?"Личный бой. Ждём принятия вызова соперником.":"Соперник принимает вызов, каждый владелец выбирает своего бойца."))+'</p><div id="setup" class="stack"></div></div></div></section>';
   const box=document.getElementById("setup");if(data.status!=="pending")return;
   if(data.own_side==="b"&&!data.b_accepted)box.innerHTML+=button("Принять"+(data.stake?" · "+data.stake+" ₣":""),"accept","primary")+button("Отклонить","refuse");
   if(data.mode==="slaves"&&data.own_side){
     const key=data.own_side;
     box.innerHTML+='<label class="check"><input type="checkbox" id="control" checked> Управлять самому · все характеристики −20%</label><div class="muted">Без контроля раб должен согласиться и самостоятельно выбирать навыки.</div>';
     box.innerHTML+=data.available.map(s=>button(esc(s.name)+" · Lv."+s.level,(s.id===data[key+"_fighter"]?"selected:":"select:")+s.id,s.id===data[key+"_fighter"]?"primary":"")).join("");
+    if(!data.available.length)box.innerHTML+='<div class="note">Нет экипированных бойцов. Открой меню → Рабы и займи свободный боевой слот. При экипировке раб снимается с работы.</div>';
   }
   if(data.consent_side&&!data[data.consent_side+"_consent"])box.innerHTML+=button("Согласен сражаться сам","consent","primary");
   if(data.own_side==="a")box.innerHTML+=button("Отменить вызов","cancel","danger");
-  box.innerHTML+='<div class="muted">Бой начнётся после принятия вызова и выбора обоих бойцов. Никаких подтверждений навыков в бою.</div>';
+  box.innerHTML+='<div class="muted">'+(data.mode==="personal"?"Бой начнётся сразу после принятия вызова.":"Бой начнётся после принятия вызова и выбора обоих бойцов.")+' Никаких подтверждений навыков в бою.</div>';
 }
 async function animateEvent(event){
   const panel=document.getElementById("panel"); if(!panel)return;
@@ -118,19 +119,28 @@ async function action(action,extra={}){
   }catch(error){toast(error.message);if(!demo)try{await applyBattle(await api("/api/battle/"+token),false);}catch{}}
   finally{busy=false;renderActions();}
 }
-function profileCard(p,title){
+function profileCard(p,title,owned=false){
   const progress=p.progress||[p.level,0,10];
-  return '<div class="card"><div class="profile"><img src="'+sprite(p.sprite)+'" alt=""><div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+progress[1]+' / '+progress[2]+' XP</span></div><div class="bar"><i style="width:'+100*progress[1]/progress[2]+'%"></i></div></div></div></div><div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary")+button("Класс и навыки","profile:"+p.user_id)+'</div></div>';
+  const status=p.personal?"":'<p class="muted">'+(p.combat_slot?"Боевой слот "+p.combat_slot+" / 5":p.working_role?"На работе · не экипирован":"Вне боевого отряда")+(p.in_battle?" · выбран для боя":"")+'</p>';
+  const equipment=owned?button(p.combat_slot?"Снять с боевого слота":"Экипировать и снять с работы",(p.combat_slot?"unequip:":"equip:")+p.user_id,"",p.in_battle):"";
+  return '<div class="card"><div class="profile"><img src="'+sprite(p.sprite)+'" alt=""><div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+progress[1]+' / '+progress[2]+' XP</span></div><div class="bar"><i style="width:'+100*progress[1]/progress[2]+'%"></i></div></div></div></div>'+status+'<div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary",!p.personal&&!p.combat_slot)+button("Класс и навыки","profile:"+p.user_id)+equipment+'</div></div>';
 }
 function activeProfile(){return [...(menu?.slaves||[]),menu?.self_slave,menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
 function menuScreen(data){
   menu=data;chat=data.chat_id;token="";
   let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+button("Рабы","tab:slaves",page==="slaves"?"selected":"")+button("Владелец","tab:owner",page==="owner"?"selected":"")+'</div>';
-  if(page==="personal")body+=profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Для дуэли: <b>/дуэль @участник 50</b> или ответом на сообщение. Ставка необязательна. Бои здесь не передают рабов.</div>';
+  if(page==="personal")body+=profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Личный персонаж есть у всех, раб не нужен. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
   else if(page==="slaves"){
-    body+=data.slaves.length?data.slaves.map(p=>profileCard(p,"ТВОЙ БОЕЦ")).join(""):'<div class="card"><h2>Пока нет рабов</h2><p class="muted">Личный персонаж доступен всем.</p></div>';
+    body+='<div class="card"><h2>Боевой отряд · '+data.combat_count+' / '+data.combat_capacity+'</h2><p class="muted">При экипировке раб снимается с работы. Чтобы вернуть его на предприятие, сначала сними с боевого слота.</p></div>';
+    for(let slot=1;slot<=data.combat_capacity;slot++){
+      const p=data.slaves.find(s=>s.combat_slot===slot);
+      body+=p?profileCard(p,"БОЕВОЙ СЛОТ "+slot,true):'<div class="card"><div class="muted">Слот '+slot+' · свободен</div></div>';
+    }
+    const reserve=data.slaves.filter(p=>!p.combat_slot);
+    if(reserve.length)body+='<h2>Остальные рабы</h2>'+reserve.map(p=>profileCard(p,"ВНЕ ОТРЯДА",true)).join("");
+    if(!data.slaves.length)body+='<div class="note">Пока нет рабов. Личный персонаж доступен всем.</div>';
     if(data.self_slave)body+=profileCard(data.self_slave,"ТВОЙ ПЕРСОНАЖ-РАБ");
-    body+='<div class="note">Ответь владельцу <b>/бой</b> или напиши <b>Я выбираю тебя @раб</b>. Каждый владелец выберет своего бойца. Без контроля раб должен согласиться; контроль доступен с 1 уровня.</div>';
+    body+='<div class="note">Ответь владельцу <b>/бой рабами</b> или напиши <b>Я выбираю тебя @раб</b>. Каждый владелец выбирает экипированного бойца. Без контроля раб должен согласиться; контроль доступен с 1 уровня.</div>';
   }else if(page==="owner"){
     const o=data.owner;
     body+='<div class="card"><h2>Владелец · Lv.'+o.level+'</h2><p class="muted">Опыт: '+o.xp+' XP · Рабов: '+data.slaves.length+'<br>Сырьё: '+o.raw_material+' / '+(o.level<5?0:100+(o.level-5)*2)+'<br>Зелья: '+o.healing_potions+' · Конфеты: '+o.candies+'</p><div class="stack">'+button("Зелье · 50 сырья · Lv.5","craft:potion")+button("Конфета · 100 сырья · Lv.7","craft:candy")+'</div></div><div class="note">С 5 уровня: 1 сырьё/час за раба. Зелье лечит 30% HP, одно на бой. Конфета с 7 уровня даёт 30 XP. Владелец получает опыт за победы рабов и новые рекорды их количества.</div>';
@@ -180,6 +190,7 @@ app.addEventListener("click",async event=>{
   if(cmd==="waste"){await menuAction("wasteland",{fighter:Number(arg),personal:page==="personal"});return;}
   if(cmd==="next"){await menuAction("wasteland",{fighter:current.a_fighter,previous:token});return;}
   if(cmd==="craft"){await menuAction("craft",{item:arg});return;}
+  if(cmd==="equip"||cmd==="unequip"){await menuAction("equipment",{user:Number(arg),equipped:cmd==="equip"});return;}
   const p=activeProfile();
   if(cmd==="class"||cmd==="hidden"){await menuAction("class",{user:p.user_id,personal:p.personal,value:cmd==="hidden"?document.getElementById("hidden-class").value:arg});return;}
   if(cmd==="toggle"){if(p.loadout.includes(arg))p.loadout=p.loadout.filter(k=>k!==arg);else if(p.loadout.length<4)p.loadout.push(arg);else toast("Не больше четырёх навыков.");menuScreen(menu);return;}

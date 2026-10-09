@@ -29,6 +29,7 @@ from arena_engine import (
 OWNER_RECORD_XP = 2
 ARENA_TURN_SECONDS = 3 * 60 * 60
 ARENA_FEE_PERCENT = 10
+COMBAT_SLAVE_CAPACITY = 5
 
 
 def utc_timestamp() -> int:
@@ -109,6 +110,19 @@ class ArenaMixin:
                 created_at INTEGER NOT NULL, deadline INTEGER NOT NULL, finished_at INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_arena_active ON arena_battles(chat_id,status,deadline);
+            CREATE TABLE IF NOT EXISTS arena_combat_slots (
+                chat_id INTEGER NOT NULL, owner_id INTEGER NOT NULL,
+                slave_id INTEGER NOT NULL, slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 5),
+                PRIMARY KEY(chat_id, slave_id), UNIQUE(chat_id, owner_id, slot)
+            );
+            CREATE TRIGGER IF NOT EXISTS arena_slots_release
+            AFTER DELETE ON ownership BEGIN
+                DELETE FROM arena_combat_slots WHERE chat_id=OLD.chat_id AND slave_id=OLD.slave_id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS arena_slots_transfer
+            AFTER UPDATE OF owner_id ON ownership WHEN OLD.owner_id<>NEW.owner_id BEGIN
+                DELETE FROM arena_combat_slots WHERE chat_id=OLD.chat_id AND slave_id=OLD.slave_id;
+            END;
             CREATE TABLE IF NOT EXISTS arena_pair_rewards (
                 chat_id INTEGER NOT NULL, first_id INTEGER NOT NULL, second_id INTEGER NOT NULL,
                 day TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0,
@@ -664,6 +678,85 @@ class ArenaMixin:
             ).fetchone()
         )
 
+    def _arena_combat_slot_locked(self, chat: int, owner: int, slave: int):
+        row = self.connection.execute(
+            """SELECT s.slot FROM arena_combat_slots s JOIN ownership o
+               ON o.chat_id=s.chat_id AND o.slave_id=s.slave_id AND o.owner_id=s.owner_id
+               WHERE s.chat_id=? AND s.owner_id=? AND s.slave_id=?""",
+            (chat, owner, slave),
+        ).fetchone()
+        return int(row["slot"]) if row else None
+
+    def _arena_require_combat_locked(self, chat: int, owner: int, slave: int) -> None:
+        if not self._arena_owns_locked(chat, owner, slave):
+            raise ValueError("Этот раб больше не принадлежит участнику боя.")
+        if self._arena_combat_slot_locked(chat, owner, slave) is None:
+            raise ValueError(
+                "Сначала экипируйте раба в одном из пяти боевых слотов в арене."
+            )
+        if self.connection.execute(
+            "SELECT 1 FROM business_workers WHERE chat_id=? AND worker_id=?",
+            (chat, slave),
+        ).fetchone():
+            raise ValueError("Боевой раб должен быть снят с работы.")
+
+    async def arena_equip_slave(
+        self, chat: int, actor: int, slave: int, equipped: bool
+    ) -> str:
+        async with self._lock:
+            self._arena_expire_locked()
+            self.connection.commit()
+            if not self._arena_owns_locked(chat, actor, slave):
+                raise ValueError("Экипировать можно только своего раба.")
+            current = self._arena_combat_slot_locked(chat, actor, slave)
+            if bool(current) == equipped:
+                return "Без изменений."
+            if self._arena_busy_locked(chat, slave):
+                raise ValueError(
+                    "Нельзя менять боевой слот раба, выбранного для текущего боя."
+                )
+            if not equipped:
+                self.connection.execute(
+                    "DELETE FROM arena_combat_slots WHERE chat_id=? AND slave_id=?",
+                    (chat, slave),
+                )
+                self.connection.commit()
+                return "Раб снят с боевого слота. Его снова можно назначить на работу."
+            used = {
+                r["slot"]
+                for r in self.connection.execute(
+                    "SELECT slot FROM arena_combat_slots WHERE chat_id=? AND owner_id=?",
+                    (chat, actor),
+                )
+            }
+            slot = next(
+                (n for n in range(1, COMBAT_SLAVE_CAPACITY + 1) if n not in used), None
+            )
+            if slot is None:
+                raise ValueError(
+                    "Все 5 боевых слотов заняты. Сначала снимите одного из бойцов."
+                )
+            try:
+                # Settle already earned income before taking the worker off the job.
+                self._settle_business_locked(chat, actor, utc_timestamp())
+                self.connection.execute(
+                    "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
+                    (chat, slave),
+                )
+                self.connection.execute(
+                    "INSERT INTO arena_combat_slots(chat_id,owner_id,slave_id,slot) VALUES(?,?,?,?)",
+                    (chat, actor, slave, slot),
+                )
+                self.connection.commit()
+            except Exception:
+                self.connection.rollback()
+                raise
+            return f"Раб экипирован в слот {slot}/5 и снят с работы."
+
+    async def arena_combat_slaves(self, chat: int, owner: int) -> list[dict]:
+        data = await self.arena_menu(chat, owner)
+        return [s for s in data["slaves"] if s["combat_slot"] and not s["working_role"]]
+
     def _arena_refund_locked(self, row: dict, status: str) -> None:
         for key in ("a", "b"):
             amount = int(row["escrow_" + key])
@@ -693,10 +786,9 @@ class ArenaMixin:
             return
         if row["mode"] == "slaves":
             for key in ("a", "b"):
-                if not self._arena_owns_locked(
+                self._arena_require_combat_locked(
                     row["chat_id"], row[key + "_owner"], row[key + "_fighter"]
-                ):
-                    raise ValueError("Этот раб больше не принадлежит участнику боя.")
+                )
                 if not row[key + "_control"] and not row[key + "_consent"]:
                     return
         classes, skills = self._fighter_catalog_locked()
@@ -854,6 +946,7 @@ class ArenaMixin:
                     raise ValueError("Выберите своего раба.")
                 if self._arena_busy_locked(row["chat_id"], fighter, row["id"]):
                     raise ValueError("Этот боец уже участвует в другом бою.")
+                self._arena_require_combat_locked(row["chat_id"], actor, fighter)
                 self.connection.execute(
                     f"UPDATE arena_battles SET {key}_fighter=?,{key}_control=?,{key}_consent=0 WHERE id=?",
                     (fighter, int(controlled), row["id"]),
@@ -1109,6 +1202,14 @@ class ArenaMixin:
                 raise ValueError("Вы не состоите в рабстве.")
             if self._arena_busy_locked(chat, fighter):
                 raise ValueError("Боец уже занят.")
+            if not personal:
+                owner = actor
+                if fighter == actor:
+                    owner = self.connection.execute(
+                        "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
+                        (chat, actor),
+                    ).fetchone()["owner_id"]
+                self._arena_require_combat_locked(chat, owner, fighter)
             source = self._arena_source_locked(chat, fighter, actor, False, personal)
             source["controlled"] = False
             enemy = dict(
@@ -1157,7 +1258,11 @@ class ArenaMixin:
             personal["loadout"] = json.loads(personal["loadout"])
             slaves = []
             for row in self.connection.execute(
-                "SELECT o.slave_id,u.display_name,u.username FROM ownership o LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.slave_id WHERE o.chat_id=? AND o.owner_id=?",
+                """SELECT o.slave_id,u.display_name,u.username,s.slot,w.role FROM ownership o
+                   LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.slave_id
+                   LEFT JOIN arena_combat_slots s ON s.chat_id=o.chat_id AND s.slave_id=o.slave_id AND s.owner_id=o.owner_id
+                   LEFT JOIN business_workers w ON w.chat_id=o.chat_id AND w.worker_id=o.slave_id AND w.owner_id=o.owner_id
+                   WHERE o.chat_id=? AND o.owner_id=? ORDER BY s.slot IS NULL,s.slot,o.acquired_at""",
                 (chat, actor),
             ).fetchall():
                 profile = dict(self._arena_profile_locked(chat, row["slave_id"]))
@@ -1167,7 +1272,22 @@ class ArenaMixin:
                         **profile,
                         "name": row["display_name"] or str(row["slave_id"]),
                         "username": row["username"],
+                        "combat_slot": row["slot"],
+                        "working_role": row["role"],
+                        "in_battle": self._arena_busy_locked(chat, row["slave_id"]),
                     }
+                )
+            self_slave = None
+            owned_by = self.connection.execute(
+                "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
+                (chat, actor),
+            ).fetchone()
+            if owned_by:
+                self_slave = dict(self._arena_profile_locked(chat, actor))
+                self_slave["loadout"] = json.loads(self_slave["loadout"])
+                self_slave["name"] = "Мой персонаж-раб"
+                self_slave["combat_slot"] = self._arena_combat_slot_locked(
+                    chat, owned_by["owner_id"], actor
                 )
             self._refresh_owner_record_locked(chat, actor)
             owner = dict(self._settle_materials_locked(chat, actor))
@@ -1179,7 +1299,15 @@ class ArenaMixin:
                 )
             ]
             self.connection.commit()
-            return dict(personal=personal, slaves=slaves, owner=owner, active=active)
+            return dict(
+                personal=personal,
+                slaves=slaves,
+                self_slave=self_slave,
+                owner=owner,
+                active=active,
+                combat_capacity=COMBAT_SLAVE_CAPACITY,
+                combat_count=sum(bool(s["combat_slot"]) for s in slaves),
+            )
 
     async def arena_edit_profile(
         self, chat: int, actor: int, user: int, personal: bool, action: str, value
