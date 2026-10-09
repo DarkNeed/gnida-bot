@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.exceptions import TelegramAPIError
 from dotenv import load_dotenv
 
 from database import Database
@@ -15,6 +17,7 @@ from handlers.franc_events import create_franc_event_router
 from handlers.routes import create_router
 from handlers.arena import ArenaPublisher, create_arena_router
 from arena_web import create_arena_app
+from arena_links import arena_link
 
 
 async def main() -> None:
@@ -80,6 +83,31 @@ async def main() -> None:
             try:
                 for battle in await database.arena_expire():
                     await publisher.changed(battle["token"])
+                if webapp_url:
+                    for visit in await database.arena_due_merchants():
+                        try:
+                            await bot.send_message(
+                                visit["chat_id"],
+                                "🧳 Пришёл странствующий торговец. Трактаты, зелья и конфеты — в арене. Он останется на два часа.",
+                                reply_markup=InlineKeyboardMarkup(
+                                    inline_keyboard=[
+                                        [
+                                            InlineKeyboardButton(
+                                                text="Посмотреть товары",
+                                                url=arena_link(
+                                                    username, f"shop_{visit['chat_id']}"
+                                                ),
+                                            )
+                                        ]
+                                    ]
+                                ),
+                            )
+                        except TelegramAPIError as error:
+                            logging.warning(
+                                "Could not announce arena merchant in %s: %s",
+                                visit["chat_id"],
+                                error,
+                            )
             except Exception:
                 logging.exception("Arena timeout sweep failed")
             await asyncio.sleep(30)

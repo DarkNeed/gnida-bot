@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import math
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
 CONTROL_PENALTY = 0.8
 MAX_ACTIVE_SKILLS = 4
+MAX_PASSIVE_SKILLS = 2
+MAX_FIGHTER_LEVEL = 20
+RARITY_LABELS = {
+    "common": "Обычный",
+    "uncommon": "Необычный",
+    "rare": "Редкий",
+    "epic": "Эпический",
+}
 CLASS_SELECTION_LEVEL = 5
 SKILL_DELEGATION_SECONDS = 48 * 60 * 60
 
@@ -22,6 +30,7 @@ class FighterClass:
     base_stats: dict[str, float]
     growth: dict[str, float]
     passives: tuple[dict[str, Any], ...] = ()
+    rarity: str = "common"
 
 
 @dataclass(frozen=True)
@@ -36,6 +45,7 @@ class Skill:
     cost: int
     cooldown: int
     effects: tuple[dict[str, Any], ...] = ()
+    rarity: str = "common"
 
     @property
     def hostile(self) -> bool:
@@ -334,6 +344,77 @@ VISIBLE_CLASS_ALIASES = {
     "задрот": "nerd",
 }
 
+FIGHTER_CLASSES = {
+    k: replace(c, rarity="common" if k == "ragamuffin" else "uncommon")
+    for k, c in FIGHTER_CLASSES.items()
+}
+BUILTIN_SKILLS = {
+    k: replace(
+        s,
+        rarity=(
+            "rare"
+            if s.unlock_level >= 8
+            else "uncommon" if s.unlock_level >= 5 else "common"
+        ),
+    )
+    for k, s in BUILTIN_SKILLS.items()
+}
+
+
+@dataclass(frozen=True)
+class PassiveSkill:
+    skill_id: str
+    name: str
+    effects: tuple[dict[str, Any], ...]
+    rarity: str = "common"
+
+
+BUILTIN_PASSIVES = {
+    p.skill_id: p
+    for p in (
+        PassiveSkill(
+            "steady_hand",
+            "Твёрдая рука",
+            (effect("steady_hand", "accuracy_flat", 8, target="self"),),
+        ),
+        PassiveSkill(
+            "light_step",
+            "Лёгкий шаг",
+            (effect("light_step", "evasion_flat", 5, target="self"),),
+        ),
+        PassiveSkill(
+            "quick_start",
+            "Расторопность",
+            (effect("quick_start", "speed_pct", 0.10, target="self"),),
+        ),
+        PassiveSkill(
+            "stone_skin",
+            "Каменная кожа",
+            (effect("stone_skin", "physical_defense_pct", 0.15, target="self"),),
+            "uncommon",
+        ),
+        PassiveSkill(
+            "magic_ward",
+            "Магический оберег",
+            (effect("magic_ward", "magic_defense_pct", 0.15, target="self"),),
+            "uncommon",
+        ),
+        PassiveSkill(
+            "battle_rhythm",
+            "Боевой ритм",
+            (effect("battle_rhythm", "damage_pct", 0.08, target="self"),),
+            "rare",
+        ),
+    )
+}
+
+
+def content_rarity(payload: dict) -> str:
+    rarity = str(payload.get("rarity", "rare"))
+    if rarity not in RARITY_LABELS:
+        raise ValueError("Unknown rarity")
+    return rarity
+
 
 def fighter_class_from_dict(class_id: str, payload: dict[str, Any]) -> FighterClass:
     """Build a validated custom class from its database definition."""
@@ -391,6 +472,7 @@ def fighter_class_from_dict(class_id: str, payload: dict[str, Any]) -> FighterCl
         base_stats=normalized_stats,
         growth=normalized_growth,
         passives=tuple(dict(item) for item in passives if isinstance(item, dict)),
+        rarity=content_rarity(payload),
     )
 
 
@@ -446,6 +528,7 @@ def skill_from_dict(skill_id: str, payload: dict[str, Any]) -> Skill:
         cost=max(0, min(BASE_RESOURCE, int(payload.get("cost", 0)))),
         cooldown=max(0, min(10, int(payload.get("cooldown", 0)))),
         effects=tuple(normalized_effects),
+        rarity=content_rarity(payload),
     )
 
 
@@ -453,10 +536,14 @@ def xp_for_next_level(level: int) -> int:
     return math.ceil(10 * (1.4 ** max(0, level - 1)))
 
 
-def level_from_total_xp(total_xp: int) -> int:
+def level_from_total_xp(
+    total_xp: int, max_level: int | None = MAX_FIGHTER_LEVEL
+) -> int:
     level = 1
     remaining = max(0, total_xp)
-    while remaining >= xp_for_next_level(level):
+    while (max_level is None or level < max_level) and remaining >= xp_for_next_level(
+        level
+    ):
         remaining -= xp_for_next_level(level)
         level += 1
     return level
@@ -465,10 +552,18 @@ def level_from_total_xp(total_xp: int) -> int:
 def level_progress(total_xp: int) -> tuple[int, int, int]:
     level = 1
     remaining = max(0, total_xp)
-    while remaining >= xp_for_next_level(level):
+    while level < MAX_FIGHTER_LEVEL and remaining >= xp_for_next_level(level):
         remaining -= xp_for_next_level(level)
         level += 1
-    return level, remaining, xp_for_next_level(level)
+    return (
+        (level, 0, 0)
+        if level == MAX_FIGHTER_LEVEL
+        else (level, remaining, xp_for_next_level(level))
+    )
+
+
+def fighter_xp_limit() -> int:
+    return sum(xp_for_next_level(level) for level in range(1, MAX_FIGHTER_LEVEL))
 
 
 def stats_for(
@@ -479,17 +574,17 @@ def stats_for(
 ) -> dict[str, float]:
     catalog = classes or FIGHTER_CLASSES
     fighter_class = catalog.get(class_id, FIGHTER_CLASSES["ragamuffin"])
-    effective_level = max(fighter_class.base_level, level)
+    effective_level = max(1, min(MAX_FIGHTER_LEVEL, level))
     delta = effective_level - fighter_class.base_level
     stats = {
-        key: round(value + fighter_class.growth.get(key, 0) * delta, 2)
+        key: max(0, round(value + fighter_class.growth.get(key, 0) * delta, 2))
         for key, value in fighter_class.base_stats.items()
     }
     stats["resource_max"] = BASE_RESOURCE
     stats["resource_regen"] = BASE_RESOURCE_REGEN
     if controlled:
         stats = {key: round(value * CONTROL_PENALTY, 2) for key, value in stats.items()}
-    for key in ("max_hp", "resource_max", "resource_regen"):
+    for key in ("max_hp", "resource_max"):
         stats[key] = max(1, round(stats[key]))
     return stats
 
@@ -553,12 +648,25 @@ def create_battle_state(
         class_id = str(source["class_id"])
         stats = stats_for(class_id, int(source["level"]), controlled, class_catalog)
         fighter_class = class_catalog.get(class_id, FIGHTER_CLASSES["ragamuffin"])
+        passive_details = source.get("passive_details")
+        if passive_details is None:
+            passive_details = [
+                dict(
+                    skill_id=f"inherent:{class_id}:{i}",
+                    name=p.get("name", "Пассивка класса"),
+                    effects=[p],
+                    rarity=fighter_class.rarity,
+                )
+                for i, p in enumerate(fighter_class.passives[:MAX_PASSIVE_SKILLS])
+            ]
+        passive_details = passive_details[:MAX_PASSIVE_SKILLS]
         starting_effects = [
             {
                 **item,
                 "duration": 1_000_000,
             }
-            for index, item in enumerate(fighter_class.passives)
+            for passive in passive_details
+            for item in passive["effects"]
             if item.get("kind") not in {"resource", "stun"}
         ]
         sides[side] = {
@@ -569,7 +677,7 @@ def create_battle_state(
             ),
             "controlled": controlled,
             "class_id": class_id,
-            "level": int(source["level"]),
+            "level": min(MAX_FIGHTER_LEVEL, int(source["level"])),
             "stats": stats,
             "hp": stats["max_hp"],
             "resource": stats["resource_max"],
@@ -581,6 +689,7 @@ def create_battle_state(
                 source.get("granted_skills", ()),
             ),
             "effects": starting_effects,
+            "passive_details": passive_details,
             "cooldowns": {},
             "potion_used": False,
         }

@@ -18,6 +18,9 @@ from arena_engine import (
     normalize_loadout,
     unlocked_skill_ids,
     stats_for,
+    effective_stat,
+    RARITY_LABELS,
+    MAX_FIGHTER_LEVEL,
 )
 from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from arena_images import MAX_SPRITE_BYTES, normalize_sprite
@@ -92,6 +95,8 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             cls = classes.get(side["class_id"], classes["ragamuffin"])
             side["class_name"] = cls.name
             side["resource_name"] = cls.resource_name
+            side["class_rarity"] = cls.rarity
+            side["class_rarity_name"] = RARITY_LABELS[cls.rarity]
             side["sprite"] = (
                 side["class_id"]
                 if side["class_id"] in {"cutie", "jock", "nerd"}
@@ -103,6 +108,21 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side["skill_details"] = [
                 asdict(skills[s]) for s in side["loadout"] if s in skills
             ]
+            side["passive_details"] = side.get("passive_details", [])[:2]
+            side["effective_stats"] = {
+                k: effective_stat(side, k) for k in side["stats"]
+            }
+            side["accuracy_bonus"] = sum(
+                e.get("value", 0)
+                for e in side["effects"]
+                if e["kind"] == "accuracy_flat"
+            )
+            side["damage_bonus"] = sum(
+                e.get("value", 0) for e in side["effects"] if e["kind"] == "damage_pct"
+            )
+            side["can_use_potion"] = side["controller_id"] == actor and bool(
+                await db.arena_potion_count(row["chat_id"], actor)
+            )
             if "bum_punch" not in side["loadout"] and not any(
                 skills[s].cost <= side["resource"] and not side["cooldowns"].get(s, 0)
                 for s in side["loadout"]
@@ -175,6 +195,10 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         profile["class_name"] = classes.get(
             profile["class_id"], classes["ragamuffin"]
         ).name
+        profile["class_rarity"] = classes.get(
+            profile["class_id"], classes["ragamuffin"]
+        ).rarity
+        profile["class_rarity_name"] = RARITY_LABELS[profile["class_rarity"]]
         profile["sprite"] = (
             profile["class_id"]
             if profile["class_id"] in {"cutie", "jock", "nerd"}
@@ -183,8 +207,10 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         profile.update(await db.arena_sprite_info(chat, profile["user_id"]))
         profile["can_edit_sprite"] = profile["user_id"] == actor
         # Grants are scoped to this user/chat, not the entire custom catalog.
+        passive_view = await db.arena_passive_view(chat, profile["user_id"], personal)
+        grants = passive_view.pop("granted")
+        profile.update(passive_view)
         async with db._lock:
-            grants = db._granted_content_locked(chat, profile["user_id"], "skill")
             class_grants = db._granted_content_locked(chat, profile["user_id"], "class")
         profile["skills"] = [
             asdict(skills[k])
@@ -193,13 +219,15 @@ async def menu_view(db, chat: int, actor: int) -> dict:
             )
         ]
         profile["classes"] = [
-            dict(id=k, name=c.name)
+            dict(id=k, name=c.name, rarity=c.rarity)
             for k, c in classes.items()
             if k in {"cutie", "jock", "nerd"} or k in class_grants
         ]
     result["chat_id"] = chat
     result["actor_id"] = actor
     result["admin"] = actor == CUSTOM_COMMAND_OWNER_ID
+    result["max_level"] = MAX_FIGHTER_LEVEL
+    result.update(await db.arena_market_view(chat, actor))
     return result
 
 
@@ -231,7 +259,13 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
             )
         except web.HTTPRequestEntityTooLarge:
             return web.json_response(
-                {"error": "Файл слишком большой. Максимум — 2 МБ." if request.path.endswith("/sprite") else "Запрос слишком большой."},
+                {
+                    "error": (
+                        "Файл слишком большой. Максимум — 2 МБ."
+                        if request.path.endswith("/sprite")
+                        else "Запрос слишком большой."
+                    )
+                },
                 status=413,
             )
         except web.HTTPException:
@@ -325,7 +359,10 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
             png = await asyncio.to_thread(normalize_sprite, raw)
         await db.arena_set_sprite(chat, actor, png, pixel_art == "true")
         return web.json_response(
-            {"notice": "Свой спрайт сохранён.", "menu": await menu_view(db, chat, actor)}
+            {
+                "notice": "Свой спрайт сохранён.",
+                "menu": await menu_view(db, chat, actor),
+            }
         )
 
     async def reset_sprite(request):
@@ -333,7 +370,10 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
         await require_member(bot, chat, actor)
         await db.arena_reset_sprite(chat, actor)
         return web.json_response(
-            {"notice": "Стандартный спрайт возвращён.", "menu": await menu_view(db, chat, actor)}
+            {
+                "notice": "Стандартный спрайт возвращён.",
+                "menu": await menu_view(db, chat, actor),
+            }
         )
 
     async def get_sprite(request):
@@ -345,7 +385,8 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
         if png is None:
             raise web.HTTPNotFound()
         return web.Response(
-            body=png, content_type="image/png",
+            body=png,
+            content_type="image/png",
             headers={"Cache-Control": "public, max-age=31536000, immutable"},
         )
 
@@ -376,7 +417,7 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
             if equipped:
                 await require_member(bot, chat, fighter)
             notice = await db.arena_equip_slave(chat, actor, fighter, equipped)
-        elif action in {"class", "loadout"}:
+        elif action in {"class", "loadout", "passives"}:
             personal = body.get("personal", False)
             if type(personal) is not bool:
                 raise ValueError("Некорректный персонаж.")
@@ -389,8 +430,20 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
                 body.get("value"),
             )
             notice = "Сохранено."
+        elif action == "buy_item":
+            notice = await db.arena_buy_item(chat, actor, int_field(body, "offer"))
+        elif action == "use_item":
+            personal = body.get("personal", True)
+            confirm = body.get("confirm", False)
+            if type(personal) is not bool or type(confirm) is not bool:
+                raise ValueError("Некорректный режим предмета.")
+            user = int_field(body, "user", actor)
+            await require_member(bot, chat, user)
+            notice = await db.arena_use_item(
+                chat, actor, int_field(body, "item"), user, personal, confirm
+            )
         elif action == "craft":
-            notice = await db.craft_owner_item(chat, actor, str(body.get("item")))
+            raise ValueError("Крафт убран. Зелья и конфеты есть у торговца.")
         elif action == "candy":
             notice = await db.give_candy(chat, actor, int_field(body, "user"))
         elif (
@@ -404,7 +457,11 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
                 if not isinstance(definition, dict):
                     raise ValueError("Нужен JSON-объект.")
                 notice = await db.create_custom_fighter_content(
-                    content_type, content_id, definition, actor
+                    content_type,
+                    content_id,
+                    definition,
+                    actor,
+                    hidden=definition.get("merchant_available") is not True,
                 )
             else:
                 user = int_field(body, "user")

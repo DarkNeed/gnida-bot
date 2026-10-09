@@ -9,6 +9,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from typing import Any
+from arena_market import ArenaMarketMixin
 from arena_engine import (
     FIGHTER_CLASSES,
     BUILTIN_SKILLS,
@@ -25,6 +26,10 @@ from arena_engine import (
     unlocked_skill_ids,
     xp_for_next_level,
     level_progress,
+    MAX_FIGHTER_LEVEL,
+    MAX_PASSIVE_SKILLS,
+    fighter_xp_limit,
+    effective_stat,
 )
 
 OWNER_RECORD_XP = 2
@@ -37,7 +42,7 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin:
+class ArenaMixin(ArenaMarketMixin):
     def _connect_arena(self) -> None:
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (
@@ -151,6 +156,8 @@ class ArenaMixin:
         )
         self.connection.commit()
 
+        self._connect_arena_market()
+
     def _slave_count_locked(self, chat_id: int, owner_id: int) -> int:
         return int(
             self.connection.execute(
@@ -202,7 +209,11 @@ class ArenaMixin:
             before = self._ensure_owner_profile_locked(chat_id, user_id)
         old_level = int(before["level"])
         total_xp = int(before["xp"]) + max(0, amount)
-        new_level = level_from_total_xp(total_xp)
+        if table != "owner_profiles":
+            total_xp = min(total_xp, fighter_xp_limit())
+        new_level = level_from_total_xp(
+            total_xp, None if table == "owner_profiles" else MAX_FIGHTER_LEVEL
+        )
         extra = ", updated_at=?" if table != "owner_profiles" else ""
         params: tuple[Any, ...]
         if table != "owner_profiles":
@@ -438,6 +449,13 @@ class ArenaMixin:
         result = await self.grant_custom_fighter_content(
             chat, user, kind, content_id, author
         )
+        if result == "granted" and kind == "skill":
+            async with self._lock:
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO arena_learned VALUES(?,?,?,?,?)",
+                    (chat, user, int(personal), "skill", content_id),
+                )
+                self.connection.commit()
         if result != "granted" or kind != "class":
             return result
         async with self._lock:
@@ -450,12 +468,21 @@ class ArenaMixin:
                 int(profile["level"]),
                 None,
                 skills,
-                self._granted_content_locked(chat, user, "skill"),
+                self._arena_grants_locked(chat, user, personal),
             )
             table = "personal_profiles" if personal else "slave_profiles"
             self.connection.execute(
                 f"UPDATE {table} SET class_id=?,loadout=?,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
                 (content_id, json.dumps(loadout), utc_timestamp(), chat, user),
+            )
+            classes, _ = self._fighter_catalog_locked()
+            defaults = [
+                f"inherent:{content_id}:{i}"
+                for i in range(min(2, len(classes[content_id].passives)))
+            ]
+            self.connection.execute(
+                f"UPDATE {table} SET passive_loadout=? WHERE chat_id=? AND user_id=?",
+                (json.dumps(defaults), chat, user),
             )
             self.connection.commit()
             return "granted"
@@ -542,7 +569,7 @@ class ArenaMixin:
             if class_id is None or class_id == "ragamuffin":
                 return "unknown"
             _classes, skills = self._fighter_catalog_locked()
-            granted_skills = self._granted_content_locked(chat_id, user_id, "skill")
+            granted_skills = self._arena_grants_locked(chat_id, user_id, False)
             loadout = normalize_loadout(
                 class_id, int(profile["level"]), None, skills, granted_skills
             )
@@ -586,7 +613,7 @@ class ArenaMixin:
                 ):
                     return "too_early"
             _classes, skills = self._fighter_catalog_locked()
-            granted_skills = self._granted_content_locked(chat_id, slave_id, "skill")
+            granted_skills = self._arena_grants_locked(chat_id, slave_id, False)
             normalized = normalize_loadout(
                 str(profile["class_id"]),
                 int(profile["level"]),
@@ -603,29 +630,7 @@ class ArenaMixin:
             return "updated"
 
     async def craft_owner_item(self, chat_id: int, owner_id: int, item: str) -> str:
-        recipes = {
-            "potion": (5, 50, "healing_potions"),
-            "candy": (7, 100, "candies"),
-        }
-        if item not in recipes:
-            return "unknown"
-        required_level, cost, column = recipes[item]
-        async with self._lock:
-            profile = self._settle_materials_locked(chat_id, owner_id)
-            if int(profile["level"]) < required_level:
-                self.connection.commit()
-                return "low_level"
-            if int(profile["raw_material"]) < cost:
-                self.connection.commit()
-                return "not_enough_material"
-            self.connection.execute(
-                f"""UPDATE owner_profiles
-                    SET raw_material=raw_material-?, {column}={column}+1
-                    WHERE chat_id=? AND user_id=?""",
-                (cost, chat_id, owner_id),
-            )
-            self.connection.commit()
-            return "crafted"
+        return "Крафт убран. Зелья и конфеты продаёт странствующий торговец."
 
     async def give_candy(self, chat_id: int, owner_id: int, slave_id: int) -> str:
         async with self._lock:
@@ -635,18 +640,15 @@ class ArenaMixin:
             ).fetchone()
             if not owned:
                 return "not_owned"
-            profile = self._ensure_owner_profile_locked(chat_id, owner_id)
-            if int(profile["candies"]) < 1:
-                self.connection.commit()
-                return "no_candy"
-            self.connection.execute(
-                """UPDATE owner_profiles SET candies=candies-1
-                   WHERE chat_id=? AND user_id=?""",
+            item = self.connection.execute(
+                "SELECT id FROM arena_inventory WHERE chat_id=? AND owner_id=? AND kind='candy'",
                 (chat_id, owner_id),
-            )
-            self._grant_profile_xp_locked("slave_profiles", chat_id, slave_id, 30)
-            self.connection.commit()
-            return "given"
+            ).fetchone()
+            if not item:
+                return "no_candy"
+            item_id = item["id"]
+        await self.arena_use_item(chat_id, owner_id, item_id, slave_id, False)
+        return "given"
 
     def _arena_profile_locked(self, chat_id: int, user_id: int, personal=False):
         if not personal:
@@ -786,7 +788,10 @@ class ArenaMixin:
             class_id=profile["class_id"],
             level=profile["level"],
             loadout=json.loads(profile["loadout"]),
-            granted_skills=self._granted_content_locked(chat, user, "skill"),
+            granted_skills=self._arena_grants_locked(chat, user, personal),
+            passive_details=self._arena_selected_passives_locked(
+                chat, user, personal, profile
+            ),
         )
 
     def _arena_activate_locked(self, row: dict) -> None:
@@ -811,7 +816,9 @@ class ArenaMixin:
             for k in ("a", "b")
         ]
         state = create_battle_state(*sources, classes=classes, skills=skills)
-        a_speed, b_speed = (state["sides"][k]["stats"]["speed"] for k in ("a", "b"))
+        a_speed, b_speed = (
+            effective_stat(state["sides"][k], "speed") for k in ("a", "b")
+        )
         state["active_side"] = (
             random.SystemRandom().choice(("a", "b"))
             if a_speed == b_speed
@@ -1021,18 +1028,35 @@ class ArenaMixin:
                 1 if low_reward else (10 if winner == k else 8 if winner is None else 7)
             )
             if row["mode"] == "wasteland":
-                xp = 5 + 2 * row["floor"] if winner == k else 3
+                xp = (
+                    0
+                    if state.get("finish_reason") in {"surrender", "timeout"}
+                    else (5 + 2 * row["floor"] if winner == k else 3)
+                )
             table = (
                 "personal_profiles"
                 if row["mode"] == "personal"
                 or (row["mode"] == "wasteland" and row["personal_solo"])
                 else "slave_profiles"
             )
+            before_xp = self._arena_profile_locked(
+                row["chat_id"], row[k + "_fighter"], table == "personal_profiles"
+            )["xp"]
             self._grant_profile_xp_locked(
                 table, row["chat_id"], row[k + "_fighter"], xp
             )
-            rewards[k] = xp
-            if table == "slave_profiles" and winner == k:
+            after_xp = self._arena_profile_locked(
+                row["chat_id"], row[k + "_fighter"], table == "personal_profiles"
+            )["xp"]
+            rewards[k] = max(0, after_xp - before_xp)
+            if (
+                table == "slave_profiles"
+                and winner == k
+                and not (
+                    row["mode"] == "wasteland"
+                    and state.get("finish_reason") in {"surrender", "timeout"}
+                )
+            ):
                 actual_owner = self.connection.execute(
                     "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
                     (row["chat_id"], row[k + "_fighter"]),
@@ -1084,16 +1108,19 @@ class ArenaMixin:
             _, skills = self._fighter_catalog_locked()
             try:
                 if skill_id == "surrender":
-                    state.update(finished=True, winner="b" if key == "a" else "a")
+                    state.update(
+                        finished=True,
+                        winner="b" if key == "a" else "a",
+                        finish_reason="surrender",
+                    )
                 elif skill_id == "potion":
-                    if row["mode"] == "personal" or row[key + "_owner"] != actor:
-                        raise ValueError("Зелья доступны владельцу раба.")
-                    changed = self.connection.execute(
-                        "UPDATE owner_profiles SET healing_potions=healing_potions-1 WHERE chat_id=? AND user_id=? AND healing_potions>0",
+                    item = self.connection.execute(
+                        "SELECT * FROM arena_inventory WHERE chat_id=? AND owner_id=? AND kind='potion' AND content_id='healing'",
                         (row["chat_id"], actor),
-                    ).rowcount
-                    if not changed:
+                    ).fetchone()
+                    if not item:
                         raise ValueError("Нет зелья.")
+                    self._arena_consume_item_locked(item)
                     use_healing_potion(state, key)
                 else:
                     resolve_skill(state, key, skill_id, skills)
@@ -1149,6 +1176,7 @@ class ArenaMixin:
             elif row["status"] == "active" and row["state_json"]:
                 state = json.loads(row["state_json"])
                 state["finished"] = True
+                state["finish_reason"] = "timeout"
                 state["winner"] = (
                     ("b" if state["active_side"] == "a" else "a")
                     if state["log"]
@@ -1408,7 +1436,7 @@ class ArenaMixin:
                     profile["level"],
                     None,
                     skills,
-                    self._granted_content_locked(chat, user, "skill"),
+                    self._arena_grants_locked(chat, user, personal),
                 )
                 self.connection.execute(
                     f"UPDATE {table} SET class_id=?,loadout=?,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
@@ -1425,7 +1453,7 @@ class ArenaMixin:
                     profile["class_id"],
                     profile["level"],
                     skills,
-                    self._granted_content_locked(chat, user, "skill"),
+                    self._arena_grants_locked(chat, user, personal),
                 )
                 if any(k not in unlocked for k in value):
                     raise ValueError("Навык ещё не открыт.")
@@ -1434,11 +1462,28 @@ class ArenaMixin:
                     profile["level"],
                     value,
                     skills,
-                    self._granted_content_locked(chat, user, "skill"),
+                    self._arena_grants_locked(chat, user, personal),
                 )
                 self.connection.execute(
                     f"UPDATE {table} SET loadout=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?",
                     (json.dumps(loadout), chat, user),
+                )
+            elif action == "passives":
+                if (
+                    not isinstance(value, list)
+                    or len(value) > MAX_PASSIVE_SKILLS
+                    or any(not isinstance(k, str) for k in value)
+                    or len(value) != len(set(value))
+                ):
+                    raise ValueError("Выбери максимум две разные пассивки.")
+                available = self._arena_passive_catalog_locked(
+                    chat, user, personal, profile
+                )
+                if any(k not in available for k in value):
+                    raise ValueError("Пассивный навык не изучен.")
+                self.connection.execute(
+                    f"UPDATE {table} SET passive_loadout=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?",
+                    (json.dumps(value), chat, user),
                 )
             else:
                 raise ValueError("Неизвестное действие.")

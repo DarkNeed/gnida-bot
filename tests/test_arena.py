@@ -588,7 +588,7 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
         r = await self.db.arena_wasteland(1, 30, 30, personal=False)
         r = await self.db.arena_action(r["token"], 30, r["revision"], "surrender")
         self.assertEqual(r["status"], "finished")
-        self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 3)
+        self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 0)
         self.assertEqual((await self.db.arena_menu(1, 30))["personal"]["xp"], 0)
 
     async def test_exclusive_content_and_immediate_class(self):

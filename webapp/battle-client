@@ -7,6 +7,10 @@ const demo=new URLSearchParams(location.search).get("demo")==="1" && /^(localhos
 const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const adminDraft={};
 let spriteDraft=null;
+let inspectSide=null,classUsePending=null;
+const rarityNames={common:"Обычный",uncommon:"Необычный",rare:"Редкий",epic:"Эпический"};
+const statNames={max_hp:"Макс. HP",resource_max:"Макс. энергия",physical_attack:"Физ. атака",magic_attack:"Маг. атака",physical_defense:"Физ. защита",magic_defense:"Маг. защита",speed:"Скорость",evasion:"Уклонение"};
+const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",evasion_flat:"Уклонение",resource:"Энергия",stun:"Ошеломление"};
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,reduced?Math.min(50,ms):ms));
 const sprite=c=>c&&typeof c==="object"&&/^\/sprites\/[0-9a-f]{64}\.png$/.test(c.sprite_url||"")?c.sprite_url:"/static/assets/"+(["cutie","jock","nerd"].includes(typeof c==="object"?c?.sprite:c)?(typeof c==="object"?c.sprite:c):"ragamuffin")+".png";
@@ -14,6 +18,23 @@ function fighterImage(p,cls="",id=""){
   return '<img class="'+cls+(p.sprite_url&&p.pixel_art?' pixel-art':'')+'"'+(id?' id="'+id+'"':'')+' src="'+sprite(p)+'" data-fallback="'+sprite(p.sprite)+'" alt="'+esc(p.class_name)+'">';
 }
 function clearSpriteDraft(){if(spriteDraft)URL.revokeObjectURL(spriteDraft.url);spriteDraft=null;}
+function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames,r)?r:"common")+'">'+esc(rarityNames[r]||r||"Обычный")+'</span>';}
+function describeEffect(e){const value=e.kind.endsWith("_pct")?Math.round(e.value*100)+"%":e.value;return esc(effectNames[e.kind]||e.kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');}
+function skillInfo(s){return '<div class="muted">'+(s.cost!==undefined?'Энергия '+s.cost+' · точность '+s.accuracy+'% · сила '+s.power+' · перезарядка '+s.cooldown+' х.':'')+'</div>'+((s.effects||[]).map(e=>'<div class="muted">'+describeEffect(e)+'</div>').join(''));}
+function itemInfo(item){const d=item.details||{};return d.description?'<p class="muted">'+esc(d.description)+'</p>':item.kind==='class'?'<p class="muted">Меняет класс, сбрасывает уровень до 1, весь опыт, изученные активные и пассивные навыки. Инвентарь и спрайт сохраняются.</p>':'<p class="muted">'+(item.kind==='passive'?'Пассивный навык · максимум 2 в бою':'Активный навык · нужен уровень '+(d.unlock_level||1))+'</p>'+skillInfo(d);}
+function fighterDetails(s,key){
+  const effective=s.effective_stats||s.stats;
+  return '<div class="profile fighter-detail">'+fighterImage(s)+'<div><h2>'+esc(s.name)+'</h2><div class="muted">'+esc(s.class_name)+' · Lv.'+s.level+'</div>'+rarityBadge(s.class_rarity)+'<p>HP '+s.hp+' / '+s.stats.max_hp+'<br>'+esc(s.resource_name)+': '+s.resource+' / '+s.stats.resource_max+'</p></div></div><div class="stats-grid">'+Object.entries(statNames).map(([id,label])=>'<div><span>'+label+'</span><b>'+esc(Math.round((effective[id]??s.stats[id]??0)*100)/100)+(effective[id]!==s.stats[id]?' <small>(база '+esc(s.stats[id])+')</small>':'')+'</b></div>').join('')+'</div><p class="muted">'+(s.controlled?'Контроль: все характеристики −20%. ':'')+'Бонус точности: '+(s.accuracy_bonus||0)+' · бонус урона: '+Math.round((s.damage_bonus||0)*100)+'%.<br>Автоматического восстановления энергии нет. Уклонение и точность указаны в процентных пунктах.</p><h3>Активные навыки</h3>'+s.skill_details.map(skill=>'<div class="detail-skill"><b>'+esc(skill.name)+'</b> '+rarityBadge(skill.rarity)+skillInfo(skill)+(s.cooldowns[skill.skill_id]?'<div class="muted">Восстановится через '+s.cooldowns[skill.skill_id]+' х.</div>':'')+'</div>').join('')+'<h3>Пассивные навыки · '+(s.passive_details||[]).length+' / 2</h3>'+((s.passive_details||[]).map(p=>'<div class="detail-skill"><b>'+esc(p.name)+'</b> '+rarityBadge(p.rarity)+skillInfo(p)+'</div>').join('')||'<p class="muted">Не экипированы.</p>')+'<h3>Эффекты</h3>'+((s.effects||[]).filter(e=>e.duration<10000).map(e=>'<p class="muted">'+describeEffect(e)+' · осталось '+e.duration+' х.</p>').join('')||'<p class="muted">Нет временных эффектов.</p>')+'<p class="muted">Владелец/игрок: '+esc(current?.names?.[key+'_owner']||s.name)+'</p>';
+}
+function closeStats(){const overlay=document.getElementById('fighter-stats');if(overlay)overlay.remove();app.inert=false;inspectSide=null;}
+function showStats(key){
+  const s=current?.state?.sides[key];if(!s)return;inspectSide=key;
+  let overlay=document.getElementById('fighter-stats');
+  if(!overlay){overlay=document.createElement('div');overlay.id='fighter-stats';overlay.className='stats-overlay';overlay.addEventListener('click',e=>{if(e.target===overlay||e.target.closest('[data-close-stats]'))closeStats();});document.body.append(overlay);}
+  overlay.innerHTML='<section class="stats-dialog" role="dialog" aria-modal="true" aria-label="Статистика бойца"><button class="small close-stats" data-close-stats>Закрыть ✕</button>'+fighterDetails(s,key)+'</section>';
+  app.inert=true;overlay.querySelector('[data-close-stats]').focus({preventScroll:true});
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeStats();});
 function toast(text){const box=document.getElementById("toast");box.textContent=text;box.hidden=false;setTimeout(()=>box.hidden=true,3500);}
 function button(label,id,cls="",disabled=false){return '<button class="'+cls+'" data-do="'+id+'"'+(disabled?' disabled':'')+'>'+label+"</button>";}
 function top(title,tag,right){return '<header class="top"><div><div class="eyebrow">'+tag+'</div><h1>'+title+'</h1></div>'+right+"</header>";}
@@ -24,7 +45,7 @@ async function api(path,body){
   return data;
 }
 function hud(s,key){
-  return '<div class="hud '+(key===near?"player":"enemy")+'"><div class="row"><div class="name">'+esc(s.name)+'</div><span class="badge">Lv.'+s.level+'</span></div><div class="meta">'+esc(s.class_name)+(s.controlled?" · контроль −20%":"")+'</div><div class="barline"><span>HP</span><span id="hp-'+key+'">'+s.hp+" / "+s.stats.max_hp+'</span></div><div class="bar" id="health-'+key+'"><i style="width:'+100*s.hp/s.stats.max_hp+'%"></i></div><div class="barline"><span>'+esc(s.resource_name)+'</span><span id="mp-'+key+'">'+s.resource+" / "+s.stats.resource_max+'</span></div><div class="bar mana" id="mana-'+key+'"><i style="width:'+100*s.resource/s.stats.resource_max+'%"></i></div></div>';
+  return '<div class="hud '+(key===near?"player":"enemy")+'"><div class="row"><div class="name">'+esc(s.name)+'</div><span class="badge">Lv.'+s.level+'</span><button class="stat-button" data-inspect="'+key+'" aria-label="Статистика '+esc(s.name)+'">ⓘ</button></div><div class="meta">'+esc(s.class_name)+(s.controlled?" · контроль −20%":"")+'</div><div class="barline"><span>HP</span><span id="hp-'+key+'">'+s.hp+" / "+s.stats.max_hp+'</span></div><div class="bar" id="health-'+key+'"><i style="width:'+100*s.hp/s.stats.max_hp+'%"></i></div><div class="barline"><span>'+esc(s.resource_name)+'</span><span id="mp-'+key+'">'+s.resource+" / "+s.stats.resource_max+'</span></div><div class="bar mana" id="mana-'+key+'"><i style="width:'+100*s.resource/s.stats.resource_max+'%"></i></div></div>';
 }
 function battleScreen(data){
   current=data; token=data.token; chat=data.chat_id;
@@ -34,6 +55,7 @@ function battleScreen(data){
   app.innerHTML='<section class="battle">'+top("Арена",data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":"БЕЗ СТАВКИ")+'</span>')+
     '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'</div><div class="turnbanner" id="turn"></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+button("В меню","menu","small")+'</footer></section>';
   renderActions();
+  if(inspectSide)showStats(inspectSide);
 }
 function renderActions(){
   if(!current?.state||!document.getElementById("panel"))return;
@@ -48,7 +70,7 @@ function renderActions(){
     for(const k of ["a","b"])document.getElementById("sprite-"+k).classList.toggle("defeated",st.sides[k].hp===0);
   }else if(mine){
     panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>'<button class="skill" data-skill="'+esc(skill.skill_id)+'" '+(side.resource<skill.cost||side.cooldowns[skill.skill_id]?"disabled":"")+'><span class="type">'+(skill.damage_type==="magic"?"МАГИЯ":skill.damage_type==="physical"?"АТАКА":"ЭФФЕКТ")+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?" · ещё "+side.cooldowns[skill.skill_id]+" х.":"")+"</span></button>").join("")+'</div>';
-    panel.innerHTML+='<div class="row" style="margin-top:8px">'+(side.controlled&&!side.potion_used?button("Зелье · 30% HP","potion","small"):"<span></span>")+button("Сдаться","surrender","small danger")+'</div>';
+    panel.innerHTML+='<div class="row" style="margin-top:8px">'+(side.can_use_potion&&!side.potion_used?button("Зелье · 30% HP","potion","small"):"<span></span>")+button("Сдаться","surrender","small danger")+'</div>';
   }else{
     panel.innerHTML='<div class="battlelog">'+(current.own_side||current.consent_side?"Ход соперника…":"Ты наблюдаешь за боем.")+'<div class="muted">'+esc(st.log.at(-1)?.text||"Первый ход скоро начнётся.")+'</div></div>';
   }
@@ -126,15 +148,16 @@ async function action(action,extra={}){
 }
 function profileCard(p,title,owned=false){
   const progress=p.progress||[p.level,0,10];
+  const maxed=p.level>=20;
   const status=p.personal?"":'<p class="muted">'+(p.combat_slot?"Боевой слот "+p.combat_slot+" / 5":p.working_role?"На работе · не экипирован":"Вне боевого отряда")+(p.in_battle?" · выбран для боя":"")+'</p>';
   const equipment=owned?button(p.combat_slot?"Снять с боевого слота":"Экипировать и снять с работы",(p.combat_slot?"unequip:":"equip:")+p.user_id,"",p.in_battle):"";
-  return '<div class="card"><div class="profile">'+fighterImage(p)+'<div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+progress[1]+' / '+progress[2]+' XP</span></div><div class="bar"><i style="width:'+100*progress[1]/progress[2]+'%"></i></div></div></div></div>'+status+'<div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary",!p.personal&&!p.combat_slot)+button("Класс и навыки","profile:"+p.user_id)+equipment+(p.can_edit_sprite?button("Свой спрайт","appearance"):"")+'</div></div>';
+  return '<div class="card"><div class="profile">'+fighterImage(p)+'<div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+(maxed?'МАКСИМУМ · 20':progress[1]+' / '+progress[2]+' XP')+'</span></div><div class="bar"><i style="width:'+(maxed?100:100*progress[1]/progress[2])+'%"></i></div></div></div></div>'+status+'<div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary",!p.personal&&!p.combat_slot)+button("Класс и навыки","profile:"+p.user_id)+equipment+(p.can_edit_sprite?button("Свой спрайт","appearance"):"")+'</div></div>';
 }
 function activeProfile(){return [...(menu?.slaves||[]),menu?.self_slave,menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
 function menuScreen(data){
   menu=data;chat=data.chat_id;token="";
   if(page!=="appearance")clearSpriteDraft();
-  let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+button("Рабы","tab:slaves",page==="slaves"?"selected":"")+button("Владелец","tab:owner",page==="owner"?"selected":"")+'</div>';
+  let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+button("Рабы","tab:slaves",page==="slaves"?"selected":"")+button("Владелец","tab:owner",page==="owner"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+'</div>';
   if(page==="personal")body+=profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Личный персонаж есть у всех, раб не нужен. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
   else if(page==="slaves"){
     body+='<div class="card"><h2>Боевой отряд · '+data.combat_count+' / '+data.combat_capacity+'</h2><p class="muted">При экипировке раб снимается с работы. Чтобы вернуть его на предприятие, сначала сними с боевого слота.</p></div>';
@@ -149,8 +172,21 @@ function menuScreen(data){
     body+='<div class="note">Ответь владельцу <b>/бой рабами</b> или напиши <b>Я выбираю тебя @раб</b>. Каждый владелец выбирает экипированного бойца. Без контроля раб должен согласиться; контроль доступен с 1 уровня.</div>';
   }else if(page==="owner"){
     const o=data.owner;
-    body+='<div class="card"><h2>Владелец · Lv.'+o.level+'</h2><p class="muted">Опыт: '+o.xp+' XP · Рабов: '+data.slaves.length+'<br>Сырьё: '+o.raw_material+' / '+(o.level<5?0:100+(o.level-5)*2)+'<br>Зелья: '+o.healing_potions+' · Конфеты: '+o.candies+'</p><div class="stack">'+button("Зелье · 50 сырья · Lv.5","craft:potion")+button("Конфета · 100 сырья · Lv.7","craft:candy")+'</div></div><div class="note">С 5 уровня: 1 сырьё/час за раба. Зелье лечит 30% HP, одно на бой. Конфета с 7 уровня даёт 30 XP. Владелец получает опыт за победы рабов и новые рекорды их количества.</div>';
+    body+='<div class="card"><h2>Владелец · Lv.'+o.level+'</h2><p class="muted">Опыт: '+o.xp+' XP · Рабов: '+data.slaves.length+'</p><div class="stack">'+button("Инвентарь","tab:inventory")+button("Странствующий торговец","tab:merchant")+'</div></div><div class="note">Крафт убран. Зелья, конфеты и трактаты покупаются за франки у торговца. Владелец получает опыт за победы рабов и новые рекорды их количества.</div>';
     if(data.admin)body+=button("Авторские классы и навыки","admin");
+  }else if(page==="merchant"){
+    const m=data.merchant||{offers:[]};
+    body+='<div class="card"><h2>Странствующий торговец</h2><p>Баланс: '+(data.balance||0)+' ₣</p><p class="muted">'+(m.visit_id?'Уходит: '+esc(new Date(m.ends*1000).toLocaleString('ru-RU')):'Сейчас торговца нет. Следующее появление: '+esc(m.next_starts?new Date(m.next_starts*1000).toLocaleString('ru-RU'):'скоро'))+'</p>'+button('Обновить товары','refresh','small')+'</div>';
+    body+=(m.offers||[]).map(item=>'<div class="card"><h2>'+esc(item.name)+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+'<p class="muted">Можно купить ещё '+item.remaining+' за этот визит.</p>'+button('Купить — '+item.price+' ₣','buy:'+item.id,'primary',!item.remaining||(data.balance||0)<item.price)+'</div>').join('');
+    body+='<div class="note">Два визита в день по два часа. Купленные предметы лежат в инвентаре. Ассортимент общий для чата, лимиты покупки индивидуальные.</div>';
+  }else if(page==="inventory"){
+    const targets=[data.personal,...data.slaves,data.self_slave].filter(Boolean);
+    body+='<div class="card"><h2>Инвентарь</h2><p class="muted">Предметы этого чата. Трактат расходуется при изучении, смена класса требует подтверждения. Передавать можно по номеру предмета.</p>'+button('К торговцу','tab:merchant')+'</div>';
+    body+=(data.inventory||[]).map(item=>'<div class="card"><h2>№'+item.id+' · '+esc(item.name)+' × '+item.quantity+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+(item.kind==='potion'?'<p class="muted">Используется кнопкой «Зелье» в свой ход.</p>':'<select id="item-target-'+item.id+'">'+targets.map(p=>'<option value="'+(p.personal?'p':'s')+':'+p.user_id+'">'+esc(p.personal?'Мой личный персонаж':p.name||'Мой персонаж-раб')+' · Lv.'+p.level+'</option>').join('')+'</select>'+button('Использовать','useitem:'+item.id,'primary'))+'<p class="muted">Передать в чате: <code>/передать предмет '+item.id+' @участник</code><br>Или ответом: <code>/передать предмет '+item.id+'</code></p></div>').join('')||'<div class="note">Пока пусто.</div>';
+  }else if(page==="classConfirm"){
+    const row=(data.inventory||[]).find(i=>i.id===classUsePending?.item);
+    if(!row){page='inventory';menuScreen(data);return;}
+    body+='<div class="card"><h2>Сменить класс на '+esc(row.name)+'?</h2><p>Боец: '+esc(classUsePending.name)+'</p><p class="danger-text">Уровень станет 1, опыт обнулится, прежние изученные активные и пассивные навыки исчезнут. Инвентарь и спрайт сохранятся. Трактат будет потрачен.</p><div class="stack">'+button('Сменить класс и сбросить развитие','confirmitem','danger')+button('Не менять','tab:inventory')+'</div></div>';
   }else if(page==="appearance"){
     const p=data.personal;
     body+='<div class="card"><h2>Свой спрайт</h2><div class="sprite-preview">'+fighterImage(p,"", "upload-preview")+'</div><p class="muted">PNG с прозрачным фоном, до 2 МБ. Каждая сторона — от 16 до 1024 пикселей. Одна поза; пропорции сохраняются. Картинка видна всем в боях личного персонажа и твоего персонажа-раба в этом чате. На характеристики она не влияет.</p><input type="file" id="sprite-file" accept="image/png,.png" hidden><label class="check"><input type="checkbox" id="sprite-pixels" checked> Пиксельный рисунок — без сглаживания</label><p class="muted" id="sprite-filename">Файл не выбран.</p><div class="stack">'+button("Выбрать PNG","choose_sprite")+button("Сохранить спрайт","upload_sprite","primary",true)+(p.sprite_url?button("Вернуть стандартный","reset_sprite"):"")+button("Назад","tab:personal")+'</div></div>';
@@ -160,8 +196,10 @@ function menuScreen(data){
     const p=activeProfile();
     if(!p){page="personal";menuScreen(data);return;}
     body+='<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p class="muted">Навыки открываются с уровнем. До четырёх навыков на бой; обычный удар доступен бесплатно.</p>';
-    if(p.level>=5&&p.class_id==="ragamuffin")body+='<div class="stack">'+p.classes.map(c=>button(esc(c.name),"class:"+c.id)).join("")+'<input id="hidden-class" placeholder="Название скрытого класса">'+button("Выбрать скрытый класс","hidden")+'</div>';
-    body+='<h3 style="margin-top:20px">Активные навыки</h3><div class="stack">'+p.skills.map(s=>button(esc(s.name)+'<div class="muted">'+s.cost+' · перезарядка '+s.cooldown+' х.</div>',"toggle:"+s.skill_id,p.loadout.includes(s.skill_id)?"selected-skill":"")).join("")+button("Сохранить навыки","save","primary")+'</div>';
+    body+=rarityBadge(p.class_rarity);
+    if(p.level>=5&&p.class_id==="ragamuffin")body+='<div class="stack">'+p.classes.map(c=>button(esc(c.name)+' '+rarityBadge(c.rarity),"class:"+c.id)).join("")+'<input id="hidden-class" placeholder="Название скрытого класса">'+button("Выбрать скрытый класс","hidden")+'</div>';
+    body+='<h3 style="margin-top:20px">Активные навыки</h3><div class="stack">'+p.skills.map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),"toggle:"+s.skill_id,p.loadout.includes(s.skill_id)?"selected-skill":"")).join("")+button("Сохранить навыки","save","primary")+'</div>';
+    body+='<h3 style="margin-top:20px">Пассивные навыки · '+(p.passive_loadout||[]).length+' / 2</h3><div class="stack">'+(p.passives||[]).map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),'togglepassive:'+s.skill_id,(p.passive_loadout||[]).includes(s.skill_id)?'selected-skill':'')).join('')+button('Сохранить пассивки','savepassives','primary')+'</div><p class="muted">Новые навыки изучаются через трактаты из инвентаря. Пассивки действуют автоматически весь бой.</p>';
     if(!p.personal&&p.user_id!==tg?.initDataUnsafe?.user?.id)body+='<p class="muted">Владелец может выбирать класс и навыки за раба после 48 часов ожидания.</p>'+button("Дать конфету · 30 XP","candy");
     body+='</div>';
   }
@@ -177,6 +215,7 @@ async function openMenu(){
   try{menuScreen(await api("/api/menu/"+chat));}catch(error){toast(error.message);}
 }
 async function menuAction(action,extra={}){
+  if(demo){toast('Демо: покупки и изменения не сохраняются.');menuScreen(menu);return;}
   if(busy)return;busy=true;
   try{
     const response=await api("/api/menu/"+chat,{action,...extra});
@@ -211,13 +250,14 @@ app.addEventListener("change",event=>{
   document.querySelector('[data-do="upload_sprite"]').disabled=false;
 });
 app.addEventListener("click",async event=>{
+  const inspect=event.target.closest('[data-inspect]');if(inspect){showStats(inspect.dataset.inspect);return;}
   const b=event.target.closest("button");if(!b||b.disabled||busy)return;
   if(b.dataset.skill){await action("skill",{skill:b.dataset.skill});return;}
   const id=b.dataset.do||"",[cmd,arg]=id.split(":");
   if(["accept","cancel","refuse","consent"].includes(cmd)){await action(cmd);return;}
   if(cmd==="select"||cmd==="selected"){await action("select",{fighter:Number(arg),controlled:document.getElementById("control").checked});return;}
   if(cmd==="potion"||cmd==="surrender"){await action("skill",{skill:cmd});return;}
-  if(cmd==="menu"||cmd==="refresh"){if(demo){toast("Демо интерфейса. В Telegram здесь откроется меню.");return;}await openMenu();return;}
+  if(cmd==="menu"||cmd==="refresh"){closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
   if(cmd==="tab"){page=arg;menuScreen(menu);return;}
   if(cmd==="appearance"){clearSpriteDraft();page="appearance";menuScreen(menu);return;}
   if(cmd==="choose_sprite"){document.getElementById("sprite-file").click();return;}
@@ -227,12 +267,22 @@ app.addEventListener("click",async event=>{
   if(cmd==="battle"){token=arg;current=null;lastSeq=0;battleScreen(await api("/api/battle/"+token));return;}
   if(cmd==="waste"){await menuAction("wasteland",{fighter:Number(arg),personal:page==="personal"});return;}
   if(cmd==="next"){await menuAction("wasteland",{fighter:current.a_fighter,previous:token});return;}
-  if(cmd==="craft"){await menuAction("craft",{item:arg});return;}
+  if(cmd==="buy"){await menuAction('buy_item',{offer:Number(arg)});return;}
+  if(cmd==="useitem"){
+    const item=(menu.inventory||[]).find(i=>i.id===Number(arg));if(!item)return;
+    const [mode,id]=document.getElementById('item-target-'+arg).value.split(':');
+    const target=[menu.personal,...menu.slaves,menu.self_slave].filter(Boolean).find(p=>p.user_id===Number(id)&&p.personal===(mode==='p'));
+    if(item.kind==='class'){classUsePending={item:item.id,user:Number(id),personal:mode==='p',name:target?.name||(mode==='p'?'Мой личный персонаж':'Мой персонаж-раб')};page='classConfirm';menuScreen(menu);return;}
+    await menuAction('use_item',{item:item.id,user:Number(id),personal:mode==='p'});return;
+  }
+  if(cmd==="confirmitem"){const pending=classUsePending;if(!pending)return;page='inventory';await menuAction('use_item',{item:pending.item,user:pending.user,personal:pending.personal,confirm:true});return;}
   if(cmd==="equip"||cmd==="unequip"){await menuAction("equipment",{user:Number(arg),equipped:cmd==="equip"});return;}
   const p=activeProfile();
   if(cmd==="class"||cmd==="hidden"){await menuAction("class",{user:p.user_id,personal:p.personal,value:cmd==="hidden"?document.getElementById("hidden-class").value:arg});return;}
   if(cmd==="toggle"){if(p.loadout.includes(arg))p.loadout=p.loadout.filter(k=>k!==arg);else if(p.loadout.length<4)p.loadout.push(arg);else toast("Не больше четырёх навыков.");menuScreen(menu);return;}
   if(cmd==="save"){await menuAction("loadout",{user:p.user_id,personal:p.personal,value:p.loadout});return;}
+  if(cmd==="togglepassive"){p.passive_loadout=p.passive_loadout||[];if(p.passive_loadout.includes(arg))p.passive_loadout=p.passive_loadout.filter(k=>k!==arg);else if(p.passive_loadout.length<2)p.passive_loadout.push(arg);else toast('Максимум две пассивки.');menuScreen(menu);return;}
+  if(cmd==="savepassives"){await menuAction('passives',{user:p.user_id,personal:p.personal,value:p.passive_loadout||[]});return;}
   if(cmd==="candy"){await menuAction("candy",{user:p.user_id});return;}
   if(cmd==="create_content"||cmd==="grant_content"){
     let definition={};try{if(cmd==="create_content")definition=JSON.parse(document.getElementById("content-json").value);}catch{toast("Не удалось разобрать JSON.");return;}
@@ -249,9 +299,18 @@ async function poll(){
   }catch(error){toast(error.message);}finally{polling=false;}
 }
 function startDemo(){
-  const skill=(id,name,type,cost)=>({skill_id:id,name,damage_type:type,cost});
-  const side=(name,classId,level)=>({name,class_name:classId==="nerd"?"Задрот":"Оборванец",sprite:classId,class_id:classId,level,hp:60,resource:100,stats:{max_hp:60,resource_max:100},resource_name:classId==="nerd"?"Энергосы":"Выносливость",controller_id:1,controlled:false,loadout:["bum_punch"],cooldowns:{},potion_used:false,skill_details:[skill("bum_punch","Удар бомжа","physical",0),skill("humiliate","Унизить","magic",20),skill("dust","Пыль в глаза",null,20),skill("store","Сходить в магаз",null,0)]});
+  const skill=(id,name,type,cost)=>({skill_id:id,name,damage_type:type,cost,power:10,accuracy:85,cooldown:0,effects:[],rarity:'common'});
+  const side=(name,classId,level)=>({name,class_name:classId==="nerd"?"Задрот":"Оборванец",sprite:classId,class_id:classId,class_rarity:classId==='nerd'?'uncommon':'common',level,hp:60,resource:100,stats:{max_hp:60,resource_max:100,physical_attack:12,magic_attack:20,physical_defense:14,magic_defense:10,speed:12,evasion:8},effects:[],passive_details:[],resource_name:classId==="nerd"?"Энергосы":"Выносливость",controller_id:1,controlled:false,loadout:["bum_punch"],cooldowns:{},potion_used:false,skill_details:[skill("bum_punch","Удар бомжа","physical",0),skill("humiliate","Унизить","magic",20),skill("dust","Пыль в глаза",null,20),skill("store","Сходить в магаз",null,0)]});
   battleScreen({token:"demo",chat_id:-1,mode:"personal",status:"active",revision:0,stake:50,actor_id:1,own_side:"a",state:{turn:1,active_side:"a",finished:false,sides:{a:side("Мистер Недосып","nerd",7),b:side("Пустошь","ragamuffin",7)},log:[]}});
+}
+function startDemoMenu(){
+  const fighter={...current.state.sides.a,user_id:1,personal:true,progress:[7,12,76],loadout:['bum_punch','humiliate'],skills:current.state.sides.a.skill_details,passives:[],passive_loadout:[],classes:[],can_edit_sprite:true};
+  const items=[
+    {id:1,kind:'class',content_id:'cutie',name:'Милашка',rarity:'uncommon',details:{},quantity:1,price:750,remaining:1},
+    {id:2,kind:'passive',name:'Каменная кожа',rarity:'uncommon',details:{effects:[{kind:'physical_defense_pct',value:.15}]},quantity:1,price:140,remaining:1},
+    {id:3,kind:'candy',name:'Конфета опыта',rarity:'common',details:{description:'Даёт выбранному бойцу 30 XP.'},quantity:2,price:50,remaining:3}
+  ];
+  menuScreen({chat_id:-1,personal:fighter,slaves:[],combat_count:0,combat_capacity:5,owner:{level:1,xp:0},active:[],balance:1000,inventory:items,merchant:{visit_id:1,ends:Math.floor(Date.now()/1000)+7200,offers:items}});
 }
 function configureViewport(){
   tg?.ready();tg?.expand();
@@ -270,7 +329,7 @@ async function boot(){
   const start=tg?.initDataUnsafe?.start_param||new URLSearchParams(location.search).get("tgWebAppStartParam")||"";
   try{
     if(start.startsWith("b_")){token=start.slice(2);const data=await api("/api/battle/"+token);lastSeq=data.state?.log.at(-1)?.seq||0;battleScreen(data);}
-    else if(/^menu_-?\d+$/.test(start)){chat=Number(start.slice(5));await openMenu();}
+    else if(/^(menu|shop)_-?\d+$/.test(start)){chat=Number(start.slice(5));if(start.startsWith('shop_'))page='merchant';await openMenu();}
     else app.innerHTML='<div class="loading"><h2>Открой арену из бота</h2><p class="muted">Кнопка «Арена» в /menu или «Открыть бой» под вызовом в чате.</p></div>';
   }catch(error){app.innerHTML='<div class="loading"><h2>Не удалось открыть арену</h2><p>'+esc(error.message)+'</p></div>';}
 }
