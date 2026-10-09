@@ -12,7 +12,7 @@ from arena_engine import (
     fighter_xp_limit,
     unlocked_skill_ids,
 )
-from arena_wasteland import enemy_source
+from arena_wasteland import enemy_source, victory_xp
 from arena_web import battle_view
 from database import Database
 
@@ -27,6 +27,10 @@ class ForcedClass(random.Random):
 
 
 class EnemySourceTests(unittest.TestCase):
+    def test_victory_xp_uses_capped_enemy_level(self):
+        for level, expected in ((1, 7), (5, 15), (10, 25), (20, 45), (200, 45), (0, 7)):
+            self.assertEqual(victory_xp(level), expected)
+
     def test_every_builtin_class_has_native_level_appropriate_build_and_passives(self):
         for cls in FIGHTER_CLASSES:
             for level in (5, 6, 9, 20):
@@ -175,6 +179,87 @@ class WastelandStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(next_state["sides"]["a"]["controlled"])
         self.assertEqual(next_row["deadline"], 0)
+
+
+class WastelandRewardTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Database(Path(self.temp.name) / "test.sqlite3")
+        await self.db.connect()
+        await self.db.upsert_chat(1, "Test")
+        for user in (10, 30):
+            await self.db.upsert_user(1, user, str(user), str(user))
+        await self.db.arena_menu(1, 10)
+
+    async def asyncTearDown(self):
+        await self.db.close()
+        self.temp.cleanup()
+
+    async def win(self, level, floor=1, personal=True):
+        source = enemy_source(level, rng=ForcedClass("ragamuffin"))
+        with patch("arena_store.enemy_source", return_value=source):
+            row = await self.db.arena_wasteland(
+                1, 10, 10 if personal else 30, personal=personal
+            )
+        state = json.loads(row["state_json"])
+        state["sides"]["b"]["hp"] = 1
+        self.db.connection.execute(
+            "UPDATE arena_battles SET state_json=?,floor=? WHERE token=?",
+            (json.dumps(state), floor, row["token"]),
+        )
+        self.db.connection.commit()
+        with patch("arena_engine.random.SystemRandom", return_value=random.Random(1)):
+            return await self.db.arena_action(
+                row["token"], 10, row["revision"], "bum_punch"
+            )
+
+    async def test_personal_win_rewards_saved_level_not_floor_or_player_level(self):
+        for level, floor, expected in (
+            (1, 10, 7),
+            (10, 1, 25),
+            (20, 1, 45),
+            (20, 500, 45),
+        ):
+            with self.subTest(level=level, floor=floor):
+                self.db.connection.execute(
+                    "UPDATE personal_profiles SET xp=0,level=1 WHERE chat_id=1 AND user_id=10"
+                )
+                self.db.connection.commit()
+                row = await self.win(level, floor)
+                self.assertEqual(row["status"], "finished")
+                state = json.loads(row["state_json"])
+                self.assertEqual(state["sides"]["b"]["level"], level)
+                self.assertEqual(state["rewards"], {"a": expected})
+                self.assertEqual(
+                    (await self.db.arena_menu(1, 10))["personal"]["xp"], expected
+                )
+                with self.assertRaises(ValueError):
+                    await self.db.arena_action(
+                        row["token"], 10, row["revision"], "bum_punch"
+                    )
+                self.assertEqual(
+                    (await self.db.arena_menu(1, 10))["personal"]["xp"], expected
+                )
+                self.assertEqual(row["deadline"], 0)
+
+    async def test_slave_win_same_formula_owner_reward_unchanged(self):
+        await self.db.force_enslave(1, 30, 10)
+        await self.db.arena_equip_slave(1, 10, 30, True)
+        before = (await self.db.get_owner_profile(1, 10))["xp"]
+        row = await self.win(10, personal=False)
+        self.assertEqual(json.loads(row["state_json"])["rewards"], {"a": 25})
+        self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 25)
+        self.assertEqual((await self.db.get_owner_profile(1, 10))["xp"], before + 6)
+        self.assertEqual((await self.db.arena_menu(1, 10))["personal"]["xp"], 0)
+
+    async def test_level_twenty_player_does_not_accumulate_more_xp(self):
+        self.db._grant_profile_xp_locked("personal_profiles", 1, 10, fighter_xp_limit())
+        self.db.connection.commit()
+        row = await self.win(20)
+        self.assertEqual(json.loads(row["state_json"])["rewards"], {"a": 0})
+        self.assertEqual(
+            (await self.db.arena_menu(1, 10))["personal"]["xp"], fighter_xp_limit()
+        )
 
 
 if __name__ == "__main__":

@@ -10,6 +10,11 @@ from arena_engine import (
 )
 
 
+def victory_xp(enemy_level: int) -> int:
+    """Reward the saved opponent's level, not an unbounded floor number."""
+    return 5 + 2 * max(1, min(MAX_FIGHTER_LEVEL, int(enemy_level)))
+
+
 def enemy_source(level: int, previous_class: str | None = None, rng=None) -> dict:
     rng = rng or random.SystemRandom()
     level = max(1, min(MAX_FIGHTER_LEVEL, int(level)))

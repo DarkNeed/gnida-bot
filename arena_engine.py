@@ -890,7 +890,7 @@ def skip_turn(state: dict) -> None:
         sum(max(0, int(e["value"])) for e in target["effects"] if e["kind"] == "bleed"),
     )
     target["hp"] -= bleed_damage
-    text = "Время вышло: ход пропущен (3 минуты)."
+    text = "Время вышло: ход пропущен (2 минуты)."
     if bleed_damage:
         text += f" · кровотечение: −{bleed_damage} HP"
     state["log"].append(

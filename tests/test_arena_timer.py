@@ -37,6 +37,7 @@ class SkipEngineTests(unittest.TestCase):
             (state["turn"], state["active_side"], state["finished"]), (2, "b", False)
         )
         self.assertEqual(state["log"][-1]["action_kind"], "turn_timeout")
+        self.assertIn("2 минуты", state["log"][-1]["text"])
         self.assertFalse(state["had_player_action"])
 
     def test_next_side_stun_and_bleed_follow_normal_turn_rules(self):
@@ -101,13 +102,14 @@ class ArenaTimerTests(unittest.IsolatedAsyncioTestCase):
         with patch("arena_store.utc_timestamp", return_value=self.now):
             row = await self.duel()
         self.assertEqual(row["deadline"] - self.now, ARENA_TURN_SECONDS)
+        self.assertEqual(ARENA_TURN_SECONDS, 120)
         with patch("arena_store.utc_timestamp", return_value=row["deadline"] - 1):
             self.assertEqual(await self.db.arena_expire(), [])
         changed = await self.expire(row)
         state = json.loads(changed["state_json"])
         self.assertEqual((changed["status"], state["active_side"]), ("active", "b"))
         self.assertEqual(changed["revision"], row["revision"] + 1)
-        self.assertEqual(changed["deadline"], row["deadline"] + 180)
+        self.assertEqual(changed["deadline"], row["deadline"] + ARENA_TURN_SECONDS)
         self.assertEqual((changed["escrow_a"], changed["escrow_b"]), (50, 50))
         self.assertNotIn("rewards", state)
         self.assertEqual((await self.db.arena_menu(1, 10))["personal"]["xp"], 0)
@@ -127,7 +129,7 @@ class ArenaTimerTests(unittest.IsolatedAsyncioTestCase):
                 changed["token"], 20, changed["revision"], "bum_punch"
             )
             self.assertEqual(json.loads(played["state_json"])["turn"], 3)
-            self.assertEqual(played["deadline"], row["deadline"] + 180)
+            self.assertEqual(played["deadline"], row["deadline"] + ARENA_TURN_SECONDS)
 
     async def test_get_and_sweep_race_skip_only_once(self):
         row = await self.duel()
@@ -195,7 +197,7 @@ class ArenaTimerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resumed["revision"], row["revision"])
         resumed = await self.expire(row, self.now + 86400)
         self.assertEqual(json.loads(resumed["state_json"])["turn"], 2)
-        self.assertEqual(resumed["deadline"], self.now + 86400 + 180)
+        self.assertEqual(resumed["deadline"], self.now + 86400 + ARENA_TURN_SECONDS)
 
     async def test_legacy_live_battle_upgrade_only_once(self):
         row = await self.duel()
@@ -210,13 +212,36 @@ class ArenaTimerTests(unittest.IsolatedAsyncioTestCase):
         with patch("arena_store.utc_timestamp", return_value=self.now + 60):
             await self.db.connect()
             upgraded = await self.db.arena_get(row["token"])
-        self.assertEqual(upgraded["deadline"], self.now + 240)
+        self.assertEqual(upgraded["deadline"], self.now + 60 + ARENA_TURN_SECONDS)
         self.assertEqual(upgraded["revision"], row["revision"] + 1)
         await self.db.close()
         with patch("arena_store.utc_timestamp", return_value=self.now + 90):
             await self.db.connect()
             same = await self.db.arena_get(row["token"])
         self.assertEqual(same["deadline"], upgraded["deadline"])
+
+    async def test_three_minute_battle_migrates_to_two_minutes_only_once(self):
+        row = await self.duel()
+        state = json.loads(row["state_json"])
+        state["turn_timer_seconds"] = 180
+        self.db.connection.execute(
+            "UPDATE arena_battles SET state_json=?,deadline=? WHERE token=?",
+            (json.dumps(state), self.now + 180, row["token"]),
+        )
+        self.db.connection.commit()
+        await self.db.close()
+        with patch("arena_store.utc_timestamp", return_value=self.now + 30):
+            await self.db.connect()
+            upgraded = await self.db.arena_get(row["token"])
+        self.assertEqual(upgraded["deadline"], self.now + 150)
+        self.assertEqual(upgraded["revision"], row["revision"] + 1)
+        self.assertEqual(json.loads(upgraded["state_json"])["turn_timer_seconds"], 120)
+        await self.db.close()
+        with patch("arena_store.utc_timestamp", return_value=self.now + 60):
+            await self.db.connect()
+            same = await self.db.arena_get(row["token"])
+        self.assertEqual(same["deadline"], upgraded["deadline"])
+        self.assertEqual(same["revision"], upgraded["revision"])
 
     async def test_idle_draw_refunds_stakes_but_gives_no_xp(self):
         row = await self.duel()
@@ -236,7 +261,7 @@ class ArenaTimerTests(unittest.IsolatedAsyncioTestCase):
 
 @unittest.skipUnless(shutil.which("node"), "Node needed")
 class TimerClientTests(unittest.TestCase):
-    def timer(self, mode="personal", status="active", remaining=180):
+    def timer(self, mode="personal", status="active", remaining=120):
         return json.loads(
             client_tests.ArenaMarketClientTests.run_client(
                 self,
@@ -251,7 +276,7 @@ class TimerClientTests(unittest.TestCase):
         )
 
     def test_countdown_visible_in_pvp_hidden_for_pve_finished_and_pending(self):
-        self.assertIn("03:00", self.timer()["textContent"])
+        self.assertIn("02:00", self.timer()["textContent"])
         self.assertIn("00:01", self.timer(remaining=1)["textContent"])
         self.assertIn("Время вышло", self.timer(remaining=0)["textContent"])
         for mode, status in (
@@ -268,11 +293,11 @@ class TimerClientTests(unittest.TestCase):
             dict(
                 mode="personal",
                 status="active",
-                deadline=1180,
+                deadline=1120,
                 state=dict(finished=False),
             ),
         )
-        self.assertIn("03:00", body)
+        self.assertIn("02:00", body)
 
 
 if __name__ == "__main__":

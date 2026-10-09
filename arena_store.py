@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 from arena_market import ArenaMarketMixin
-from arena_wasteland import enemy_source
+from arena_wasteland import enemy_source, victory_xp
 from arena_engine import (
     FIGHTER_CLASSES,
     BUILTIN_SKILLS,
@@ -36,7 +36,7 @@ from arena_engine import (
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
-ARENA_TURN_SECONDS = 3 * 60
+ARENA_TURN_SECONDS = 2 * 60
 ARENA_FEE_PERCENT = 10
 COMBAT_SLAVE_CAPACITY = 5
 
@@ -1085,7 +1085,9 @@ class ArenaMixin(ArenaMarketMixin):
                 xp = (
                     0
                     if state.get("finish_reason") in {"surrender", "timeout"}
-                    else (5 + 2 * row["floor"] if winner == k else 3)
+                    else (
+                        victory_xp(state["sides"]["b"]["level"]) if winner == k else 3
+                    )
                 )
             table = (
                 "personal_profiles"
