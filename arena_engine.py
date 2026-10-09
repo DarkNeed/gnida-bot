@@ -12,6 +12,7 @@ from arena_fingers import (
     after_action,
 )
 from arena_class_mechanics import class_modifiers, class_after_action, has_adoration
+from arena_mirror_effects import gift_cost, gift_modifiers, gift_after_action
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -830,7 +831,7 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
     ) or skill_id not in catalog:
         raise ValueError("Навык недоступен.")
     skill = catalog[skill_id]
-    if side["resource"] < skill.cost:
+    if side["resource"] < gift_cost(side, skill):
         raise ValueError("Недостаточно выносливости.")
     if side["cooldowns"].get(skill_id, 0) > 0:
         raise ValueError("Навык восстанавливается.")
@@ -928,6 +929,9 @@ def resolve_skill(
     }
     previous_negatives = negative_kinds(target)
     adored = has_adoration(target)
+    bleeding = any(e["kind"] == "bleed" for e in target["effects"])
+    mirror_accuracy, mirror_multiplier = gift_modifiers(actor, target)
+    actual_cost = gift_cost(actor, skill)
     class_accuracy, class_boost = class_modifiers(actor, target, skill)
     extra_accuracy, extra_boost, pierce, critical, obeyed = combat_modifiers(
         actor, target, skill, rng
@@ -936,7 +940,13 @@ def resolve_skill(
         e.get("value", 0) for e in actor["effects"] if e.get("kind") == "accuracy_flat"
     )
     roll = rng.random() * 100 if skill.hostile else 0
-    raw_accuracy = skill.accuracy + accuracy_bonus + extra_accuracy + class_accuracy
+    raw_accuracy = (
+        skill.accuracy
+        + accuracy_bonus
+        + extra_accuracy
+        + class_accuracy
+        + mirror_accuracy
+    )
     hit = not skill.hostile or roll < max(
         5,
         min(
@@ -947,7 +957,7 @@ def resolve_skill(
     dodged = bool(
         skill.damage_type and not hit and roll < max(5, min(95, raw_accuracy))
     )
-    actor["resource"] -= skill.cost
+    actor["resource"] -= actual_cost
     damage = 0
     if hit and skill.damage_type:
         attack = effective_stat(actor, skill.damage_type + "_attack")
@@ -966,6 +976,7 @@ def resolve_skill(
                 / (100 + defense * 4)
                 * max(0.1, 1 + boost + extra_boost + class_boost)
                 * reduction
+                * mirror_multiplier
                 * (1.5 if critical else 1)
                 * rng.uniform(0.95, 1.05)
             ),
@@ -1039,6 +1050,7 @@ def resolve_skill(
     if skill.cooldown:
         actor["cooldowns"][skill_id] = skill.cooldown
     class_after_action(actor, target, skill, hit, dodged, adored, charmed)
+    gift_after_action(actor, target, skill, hit, damage, actual_cost, bleeding, charmed)
     after_action(
         actor,
         target,

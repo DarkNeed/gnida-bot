@@ -27,6 +27,7 @@ from arena_engine import (
 from arena_fingers import FINGER_IDS
 from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from arena_images import MAX_SPRITE_BYTES, normalize_sprite
+from arena_mirror_effects import GIFTS, gift_cost, gift_modifiers
 
 ROOT = Path(__file__).parent / "webapp"
 ACTOR = web.RequestKey("arena_actor", int)
@@ -97,7 +98,12 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side["name"] = names.get(key + "_fighter", "Боец")
             cls = classes.get(side["class_id"], classes["ragamuffin"])
             if row["mode"] == "wasteland" and key == "b":
-                side["name"] = f"Пустошь · {cls.name}"
+                prefix = (
+                    "Зеркальный босс"
+                    if state.get("mirror_token") and row["floor"] == 5
+                    else "Зеркало" if state.get("mirror_token") else "Пустошь"
+                )
+                side["name"] = f"{prefix} · {cls.name}"
                 names["b_fighter"] = side["name"]
             side["class_name"] = cls.name
             side["resource_name"] = cls.resource_name
@@ -112,13 +118,21 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 await db.arena_sprite_info(row["chat_id"], row[key + "_fighter"] or 0)
             )
             side["skill_details"] = [
-                asdict(skills[s]) for s in side["loadout"] if s in skills
+                dict(asdict(skills[s]), cost=gift_cost(side, skills[s]))
+                for s in side["loadout"]
+                if s in skills
+            ]
+            side["mirror_gift_details"] = [
+                dict(name=GIFTS[k][0], description=GIFTS[k][1])
+                for k in side.get("mirror_gifts", [])
+                if k in GIFTS
             ]
             side["passive_details"] = side.get("passive_details", [])[:2]
             side["effective_stats"] = {
                 k: effective_stat(side, k) for k in side["stats"]
             }
-            side["accuracy_bonus"] = sum(
+            mirror_accuracy, mirror_damage = gift_modifiers(side, {})
+            side["accuracy_bonus"] = mirror_accuracy + sum(
                 e.get("value", 0)
                 for e in side["effects"]
                 if e["kind"] == "accuracy_flat"
@@ -129,13 +143,15 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side["damage_bonus"] = (
                 max(0.1, 1 + sum(v for v in damage_effects if v >= 0))
                 * max(0.1, 1 + sum(v for v in damage_effects if v < 0))
+                * mirror_damage
                 - 1
             )
             side["can_use_potion"] = side["controller_id"] == actor and bool(
                 await db.arena_potion_count(row["chat_id"], actor)
             )
             if "bum_punch" not in side["loadout"] and not any(
-                skills[s].cost <= side["resource"] and not side["cooldowns"].get(s, 0)
+                gift_cost(side, skills[s]) <= side["resource"]
+                and not side["cooldowns"].get(s, 0)
                 for s in side["loadout"]
                 if s in skills
             ):
@@ -193,6 +209,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
 
 
 async def menu_view(db, chat: int, actor: int) -> dict:
+    mirror_runs = await db.arena_mirror_list(chat, actor)
     result = await db.arena_menu(chat, actor)
     classes, skills = await db.get_fighter_catalog()
     profiles = [(result["personal"], True), *((p, False) for p in result["slaves"])]
@@ -245,6 +262,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
     result["admin"] = actor == CUSTOM_COMMAND_OWNER_ID
     result["max_level"] = MAX_FIGHTER_LEVEL
     result.update(await db.arena_market_view(chat, actor))
+    result["mirror_runs"] = mirror_runs
     return result
 
 
@@ -370,6 +388,33 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
         await read_member(chat, actor)
         return web.json_response(await menu_view(db, chat, actor))
 
+    async def get_mirror(request):
+        run = await db.arena_mirror_get(request.match_info["token"], request[ACTOR])
+        await read_member(run["chat_id"], request[ACTOR])
+        return web.json_response(run)
+
+    async def post_mirror(request):
+        actor = request[ACTOR]
+        run = await db.arena_mirror_get(request.match_info["token"], actor)
+        await require_member(bot, run["chat_id"], actor)
+        body = await request.json()
+        if (
+            not isinstance(body, dict)
+            or not isinstance(body.get("action"), str)
+            or not isinstance(body.get("value", ""), str)
+        ):
+            raise ValueError("Некорректный запрос.")
+        if body["action"] == "next":
+            await require_member(bot, run["chat_id"], run["fighter_id"])
+        run = await db.arena_mirror_action(
+            run["token"],
+            actor,
+            int_field(body, "revision"),
+            body["action"],
+            body.get("value", ""),
+        )
+        return web.json_response(run)
+
     async def upload_sprite(request):
         chat, actor = int(request.match_info["chat"]), request[ACTOR]
         await require_member(bot, chat, actor)
@@ -422,13 +467,21 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
         if not isinstance(body, dict):
             raise ValueError("Некорректный запрос.")
         action = body.get("action")
-        if action == "wasteland":
+        if action in {"wasteland", "mirror_start"}:
             fighter = int_field(body, "fighter")
             if fighter:
                 await require_member(bot, chat, fighter)
             personal = body.get("personal", True)
             if type(personal) is not bool:
                 raise ValueError("Некорректный режим персонажа.")
+            if action == "mirror_start":
+                return web.json_response(
+                    {
+                        "mirror": await db.arena_mirror_start(
+                            chat, actor, fighter, personal
+                        )
+                    }
+                )
             row = await db.arena_wasteland(
                 chat, actor, fighter, str(body.get("previous", "")), personal
             )
@@ -523,6 +576,8 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
     app.router.add_static("/static/", ROOT, show_index=False)
     app.router.add_get("/api/battle/{token}", get_battle)
     app.router.add_post("/api/battle/{token}", post_battle)
+    app.router.add_get("/api/mirror/{token}", get_mirror)
+    app.router.add_post("/api/mirror/{token}", post_mirror)
     app.router.add_get("/api/menu/{chat}", get_menu)
     app.router.add_post("/api/menu/{chat}", post_menu)
     app.router.add_post("/api/menu/{chat}/sprite", upload_sprite)

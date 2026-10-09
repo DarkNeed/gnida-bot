@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 from arena_market import ArenaMarketMixin
+from arena_mirror import MirrorMixin
 from arena_wasteland import enemy_source, victory_xp
 from arena_engine import (
     FIGHTER_CLASSES,
@@ -45,7 +46,7 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin(ArenaMarketMixin):
+class ArenaMixin(ArenaMarketMixin, MirrorMixin):
     def _connect_arena(self) -> None:
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (
@@ -160,6 +161,7 @@ class ArenaMixin(ArenaMarketMixin):
         self.connection.commit()
 
         self._connect_arena_market()
+        self._connect_mirror()
         # Upgrade live battles once. Restarting must never renew a PvP deadline.
         for raw in self.connection.execute(
             "SELECT id,mode,state_json FROM arena_battles WHERE status='active' AND state_json IS NOT NULL"
@@ -733,6 +735,10 @@ class ArenaMixin(ArenaMarketMixin):
                AND id<>? AND (a_owner=? OR b_owner=? OR a_fighter=? OR b_fighter=?)""",
                 (chat, exclude, user, user, user, user),
             ).fetchone()
+            or self.connection.execute(
+                "SELECT 1 FROM arena_mirror_runs WHERE chat_id=? AND status='active' AND (actor_id=? OR fighter_id=?)",
+                (chat, user, user),
+            ).fetchone()
         )
 
     def _arena_combat_slot_locked(self, chat: int, owner: int, slave: int):
@@ -815,6 +821,13 @@ class ArenaMixin(ArenaMarketMixin):
         return [s for s in data["slaves"] if s["combat_slot"] and not s["working_role"]]
 
     def _arena_refund_locked(self, row: dict, status: str) -> None:
+        state = json.loads(row["state_json"]) if row["state_json"] else {}
+        if state.get("mirror_token"):
+            run = self._mirror_row_locked(state["mirror_token"])
+            if run["status"] == "active":
+                self._mirror_close_locked(
+                    run, "Бой отменён. Забег закрыт без награды за босса."
+                )
         for key in ("a", "b"):
             amount = int(row["escrow_" + key])
             if amount:
@@ -956,6 +969,12 @@ class ArenaMixin(ArenaMarketMixin):
     async def arena_get(self, token: str) -> dict:
         async with self._lock:
             row = self._arena_row_locked(token)
+            if row["status"] == "active" and json.loads(row["state_json"] or "{}").get(
+                "mirror_token"
+            ):
+                self._mirror_cleanup_locked(row["chat_id"])
+                self.connection.commit()
+                row = self._arena_row_locked(token)
             if (
                 row["status"] in {"pending", "active"}
                 and row["mode"] != "wasteland"
@@ -1043,6 +1062,9 @@ class ArenaMixin(ArenaMarketMixin):
 
     def _arena_finish_locked(self, row: dict, state: dict) -> None:
         # Called only while status is active, within the action transaction.
+        if state.get("mirror_token"):
+            self._mirror_finish_battle_locked(row, state)
+            return
         winner = state["winner"]
         if winner and row["escrow_a"] and row["escrow_b"]:
             pot = row["escrow_a"] + row["escrow_b"]
@@ -1139,6 +1161,12 @@ class ArenaMixin(ArenaMarketMixin):
     ) -> dict:
         async with self._lock:
             row = self._arena_row_locked(token)
+            if row["status"] == "active" and json.loads(row["state_json"] or "{}").get(
+                "mirror_token"
+            ):
+                self._mirror_cleanup_locked(row["chat_id"])
+                self.connection.commit()
+                row = self._arena_row_locked(token)
             if row["status"] != "active":
                 raise ValueError("Бой не активен.")
             if row["mode"] != "wasteland" and row["deadline"] <= utc_timestamp():
@@ -1285,6 +1313,8 @@ class ArenaMixin(ArenaMarketMixin):
             previous_class = None
             if previous:
                 old = self._arena_row_locked(previous)
+                if json.loads(old["state_json"] or "{}").get("mirror_token"):
+                    raise ValueError("Продолжайте зеркальный забег через его меню.")
                 if (
                     old["mode"] != "wasteland"
                     or old["a_owner"] != actor

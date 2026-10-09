@@ -9,6 +9,7 @@ const adminDraft={};
 let spriteDraft=null;
 let inspectSide=null,classUsePending=null,skillUsePending=null,resetPending=null;
 let serverClockOffset=0;
+let mirrorRun=null,mirrorAbandonConfirm=false;
 const rarityNames={common:"Обычный",uncommon:"Необычный",rare:"Редкий",epic:"Эпический"};
 const statNames={max_hp:"Макс. HP",resource_max:"Макс. энергия",physical_attack:"Физ. атака",magic_attack:"Маг. атака",physical_defense:"Физ. защита",magic_defense:"Маг. защита",speed:"Скорость",evasion:"Уклонение"};
 const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",physical_attack_pct:"Физ. атака",evasion_flat:"Уклонение",resource:"Энергия",resource_leech:"Похищение энергии (возврат половины)",next_magic_damage:"Следующая магическая атака",next_physical_damage:"Следующая физическая атака",stun:"Ошеломление",bleed:"Кровотечение"};
@@ -61,8 +62,8 @@ function battleScreen(data){
   if(!data.state||!["active","finished"].includes(data.status)){setupScreen(data);return;}
   near=(data.own_side==="b"||(!data.own_side&&(data.state.sides.b.controller_id===data.actor_id||data.consent_side==="b")))?"b":"a";
   const far=near==="a"?"b":"a",a=data.state.sides[near],b=data.state.sides[far];
-  app.innerHTML='<section class="battle">'+top("Арена",data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":"БЕЗ СТАВКИ")+'</span>')+
-    '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'</div><div class="turnbanner" id="turn"></div><div class="turn-timer" id="turn-timer" role="timer" hidden></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+button("В меню","menu","small")+'</footer></section>';
+  app.innerHTML='<section class="battle">'+top("Арена",data.state.mirror_token?'ЗЕРКАЛО · '+(data.floor===5?'БОСС':'ЭТАЖ '+data.floor+' / 5'):data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":"БЕЗ СТАВКИ")+'</span>')+
+    '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'</div><div class="turnbanner" id="turn"></div><div class="turn-timer" id="turn-timer" role="timer" hidden></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+(data.state.mirror_token&&data.actor_id===data.state.sides.a.controller_id?button("К забегу","mirror:"+data.state.mirror_token,"small"):"")+button("В меню","menu","small")+'</footer></section>';
   renderActions();
   if(inspectSide)showStats(inspectSide);
 }
@@ -75,12 +76,13 @@ function renderActions(){
   if(st.finished){
     const winner=st.winner?st.sides[st.winner].name:"";
     panel.innerHTML='<div class="battlelog">'+(winner?"Победа: "+esc(winner):"Ничья")+'<div class="muted">Опыт: '+Object.values(st.rewards||{}).join(" / ")+' XP'+(st.payout?" · Приз "+st.payout+" ₣":"")+'</div></div>'+
-      (current.mode==="wasteland"&&st.winner==="a"?button("Следующий этаж","next","primary"):"");
+      (st.mirror_token?(current.actor_id===st.sides.a.controller_id?button("Итоги / продолжить забег","mirror:"+st.mirror_token,"primary"):""):current.mode==="wasteland"&&st.winner==="a"?button("Следующий этаж","next","primary"):"");
     for(const k of ["a","b"])document.getElementById("sprite-"+k).classList.toggle("defeated",st.sides[k].hp===0);
   }else if(mine){
     panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>'<button class="skill'+(side.mechanics?.prescript===skill.skill_id?' prescribed':'')+'" data-skill="'+esc(skill.skill_id)+'" '+(side.resource<skill.cost||side.cooldowns[skill.skill_id]?"disabled":"")+'><span class="type">'+(side.mechanics?.prescript===skill.skill_id?'ПРЕДПИСАНИЕ':skill.damage_type==="magic"?"МАГИЯ":skill.damage_type==="physical"?"АТАКА":"ЭФФЕКТ")+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?" · ещё "+side.cooldowns[skill.skill_id]+" х.":"")+"</span></button>").join("")+'</div>';
     const m=side.mechanics||{},charges=[m.order?'Субординация: '+m.order+'/3':'',m.grudge?'Обиды: '+m.grudge+'/3':'',m.focus?'Созвездие: '+m.focus+'/3':''].filter(Boolean);
     if(charges.length)panel.innerHTML+='<p class="muted">'+charges.join(' · ')+'</p>';
+    if(side.mirror_gift_details?.length)panel.innerHTML+='<details><summary>Дары зеркала · '+side.mirror_gift_details.length+'</summary>'+side.mirror_gift_details.map(g=>'<p class="muted"><b>'+esc(g.name)+'</b> · '+esc(g.description)+'</p>').join('')+'</details>';
     if(side.can_use_potion&&!side.potion_used)panel.innerHTML+='<div class="row" style="margin-top:8px">'+button("Зелье · 30% HP","potion","small")+'</div>';
   }else{
     panel.innerHTML='<div class="battlelog">'+(current.own_side||current.consent_side?"Ход соперника…":"Ты наблюдаешь за боем.")+'<div class="muted">'+esc(st.log.at(-1)?.text||"Первый ход скоро начнётся.")+'</div></div>';
@@ -173,12 +175,45 @@ async function action(action,extra={}){
   }catch(error){toast(error.message);if(!demo)try{await applyBattle(await api("/api/battle/"+token),false);}catch{}}
   finally{busy=false;renderActions();}
 }
+function mirrorScreen(data){
+  closeStats();mirrorRun=data;current=null;token="";chat=data.chat_id;
+  const choice=(name,id,description,disabled=false)=>button(esc(name)+'<span class="muted">'+esc(description)+'</span>',id,'mirror-choice',disabled);
+  let body='<div class="card"><h2>Этаж '+data.floor+' / '+data.total_floors+'</h2><p>HP '+data.hp+' / '+data.max_hp+' · Энергия '+data.resource+' / '+data.resource_max+'</p><p>Осколки: '+data.shards+' · Получено: '+data.xp+' XP</p><p class="muted">Осколки и дары временные. Энергия +30 после победы; здоровье сохраняется. Таймера нет.</p></div>';
+  if(data.status!=='active')body+='<div class="card"><h2>'+esc(data.result)+'</h2><p>Опыт: '+data.xp+' XP · Франки: '+data.francs+' ₣</p>'+(data.loot?'<p>Трактат в инвентаре: '+esc(data.loot)+'</p>':'')+button('В меню','menu','primary')+'</div>';
+  else if(mirrorAbandonConfirm)body+='<div class="card"><h2>Оставить забег?</h2><p>Дары и осколки исчезнут. Уже заработанный опыт сохранится, награды за босса не будет.</p>'+button('Оставить забег','mirroraction:abandon','danger')+button('Продолжить','mirrorback')+'</div>';
+  else{
+    body+='<div class="card stack">';
+    if(data.phase==='combat')body+='<h2>'+(data.floor===5?'Финальный босс':'Бой ждёт тебя')+'</h2>'+button('Открыть бой','battle:'+data.battle_token,'primary');
+    if(data.phase==='gift')body+='<h2>Выбери дар зеркала</h2>'+data.choices.map(g=>choice(g.name,'mirrorchoice:gift:'+g.id,g.description)).join('');
+    if(data.phase==='route')body+='<h2>Куда пойдёшь дальше?</h2>'+choice('Отдых','mirrorchoice:route:rest','Восстановить 35% HP и 35 энергии')+choice('Событие','mirrorchoice:route:event','Награда с риском или пройти мимо')+choice('Торговец','mirrorchoice:route:merchant','Одна покупка за временные осколки');
+    if(data.phase==='event')body+='<h2>'+(data.event==='altar'?'Алтарь отражения':'Зеркальный сундук')+'</h2>'+choice(data.event==='altar'?'Принести жертву':'Открыть сундук','mirrorchoice:event:risk',data.event==='altar'?'Потерять 20% максимального HP. Урон +20%, защиты −15% до конца забега.':'60%: получить 30 осколков; иначе потерять 15% максимального HP.',data.event==='altar'&&(data.hp<=Math.max(1,Math.round(data.max_hp*.2))||data.gifts.some(g=>g.id==='risk')))+button('Пройти мимо','mirrorchoice:event:safe');
+    if(data.phase==='merchant')body+='<h2>Торговец отражениями</h2>'+choice('Лечение · 20 осколков','mirrorchoice:shop:heal','Восстановить 50% HP',data.shards<20)+choice('Энергия · 20 осколков','mirrorchoice:shop:energy','Восстановить 60 энергии',data.shards<20)+choice('Случайный дар · 30 осколков','mirrorchoice:shop:gift','Дар действует только в этом забеге',data.shards<30)+button('Уйти без покупки','mirrorchoice:shop:leave');
+    if(data.phase==='ready')body+='<p>'+esc(data.result)+'</p>'+button(data.floor===4?'К финальному боссу':'На этаж '+(data.floor+1),'mirroraction:next','primary');
+    body+='</div>'+button('Оставить забег','mirrorabandon','small danger');
+  }
+  if(data.gifts.length)body+='<div class="card"><h2>Дары · '+data.gifts.length+'</h2>'+data.gifts.map(g=>'<p><b>'+esc(g.name)+'</b><br><span class="muted">'+esc(g.description)+'</span></p>').join('')+'</div>';
+  app.innerHTML='<section class="menu mirror">'+top('Зеркальная Пустошь',demo?'ДЕМО · НЕ СОХРАНЯЕТСЯ':'ЗАБЕГ · 5 ЭТАЖЕЙ',button('В меню','menu','small'))+'<div class="content">'+body+'</div></section>';
+}
+async function openMirror(runToken){
+  try{mirrorAbandonConfirm=false;mirrorScreen(await api('/api/mirror/'+runToken));}catch(error){toast(error.message);}
+}
+async function mirrorAction(action,value=''){
+  if(demo){toast('Демо экрана: прогресс и награды не сохраняются.');return;}
+  if(busy||!mirrorRun)return;busy=true;
+  document.querySelectorAll('.mirror button').forEach(b=>b.disabled=true);
+  try{
+    const data=await api('/api/mirror/'+mirrorRun.token,{action,value,revision:mirrorRun.revision});mirrorAbandonConfirm=false;
+    if(action==='next'&&data.phase==='combat'){current=null;lastSeq=0;battleScreen(await api('/api/battle/'+data.battle_token));}
+    else mirrorScreen(data);
+  }catch(error){toast(error.message);try{mirrorScreen(await api('/api/mirror/'+mirrorRun.token));}catch{mirrorScreen(mirrorRun);}}
+  finally{busy=false;}
+}
 function profileCard(p,title,owned=false){
   const progress=p.progress||[p.level,0,10];
   const maxed=p.level>=20;
   const status=p.personal?"":'<p class="muted">'+(p.combat_slot?"Боевой слот "+p.combat_slot+" / 5":p.working_role?"На работе · не экипирован":"Вне боевого отряда")+(p.in_battle?" · выбран для боя":"")+'</p>';
   const equipment=owned?button(p.combat_slot?"Снять с боевого слота":"Экипировать и снять с работы",(p.combat_slot?"unequip:":"equip:")+p.user_id,"",p.in_battle):"";
-  return '<div class="card"><div class="profile">'+fighterImage(p)+'<div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+(maxed?'МАКСИМУМ · 20':progress[1]+' / '+progress[2]+' XP')+'</span></div><div class="bar"><i style="width:'+(maxed?100:100*progress[1]/progress[2])+'%"></i></div></div></div></div>'+status+'<div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary",!p.personal&&!p.combat_slot)+button("Класс и навыки","profile:"+p.user_id)+equipment+(p.can_edit_sprite?button("Свой спрайт","appearance"):"")+'</div></div>';
+  return '<div class="card"><div class="profile">'+fighterImage(p)+'<div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+(maxed?'МАКСИМУМ · 20':progress[1]+' / '+progress[2]+' XP')+'</span></div><div class="bar"><i style="width:'+(maxed?100:100*progress[1]/progress[2])+'%"></i></div></div></div></div>'+status+'<div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary",!p.personal&&!p.combat_slot)+button('Зеркальная Пустошь','mirrorstart:'+(p.personal?'p:':'s:')+p.user_id,'',(!p.personal&&!p.combat_slot)||(menu?.mirror_runs||[]).some(r=>r.status==='active'))+button("Класс и навыки","profile:"+p.user_id)+equipment+(p.can_edit_sprite?button("Свой спрайт","appearance"):"")+'</div></div>';
 }
 function activeProfile(){return [...(menu?.slaves||[]),menu?.self_slave,menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
 function menuScreen(data){
@@ -250,6 +285,7 @@ function menuScreen(data){
     body+='</div>';
   }
   if(data.active?.length)body+='<div class="card"><h3>Текущие бои</h3><div class="stack">'+data.active.map(b=>button((b.mode==="wasteland"?"Пустошь":"Бой")+" · "+b.status,"battle:"+b.token)).join("")+'</div></div>';
+  if(data.mirror_runs?.length)body+='<div class="card"><h3>Зеркальные забеги</h3><div class="stack">'+data.mirror_runs.map(r=>button((r.status==='active'?'Продолжить':'Итоги')+' · этаж '+r.floor+' / 5 · '+r.xp+' XP','mirror:'+r.token,r.status==='active'?'primary':'')).join('')+'</div></div>';
   app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content">'+body+'</div></section>';
   if(page==="admin"){
     document.querySelector(".form").insertAdjacentHTML("beforeend",'<label class="check"><input id="grant-personal" type="checkbox"> Выдать класс личному персонажу (иначе — персонажу-рабу)</label>');
@@ -265,7 +301,8 @@ async function menuAction(action,extra={}){
   if(busy)return;busy=true;
   try{
     const response=await api("/api/menu/"+chat,{action,...extra});
-    if(response.token){token=response.token;current=null;lastSeq=0;battleScreen(await api("/api/battle/"+token));}
+    if(response.mirror){mirrorAbandonConfirm=false;mirrorScreen(response.mirror);}
+    else if(response.token){token=response.token;current=null;lastSeq=0;battleScreen(await api("/api/battle/"+token));}
     else{toast(({crafted:"Создано.",low_level:"Недостаточный уровень.",not_enough_material:"Не хватает сырья.",no_candy:"Нет конфет.",given:"Конфета выдана.",created:"Создано.",granted:"Выдано.",invalid_definition:"Некорректное описание.",exists:"Такой ID уже есть."})[response.notice]||response.notice);menuScreen(response.menu);}
     return true;
   }catch(error){toast(error.message);return false;}finally{busy=false;}
@@ -315,6 +352,11 @@ app.addEventListener("click",async event=>{
   if(cmd==='confirmreset'){const pending=resetPending;if(!pending)return;if(await menuAction('reset_class',{user:pending.user,personal:pending.personal,value:true})){page=pending.personal?'personalProfile':'slaveProfile';resetPending=null;menuScreen(menu);}return;}
   if(cmd==="admin"){page="admin";menuScreen(menu);return;}
   if(cmd==="battle"){token=arg;current=null;lastSeq=0;battleScreen(await api("/api/battle/"+token));return;}
+  if(cmd==='mirror'){await openMirror(arg);return;}
+  if(cmd==='mirrorstart'){const [mode,user]=arg.split(':');await menuAction('mirror_start',{fighter:Number(user),personal:mode==='p'});return;}
+  if(cmd==='mirrorchoice'){const [action,value]=arg.split(':');await mirrorAction(action,value);return;}
+  if(cmd==='mirroraction'){await mirrorAction(arg);return;}
+  if(cmd==='mirrorabandon'||cmd==='mirrorback'){mirrorAbandonConfirm=cmd==='mirrorabandon';mirrorScreen(mirrorRun);return;}
   if(cmd==="waste"){await menuAction("wasteland",{fighter:Number(arg),personal:page==="personal"});return;}
   if(cmd==="next"){await menuAction("wasteland",{fighter:current.a_fighter,previous:token});return;}
   if(cmd==="buy"){await menuAction('buy_item',{offer:Number(arg)});return;}
@@ -365,6 +407,7 @@ function startDemo(){
   battleScreen({token:"demo",chat_id:-1,mode:"personal",status:"active",revision:0,stake:50,actor_id:1,own_side:"a",state:{turn:1,active_side:"a",finished:false,sides:{a:side("Мистер Недосып","nerd",7),b:side("Пустошь","ragamuffin",7)},log:[]}});
 }
 function startDemoMenu(){
+  if(!current?.state)startDemo();
   const fighter={...current.state.sides.a,user_id:1,personal:true,progress:[7,12,76],loadout:['bum_punch','humiliate'],skills:current.state.sides.a.skill_details,passives:[],passive_loadout:[],classes:[],can_edit_sprite:true};
   const items=[
     {id:1,kind:'class',content_id:'cutie',name:'Милашка',rarity:'uncommon',details:{},quantity:1,price:750,remaining:1},
@@ -387,6 +430,8 @@ function configureViewport(){
 async function boot(){
   configureViewport();
   if(demo){
+    const mirrorPreview=new URLSearchParams(location.search).get('mirror_preview');
+    if(mirrorPreview){try{mirrorScreen(await api('/demo/mirror/'+encodeURIComponent(mirrorPreview)));return;}catch{}}
     const cls=new URLSearchParams(location.search).get('fighter');
     if(['thumb','index','middle','ring','pinky'].includes(cls)){
       try{battleScreen(await api('/demo/fighter/'+cls));return;}catch{}

@@ -16,6 +16,7 @@ from arena_engine import (
     unlocked_skill_ids,
     effective_stat,
 )
+from arena_mirror_effects import GIFTS, NORMAL_GIFTS
 
 app = web.Application()
 
@@ -73,9 +74,46 @@ async def demo_fighter(request):
     )
 
 
+async def demo_mirror(request):
+    phase = request.match_info["phase"]
+    if phase not in {"gift", "route", "event", "merchant", "ready", "ended", "combat"}:
+        raise web.HTTPNotFound()
+    details = lambda k: dict(id=k, name=GIFTS[k][0], description=GIFTS[k][1])
+    return web.json_response(
+        dict(
+            token="preview",
+            chat_id=-1,
+            actor_id=1,
+            fighter_id=1,
+            personal=True,
+            status="finished" if phase == "ended" else "active",
+            revision=0,
+            phase=phase,
+            floor=5 if phase == "ended" else 2,
+            total_floors=5,
+            hp=34,
+            max_hp=60,
+            resource=45,
+            resource_max=100,
+            shards=35,
+            xp=25,
+            francs=85 if phase == "ended" else 0,
+            loot="Твёрдая рука" if phase == "ended" else "",
+            result=(
+                "Зеркало пройдено!" if phase == "ended" else "Можно продолжить путь."
+            ),
+            event="altar",
+            battle_token="demo",
+            gifts=[details("edge")],
+            choices=[details(k) for k in NORMAL_GIFTS[:3]],
+        )
+    )
+
+
 app.router.add_get("/", index)
 app.router.add_get("/static/client.js", client)
 app.router.add_get("/demo/fighter/{class_id}", demo_fighter)
+app.router.add_get("/demo/mirror/{phase}", demo_mirror)
 app.router.add_static("/static/", ROOT)
 
 if __name__ == "__main__":
