@@ -22,7 +22,9 @@ from arena_engine import (
     effective_stat,
     RARITY_LABELS,
     MAX_FIGHTER_LEVEL,
+    VISIBLE_CLASS_ALIASES,
 )
+from arena_fingers import FINGER_IDS
 from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from arena_images import MAX_SPRITE_BYTES, normalize_sprite
 
@@ -100,7 +102,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side["class_rarity_name"] = RARITY_LABELS[cls.rarity]
             side["sprite"] = (
                 side["class_id"]
-                if side["class_id"] in {"cutie", "jock", "nerd"}
+                if side["class_id"] in {"cutie", "jock", "nerd"} | FINGER_IDS
                 else "ragamuffin"
             )
             side.update(
@@ -202,7 +204,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         profile["class_rarity_name"] = RARITY_LABELS[profile["class_rarity"]]
         profile["sprite"] = (
             profile["class_id"]
-            if profile["class_id"] in {"cutie", "jock", "nerd"}
+            if profile["class_id"] in {"cutie", "jock", "nerd"} | FINGER_IDS
             else "ragamuffin"
         )
         profile.update(await db.arena_sprite_info(chat, profile["user_id"]))
@@ -226,7 +228,8 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         profile["classes"] = [
             dict(id=k, name=c.name, rarity=c.rarity)
             for k, c in classes.items()
-            if k in {"cutie", "jock", "nerd"} or k in class_grants
+            if (k in set(VISIBLE_CLASS_ALIASES.values()) and k != "ragamuffin")
+            or k in class_grants
         ]
     result["chat_id"] = chat
     result["actor_id"] = actor
@@ -431,6 +434,7 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
             notice = await db.arena_equip_slave(chat, actor, fighter, equipped)
         elif action in {
             "class",
+            "reset_class",
             "loadout",
             "passives",
             "forget_skill",
@@ -441,7 +445,7 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
             personal = body.get("personal", False)
             if type(personal) is not bool:
                 raise ValueError("Некорректный персонаж.")
-            await db.arena_edit_profile(
+            notice = await db.arena_edit_profile(
                 chat,
                 actor,
                 int_field(body, "user", actor),
@@ -449,7 +453,6 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
                 action,
                 body.get("value"),
             )
-            notice = "Сохранено."
         elif action == "buy_item":
             notice = await db.arena_buy_item(chat, actor, int_field(body, "offer"))
         elif action == "use_item":

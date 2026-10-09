@@ -146,6 +146,30 @@ process.stdout.write(c.out||app.innerHTML);
         self.assertIn('data-do="savepassives"', body)
         self.assertIn("активных 0 / 6", body)
         self.assertIn("пассивных 1 / 3", body)
+        self.assertIn('data-do="resetprofile"', body)
+
+    def test_free_class_reset_warning_and_correct_target(self):
+        body = self.run_client(
+            "page='resetConfirm';resetPending={user:10,personal:true,name:'Игрок'};menuScreen(input);",
+            self.menu_data(),
+        )
+        self.assertIn("Оборванцем 1 уровня с 0 XP", body)
+        self.assertIn("Это нельзя отменить", body)
+        self.assertIn("Сброс бесплатный", body)
+        self.assertIn('data-do="confirmreset"', body)
+        self.assertIn('data-do="cancelreset"', body)
+
+    def test_finger_sprites_and_custom_override(self):
+        for cls in ("thumb", "index", "middle", "ring", "pinky"):
+            output = self.run_client("out=sprite(input);", dict(sprite=cls))
+            self.assertEqual(output, "/static/assets/" + cls + ".png")
+        custom = "/sprites/" + "a" * 64 + ".png"
+        self.assertEqual(
+            self.run_client(
+                "out=sprite(input);", dict(sprite="thumb", sprite_url=custom)
+            ),
+            custom,
+        )
 
     def test_scroll_replacement_lists_skills_and_cancel_without_free_attack(self):
         data = self.menu_data()

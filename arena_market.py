@@ -541,6 +541,34 @@ class ArenaMarketMixin:
                 self.connection.rollback()
                 raise
 
+    def _arena_reset_profile_locked(self, chat, user, personal, class_id="ragamuffin"):
+        table = "personal_profiles" if personal else "slave_profiles"
+        self.connection.execute(
+            "DELETE FROM arena_learned WHERE chat_id=? AND user_id=? AND personal=?",
+            (chat, user, int(personal)),
+        )
+        self.connection.execute(
+            f"""UPDATE {table} SET class_id=?,level=1,xp=0,loadout='["bum_punch"]',
+                passive_loadout='[]',skills_reset=1,class_choice_pending_at=NULL,
+                skills_pending_at=?,updated_at=?,skill_memory=NULL,passive_memory=NULL,
+                skill_seen='[]',passive_seen='[]' WHERE chat_id=? AND user_id=?""",
+            (class_id, market_now(), market_now(), chat, user),
+        )
+
+    def _arena_equip_class_passives_locked(self, chat, user, personal, class_id):
+        profile = dict(
+            self._arena_profile_locked(chat, user, personal), class_id=class_id
+        )
+        available = self._arena_passive_catalog_locked(chat, user, personal, profile)
+        selected = [k for k in available if k.startswith(f"inherent:{class_id}:")][
+            :MAX_PASSIVE_SKILLS
+        ]
+        table = "personal_profiles" if personal else "slave_profiles"
+        self.connection.execute(
+            f"UPDATE {table} SET passive_loadout=? WHERE chat_id=? AND user_id=?",
+            (json.dumps(selected), chat, user),
+        )
+
     async def arena_use_item(
         self, chat, actor, item, user, personal=True, confirm=False, replace_skill=None
     ):
@@ -594,18 +622,9 @@ class ArenaMarketMixin:
                         )
                     if content not in classes or profile["class_id"] == content:
                         raise ValueError("Этот класс недоступен или уже выбран.")
-                    self.connection.execute(
-                        "DELETE FROM arena_learned WHERE chat_id=? AND user_id=? AND personal=?",
-                        (chat, user, int(personal)),
-                    )
-                    self.connection.execute(
-                        f"""UPDATE {table} SET class_id=?,level=1,xp=0,loadout='["bum_punch"]',passive_loadout='[]',skills_reset=1,
-                        class_choice_pending_at=NULL,skills_pending_at=?,updated_at=? WHERE chat_id=? AND user_id=?""",
-                        (content, market_now(), market_now(), chat, user),
-                    )
-                    self.connection.execute(
-                        f"UPDATE {table} SET skill_memory=NULL,passive_memory=NULL,skill_seen='[]',passive_seen='[]' WHERE chat_id=? AND user_id=?",
-                        (chat, user),
+                    self._arena_reset_profile_locked(chat, user, personal, content)
+                    self._arena_equip_class_passives_locked(
+                        chat, user, personal, content
                     )
                     notice = f"Новый класс: {classes[content].name}. Уровень 1; прежние навыки и пассивки забыты."
                 elif kind in {"skill", "passive"}:

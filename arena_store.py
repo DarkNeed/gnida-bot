@@ -612,6 +612,7 @@ class ArenaMixin(ArenaMarketMixin):
                     user_id,
                 ),
             )
+            self._arena_equip_class_passives_locked(chat_id, user_id, False, class_id)
             self.connection.commit()
             return class_id
 
@@ -1438,6 +1439,16 @@ class ArenaMixin(ArenaMarketMixin):
                 raise ValueError("Нельзя менять навыки во время боя.")
             classes, skills = self._fighter_catalog_locked()
             table = "personal_profiles" if personal else "slave_profiles"
+            if action == "reset_class":
+                if value is not True:
+                    raise ValueError(
+                        "Подтверди сброс класса, уровня, опыта и всех навыков."
+                    )
+                # Resetting a delegated fighter is an owner action just like
+                # using a class tractate; never another user's personal fighter.
+                self._arena_reset_profile_locked(chat, user, personal)
+                self.connection.commit()
+                return "Класс сброшен: Оборванец, уровень 1, опыт 0. Прежние навыки забыты."
             if action == "class":
                 if profile["level"] < 5 or profile["class_id"] != "ragamuffin":
                     raise ValueError("Класс выбирается один раз, с 5 уровня.")
@@ -1472,6 +1483,7 @@ class ArenaMixin(ArenaMarketMixin):
                     f"UPDATE {table} SET class_id=?,loadout=?,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
                     (chosen, json.dumps(loadout), utc_timestamp(), chat, user),
                 )
+                self._arena_equip_class_passives_locked(chat, user, personal, chosen)
             elif action == "loadout":
                 if (
                     not isinstance(value, list)

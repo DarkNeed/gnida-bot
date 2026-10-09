@@ -4,6 +4,13 @@ import math
 import random
 from dataclasses import dataclass, replace
 from typing import Any, Iterable
+from arena_fingers import (
+    build_catalog,
+    has_trait,
+    negative_kinds,
+    combat_modifiers,
+    after_action,
+)
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -48,6 +55,7 @@ class Skill:
     cooldown: int
     effects: tuple[dict[str, Any], ...] = ()
     rarity: str = "common"
+    description: str = ""
 
     @property
     def hostile(self) -> bool:
@@ -362,6 +370,11 @@ BUILTIN_SKILLS = {
     for k, s in BUILTIN_SKILLS.items()
 }
 
+_finger_classes, _finger_skills = build_catalog(FighterClass, Skill, effect)
+FIGHTER_CLASSES.update(_finger_classes)
+BUILTIN_SKILLS.update(_finger_skills)
+VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _finger_classes.items()})
+
 
 @dataclass(frozen=True)
 class PassiveSkill:
@@ -499,6 +512,8 @@ def skill_from_dict(skill_id: str, payload: dict[str, Any]) -> Skill:
         "evasion_flat",
         "resource",
         "stun",
+        "bleed",
+        "physical_attack_pct",
     }
     normalized_effects: list[dict[str, Any]] = []
     for item in effects:
@@ -672,7 +687,16 @@ def create_battle_state(
             }
             for passive in passive_details
             for item in passive["effects"]
-            if item.get("kind") not in {"resource", "stun"}
+            if item.get("kind")
+            in {
+                "accuracy_flat",
+                "damage_pct",
+                "speed_pct",
+                "physical_defense_pct",
+                "magic_defense_pct",
+                "evasion_flat",
+                "physical_attack_pct",
+            }
         ]
         sides[side] = {
             "slave_id": int(source["slave_id"]),
@@ -723,6 +747,11 @@ def effective_stat(side: dict, name: str) -> float:
         for e in side["effects"]
         if e.get("kind") == name + "_flat"
     )
+    if name in {"physical_defense", "magic_defense"}:
+        if has_trait(side, "uniform") and side["hp"] > side["stats"]["max_hp"] / 2:
+            pct += 0.15
+        if has_trait(side, "tattoos") and side["hp"] <= side["stats"]["max_hp"] * 0.4:
+            pct += 0.25
     return max(0, value * max(0, 1 + pct) + flat)
 
 
@@ -766,17 +795,28 @@ def resolve_skill(
     before = {
         k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
     }
+    previous_negatives = negative_kinds(target)
+    extra_accuracy, extra_boost, pierce, critical, obeyed = combat_modifiers(
+        actor, target, skill, rng
+    )
     accuracy_bonus = sum(
         e.get("value", 0) for e in actor["effects"] if e.get("kind") == "accuracy_flat"
     )
     hit = not skill.hostile or rng.random() * 100 < max(
-        5, min(95, skill.accuracy + accuracy_bonus - effective_stat(target, "evasion"))
+        5,
+        min(
+            95,
+            skill.accuracy
+            + accuracy_bonus
+            + extra_accuracy
+            - effective_stat(target, "evasion"),
+        ),
     )
     actor["resource"] -= skill.cost
     damage = 0
     if hit and skill.damage_type:
         attack = effective_stat(actor, skill.damage_type + "_attack")
-        defense = effective_stat(target, skill.damage_type + "_defense")
+        defense = effective_stat(target, skill.damage_type + "_defense") * (1 - pierce)
         boost = sum(
             e.get("value", 0) for e in actor["effects"] if e.get("kind") == "damage_pct"
         )
@@ -787,7 +827,8 @@ def resolve_skill(
                 * (1 + attack / 20)
                 * 100
                 / (100 + defense * 4)
-                * max(0.1, 1 + boost)
+                * max(0.1, 1 + boost + extra_boost)
+                * (1.5 if critical else 1)
                 * rng.uniform(0.95, 1.05)
             ),
         )
@@ -826,15 +867,43 @@ def resolve_skill(
                 "evasion_flat": "уклонение",
                 "resource": "ресурс",
                 "stun": "ошеломление",
+                "bleed": "кровотечение",
+                "physical_attack_pct": "физ. атака",
             }.get(effect["kind"], effect["kind"])
             effects_text.append(label)
     if skill.cooldown:
         actor["cooldowns"][skill_id] = skill.cooldown
+    after_action(
+        actor,
+        target,
+        skill,
+        hit,
+        damage,
+        critical,
+        obeyed,
+        previous_negatives,
+        skills or BUILTIN_SKILLS,
+        rng,
+    )
+    # Damage-over-time ticks when the affected fighter is about to act, including
+    # a stunned turn. It cannot be avoided by using a utility skill.
+    bleed_damage = min(
+        target["hp"],
+        sum(max(0, int(e["value"])) for e in target["effects"] if e["kind"] == "bleed"),
+    )
+    if target["hp"] > 0:
+        target["hp"] -= bleed_damage
     text = f"{skill.name}: " + (
         f"−{damage} HP" if damage else ("эффект применён" if hit else "промах")
     )
     if effects_text:
         text += " · " + ", ".join(effects_text)
+    if hit and critical:
+        text += " · критический удар"
+    if obeyed:
+        text += " · предписание исполнено"
+    if bleed_damage:
+        text += f" · кровотечение: −{bleed_damage} HP"
     event = {
         "seq": state["turn"],
         "side": side_key,
@@ -843,6 +912,8 @@ def resolve_skill(
         "damage_type": skill.damage_type,
         "hit": hit,
         "damage": damage,
+        "critical": bool(hit and critical),
+        "bleed_damage": bleed_damage,
         "text": text,
         "before": before,
         "after": {

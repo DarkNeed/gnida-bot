@@ -7,20 +7,20 @@ const demo=new URLSearchParams(location.search).get("demo")==="1" && /^(localhos
 const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const adminDraft={};
 let spriteDraft=null;
-let inspectSide=null,classUsePending=null,skillUsePending=null;
+let inspectSide=null,classUsePending=null,skillUsePending=null,resetPending=null;
 const rarityNames={common:"Обычный",uncommon:"Необычный",rare:"Редкий",epic:"Эпический"};
 const statNames={max_hp:"Макс. HP",resource_max:"Макс. энергия",physical_attack:"Физ. атака",magic_attack:"Маг. атака",physical_defense:"Физ. защита",magic_defense:"Маг. защита",speed:"Скорость",evasion:"Уклонение"};
-const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",evasion_flat:"Уклонение",resource:"Энергия",stun:"Ошеломление"};
+const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",physical_attack_pct:"Физ. атака",evasion_flat:"Уклонение",resource:"Энергия",stun:"Ошеломление",bleed:"Кровотечение"};
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,reduced?Math.min(50,ms):ms));
-const sprite=c=>c&&typeof c==="object"&&/^\/sprites\/[0-9a-f]{64}\.png$/.test(c.sprite_url||"")?c.sprite_url:"/static/assets/"+(["cutie","jock","nerd"].includes(typeof c==="object"?c?.sprite:c)?(typeof c==="object"?c.sprite:c):"ragamuffin")+".png";
+const sprite=c=>c&&typeof c==="object"&&/^\/sprites\/[0-9a-f]{64}\.png$/.test(c.sprite_url||"")?c.sprite_url:"/static/assets/"+(["cutie","jock","nerd","thumb","index","middle","ring","pinky"].includes(typeof c==="object"?c?.sprite:c)?(typeof c==="object"?c.sprite:c):"ragamuffin")+".png";
 function fighterImage(p,cls="",id=""){
   return '<img class="'+cls+(p.sprite_url&&p.pixel_art?' pixel-art':'')+'"'+(id?' id="'+id+'"':'')+' src="'+sprite(p)+'" data-fallback="'+sprite(p.sprite)+'" alt="'+esc(p.class_name)+'">';
 }
 function clearSpriteDraft(){if(spriteDraft)URL.revokeObjectURL(spriteDraft.url);spriteDraft=null;}
 function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames,r)?r:"common")+'">'+esc(rarityNames[r]||r||"Обычный")+'</span>';}
-function describeEffect(e){const value=e.kind.endsWith("_pct")?Math.round(e.value*100)+"%":e.value;return esc(effectNames[e.kind]||e.kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');}
-function skillInfo(s){return '<div class="muted">'+(s.cost!==undefined?'Энергия '+s.cost+' · точность '+s.accuracy+'% · сила '+s.power+' · перезарядка '+s.cooldown+' х.':'')+'</div>'+((s.effects||[]).map(e=>'<div class="muted">'+describeEffect(e)+'</div>').join(''));}
+function describeEffect(e){if(e.description)return esc(e.description);const value=e.kind.endsWith("_pct")?Math.round(e.value*100)+"%":e.value;return esc(effectNames[e.kind]||e.kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');}
+function skillInfo(s){return '<div class="muted">'+(s.cost!==undefined?'Энергия '+s.cost+' · точность '+s.accuracy+'% · сила '+s.power+' · перезарядка '+s.cooldown+' х.':'')+'</div>'+(s.description?'<div class="muted">'+esc(s.description)+'</div>':'')+((s.effects||[]).map(e=>'<div class="muted">'+describeEffect(e)+'</div>').join(''));}
 function itemInfo(item){const d=item.details||{};return d.description?'<p class="muted">'+esc(d.description)+'</p>':item.kind==='class'?'<p class="muted">Меняет класс, сбрасывает уровень до 1, весь опыт, изученные активные и пассивные навыки. Инвентарь и спрайт сохраняются.</p>':'<p class="muted">'+(item.kind==='passive'?'Пассивный навык · максимум 2 в бою':'Активный навык · нужен уровень '+(d.unlock_level||1))+'</p>'+skillInfo(d);}
 function fighterDetails(s,key){
   const effective=s.effective_stats||s.stats;
@@ -76,7 +76,9 @@ function renderActions(){
       (current.mode==="wasteland"&&st.winner==="a"?button("Следующий этаж","next","primary"):"");
     for(const k of ["a","b"])document.getElementById("sprite-"+k).classList.toggle("defeated",st.sides[k].hp===0);
   }else if(mine){
-    panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>'<button class="skill" data-skill="'+esc(skill.skill_id)+'" '+(side.resource<skill.cost||side.cooldowns[skill.skill_id]?"disabled":"")+'><span class="type">'+(skill.damage_type==="magic"?"МАГИЯ":skill.damage_type==="physical"?"АТАКА":"ЭФФЕКТ")+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?" · ещё "+side.cooldowns[skill.skill_id]+" х.":"")+"</span></button>").join("")+'</div>';
+    panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>'<button class="skill'+(side.mechanics?.prescript===skill.skill_id?' prescribed':'')+'" data-skill="'+esc(skill.skill_id)+'" '+(side.resource<skill.cost||side.cooldowns[skill.skill_id]?"disabled":"")+'><span class="type">'+(side.mechanics?.prescript===skill.skill_id?'ПРЕДПИСАНИЕ':skill.damage_type==="magic"?"МАГИЯ":skill.damage_type==="physical"?"АТАКА":"ЭФФЕКТ")+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?" · ещё "+side.cooldowns[skill.skill_id]+" х.":"")+"</span></button>").join("")+'</div>';
+    const m=side.mechanics||{},charges=[m.order?'Субординация: '+m.order+'/3':'',m.grudge?'Обиды: '+m.grudge+'/3':'',m.focus?'Созвездие: '+m.focus+'/3':''].filter(Boolean);
+    if(charges.length)panel.innerHTML+='<p class="muted">'+charges.join(' · ')+'</p>';
     panel.innerHTML+='<div class="row" style="margin-top:8px">'+(side.can_use_potion&&!side.potion_used?button("Зелье · 30% HP","potion","small"):"<span></span>")+button("Сдаться","surrender","small danger")+'</div>';
   }else{
     panel.innerHTML='<div class="battlelog">'+(current.own_side||current.consent_side?"Ход соперника…":"Ты наблюдаешь за боем.")+'<div class="muted">'+esc(st.log.at(-1)?.text||"Первый ход скоро начнётся.")+'</div></div>';
@@ -199,6 +201,9 @@ function menuScreen(data){
     body+='<div class="card"><h2>Какой навык заменить?</h2><p>Новый: <b>'+esc(row.name)+'</b></p><p>Боец: '+esc(target.name||target.class_name)+'</p><p class="muted">Лимит изученных '+(row.kind==='skill'?'активных навыков — 6':'пассивных навыков — 3')+'. Выбери замену. До выбора трактат не тратится.</p><div class="stack">';
     body+=known.filter(s=>s.skill_id!=='bum_punch').map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),'replaceitem:'+s.skill_id)).join('');
     body+=button('Отмена — ничего не менять','tab:inventory')+'</div></div>';
+  }else if(page==="resetConfirm"){
+    if(!resetPending){page='personal';menuScreen(data);return;}
+    body+='<div class="card"><h2>Сбросить класс и уровень?</h2><p>Боец: '+esc(resetPending.name)+'</p><p class="danger-text">Боец станет Оборванцем 1 уровня с 0 XP. Все изученные активные и пассивные навыки будут забыты. Это нельзя отменить.</p><p class="muted">Франки, инвентарь, свой спрайт, принадлежность и уровень рабовладельца сохранятся. Сброс бесплатный.</p><div class="stack">'+button('Сбросить класс и уровень','confirmreset','danger')+button('Не менять','cancelreset')+'</div></div>';
   }else if(page==="classConfirm"){
     const row=(data.inventory||[]).find(i=>i.id===classUsePending?.item);
     if(!row){page='inventory';menuScreen(data);return;}
@@ -222,7 +227,7 @@ function menuScreen(data){
     for(const s of p.passives||[])body+=button('Забыть пассивку: '+esc(s.name),'forget_passive:'+s.skill_id,'small');
     for(const s of p.available_skills||[])body+=button('Изучить: '+esc(s.name),'learn_skill:'+s.skill_id,'small',p.skills.length>=6);
     for(const s of p.available_passives||[])body+=button('Изучить пассивку: '+esc(s.name),'learn_passive:'+s.skill_id,'small',(p.passives||[]).length>=3);
-    body+='</div></details>';
+    body+='</div></details>'+button('Сбросить класс и уровень','resetprofile','small danger');
     if(!p.personal&&p.user_id!==tg?.initDataUnsafe?.user?.id)body+='<p class="muted">Владелец может выбирать класс и навыки за раба после 48 часов ожидания.</p>'+button("Дать конфету · 30 XP","candy");
     body+='</div>';
   }
@@ -287,6 +292,9 @@ app.addEventListener("click",async event=>{
   if(cmd==="choose_sprite"){document.getElementById("sprite-file").click();return;}
   if(cmd==="upload_sprite"||cmd==="reset_sprite"){await saveSprite(cmd==="reset_sprite");return;}
   if(cmd==="profile"){profileId=Number(arg);page=page==="personal"?"personalProfile":"slaveProfile";menuScreen(menu);return;}
+  if(cmd==='resetprofile'){const p=activeProfile();if(!p)return;resetPending={user:p.user_id,personal:p.personal,name:p.name||p.class_name};page='resetConfirm';menuScreen(menu);return;}
+  if(cmd==='cancelreset'){page=resetPending?.personal?'personalProfile':'slaveProfile';resetPending=null;menuScreen(menu);return;}
+  if(cmd==='confirmreset'){const pending=resetPending;if(!pending)return;if(await menuAction('reset_class',{user:pending.user,personal:pending.personal,value:true})){page=pending.personal?'personalProfile':'slaveProfile';resetPending=null;menuScreen(menu);}return;}
   if(cmd==="admin"){page="admin";menuScreen(menu);return;}
   if(cmd==="battle"){token=arg;current=null;lastSeq=0;battleScreen(await api("/api/battle/"+token));return;}
   if(cmd==="waste"){await menuAction("wasteland",{fighter:Number(arg),personal:page==="personal"});return;}
@@ -360,7 +368,13 @@ function configureViewport(){
 }
 async function boot(){
   configureViewport();
-  if(demo){startDemo();return;}
+  if(demo){
+    const cls=new URLSearchParams(location.search).get('fighter');
+    if(['thumb','index','middle','ring','pinky'].includes(cls)){
+      try{battleScreen(await api('/demo/fighter/'+cls));return;}catch{}
+    }
+    startDemo();return;
+  }
   const start=tg?.initDataUnsafe?.start_param||new URLSearchParams(location.search).get("tgWebAppStartParam")||"";
   try{
     if(start.startsWith("b_")){token=start.slice(2);const data=await api("/api/battle/"+token);lastSeq=data.state?.log.at(-1)?.seq||0;battleScreen(data);}
