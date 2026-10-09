@@ -216,7 +216,11 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         profile["skills"] = [
             asdict(skills[k])
             for k in unlocked_skill_ids(
-                profile["class_id"], profile["level"], skills, grants
+                profile["class_id"],
+                profile["level"],
+                skills,
+                grants,
+                profile["known_skills"],
             )
         ]
         profile["classes"] = [
@@ -425,7 +429,15 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
             if equipped:
                 await require_member(bot, chat, fighter)
             notice = await db.arena_equip_slave(chat, actor, fighter, equipped)
-        elif action in {"class", "loadout", "passives"}:
+        elif action in {
+            "class",
+            "loadout",
+            "passives",
+            "forget_skill",
+            "forget_passive",
+            "learn_skill",
+            "learn_passive",
+        }:
             personal = body.get("personal", False)
             if type(personal) is not bool:
                 raise ValueError("Некорректный персонаж.")
@@ -448,7 +460,13 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
             user = int_field(body, "user", actor)
             await require_member(bot, chat, user)
             notice = await db.arena_use_item(
-                chat, actor, int_field(body, "item"), user, personal, confirm
+                chat,
+                actor,
+                int_field(body, "item"),
+                user,
+                personal,
+                confirm,
+                body.get("replace_skill"),
             )
         elif action == "craft":
             raise ValueError("Крафт убран. Зелья и конфеты есть у торговца.")

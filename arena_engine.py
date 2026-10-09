@@ -10,6 +10,8 @@ BASE_RESOURCE_REGEN = 0
 CONTROL_PENALTY = 0.8
 MAX_ACTIVE_SKILLS = 4
 MAX_PASSIVE_SKILLS = 2
+MAX_LEARNED_ACTIVE_SKILLS = 6
+MAX_LEARNED_PASSIVE_SKILLS = 3
 MAX_FIGHTER_LEVEL = 20
 RARITY_LABELS = {
     "common": "Обычный",
@@ -594,6 +596,7 @@ def unlocked_skill_ids(
     level: int,
     skills: dict[str, Skill] | None = None,
     granted: Iterable[str] = (),
+    known: Iterable[str] | None = None,
 ) -> list[str]:
     catalog = skills or BUILTIN_SKILLS
     allowed_classes = {"ragamuffin"}
@@ -610,6 +613,7 @@ def unlocked_skill_ids(
             or skill.skill_id in granted
         )
         and skill.unlock_level <= level
+        and (known is None or skill.skill_id in known)
     ]
 
 
@@ -619,8 +623,9 @@ def normalize_loadout(
     requested: Iterable[str] | None,
     skills: dict[str, Skill] | None = None,
     granted: Iterable[str] = (),
+    known: Iterable[str] | None = None,
 ) -> list[str]:
-    unlocked = unlocked_skill_ids(class_id, level, skills, granted)
+    unlocked = unlocked_skill_ids(class_id, level, skills, granted, known)
     selected: list[str] = []
     for skill_id in requested or ():
         if skill_id in unlocked and skill_id not in selected:
@@ -687,6 +692,7 @@ def create_battle_state(
                 source.get("loadout"),
                 skill_catalog,
                 source.get("granted_skills", ()),
+                source.get("known_skills"),
             ),
             "effects": starting_effects,
             "passive_details": passive_details,

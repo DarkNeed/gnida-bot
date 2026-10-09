@@ -12,10 +12,13 @@ from arena_engine import (
     FIGHTER_CLASSES,
     MAX_FIGHTER_LEVEL,
     MAX_PASSIVE_SKILLS,
+    MAX_LEARNED_ACTIVE_SKILLS,
+    MAX_LEARNED_PASSIVE_SKILLS,
     PassiveSkill,
     RARITY_LABELS,
     fighter_xp_limit,
     normalize_loadout,
+    unlocked_skill_ids,
 )
 
 MSK = timezone(timedelta(hours=3))
@@ -35,6 +38,9 @@ class ArenaMarketMixin:
         for table in ("slave_profiles", "personal_profiles"):
             self._ensure_column(table, "passive_loadout", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(table, "skills_reset", "INTEGER NOT NULL DEFAULT 0")
+            for kind in ("skill", "passive"):
+                self._ensure_column(table, kind + "_memory", "TEXT DEFAULT NULL")
+                self._ensure_column(table, kind + "_seen", "TEXT NOT NULL DEFAULT '[]'")
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS arena_inventory(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL,
@@ -156,7 +162,80 @@ class ArenaMarketMixin:
             else self._granted_content_locked(chat, user, "skill")
         )
 
-    def _arena_passive_catalog_locked(self, chat, user, personal, profile=None):
+    def _arena_memory_locked(self, chat, user, personal, kind, eligible, profile=None):
+        """Stable capped memory; overflow remains available, never silently deleted.
+
+        Only newly unlocked class skills auto-fill free slots. Forgetting a skill
+        does not immediately relearn it or another previously seen skill.
+        """
+        profile = profile or self._arena_profile_locked(chat, user, personal)
+        table = "personal_profiles" if personal else "slave_profiles"
+        column = kind + "_memory"
+        limit = (
+            MAX_LEARNED_ACTIVE_SKILLS if kind == "skill" else MAX_LEARNED_PASSIVE_SKILLS
+        )
+        eligible = list(dict.fromkeys(eligible))
+        previous = profile[column]
+        seen = set(json.loads(profile[kind + "_seen"]))
+        if previous is None:
+            equipped = json.loads(
+                profile["loadout" if kind == "skill" else "passive_loadout"]
+            )
+            priority = (["bum_punch"] if kind == "skill" else []) + equipped
+            priority += sorted(self._arena_learned_locked(chat, user, personal, kind))
+            priority += eligible
+            memory = [k for k in dict.fromkeys(priority) if k in eligible][:limit]
+        else:
+            memory = [k for k in dict.fromkeys(json.loads(previous)) if k in eligible][
+                :limit
+            ]
+            for key in eligible:
+                if key not in seen and key not in memory and len(memory) < limit:
+                    memory.append(key)
+        seen.update(eligible)
+        encoded, encoded_seen = json.dumps(memory), json.dumps(sorted(seen))
+        if previous != encoded or profile[kind + "_seen"] != encoded_seen:
+            self.connection.execute(
+                f"UPDATE {table} SET {column}=?,{kind}_seen=? WHERE chat_id=? AND user_id=?",
+                (encoded, encoded_seen, chat, user),
+            )
+        return memory
+
+    def _arena_known_skills_locked(self, chat, user, personal, profile=None):
+        profile = profile or self._arena_profile_locked(chat, user, personal)
+        _, skills = self._fighter_catalog_locked()
+        eligible = unlocked_skill_ids(
+            profile["class_id"],
+            profile["level"],
+            skills,
+            self._arena_grants_locked(chat, user, personal),
+        )
+        return self._arena_memory_locked(
+            chat, user, personal, "skill", eligible, profile
+        )
+
+    def _arena_remember_locked(self, chat, user, personal, kind, content):
+        profile = self._arena_profile_locked(chat, user, personal)
+        memory = json.loads(profile[kind + "_memory"] or "[]")
+        limit = (
+            MAX_LEARNED_ACTIVE_SKILLS if kind == "skill" else MAX_LEARNED_PASSIVE_SKILLS
+        )
+        if content not in memory:
+            if len(memory) >= limit:
+                raise ValueError(
+                    f"Максимум {limit} изученных {'активных' if kind == 'skill' else 'пассивных'} навыков. Сначала забудь один. Трактат не потрачен."
+                )
+            memory.append(content)
+        seen = set(json.loads(profile[kind + "_seen"])) | {content}
+        table = "personal_profiles" if personal else "slave_profiles"
+        self.connection.execute(
+            f"UPDATE {table} SET {kind}_memory=?,{kind}_seen=? WHERE chat_id=? AND user_id=?",
+            (json.dumps(memory), json.dumps(sorted(seen)), chat, user),
+        )
+
+    def _arena_passive_catalog_locked(
+        self, chat, user, personal, profile=None, all_available=False
+    ):
         profile = profile or self._arena_profile_locked(chat, user, personal)
         classes, _ = self._fighter_catalog_locked()
         cls = classes.get(profile["class_id"], FIGHTER_CLASSES["ragamuffin"])
@@ -172,7 +251,10 @@ class ArenaMarketMixin:
                     key, item.get("name", f"Пассивка класса {i+1}"), (item,), cls.rarity
                 )
             )
-        return available
+        memory = self._arena_memory_locked(
+            chat, user, personal, "passive", available, profile
+        )
+        return available if all_available else {k: available[k] for k in memory}
 
     def _arena_selected_passives_locked(self, chat, user, personal, profile=None):
         profile = profile or self._arena_profile_locked(chat, user, personal)
@@ -460,7 +542,7 @@ class ArenaMarketMixin:
                 raise
 
     async def arena_use_item(
-        self, chat, actor, item, user, personal=True, confirm=False
+        self, chat, actor, item, user, personal=True, confirm=False, replace_skill=None
     ):
         async with self._lock:
             try:
@@ -488,6 +570,14 @@ class ArenaMarketMixin:
                 table = "personal_profiles" if personal else "slave_profiles"
                 classes, skills = self._fighter_catalog_locked()
                 kind, content = row["kind"], row["content_id"]
+                if replace_skill is not None and (
+                    not isinstance(replace_skill, str)
+                    or kind not in {"skill", "passive"}
+                ):
+                    raise ValueError(
+                        "Заменять можно только навык трактатом того же типа."
+                    )
+                replaced_name = None
                 if kind == "potion":
                     raise ValueError("Зелье используется кнопкой в бою.")
                 if kind == "candy":
@@ -513,25 +603,22 @@ class ArenaMarketMixin:
                         class_choice_pending_at=NULL,skills_pending_at=?,updated_at=? WHERE chat_id=? AND user_id=?""",
                         (content, market_now(), market_now(), chat, user),
                     )
+                    self.connection.execute(
+                        f"UPDATE {table} SET skill_memory=NULL,passive_memory=NULL,skill_seen='[]',passive_seen='[]' WHERE chat_id=? AND user_id=?",
+                        (chat, user),
+                    )
                     notice = f"Новый класс: {classes[content].name}. Уровень 1; прежние навыки и пассивки забыты."
                 elif kind in {"skill", "passive"}:
                     catalog = skills if kind == "skill" else BUILTIN_PASSIVES
                     if content not in catalog:
                         raise ValueError("Навык больше недоступен.")
                     if kind == "skill":
-                        from arena_engine import unlocked_skill_ids
-
                         if catalog[content].unlock_level > profile["level"]:
                             raise ValueError(
                                 f"Для изучения нужен уровень {catalog[content].unlock_level}. Трактат не потрачен."
                             )
                         known = set(
-                            unlocked_skill_ids(
-                                profile["class_id"],
-                                profile["level"],
-                                skills,
-                                self._arena_grants_locked(chat, user, personal),
-                            )
+                            self._arena_known_skills_locked(chat, user, personal)
                         )
                     else:
                         known = set(
@@ -543,8 +630,40 @@ class ArenaMarketMixin:
                         raise ValueError(
                             "Боец уже знает этот навык. Трактат не потрачен."
                         )
+                    if replace_skill is not None:
+                        if replace_skill not in known or replace_skill == "bum_punch":
+                            raise ValueError(
+                                "Выбери изученный навык того же типа. Бесплатный удар заменить нельзя. Трактат не потрачен."
+                            )
+                        old_catalog = (
+                            skills
+                            if kind == "skill"
+                            else self._arena_passive_catalog_locked(
+                                chat, user, personal
+                            )
+                        )
+                        old = old_catalog[replace_skill]
+                        replaced_name = old.name if kind == "skill" else old["name"]
+                        current = self._arena_profile_locked(chat, user, personal)
+                        memory = [
+                            k
+                            for k in json.loads(current[kind + "_memory"])
+                            if k != replace_skill
+                        ]
+                        column = "loadout" if kind == "skill" else "passive_loadout"
+                        selected = [
+                            content if k == replace_skill else k
+                            for k in json.loads(current[column])
+                        ]
+                        self.connection.execute(
+                            f"UPDATE {table} SET {kind}_memory=?,{column}=? WHERE chat_id=? AND user_id=?",
+                            (json.dumps(memory), json.dumps(selected), chat, user),
+                        )
+                        profile = dict(profile)
+                        profile[column] = json.dumps(selected)
+                    self._arena_remember_locked(chat, user, personal, kind, content)
                     self.connection.execute(
-                        "INSERT INTO arena_learned VALUES(?,?,?,?,?)",
+                        "INSERT OR IGNORE INTO arena_learned VALUES(?,?,?,?,?)",
                         (chat, user, int(personal), kind, content),
                     )
                     if kind == "skill":
@@ -554,20 +673,25 @@ class ArenaMarketMixin:
                             json.loads(profile["loadout"]),
                             skills,
                             self._arena_grants_locked(chat, user, personal),
+                            self._arena_known_skills_locked(chat, user, personal),
                         )
                         self.connection.execute(
                             f"UPDATE {table} SET loadout=?,skills_pending_at=? WHERE chat_id=? AND user_id=?",
                             (json.dumps(loadout), market_now(), chat, user),
                         )
                     else:
-                        loadout = json.loads(profile["passive_loadout"])
-                        if len(loadout) < MAX_PASSIVE_SKILLS:
+                        loadout = list(
+                            dict.fromkeys(json.loads(profile["passive_loadout"]))
+                        )
+                        if content not in loadout and len(loadout) < MAX_PASSIVE_SKILLS:
                             loadout.append(content)
                             self.connection.execute(
                                 f"UPDATE {table} SET passive_loadout=?,skills_pending_at=? WHERE chat_id=? AND user_id=?",
                                 (json.dumps(loadout), market_now(), chat, user),
                             )
                     notice = f"Изучено: {catalog[content].name}. Набор меняется в «Класс и навыки»."
+                    if replaced_name:
+                        notice += f" Заменён навык: {replaced_name}."
                 else:
                     raise ValueError("Неизвестный предмет.")
                 self._arena_consume_item_locked(row)
@@ -601,13 +725,43 @@ class ArenaMarketMixin:
     async def arena_passive_view(self, chat, user, personal):
         async with self._lock:
             profile = self._arena_profile_locked(chat, user, personal)
+            known = self._arena_known_skills_locked(chat, user, personal)
+            all_passives = self._arena_passive_catalog_locked(
+                chat, user, personal, all_available=True
+            )
+            passives = self._arena_passive_catalog_locked(chat, user, personal)
+            _, skills = self._fighter_catalog_locked()
+            eligible = unlocked_skill_ids(
+                profile["class_id"],
+                profile["level"],
+                skills,
+                self._arena_grants_locked(chat, user, personal),
+            )
             result = dict(
-                passives=list(
-                    self._arena_passive_catalog_locked(
-                        chat, user, personal, profile
-                    ).values()
+                passives=list(passives.values()),
+                available_passives=[
+                    v for k, v in all_passives.items() if k not in passives
+                ],
+                available_skills=[
+                    asdict(skills[k]) for k in eligible if k not in known
+                ],
+                known_skills=known,
+                learned_limits=dict(
+                    active=MAX_LEARNED_ACTIVE_SKILLS, passive=MAX_LEARNED_PASSIVE_SKILLS
                 ),
-                passive_loadout=json.loads(profile["passive_loadout"]),
+                loadout=normalize_loadout(
+                    profile["class_id"],
+                    profile["level"],
+                    json.loads(profile["loadout"]),
+                    skills,
+                    self._arena_grants_locked(chat, user, personal),
+                    known,
+                ),
+                passive_loadout=[
+                    k
+                    for k in dict.fromkeys(json.loads(profile["passive_loadout"]))
+                    if k in passives
+                ][:MAX_PASSIVE_SKILLS],
                 granted=self._arena_grants_locked(chat, user, personal),
             )
             self.connection.commit()

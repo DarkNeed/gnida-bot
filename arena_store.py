@@ -401,6 +401,7 @@ class ArenaMixin(ArenaMarketMixin):
         content_type: str,
         content_id: str,
         granted_by: int,
+        personal: bool = False,
     ) -> str:
         table = {
             "class": ("custom_fighter_classes", "class_id"),
@@ -414,6 +415,13 @@ class ArenaMixin(ArenaMarketMixin):
             ).fetchone()
             if not present:
                 return "not_found"
+            if content_type == "skill":
+                from arena_engine import MAX_LEARNED_ACTIVE_SKILLS
+
+                known = self._arena_known_skills_locked(chat_id, user_id, personal)
+                if content_id not in known and len(known) >= MAX_LEARNED_ACTIVE_SKILLS:
+                    self.connection.commit()
+                    return "Максимум 6 изученных активных навыков. Сначала забудь один."
             self.connection.execute(
                 """INSERT INTO granted_fighter_content(
                        chat_id, user_id, content_type, content_id, granted_by, granted_at
@@ -447,7 +455,7 @@ class ArenaMixin(ArenaMarketMixin):
         if author != 1980056841:
             raise ValueError("Недостаточно прав.")
         result = await self.grant_custom_fighter_content(
-            chat, user, kind, content_id, author
+            chat, user, kind, content_id, author, personal
         )
         if result == "granted" and kind == "skill":
             async with self._lock:
@@ -455,6 +463,13 @@ class ArenaMixin(ArenaMarketMixin):
                     "INSERT OR IGNORE INTO arena_learned VALUES(?,?,?,?,?)",
                     (chat, user, int(personal), "skill", content_id),
                 )
+                self._arena_known_skills_locked(chat, user, personal)
+                _, catalog = self._fighter_catalog_locked()
+                profile = self._arena_profile_locked(chat, user, personal)
+                if catalog[content_id].unlock_level <= profile["level"]:
+                    self._arena_remember_locked(
+                        chat, user, personal, "skill", content_id
+                    )
                 self.connection.commit()
         if result != "granted" or kind != "class":
             return result
@@ -469,6 +484,9 @@ class ArenaMixin(ArenaMarketMixin):
                 None,
                 skills,
                 self._arena_grants_locked(chat, user, personal),
+                self._arena_known_skills_locked(
+                    chat, user, personal, dict(profile, class_id=content_id)
+                ),
             )
             table = "personal_profiles" if personal else "slave_profiles"
             self.connection.execute(
@@ -571,7 +589,14 @@ class ArenaMixin(ArenaMarketMixin):
             _classes, skills = self._fighter_catalog_locked()
             granted_skills = self._arena_grants_locked(chat_id, user_id, False)
             loadout = normalize_loadout(
-                class_id, int(profile["level"]), None, skills, granted_skills
+                class_id,
+                int(profile["level"]),
+                None,
+                skills,
+                granted_skills,
+                self._arena_known_skills_locked(
+                    chat_id, user_id, False, dict(profile, class_id=class_id)
+                ),
             )
             self.connection.execute(
                 """UPDATE slave_profiles
@@ -620,6 +645,7 @@ class ArenaMixin(ArenaMarketMixin):
                 skill_ids,
                 skills,
                 granted_skills,
+                self._arena_known_skills_locked(chat_id, slave_id, False),
             )
             self.connection.execute(
                 """UPDATE slave_profiles SET loadout=?, skills_pending_at=NULL, updated_at=?
@@ -789,6 +815,7 @@ class ArenaMixin(ArenaMarketMixin):
             level=profile["level"],
             loadout=json.loads(profile["loadout"]),
             granted_skills=self._arena_grants_locked(chat, user, personal),
+            known_skills=self._arena_known_skills_locked(chat, user, personal),
             passive_details=self._arena_selected_passives_locked(
                 chat, user, personal, profile
             ),
@@ -1437,6 +1464,9 @@ class ArenaMixin(ArenaMarketMixin):
                     None,
                     skills,
                     self._arena_grants_locked(chat, user, personal),
+                    self._arena_known_skills_locked(
+                        chat, user, personal, dict(profile, class_id=chosen)
+                    ),
                 )
                 self.connection.execute(
                     f"UPDATE {table} SET class_id=?,loadout=?,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
@@ -1454,6 +1484,7 @@ class ArenaMixin(ArenaMarketMixin):
                     profile["level"],
                     skills,
                     self._arena_grants_locked(chat, user, personal),
+                    self._arena_known_skills_locked(chat, user, personal),
                 )
                 if any(k not in unlocked for k in value):
                     raise ValueError("Навык ещё не открыт.")
@@ -1463,6 +1494,7 @@ class ArenaMixin(ArenaMarketMixin):
                     value,
                     skills,
                     self._arena_grants_locked(chat, user, personal),
+                    self._arena_known_skills_locked(chat, user, personal),
                 )
                 self.connection.execute(
                     f"UPDATE {table} SET loadout=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?",
@@ -1484,6 +1516,59 @@ class ArenaMixin(ArenaMarketMixin):
                 self.connection.execute(
                     f"UPDATE {table} SET passive_loadout=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?",
                     (json.dumps(value), chat, user),
+                )
+            elif action in {
+                "forget_skill",
+                "forget_passive",
+                "learn_skill",
+                "learn_passive",
+            }:
+                kind = "skill" if action.endswith("_skill") else "passive"
+                if kind == "skill":
+                    eligible = unlocked_skill_ids(
+                        profile["class_id"],
+                        profile["level"],
+                        skills,
+                        self._arena_grants_locked(chat, user, personal),
+                    )
+                    known = self._arena_known_skills_locked(chat, user, personal)
+                else:
+                    eligible = self._arena_passive_catalog_locked(
+                        chat, user, personal, all_available=True
+                    )
+                    known = list(
+                        self._arena_passive_catalog_locked(chat, user, personal)
+                    )
+                if not isinstance(value, str) or value not in eligible:
+                    raise ValueError("Навык недоступен.")
+                if action.startswith("forget_"):
+                    if value == "bum_punch":
+                        raise ValueError("Бесплатный обычный удар нельзя забыть.")
+                    if value not in known:
+                        raise ValueError("Навык не изучен.")
+                    known.remove(value)
+                    self.connection.execute(
+                        f"UPDATE {table} SET {kind}_memory=? WHERE chat_id=? AND user_id=?",
+                        (json.dumps(known), chat, user),
+                    )
+                else:
+                    self._arena_remember_locked(chat, user, personal, kind, value)
+                    if value not in known:
+                        known.append(value)
+                column = "loadout" if kind == "skill" else "passive_loadout"
+                selected = [k for k in json.loads(profile[column]) if k in known]
+                if kind == "skill":
+                    selected = normalize_loadout(
+                        profile["class_id"],
+                        profile["level"],
+                        selected,
+                        skills,
+                        self._arena_grants_locked(chat, user, personal),
+                        known,
+                    )
+                self.connection.execute(
+                    f"UPDATE {table} SET {column}=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?",
+                    (json.dumps(selected), chat, user),
                 )
             else:
                 raise ValueError("Неизвестное действие.")

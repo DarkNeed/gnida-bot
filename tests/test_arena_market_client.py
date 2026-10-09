@@ -144,6 +144,36 @@ process.stdout.write(c.out||app.innerHTML);
         self.assertIn("Физ. защита: +15%", body)
         self.assertIn("Необычный", body)
         self.assertIn('data-do="savepassives"', body)
+        self.assertIn("активных 0 / 6", body)
+        self.assertIn("пассивных 1 / 3", body)
+
+    def test_scroll_replacement_lists_skills_and_cancel_without_free_attack(self):
+        data = self.menu_data()
+        data["inventory"].append(
+            {
+                "id": 43,
+                "kind": "skill",
+                "name": "Новый навык",
+                "content_id": "new",
+                "rarity": "rare",
+                "quantity": 1,
+                "details": {},
+            }
+        )
+        data["personal"]["skills"] = [
+            {"skill_id": "bum_punch", "name": "Удар бомжа", "rarity": "common"},
+            {"skill_id": "humiliate", "name": "Унизить", "rarity": "uncommon"},
+        ]
+        body = self.run_client(
+            "page='skillReplace';skillUsePending={item:43,user:10,personal:true};menuScreen(input);",
+            data,
+        )
+        self.assertIn("Какой навык заменить?", body)
+        self.assertIn("Новый навык", body)
+        self.assertIn('data-do="replaceitem:humiliate"', body)
+        self.assertNotIn('data-do="replaceitem:bum_punch"', body)
+        self.assertIn("Отмена — ничего не менять", body)
+        self.assertIn("До выбора трактат не тратится", body)
 
     def test_owner_has_no_craft_buttons(self):
         body = self.render("owner")

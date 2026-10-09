@@ -299,6 +299,150 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
             await self.db.arena_use_item(1, 10, passive, 10)
         self.assertEqual(self.qty(passive), 1)
 
+    async def test_memory_caps_preserve_scrolls_and_battle_slots(self):
+        await self.db.arena_menu(1, 10)
+        self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 10**6)
+        self.db.connection.commit()
+        for key in ("smack", "humiliate", "uwu", "posing"):
+            await self.db.arena_use_item(1, 10, self.add("skill", key), 10)
+        view = (await menu_view(self.db, 1, 10))["personal"]
+        self.assertEqual(len(view["skills"]), 6)
+        item = self.add("skill", "meow")
+        with self.assertRaisesRegex(ValueError, "Максимум 6"):
+            await self.db.arena_use_item(1, 10, item, 10)
+        self.assertEqual(self.qty(item), 1)
+        for key in ("light_step", "stone_skin", "battle_rhythm"):
+            await self.db.arena_use_item(1, 10, self.add("passive", key), 10)
+        other = next(
+            k
+            for k in BUILTIN_PASSIVES
+            if k not in {"light_step", "stone_skin", "battle_rhythm"}
+        )
+        passive = self.add("passive", other)
+        with self.assertRaisesRegex(ValueError, "Максимум 3"):
+            await self.db.arena_use_item(1, 10, passive, 10)
+        self.assertEqual(self.qty(passive), 1)
+        view = (await menu_view(self.db, 1, 10))["personal"]
+        self.assertEqual((len(view["skills"]), len(view["passives"])), (6, 3))
+        self.assertEqual((len(view["loadout"]), len(view["passive_loadout"])), (4, 2))
+        battle = await self.db.arena_wasteland(1, 10)
+        side = json.loads(battle["state_json"])["sides"]["a"]
+        self.assertEqual((len(side["loadout"]), len(side["passive_details"])), (4, 2))
+
+    async def test_forget_and_relearn_without_consuming_scroll(self):
+        self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 100)
+        self.db.connection.commit()
+        await self.db.arena_use_item(1, 10, self.add("skill", "smack"), 10)
+        await self.db.arena_use_item(1, 10, self.add("passive", "light_step"), 10)
+        await self.db.arena_edit_profile(1, 10, 10, True, "forget_skill", "smack")
+        await self.db.arena_edit_profile(
+            1, 10, 10, True, "forget_passive", "light_step"
+        )
+        view = (await menu_view(self.db, 1, 10))["personal"]
+        self.assertNotIn("smack", view["known_skills"])
+        self.assertNotIn("light_step", view["passive_loadout"])
+        self.assertIn("smack", [s["skill_id"] for s in view["available_skills"]])
+        await self.db.arena_edit_profile(1, 10, 10, True, "learn_skill", "smack")
+        await self.db.arena_edit_profile(1, 10, 10, True, "learn_passive", "light_step")
+        view = (await menu_view(self.db, 1, 10))["personal"]
+        self.assertIn("smack", view["known_skills"])
+        self.assertEqual(len(view["passives"]), 1)
+        await self.db.arena_edit_profile(1, 10, 10, True, "forget_skill", "smack")
+        scroll = self.add("skill", "smack")
+        await self.db.arena_use_item(1, 10, scroll, 10)
+        self.assertEqual(self.qty(scroll), 0)
+        with self.assertRaisesRegex(ValueError, "нельзя забыть"):
+            await self.db.arena_edit_profile(
+                1, 10, 10, True, "forget_skill", "bum_punch"
+            )
+        with self.assertRaises(ValueError):
+            await self.db.arena_edit_profile(1, 20, 10, True, "forget_skill", "smack")
+
+    async def test_level_unlocks_and_legacy_overflow_are_stable(self):
+        await self.db.arena_menu(1, 10)
+        self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 10**6)
+        self.db.connection.execute(
+            "UPDATE personal_profiles SET class_id='nerd',skill_memory=NULL,loadout=? WHERE chat_id=1 AND user_id=10",
+            (json.dumps(["go_to_store", "mother_joke", "deanon", "humiliate"]),),
+        )
+        self.db.connection.commit()
+        view = (await menu_view(self.db, 1, 10))["personal"]
+        self.assertEqual(len(view["skills"]), 6)
+        self.assertIn("bum_punch", view["known_skills"])
+        self.assertTrue(set(view["loadout"]).issubset(view["known_skills"]))
+        self.assertEqual(len(view["available_skills"]), 1)
+        before = view["known_skills"]
+        await self.db.arena_edit_profile(1, 10, 10, True, "loadout", ["bum_punch"])
+        self.assertEqual(
+            (await menu_view(self.db, 1, 10))["personal"]["known_skills"], before
+        )
+        await self.db.close()
+        self.db = Database(Path(self.temp.name) / "bot.sqlite3")
+        await self.db.connect()
+        self.assertEqual(
+            (await menu_view(self.db, 1, 10))["personal"]["known_skills"], before
+        )
+
+    async def test_concurrent_learning_last_slot_and_profile_isolation(self):
+        for key in ("stone_skin", "light_step"):
+            await self.db.arena_use_item(1, 10, self.add("passive", key), 10)
+        candidates = [
+            k for k in BUILTIN_PASSIVES if k not in {"stone_skin", "light_step"}
+        ][:2]
+        items = [self.add("passive", key) for key in candidates]
+        outcomes = await asyncio.gather(
+            *(self.db.arena_use_item(1, 10, item, 10) for item in items),
+            return_exceptions=True,
+        )
+        self.assertEqual(sum(isinstance(o, ValueError) for o in outcomes), 1)
+        self.assertEqual(sum(self.qty(i) for i in items), 1)
+        await self.db.arena_use_item(
+            1, 10, self.add("passive", "stone_skin"), 30, False
+        )
+        view = await menu_view(self.db, 1, 10)
+        self.assertEqual(len(view["personal"]["passives"]), 3)
+        self.assertEqual(len(view["slaves"][0]["passives"]), 1)
+
+    async def test_scroll_replacement_is_atomic_and_keeps_equipped_slot(self):
+        self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 10**6)
+        for key in ("smack", "humiliate", "uwu", "posing"):
+            await self.db.arena_use_item(1, 10, self.add("skill", key), 10)
+        await self.db.arena_edit_profile(
+            1, 10, 10, True, "loadout", ["bum_punch", "smack", "humiliate", "uwu"]
+        )
+        item = self.add("skill", "meow")
+        notice = await self.db.arena_use_item(1, 10, item, 10, replace_skill="smack")
+        self.assertIn("Заменён", notice)
+        view = (await menu_view(self.db, 1, 10))["personal"]
+        self.assertEqual(len(view["skills"]), 6)
+        self.assertIn("meow", view["known_skills"])
+        self.assertNotIn("smack", view["known_skills"])
+        self.assertEqual(view["loadout"], ["bum_punch", "meow", "humiliate", "uwu"])
+        self.assertEqual(self.qty(item), 0)
+
+    async def test_invalid_replacement_and_storage_failure_preserve_everything(self):
+        await self.db.arena_use_item(1, 10, self.add("passive", "light_step"), 10)
+        item = self.add("passive", "stone_skin")
+        for wrong in ("bum_punch", "unknown", "smack", 7):
+            with self.assertRaises(ValueError):
+                await self.db.arena_use_item(1, 10, item, 10, replace_skill=wrong)
+            self.assertEqual(self.qty(item), 1)
+        with patch.object(
+            self.db, "_arena_consume_item_locked", side_effect=RuntimeError("disk")
+        ):
+            with self.assertRaises(RuntimeError):
+                await self.db.arena_use_item(
+                    1, 10, item, 10, replace_skill="light_step"
+                )
+        view = (await menu_view(self.db, 1, 10))["personal"]
+        self.assertEqual([s["skill_id"] for s in view["passives"]], ["light_step"])
+        self.assertEqual(view["passive_loadout"], ["light_step"])
+        self.assertEqual(self.qty(item), 1)
+        await self.db.arena_use_item(1, 10, item, 10, replace_skill="light_step")
+        view = (await menu_view(self.db, 1, 10))["personal"]
+        self.assertEqual([s["skill_id"] for s in view["passives"]], ["stone_skin"])
+        self.assertEqual(view["passive_loadout"], ["stone_skin"])
+
     async def test_class_change_resets_only_target_profile_and_preserves_inventory_and_sprite(
         self,
     ):
@@ -344,7 +488,15 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
                 for s in (await menu_view(self.db, 1, 10))["personal"]["skills"]
             ],
         )
-        await self.db.arena_admin_grant(1, 10, "skill", "exclusive", admin, True)
+        rejected = await self.db.arena_admin_grant(
+            1, 10, "skill", "exclusive", admin, True
+        )
+        self.assertIn("Максимум 6", rejected)
+        await self.db.arena_edit_profile(1, 10, 10, True, "forget_skill", "mother_joke")
+        self.assertEqual(
+            await self.db.arena_admin_grant(1, 10, "skill", "exclusive", admin, True),
+            "granted",
+        )
         self.assertIn(
             "exclusive",
             [
