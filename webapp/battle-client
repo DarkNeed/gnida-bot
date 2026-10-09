@@ -26,13 +26,20 @@ function fighterDetails(s,key){
   const effective=s.effective_stats||s.stats;
   return '<div class="profile fighter-detail">'+fighterImage(s)+'<div><h2>'+esc(s.name)+'</h2><div class="muted">'+esc(s.class_name)+' · Lv.'+s.level+'</div>'+rarityBadge(s.class_rarity)+'<p>HP '+s.hp+' / '+s.stats.max_hp+'<br>'+esc(s.resource_name)+': '+s.resource+' / '+s.stats.resource_max+'</p></div></div><div class="stats-grid">'+Object.entries(statNames).map(([id,label])=>'<div><span>'+label+'</span><b>'+esc(Math.round((effective[id]??s.stats[id]??0)*100)/100)+(effective[id]!==s.stats[id]?' <small>(база '+esc(s.stats[id])+')</small>':'')+'</b></div>').join('')+'</div><p class="muted">'+(s.controlled?'Контроль: все характеристики −20%. ':'')+'Бонус точности: '+(s.accuracy_bonus||0)+' · бонус урона: '+Math.round((s.damage_bonus||0)*100)+'%.<br>Автоматического восстановления энергии нет. Уклонение и точность указаны в процентных пунктах.</p><h3>Активные навыки</h3>'+s.skill_details.map(skill=>'<div class="detail-skill"><b>'+esc(skill.name)+'</b> '+rarityBadge(skill.rarity)+skillInfo(skill)+(s.cooldowns[skill.skill_id]?'<div class="muted">Восстановится через '+s.cooldowns[skill.skill_id]+' х.</div>':'')+'</div>').join('')+'<h3>Пассивные навыки · '+(s.passive_details||[]).length+' / 2</h3>'+((s.passive_details||[]).map(p=>'<div class="detail-skill"><b>'+esc(p.name)+'</b> '+rarityBadge(p.rarity)+skillInfo(p)+'</div>').join('')||'<p class="muted">Не экипированы.</p>')+'<h3>Эффекты</h3>'+((s.effects||[]).filter(e=>e.duration<10000).map(e=>'<p class="muted">'+describeEffect(e)+' · осталось '+e.duration+' х.</p>').join('')||'<p class="muted">Нет временных эффектов.</p>')+'<p class="muted">Владелец/игрок: '+esc(current?.names?.[key+'_owner']||s.name)+'</p>';
 }
-function closeStats(){const overlay=document.getElementById('fighter-stats');if(overlay)overlay.remove();app.inert=false;inspectSide=null;}
+function closeStats(){const key=inspectSide,overlay=document.getElementById('fighter-stats');if(overlay){overlay.close();overlay.remove();}document.documentElement.classList.remove('fighter-details-open');app.inert=false;inspectSide=null;if(key)app.querySelector('[data-inspect="'+key+'"]')?.focus({preventScroll:true});}
 function showStats(key){
   const s=current?.state?.sides[key];if(!s)return;inspectSide=key;
   let overlay=document.getElementById('fighter-stats');
-  if(!overlay){overlay=document.createElement('div');overlay.id='fighter-stats';overlay.className='stats-overlay';overlay.addEventListener('click',e=>{if(e.target===overlay||e.target.closest('[data-close-stats]'))closeStats();});document.body.append(overlay);}
-  overlay.innerHTML='<section class="stats-dialog" role="dialog" aria-modal="true" aria-label="Статистика бойца"><button class="small close-stats" data-close-stats>Закрыть ✕</button>'+fighterDetails(s,key)+'</section>';
-  app.inert=true;overlay.querySelector('[data-close-stats]').focus({preventScroll:true});
+  const fresh=!overlay;
+  if(fresh){
+    overlay=document.createElement('dialog');overlay.id='fighter-stats';overlay.className='stats-dialog';overlay.setAttribute('aria-label','Статистика бойца');
+    overlay.addEventListener('cancel',e=>{e.preventDefault();closeStats();});
+    overlay.addEventListener('click',e=>{const r=overlay.getBoundingClientRect();if(e.target.closest('[data-close-stats]')||(e.target===overlay&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)))closeStats();});document.body.append(overlay);
+  }
+  const scroll=overlay.scrollTop;
+  overlay.innerHTML='<header class="stats-header"><b>О бойце</b><button class="small close-stats" data-close-stats aria-label="Закрыть детали">Закрыть ✕</button></header>'+fighterDetails(s,key);
+  overlay.scrollTop=scroll;
+  if(fresh){overlay.showModal();document.documentElement.classList.add('fighter-details-open');overlay.querySelector('[data-close-stats]').focus({preventScroll:true});}
 }
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeStats();});
 function toast(text){const box=document.getElementById("toast");box.textContent=text;box.hidden=false;setTimeout(()=>box.hidden=true,3500);}

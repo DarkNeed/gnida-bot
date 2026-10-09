@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl
 from aiohttp import web
 from aiogram.exceptions import TelegramAPIError
+from arena_assets import render_arena_index
 from arena_engine import (
     level_progress,
     normalize_loadout,
@@ -284,8 +285,15 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
     image_slots = asyncio.Semaphore(2)
 
     async def index(request):
+        return web.Response(
+            text=render_arena_index(ROOT),
+            content_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def stylesheet(request):
         return web.FileResponse(
-            ROOT / "index.html", headers={"Cache-Control": "no-cache"}
+            ROOT / "style.css", headers={"Cache-Control": "no-cache"}
         )
 
     async def client(request):
@@ -481,6 +489,7 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
     app.router.add_get("/", index)
     app.router.add_get("/health", health)
     app.router.add_get("/static/client.js", client)
+    app.router.add_get("/static/style.css", stylesheet)
     app.router.add_static("/static/", ROOT, show_index=False)
     app.router.add_get("/api/battle/{token}", get_battle)
     app.router.add_post("/api/battle/{token}", post_battle)

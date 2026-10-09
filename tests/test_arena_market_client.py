@@ -151,6 +151,38 @@ process.stdout.write(c.out||app.innerHTML);
         self.assertNotIn('data-do="craft:', body)
         self.assertIn("Владелец · Lv.25", body)
 
+    def test_native_details_dialog_preserves_scroll_and_restores_focus(self):
+        code = """
+let modal=null,shown=0,closed=0,focus=0,returned=0,kind='';
+const handlers={};
+app.querySelector=()=>({focus(){returned++}});
+document.documentElement={classList:{add(){},remove(){}}};
+document.getElementById=id=>id==='fighter-stats'?modal:app;
+document.body={append(el){modal=el}};
+document.createElement=tag=>{kind=tag;return {
+  innerHTML:'',scrollTop:0,setAttribute(){},addEventListener(name,fn){handlers[name]=fn},
+  querySelector:()=>({focus(){focus++}}),showModal(){shown++},close(){closed++},remove(){modal=null}
+}};
+current={state:{sides:{a:{name:'Игрок',class_name:'Оборванец',class_rarity:'common',level:1,hp:20,resource:100,resource_name:'Энергия',stats:{max_hp:20,resource_max:100},skill_details:[],effects:[],cooldowns:{}}}}};
+showStats('a');modal.scrollTop=90;showStats('a');
+const scroll=modal.scrollTop;
+handlers.cancel({preventDefault(){}});
+out=JSON.stringify({kind,shown,closed,focus,returned,scroll,removed:modal===null});
+"""
+        result = json.loads(self.run_client(code, {}))
+        self.assertEqual(
+            result,
+            {
+                "kind": "dialog",
+                "shown": 1,
+                "closed": 1,
+                "focus": 1,
+                "returned": 1,
+                "scroll": 90,
+                "removed": True,
+            },
+        )
+
     def test_battle_card_displays_effective_stats_and_escapes_names(self):
         data = {
             "name": "<img onerror=attack>",
