@@ -120,8 +120,13 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 for e in side["effects"]
                 if e["kind"] == "accuracy_flat"
             )
-            side["damage_bonus"] = sum(
+            damage_effects = [
                 e.get("value", 0) for e in side["effects"] if e["kind"] == "damage_pct"
+            ]
+            side["damage_bonus"] = (
+                max(0.1, 1 + sum(v for v in damage_effects if v >= 0))
+                * max(0.1, 1 + sum(v for v in damage_effects if v < 0))
+                - 1
             )
             side["can_use_potion"] = side["controller_id"] == actor and bool(
                 await db.arena_potion_count(row["chat_id"], actor)

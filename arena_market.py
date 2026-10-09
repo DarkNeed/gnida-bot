@@ -251,14 +251,41 @@ class ArenaMarketMixin:
                     key, item.get("name", f"Пассивка класса {i+1}"), (item,), cls.rarity
                 )
             )
+        unseen_inherent = [
+            k
+            for k in available
+            if k.startswith(f"inherent:{cls.class_id}:")
+            and k not in set(json.loads(profile["passive_seen"]))
+        ]
         memory = self._arena_memory_locked(
             chat, user, personal, "passive", available, profile
         )
+        # Fill free slots only on first discovery, never repeatedly re-equip a
+        # passive the player deliberately removed, and never replace their build.
+        selected = [
+            k
+            for k in dict.fromkeys(json.loads(profile["passive_loadout"]))
+            if k in memory
+        ][:MAX_PASSIVE_SKILLS]
+        for key in unseen_inherent:
+            if (
+                key in memory
+                and key not in selected
+                and len(selected) < MAX_PASSIVE_SKILLS
+            ):
+                selected.append(key)
+        if selected != json.loads(profile["passive_loadout"]):
+            table = "personal_profiles" if personal else "slave_profiles"
+            self.connection.execute(
+                f"UPDATE {table} SET passive_loadout=? WHERE chat_id=? AND user_id=?",
+                (json.dumps(selected), chat, user),
+            )
         return available if all_available else {k: available[k] for k in memory}
 
     def _arena_selected_passives_locked(self, chat, user, personal, profile=None):
         profile = profile or self._arena_profile_locked(chat, user, personal)
         available = self._arena_passive_catalog_locked(chat, user, personal, profile)
+        profile = self._arena_profile_locked(chat, user, personal)
         return [
             available[k]
             for k in dict.fromkeys(json.loads(profile["passive_loadout"]))
@@ -749,6 +776,7 @@ class ArenaMarketMixin:
                 chat, user, personal, all_available=True
             )
             passives = self._arena_passive_catalog_locked(chat, user, personal)
+            profile = self._arena_profile_locked(chat, user, personal)
             _, skills = self._fighter_catalog_locked()
             eligible = unlocked_skill_ids(
                 profile["class_id"],

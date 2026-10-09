@@ -11,6 +11,7 @@ from arena_fingers import (
     combat_modifiers,
     after_action,
 )
+from arena_class_mechanics import class_modifiers, class_after_action, has_adoration
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -119,19 +120,19 @@ FIGHTER_CLASSES = {
         "Тестостерон",
         5,
         {
-            "max_hp": 58,
-            "physical_attack": 15,
+            "max_hp": 53,
+            "physical_attack": 13.5,
             "magic_attack": 4,
-            "physical_defense": 14,
+            "physical_defense": 12,
             "magic_defense": 8,
             "speed": 8,
             "evasion": 4,
         },
         {
-            "max_hp": 6,
-            "physical_attack": 1.8,
+            "max_hp": 5,
+            "physical_attack": 1.5,
             "magic_attack": 0.3,
-            "physical_defense": 1.5,
+            "physical_defense": 1.05,
             "magic_defense": 0.8,
             "speed": 0.6,
             "evasion": 0.2,
@@ -143,19 +144,19 @@ FIGHTER_CLASSES = {
         "Энергосы",
         5,
         {
-            "max_hp": 40,
+            "max_hp": 44,
             "physical_attack": 5,
             "magic_attack": 16,
-            "physical_defense": 6,
+            "physical_defense": 7,
             "magic_defense": 12,
             "speed": 6,
             "evasion": 3,
         },
         {
-            "max_hp": 4,
+            "max_hp": 4.5,
             "physical_attack": 0.4,
             "magic_attack": 2,
-            "physical_defense": 0.5,
+            "physical_defense": 0.65,
             "magic_defense": 1.3,
             "speed": 0.5,
             "evasion": 0.1,
@@ -205,11 +206,11 @@ BUILTIN_SKILLS = {
             "cutie",
             5,
             "magic",
-            6,
+            8,
             90,
-            15,
+            10,
             0,
-            (effect("adoration", "damage_pct", -0.15, 2, chance=0.40),),
+            (effect("adoration", "damage_pct", -0.40, 2, chance=0.60),),
         ),
         Skill(
             "posing",
@@ -219,7 +220,7 @@ BUILTIN_SKILLS = {
             None,
             0,
             100,
-            25,
+            20,
             3,
             (effect("posing", "evasion_flat", 20, 3, target="self"),),
         ),
@@ -229,13 +230,25 @@ BUILTIN_SKILLS = {
             "cutie",
             7,
             "magic",
-            10,
-            85,
-            25,
+            12,
+            90,
+            20,
             1,
-            (effect("adoration", "damage_pct", -0.15, 2, chance=0.45),),
+            (effect("adoration", "damage_pct", -0.40, 2, chance=0.45),),
+            description="Против умилённой цели наносит на 20% больше урона.",
         ),
-        Skill("meow", "Мяу", "cutie", 9, "magic", 17, 80, 45, 2),
+        Skill(
+            "meow",
+            "Мяу",
+            "cutie",
+            9,
+            "magic",
+            17,
+            85,
+            35,
+            2,
+            description="Против умилённой цели +25% урона, но при попадании умиление снимается.",
+        ),
         Skill("smack", "Въебать", "jock", 5, "physical", 10, 95, 10, 0),
         Skill("butt_peak", "Жопный пик", "jock", 6, "physical", 18, 75, 45, 3),
         Skill(
@@ -283,11 +296,12 @@ BUILTIN_SKILLS = {
             "nerd",
             5,
             "magic",
-            10,
+            13,
             88,
-            20,
-            1,
-            (effect("humiliate_drain", "resource", -15),),
+            15,
+            0,
+            (effect("humiliate_drain", "resource_leech", 15),),
+            description="Отнимает до 15 энергии и возвращает себе половину действительно отнятого ресурса.",
         ),
         Skill(
             "charging",
@@ -297,12 +311,13 @@ BUILTIN_SKILLS = {
             None,
             0,
             100,
-            40,
-            4,
+            15,
+            3,
             (
-                effect("charging_damage", "damage_pct", 0.25, 3, target="self"),
-                effect("charging_speed", "speed_pct", 0.20, 3, target="self"),
+                effect("charging_damage", "next_magic_damage", 0.60, 3, target="self"),
+                effect("charging_aim", "accuracy_flat", 10, 1, target="self"),
             ),
+            description="Следующая магическая атака получает +60% урона. Усиление действует не дольше 3 своих действий и расходуется даже при промахе.",
         ),
         Skill(
             "doxxing",
@@ -312,10 +327,11 @@ BUILTIN_SKILLS = {
             None,
             0,
             90,
-            25,
+            20,
             3,
             (
-                effect("doxxing_drain", "resource", -25),
+                effect("doxxing_physical", "physical_defense_pct", -0.20, 3),
+                effect("doxxing_magic", "magic_defense_pct", -0.20, 3),
                 effect("doxxed", "evasion_flat", -15, 3),
             ),
         ),
@@ -330,6 +346,7 @@ BUILTIN_SKILLS = {
             40,
             2,
             (effect("enraged", "damage_pct", 0.20, 2),),
+            description="По цели под Деаноном +20% урона. При попадании усиливает урон противника на 20% на 2 его хода.",
         ),
         Skill(
             "go_to_store",
@@ -340,7 +357,7 @@ BUILTIN_SKILLS = {
             0,
             100,
             0,
-            4,
+            0,
             (effect("energy_drinks", "resource", 55, target="self"),),
         ),
     )
@@ -374,6 +391,37 @@ _finger_classes, _finger_skills = build_catalog(FighterClass, Skill, effect)
 FIGHTER_CLASSES.update(_finger_classes)
 BUILTIN_SKILLS.update(_finger_skills)
 VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _finger_classes.items()})
+
+FIGHTER_CLASSES["cutie"] = replace(
+    FIGHTER_CLASSES["cutie"],
+    passives=(
+        dict(
+            effect("charming", "charming", 1, target="self"),
+            name="Очаровашка",
+            description="Успешное наложение умиления возвращает 5 Любви, не чаще раза за действие.",
+        ),
+        dict(
+            effect("evasive_love", "evasive_love", 1, target="self"),
+            name="Не трогай лапками",
+            description="Уклонение от прямой атаки возвращает 8 Любви. Обычный промах врага бонуса не даёт.",
+        ),
+    ),
+)
+FIGHTER_CLASSES["nerd"] = replace(
+    FIGHTER_CLASSES["nerd"],
+    passives=(
+        dict(
+            effect("analysis", "analysis", 1, target="self"),
+            name="Анализ",
+            description="Разная магическая атака после предыдущей получает +10 точности. Повтор бонуса не даёт.",
+        ),
+        dict(
+            effect("economy", "economy", 1, target="self"),
+            name="Экономия",
+            description="Каждая третья платная магическая атака возвращает 10 энергии. Счётчик обнуляется в новом бою.",
+        ),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -514,6 +562,8 @@ def skill_from_dict(skill_id: str, payload: dict[str, Any]) -> Skill:
         "stun",
         "bleed",
         "physical_attack_pct",
+        "resource_leech",
+        "next_magic_damage",
     }
     normalized_effects: list[dict[str, Any]] = []
     for item in effects:
@@ -796,30 +846,36 @@ def resolve_skill(
         k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
     }
     previous_negatives = negative_kinds(target)
+    adored = has_adoration(target)
+    class_accuracy, class_boost = class_modifiers(actor, target, skill)
     extra_accuracy, extra_boost, pierce, critical, obeyed = combat_modifiers(
         actor, target, skill, rng
     )
     accuracy_bonus = sum(
         e.get("value", 0) for e in actor["effects"] if e.get("kind") == "accuracy_flat"
     )
-    hit = not skill.hostile or rng.random() * 100 < max(
+    roll = rng.random() * 100 if skill.hostile else 0
+    raw_accuracy = skill.accuracy + accuracy_bonus + extra_accuracy + class_accuracy
+    hit = not skill.hostile or roll < max(
         5,
         min(
             95,
-            skill.accuracy
-            + accuracy_bonus
-            + extra_accuracy
-            - effective_stat(target, "evasion"),
+            raw_accuracy - effective_stat(target, "evasion"),
         ),
+    )
+    dodged = bool(
+        skill.damage_type and not hit and roll < max(5, min(95, raw_accuracy))
     )
     actor["resource"] -= skill.cost
     damage = 0
     if hit and skill.damage_type:
         attack = effective_stat(actor, skill.damage_type + "_attack")
         defense = effective_stat(target, skill.damage_type + "_defense") * (1 - pierce)
-        boost = sum(
+        boosts = [
             e.get("value", 0) for e in actor["effects"] if e.get("kind") == "damage_pct"
-        )
+        ]
+        boost = sum(v for v in boosts if v >= 0)
+        reduction = max(0.1, 1 + sum(v for v in boosts if v < 0))
         damage = max(
             1,
             round(
@@ -827,21 +883,33 @@ def resolve_skill(
                 * (1 + attack / 20)
                 * 100
                 / (100 + defense * 4)
-                * max(0.1, 1 + boost + extra_boost)
+                * max(0.1, 1 + boost + extra_boost + class_boost)
+                * reduction
                 * (1.5 if critical else 1)
                 * rng.uniform(0.95, 1.05)
             ),
         )
         target["hp"] = max(0, target["hp"] - damage)
     # Existing buffs expire after this action, before newly applied buffs are added.
+    if skill.damage_type == "magic":
+        actor["effects"] = [
+            e for e in actor["effects"] if e["kind"] != "next_magic_damage"
+        ]
     _tick(actor)
     effects_text = []
+    charmed = False
     if hit:
         for effect in skill.effects:
             if rng.random() >= effect.get("chance", 1):
                 continue
             recipient = target if effect.get("target") == "enemy" else actor
-            if effect["kind"] == "resource":
+            if effect["kind"] == "resource_leech":
+                stolen = min(recipient["resource"], max(0, int(effect["value"])))
+                recipient["resource"] -= stolen
+                actor["resource"] = min(
+                    actor["stats"]["resource_max"], actor["resource"] + stolen // 2
+                )
+            elif effect["kind"] == "resource":
                 recipient["resource"] = max(
                     0,
                     min(
@@ -858,21 +926,34 @@ def resolve_skill(
                     if (e.get("id"), e["kind"]) != (new.get("id"), new["kind"])
                 ]
                 recipient["effects"].append(new)
-            label = {
-                "accuracy_flat": "точность",
-                "damage_pct": "урон",
-                "speed_pct": "скорость",
-                "physical_defense_pct": "защита",
-                "magic_defense_pct": "маг. защита",
-                "evasion_flat": "уклонение",
-                "resource": "ресурс",
-                "stun": "ошеломление",
-                "bleed": "кровотечение",
-                "physical_attack_pct": "физ. атака",
-            }.get(effect["kind"], effect["kind"])
+                charmed = charmed or (
+                    recipient is target
+                    and new.get("id") == "adoration"
+                    and new["kind"] == "damage_pct"
+                    and new.get("value", 0) < 0
+                )
+            label = (
+                "умиление"
+                if effect.get("id") == "adoration"
+                else {
+                    "accuracy_flat": "точность",
+                    "damage_pct": "урон",
+                    "speed_pct": "скорость",
+                    "physical_defense_pct": "защита",
+                    "magic_defense_pct": "маг. защита",
+                    "evasion_flat": "уклонение",
+                    "resource": "ресурс",
+                    "stun": "ошеломление",
+                    "bleed": "кровотечение",
+                    "physical_attack_pct": "физ. атака",
+                    "resource_leech": "похищение энергии",
+                    "next_magic_damage": "подготовка магии",
+                }.get(effect["kind"], effect["kind"])
+            )
             effects_text.append(label)
     if skill.cooldown:
         actor["cooldowns"][skill_id] = skill.cooldown
+    class_after_action(actor, target, skill, hit, dodged, adored, charmed)
     after_action(
         actor,
         target,
@@ -894,7 +975,9 @@ def resolve_skill(
     if target["hp"] > 0:
         target["hp"] -= bleed_damage
     text = f"{skill.name}: " + (
-        f"−{damage} HP" if damage else ("эффект применён" if hit else "промах")
+        f"−{damage} HP"
+        if damage
+        else ("эффект применён" if hit else "уклонение" if dodged else "промах")
     )
     if effects_text:
         text += " · " + ", ".join(effects_text)
@@ -911,6 +994,7 @@ def resolve_skill(
         "skill_name": skill.name,
         "damage_type": skill.damage_type,
         "hit": hit,
+        "dodged": dodged,
         "damage": damage,
         "critical": bool(hit and critical),
         "bleed_damage": bleed_damage,

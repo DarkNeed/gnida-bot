@@ -1119,6 +1119,17 @@ class ArenaMixin(ArenaMarketMixin):
                 raise ValueError("Ход уже изменился. Обновите бой.")
             state = json.loads(row["state_json"])
             key = state["active_side"]
+            if skill_id == "surrender":
+                key = next(
+                    (
+                        k
+                        for k, s in state["sides"].items()
+                        if s["controller_id"] == actor
+                    ),
+                    None,
+                )
+                if key is None:
+                    raise ValueError("Сдаться может только управляющий бойцом.")
             if state["sides"][key]["controller_id"] != actor:
                 raise ValueError("Вы не управляете бойцом в этот ход.")
             if row["mode"] == "slaves" or (

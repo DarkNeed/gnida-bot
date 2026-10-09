@@ -461,8 +461,9 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         p = view["personal"]
         self.assertEqual((p["class_id"], p["level"], p["xp"]), ("nerd", 1, 0))
         self.assertEqual([s["skill_id"] for s in p["skills"]], ["bum_punch"])
-        self.assertEqual(p["passive_loadout"], [])
-        self.assertEqual(p["passives"], [])
+        self.assertEqual(p["passive_loadout"], ["inherent:nerd:0", "inherent:nerd:1"])
+        self.assertEqual(len(p["passives"]), 2)
+        self.assertNotIn("light_step", [s["skill_id"] for s in p["passives"]])
         self.assertTrue(p["sprite_url"])
         self.assertGreater((await self.db.get_slave_profile(1, 10))["level"], 1)
         self.assertEqual(self.qty(candy), 3)
