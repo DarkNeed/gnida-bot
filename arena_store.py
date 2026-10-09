@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 from arena_market import ArenaMarketMixin
+from arena_wasteland import enemy_source
 from arena_engine import (
     FIGHTER_CLASSES,
     BUILTIN_SKILLS,
@@ -1279,6 +1280,7 @@ class ArenaMixin(ArenaMarketMixin):
     ) -> dict:
         async with self._lock:
             floor = 1
+            previous_class = None
             if previous:
                 old = self._arena_row_locked(previous)
                 if (
@@ -1290,6 +1292,7 @@ class ArenaMixin(ArenaMarketMixin):
                 ):
                     raise ValueError("Сначала победите на текущем этаже.")
                 floor = old["floor"] + 1
+                previous_class = json.loads(old["state_json"])["sides"]["b"]["class_id"]
                 personal = bool(old["personal_solo"])
                 fighter = old["a_fighter"]
             if self._arena_busy_locked(chat, actor):
@@ -1324,14 +1327,7 @@ class ArenaMixin(ArenaMarketMixin):
                 self._arena_require_combat_locked(chat, owner, fighter)
             source = self._arena_source_locked(chat, fighter, actor, False, personal)
             source["controlled"] = False
-            enemy = dict(
-                slave_id=0,
-                owner_id=0,
-                controlled=False,
-                class_id="ragamuffin",
-                level=source["level"] + floor - 1,
-                loadout=["bum_punch", "dust_in_eyes"],
-            )
+            enemy = enemy_source(source["level"] + floor - 1, previous_class)
             classes, skills = self._fighter_catalog_locked()
             state = create_battle_state(source, enemy, classes=classes, skills=skills)
             # The owner can pilot a slave in PvE; the same 20% control penalty applies.

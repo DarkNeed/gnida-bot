@@ -96,6 +96,9 @@ async def battle_view(db, row: dict, actor: int) -> dict:
         for key, side in state["sides"].items():
             side["name"] = names.get(key + "_fighter", "Боец")
             cls = classes.get(side["class_id"], classes["ragamuffin"])
+            if row["mode"] == "wasteland" and key == "b":
+                side["name"] = f"Пустошь · {cls.name}"
+                names["b_fighter"] = side["name"]
             side["class_name"] = cls.name
             side["resource_name"] = cls.resource_name
             side["class_rarity"] = cls.rarity
