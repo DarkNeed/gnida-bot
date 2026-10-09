@@ -15,3 +15,4 @@
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
 .sprite.player{height:55%;bottom:4%;width:42%}.sprite.enemy{height:42%;bottom:53%;width:35%}.podium.enemy{bottom:51%}.podium.player{bottom:3%}
 @media(min-width:700px){.hud{padding:8px;width:35%}.hud .name{font-size:13px}.hud .meta,.barline{font-size:9px}.hud .meta{margin:3px 0 6px}.barline{margin:3px 0}.sprite.player{height:48%}}
+.pixel-art{image-rendering:pixelated}.sprite-preview{display:flex;justify-content:center;align-items:center;height:240px;margin:16px 0;border-radius:14px;background-color:#10192b;background-image:conic-gradient(#26344a 25%,transparent 0 50%,#26344a 0 75%,transparent 0);background-size:24px 24px}.sprite-preview img{width:90%;height:90%;object-fit:contain}input[hidden]{display:none}

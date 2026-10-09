@@ -6,9 +6,14 @@ let current=null, menu=null, busy=false, lastSeq=0, polling=false, token="", cha
 const demo=new URLSearchParams(location.search).get("demo")==="1" && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const adminDraft={};
+let spriteDraft=null;
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,reduced?Math.min(50,ms):ms));
-const sprite=c=>"/static/assets/"+(c||"ragamuffin")+".png";
+const sprite=c=>c&&typeof c==="object"&&/^\/sprites\/[0-9a-f]{64}\.png$/.test(c.sprite_url||"")?c.sprite_url:"/static/assets/"+(["cutie","jock","nerd"].includes(typeof c==="object"?c?.sprite:c)?(typeof c==="object"?c.sprite:c):"ragamuffin")+".png";
+function fighterImage(p,cls="",id=""){
+  return '<img class="'+cls+(p.sprite_url&&p.pixel_art?' pixel-art':'')+'"'+(id?' id="'+id+'"':'')+' src="'+sprite(p)+'" data-fallback="'+sprite(p.sprite)+'" alt="'+esc(p.class_name)+'">';
+}
+function clearSpriteDraft(){if(spriteDraft)URL.revokeObjectURL(spriteDraft.url);spriteDraft=null;}
 function toast(text){const box=document.getElementById("toast");box.textContent=text;box.hidden=false;setTimeout(()=>box.hidden=true,3500);}
 function button(label,id,cls="",disabled=false){return '<button class="'+cls+'" data-do="'+id+'"'+(disabled?' disabled':'')+'>'+label+"</button>";}
 function top(title,tag,right){return '<header class="top"><div><div class="eyebrow">'+tag+'</div><h1>'+title+'</h1></div>'+right+"</header>";}
@@ -27,7 +32,7 @@ function battleScreen(data){
   near=(data.own_side==="b"||(!data.own_side&&(data.state.sides.b.controller_id===data.actor_id||data.consent_side==="b")))?"b":"a";
   const far=near==="a"?"b":"a",a=data.state.sides[near],b=data.state.sides[far];
   app.innerHTML='<section class="battle">'+top("Арена",data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":"БЕЗ СТАВКИ")+'</span>')+
-    '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div><img class="sprite enemy" id="sprite-'+far+'" src="'+sprite(b.sprite)+'" alt="'+esc(b.class_name)+'"><div class="podium player"></div><img class="sprite player" id="sprite-'+near+'" src="'+sprite(a.sprite)+'" alt="'+esc(a.class_name)+'">'+hud(a,near)+'</div><div class="turnbanner" id="turn"></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+button("В меню","menu","small")+'</footer></section>';
+    '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'</div><div class="turnbanner" id="turn"></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+button("В меню","menu","small")+'</footer></section>';
   renderActions();
 }
 function renderActions(){
@@ -123,11 +128,12 @@ function profileCard(p,title,owned=false){
   const progress=p.progress||[p.level,0,10];
   const status=p.personal?"":'<p class="muted">'+(p.combat_slot?"Боевой слот "+p.combat_slot+" / 5":p.working_role?"На работе · не экипирован":"Вне боевого отряда")+(p.in_battle?" · выбран для боя":"")+'</p>';
   const equipment=owned?button(p.combat_slot?"Снять с боевого слота":"Экипировать и снять с работы",(p.combat_slot?"unequip:":"equip:")+p.user_id,"",p.in_battle):"";
-  return '<div class="card"><div class="profile"><img src="'+sprite(p.sprite)+'" alt=""><div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+progress[1]+' / '+progress[2]+' XP</span></div><div class="bar"><i style="width:'+100*progress[1]/progress[2]+'%"></i></div></div></div></div>'+status+'<div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary",!p.personal&&!p.combat_slot)+button("Класс и навыки","profile:"+p.user_id)+equipment+'</div></div>';
+  return '<div class="card"><div class="profile">'+fighterImage(p)+'<div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+progress[1]+' / '+progress[2]+' XP</span></div><div class="bar"><i style="width:'+100*progress[1]/progress[2]+'%"></i></div></div></div></div>'+status+'<div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary",!p.personal&&!p.combat_slot)+button("Класс и навыки","profile:"+p.user_id)+equipment+(p.can_edit_sprite?button("Свой спрайт","appearance"):"")+'</div></div>';
 }
 function activeProfile(){return [...(menu?.slaves||[]),menu?.self_slave,menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
 function menuScreen(data){
   menu=data;chat=data.chat_id;token="";
+  if(page!=="appearance")clearSpriteDraft();
   let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+button("Рабы","tab:slaves",page==="slaves"?"selected":"")+button("Владелец","tab:owner",page==="owner"?"selected":"")+'</div>';
   if(page==="personal")body+=profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Личный персонаж есть у всех, раб не нужен. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
   else if(page==="slaves"){
@@ -145,6 +151,9 @@ function menuScreen(data){
     const o=data.owner;
     body+='<div class="card"><h2>Владелец · Lv.'+o.level+'</h2><p class="muted">Опыт: '+o.xp+' XP · Рабов: '+data.slaves.length+'<br>Сырьё: '+o.raw_material+' / '+(o.level<5?0:100+(o.level-5)*2)+'<br>Зелья: '+o.healing_potions+' · Конфеты: '+o.candies+'</p><div class="stack">'+button("Зелье · 50 сырья · Lv.5","craft:potion")+button("Конфета · 100 сырья · Lv.7","craft:candy")+'</div></div><div class="note">С 5 уровня: 1 сырьё/час за раба. Зелье лечит 30% HP, одно на бой. Конфета с 7 уровня даёт 30 XP. Владелец получает опыт за победы рабов и новые рекорды их количества.</div>';
     if(data.admin)body+=button("Авторские классы и навыки","admin");
+  }else if(page==="appearance"){
+    const p=data.personal;
+    body+='<div class="card"><h2>Свой спрайт</h2><div class="sprite-preview">'+fighterImage(p,"", "upload-preview")+'</div><p class="muted">PNG с прозрачным фоном, до 2 МБ. Каждая сторона — от 16 до 1024 пикселей. Одна поза; пропорции сохраняются. Картинка видна всем в боях личного персонажа и твоего персонажа-раба в этом чате. На характеристики она не влияет.</p><input type="file" id="sprite-file" accept="image/png,.png" hidden><label class="check"><input type="checkbox" id="sprite-pixels" checked> Пиксельный рисунок — без сглаживания</label><p class="muted" id="sprite-filename">Файл не выбран.</p><div class="stack">'+button("Выбрать PNG","choose_sprite")+button("Сохранить спрайт","upload_sprite","primary",true)+(p.sprite_url?button("Вернуть стандартный","reset_sprite"):"")+button("Назад","tab:personal")+'</div></div>';
   }else if(page==="admin"){
     body+='<div class="card"><h2>Авторский контент</h2><p class="muted">Создание и выдача доступны только тебе. Формат JSON описан в ARENA.md.</p><div class="form"><select id="content-type"><option value="skill">Навык</option><option value="class">Класс + пассивки</option></select><input id="content-id" placeholder="Уникальный ID, например fire_ball"><textarea id="content-json" placeholder=\'{"name":"Огненный шар","damage_type":"magic","power":15,"cost":20}\'></textarea>'+button("Создать","create_content","primary")+'<input id="content-user" type="number" placeholder="Telegram ID получателя">'+button("Выдать выбранный ID участнику","grant_content")+'</div></div>';
   }else {
@@ -175,6 +184,32 @@ async function menuAction(action,extra={}){
     else{toast(({crafted:"Создано.",low_level:"Недостаточный уровень.",not_enough_material:"Не хватает сырья.",no_candy:"Нет конфет.",given:"Конфета выдана.",created:"Создано.",granted:"Выдано.",invalid_definition:"Некорректное описание.",exists:"Такой ID уже есть."})[response.notice]||response.notice);menuScreen(response.menu);}
   }catch(error){toast(error.message);}finally{busy=false;}
 }
+async function saveSprite(reset=false){
+  if(busy||(!reset&&!spriteDraft))return;
+  busy=true;
+  document.querySelectorAll(".content button,.tabs button,#sprite-file").forEach(b=>b.disabled=true);
+  try{
+    const response=await fetch("/api/menu/"+chat+"/sprite",{method:reset?"DELETE":"POST",headers:{"X-Telegram-Init-Data":tg?.initData||"",...(!reset?{"Content-Type":"image/png","X-Pixel-Art":String(document.getElementById("sprite-pixels").checked)}:{})},body:reset?undefined:spriteDraft.file});
+    const data=await response.json().catch(()=>({error:"Сервер недоступен. Попробуй ещё раз."}));
+    if(!response.ok)throw new Error(data.error||"Не удалось сохранить спрайт.");
+    clearSpriteDraft();page="personal";menuScreen(data.menu);toast(data.notice);
+  }catch(error){toast(error.message);}finally{
+    busy=false;document.querySelectorAll(".content button,.tabs button,#sprite-file").forEach(b=>b.disabled=false);
+    const upload=document.querySelector('[data-do="upload_sprite"]');if(upload)upload.disabled=!spriteDraft;
+  }
+}
+app.addEventListener("error",event=>{const img=event.target;if(img.tagName==="IMG"&&img.dataset.fallback){const fallback=img.dataset.fallback;delete img.dataset.fallback;img.classList.remove("pixel-art");img.src=fallback;}},true);
+app.addEventListener("change",event=>{
+  if(event.target.id==="sprite-pixels"){document.getElementById("upload-preview")?.classList.toggle("pixel-art",event.target.checked);return;}
+  if(event.target.id!=="sprite-file"||busy)return;
+  const file=event.target.files?.[0];if(!file)return;
+  if(file.size>2*1024*1024||!file.size){toast("PNG должен весить не больше 2 МБ.");event.target.value="";return;}
+  if(!/\.png$/i.test(file.name)){toast("Выбери PNG с прозрачным фоном.");event.target.value="";return;}
+  clearSpriteDraft();spriteDraft={file,url:URL.createObjectURL(file)};
+  const preview=document.getElementById("upload-preview");preview.dataset.fallback=sprite(menu.personal.sprite);preview.src=spriteDraft.url;preview.classList.toggle("pixel-art",document.getElementById("sprite-pixels").checked);
+  document.getElementById("sprite-filename").textContent=file.name;
+  document.querySelector('[data-do="upload_sprite"]').disabled=false;
+});
 app.addEventListener("click",async event=>{
   const b=event.target.closest("button");if(!b||b.disabled||busy)return;
   if(b.dataset.skill){await action("skill",{skill:b.dataset.skill});return;}
@@ -184,6 +219,9 @@ app.addEventListener("click",async event=>{
   if(cmd==="potion"||cmd==="surrender"){await action("skill",{skill:cmd});return;}
   if(cmd==="menu"||cmd==="refresh"){if(demo){toast("Демо интерфейса. В Telegram здесь откроется меню.");return;}await openMenu();return;}
   if(cmd==="tab"){page=arg;menuScreen(menu);return;}
+  if(cmd==="appearance"){clearSpriteDraft();page="appearance";menuScreen(menu);return;}
+  if(cmd==="choose_sprite"){document.getElementById("sprite-file").click();return;}
+  if(cmd==="upload_sprite"||cmd==="reset_sprite"){await saveSprite(cmd==="reset_sprite");return;}
   if(cmd==="profile"){profileId=Number(arg);page=page==="personal"?"personalProfile":"slaveProfile";menuScreen(menu);return;}
   if(cmd==="admin"){page="admin";menuScreen(menu);return;}
   if(cmd==="battle"){token=arg;current=null;lastSeq=0;battleScreen(await api("/api/battle/"+token));return;}

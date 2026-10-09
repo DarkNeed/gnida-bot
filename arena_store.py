@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import json
+import hashlib
 import random
 import secrets
 import sqlite3
@@ -128,6 +129,13 @@ class ArenaMixin:
                 day TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(chat_id,first_id,second_id,day)
             );
+            CREATE TABLE IF NOT EXISTS arena_sprites (
+                chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                sprite_key TEXT NOT NULL, png BLOB NOT NULL,
+                pixel_art INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(chat_id,user_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_arena_sprite_key ON arena_sprites(sprite_key);
         """)
         self.connection.commit()
 
@@ -1251,6 +1259,48 @@ class ArenaMixin:
             )
             self.connection.commit()
             return self._arena_row_locked(token)
+
+    async def arena_set_sprite(
+        self, chat: int, actor: int, png: bytes, pixel_art: bool
+    ) -> str:
+        # HTTP boundary has already decoded/validated PNG. No user/target supplied by caller.
+        key = hashlib.sha256(png).hexdigest()
+        async with self._lock:
+            self.connection.execute(
+                """INSERT INTO arena_sprites(chat_id,user_id,sprite_key,png,pixel_art)
+                   VALUES(?,?,?,?,?) ON CONFLICT(chat_id,user_id) DO UPDATE SET
+                   sprite_key=excluded.sprite_key,png=excluded.png,pixel_art=excluded.pixel_art""",
+                (chat, actor, key, png, int(pixel_art)),
+            )
+            self.connection.commit()
+        return key
+
+    async def arena_reset_sprite(self, chat: int, actor: int) -> None:
+        async with self._lock:
+            self.connection.execute(
+                "DELETE FROM arena_sprites WHERE chat_id=? AND user_id=?", (chat, actor)
+            )
+            self.connection.commit()
+
+    async def arena_sprite_info(self, chat: int, user: int) -> dict:
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT sprite_key,pixel_art FROM arena_sprites WHERE chat_id=? AND user_id=?",
+                (chat, user),
+            ).fetchone()
+            if not row:
+                return dict(sprite_url=None, pixel_art=False)
+            return dict(
+                sprite_url="/sprites/" + row["sprite_key"] + ".png",
+                pixel_art=bool(row["pixel_art"]),
+            )
+
+    async def arena_sprite_png(self, key: str) -> bytes | None:
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT png FROM arena_sprites WHERE sprite_key=? LIMIT 1", (key,)
+            ).fetchone()
+            return bytes(row["png"]) if row else None
 
     async def arena_menu(self, chat: int, actor: int) -> dict:
         async with self._lock:

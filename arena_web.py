@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -19,6 +20,7 @@ from arena_engine import (
     stats_for,
 )
 from custom_commands import CUSTOM_COMMAND_OWNER_ID
+from arena_images import MAX_SPRITE_BYTES, normalize_sprite
 
 ROOT = Path(__file__).parent / "webapp"
 ACTOR = web.RequestKey("arena_actor", int)
@@ -94,6 +96,9 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 side["class_id"]
                 if side["class_id"] in {"cutie", "jock", "nerd"}
                 else "ragamuffin"
+            )
+            side.update(
+                await db.arena_sprite_info(row["chat_id"], row[key + "_fighter"] or 0)
             )
             side["skill_details"] = [
                 asdict(skills[s]) for s in side["loadout"] if s in skills
@@ -175,6 +180,8 @@ async def menu_view(db, chat: int, actor: int) -> dict:
             if profile["class_id"] in {"cutie", "jock", "nerd"}
             else "ragamuffin"
         )
+        profile.update(await db.arena_sprite_info(chat, profile["user_id"]))
+        profile["can_edit_sprite"] = profile["user_id"] == actor
         # Grants are scoped to this user/chat, not the entire custom catalog.
         async with db._lock:
             grants = db._granted_content_locked(chat, profile["user_id"], "skill")
@@ -191,6 +198,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
             if k in {"cutie", "jock", "nerd"} or k in class_grants
         ]
     result["chat_id"] = chat
+    result["actor_id"] = actor
     result["admin"] = actor == CUSTOM_COMMAND_OWNER_ID
     return result
 
@@ -221,6 +229,11 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
             return web.json_response(
                 {"error": str(error)}, status=400, headers={"Cache-Control": "no-store"}
             )
+        except web.HTTPRequestEntityTooLarge:
+            return web.json_response(
+                {"error": "Файл слишком большой. Максимум — 2 МБ." if request.path.endswith("/sprite") else "Запрос слишком большой."},
+                status=413,
+            )
         except web.HTTPException:
             raise
         except Exception:
@@ -234,6 +247,7 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
         return response
 
     app = web.Application(middlewares=[guard], client_max_size=64 * 1024)
+    image_slots = asyncio.Semaphore(2)
 
     async def index(request):
         return web.FileResponse(
@@ -297,6 +311,43 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
         actor = request[ACTOR]
         await read_member(chat, actor)
         return web.json_response(await menu_view(db, chat, actor))
+
+    async def upload_sprite(request):
+        chat, actor = int(request.match_info["chat"]), request[ACTOR]
+        await require_member(bot, chat, actor)
+        if request.content_type not in {"image/png", "application/octet-stream"}:
+            raise ValueError("Можно загрузить только PNG.")
+        pixel_art = request.headers.get("X-Pixel-Art", "false")
+        if pixel_art not in {"true", "false"}:
+            raise ValueError("Некорректный режим пиксельного рисунка.")
+        async with image_slots:
+            raw = await request.clone(client_max_size=MAX_SPRITE_BYTES + 1).read()
+            png = await asyncio.to_thread(normalize_sprite, raw)
+        await db.arena_set_sprite(chat, actor, png, pixel_art == "true")
+        return web.json_response(
+            {"notice": "Свой спрайт сохранён.", "menu": await menu_view(db, chat, actor)}
+        )
+
+    async def reset_sprite(request):
+        chat, actor = int(request.match_info["chat"]), request[ACTOR]
+        await require_member(bot, chat, actor)
+        await db.arena_reset_sprite(chat, actor)
+        return web.json_response(
+            {"notice": "Стандартный спрайт возвращён.", "menu": await menu_view(db, chat, actor)}
+        )
+
+    async def get_sprite(request):
+        # Public appearance, like the default sprites; opaque content-addressed URL.
+        key = request.match_info["key"]
+        if not re.fullmatch(r"[0-9a-f]{64}", key):
+            raise web.HTTPNotFound()
+        png = await db.arena_sprite_png(key)
+        if png is None:
+            raise web.HTTPNotFound()
+        return web.Response(
+            body=png, content_type="image/png",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
 
     async def post_menu(request):
         chat = int(request.match_info["chat"])
@@ -378,4 +429,7 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
     app.router.add_post("/api/battle/{token}", post_battle)
     app.router.add_get("/api/menu/{chat}", get_menu)
     app.router.add_post("/api/menu/{chat}", post_menu)
+    app.router.add_post("/api/menu/{chat}/sprite", upload_sprite)
+    app.router.add_delete("/api/menu/{chat}/sprite", reset_sprite)
+    app.router.add_get("/sprites/{key}.png", get_sprite)
     return app

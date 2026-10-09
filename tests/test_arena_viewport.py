@@ -118,6 +118,7 @@ const app = {innerHTML: ''};
 const context = {
   app, page: process.argv[3], menu: null, chat: null, token: '', tg: undefined,
   esc: value => String(value ?? ''), sprite: () => '', top: () => '',
+  fighterImage: () => '<img>', clearSpriteDraft: () => {},
   button: (label, id, cls = '', disabled = false) => `<button data-do="${id}"${disabled ? ' disabled' : ''}>${label}</button>`
 };
 vm.runInNewContext(process.argv[2] + '\\nmenuScreen(' + JSON.stringify(data) + ');', context);
@@ -134,6 +135,7 @@ process.stdout.write(app.innerHTML);
                 "personal": True,
                 "level": 1,
                 "class_name": "Оборванец",
+                "can_edit_sprite": True,
             },
         }
         return subprocess.run(
@@ -184,3 +186,43 @@ process.stdout.write(app.innerHTML);
         body = self.render([], "personal")
         self.assertIn('data-do="waste:10">', body)
         self.assertIn("/бой @участник", body)
+        self.assertIn('data-do="appearance"', body)
+
+    def test_cannot_change_owned_slave_sprite(self):
+        body = self.render([{"user_id":30,"level":1,"class_name":"Оборванец","can_edit_sprite":False}])
+        self.assertNotIn('data-do="appearance"', body)
+
+    def test_appearance_upload_and_reset_controls(self):
+        body = self.render([], "appearance")
+        self.assertIn('id="sprite-file"', body)
+        self.assertIn('data-do="upload_sprite" disabled', body)
+        self.assertIn('id="sprite-pixels" checked', body)
+        self.assertNotIn('data-do="reset_sprite"', body)
+        self.assertIn("до 2 МБ", body)
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is needed for client tests")
+class ArenaSpriteClientTests(unittest.TestCase):
+    def render(self, profile):
+        source=(Path(__file__).resolve().parents[1]/"webapp"/"battle-client").read_text(encoding="utf-8")
+        code=source.split("const sprite=",1)[1].split("\nfunction clearSpriteDraft",1)[0]
+        result=subprocess.run(
+            [shutil.which("node"),"-e",
+             "const vm=require('node:vm');const c={esc:v=>String(v??'')};vm.runInNewContext(process.argv[1]+ '\\nresult=fighterImage('+process.argv[2]+',\"sprite player\",\"sprite-a\");',c);process.stdout.write(c.result);",
+             "const sprite="+code,json.dumps(profile)],capture_output=True,text=True,check=True,encoding="utf-8")
+        return result.stdout
+
+    def test_custom_image_with_pixel_mode_and_default_fallback(self):
+        url="/sprites/"+"a"*64+".png"
+        body=self.render({"sprite":"nerd","sprite_url":url,"pixel_art":True})
+        self.assertIn('src="'+url+'"',body)
+        self.assertIn('data-fallback="/static/assets/nerd.png"',body)
+        self.assertIn('class="sprite player pixel-art"',body)
+
+    def test_default_and_untrusted_sprite_paths(self):
+        for url in (None,"javascript:alert(1)","https://other/image.png",'/sprites/" onerror="alert(1)'):
+            body=self.render({"sprite":"cutie","sprite_url":url})
+            self.assertIn('src="/static/assets/cutie.png"',body)
+            self.assertNotIn("onerror",body)
+        body=self.render({"sprite":"../../other"})
+        self.assertIn('src="/static/assets/ragamuffin.png"',body)
