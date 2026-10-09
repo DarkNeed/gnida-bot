@@ -422,6 +422,21 @@ FIGHTER_CLASSES["nerd"] = replace(
         ),
     ),
 )
+FIGHTER_CLASSES["jock"] = replace(
+    FIGHTER_CLASSES["jock"],
+    passives=(
+        dict(
+            effect("right_version", "right_version", 1, target="self"),
+            name="♂ Right Version ♂",
+            description="Успешные «Напрячь сиси» и «Зажим булками» усиливают следующую физическую атаку на 15%. Не складывается; действует 2 своих хода, расходуется даже при промахе.",
+        ),
+        dict(
+            effect("fucking_stamina", "fucking_stamina", 1, target="self"),
+            name="♂ Fucking Stamina ♂",
+            description="«Напрячь сиси» и успешный «Зажим булками» возвращают 8 Тестостерона после оплаты навыка. Ход и перезарядка сохраняются.",
+        ),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -960,6 +975,10 @@ def resolve_skill(
     if skill.damage_type == "magic":
         actor["effects"] = [
             e for e in actor["effects"] if e["kind"] != "next_magic_damage"
+        ]
+    elif skill.damage_type == "physical":
+        actor["effects"] = [
+            e for e in actor["effects"] if e["kind"] != "next_physical_damage"
         ]
     _tick(actor)
     effects_text = []

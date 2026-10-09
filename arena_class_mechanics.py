@@ -1,6 +1,8 @@
-"""Cutie and nerd identities; equipped passives, not class labels, enable traits."""
+"""Core class identities; equipped passives, not class labels, enable traits."""
 
 from arena_fingers import has_trait
+
+JOCK_PREPARATION_SKILLS = frozenset({"flex_chest", "clench"})
 
 
 def has_adoration(side):
@@ -29,6 +31,12 @@ def class_modifiers(actor, target, skill):
         last = actor.get("mechanics", {}).get("last_magic")
         if has_trait(actor, "analysis") and last not in {None, skill.skill_id}:
             accuracy += 10
+    if skill.damage_type == "physical":
+        boost += sum(
+            e.get("value", 0)
+            for e in actor["effects"]
+            if e["kind"] == "next_physical_damage"
+        )
     return accuracy, boost
 
 
@@ -42,6 +50,23 @@ def class_after_action(actor, target, skill, hit, dodged, adored, charmed):
             memory["paid_magic"] = count % 3
             if count == 3:
                 refund += 10
+    if hit and skill.skill_id in JOCK_PREPARATION_SKILLS:
+        if has_trait(actor, "right_version"):
+            # Refresh one charge after the current action's tick, never stack it.
+            actor["effects"] = [
+                e for e in actor["effects"] if e.get("id") != "right_version_ready"
+            ]
+            actor["effects"].append(
+                dict(
+                    id="right_version_ready",
+                    kind="next_physical_damage",
+                    value=0.15,
+                    duration=2,
+                    target="self",
+                )
+            )
+        if has_trait(actor, "fucking_stamina"):
+            refund += min(8, skill.cost)
     actor["resource"] = min(actor["stats"]["resource_max"], actor["resource"] + refund)
     if dodged and has_trait(target, "evasive_love"):
         target["resource"] = min(

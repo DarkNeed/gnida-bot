@@ -19,7 +19,7 @@ from arena_engine import (
     resolve_skill,
 )
 from arena_fingers import combat_modifiers, has_trait
-from arena_class_mechanics import class_modifiers
+from arena_class_mechanics import class_modifiers, JOCK_PREPARATION_SKILLS
 
 BUILDS = {
     "jock": [
@@ -193,6 +193,21 @@ def select_skill(state, style):
                 value += 2
             if skill.skill_id == "calm_breath" and has_trait(actor, "constellation"):
                 value += 0.06 * own_peak
+            if skill.skill_id in JOCK_PREPARATION_SKILLS:
+                if has_trait(actor, "right_version") and not any(
+                    e["kind"] == "next_physical_damage" for e in actor["effects"]
+                ):
+                    physical_peak = max(
+                        (
+                            damage_estimate(actor, target, BUILTIN_SKILLS[k])
+                            for k in actor["loadout"] + ["bum_punch"]
+                            if BUILTIN_SKILLS[k].damage_type == "physical"
+                        ),
+                        default=0,
+                    )
+                    value += hit * 0.15 * physical_peak
+                if has_trait(actor, "fucking_stamina"):
+                    value += hit * min(8, skill.cost) * energy_value
         elif value <= 0:
             value = sum(
                 min(
@@ -208,14 +223,23 @@ def select_skill(state, style):
     return best
 
 
-def match(first, second, level, seed, style, controlled=False, foreign=False):
+def match(
+    first,
+    second,
+    level,
+    seed,
+    style,
+    controlled=False,
+    foreign=False,
+    jock_passives=True,
+):
     def source(cls, user):
         builds = BUILDS[cls]
         build = list(builds[seed % len(builds)])
         if foreign:
             build = ["uwu", "humiliate", "go_to_store", "mother_joke"]
         build = [k for k in build if BUILTIN_SKILLS[k].unlock_level <= level]
-        return dict(
+        result = dict(
             slave_id=user,
             owner_id=user,
             class_id=cls,
@@ -224,6 +248,9 @@ def match(first, second, level, seed, style, controlled=False, foreign=False):
             loadout=build,
             granted_skills=build if foreign else [],
         )
+        if cls == "jock" and not jock_passives:
+            result["passive_details"] = []
+        return result
 
     state = create_battle_state(source(first, 1), source(second, 2))
     a, b = state["sides"]["a"], state["sides"]["b"]
@@ -250,6 +277,11 @@ def main():
     p.add_argument("--style", choices=("damage", "tactical"), default="tactical")
     p.add_argument("--controlled", action="store_true")
     p.add_argument("--foreign", action="store_true")
+    p.add_argument(
+        "--no-jock-passives",
+        action="store_true",
+        help="Compare the same policy with jock's new passives disabled.",
+    )
     args = p.parse_args()
     classes = args.classes.split(",")
     results = []
@@ -266,6 +298,7 @@ def main():
                         args.style,
                         args.controlled,
                         args.foreign,
+                        not args.no_jock_passives,
                     )
                     wins += winner == "a"
                     draws += winner is None
@@ -287,6 +320,7 @@ def main():
                 samples=args.samples,
                 controlled=args.controlled,
                 foreign=args.foreign,
+                jock_passives=not args.no_jock_passives,
                 results=results,
             ),
             indent=2,
