@@ -22,6 +22,7 @@ from arena_engine import (
     skill_from_dict,
     create_battle_state,
     resolve_skill,
+    skip_turn,
     use_healing_potion,
     unlocked_skill_ids,
     xp_for_next_level,
@@ -33,7 +34,8 @@ from arena_engine import (
 )
 
 OWNER_RECORD_XP = 2
-ARENA_TURN_SECONDS = 3 * 60 * 60
+ARENA_PREPARATION_SECONDS = 3 * 60 * 60
+ARENA_TURN_SECONDS = 3 * 60
 ARENA_FEE_PERCENT = 10
 COMBAT_SLAVE_CAPACITY = 5
 
@@ -157,6 +159,23 @@ class ArenaMixin(ArenaMarketMixin):
         self.connection.commit()
 
         self._connect_arena_market()
+        # Upgrade live battles once. Restarting must never renew a PvP deadline.
+        for raw in self.connection.execute(
+            "SELECT id,mode,state_json FROM arena_battles WHERE status='active' AND state_json IS NOT NULL"
+        ).fetchall():
+            state = json.loads(raw["state_json"])
+            timer = 0 if raw["mode"] == "wasteland" else ARENA_TURN_SECONDS
+            if state.get("turn_timer_seconds") != timer:
+                state["turn_timer_seconds"] = timer
+                self.connection.execute(
+                    "UPDATE arena_battles SET state_json=?,deadline=?,revision=revision+1 WHERE id=?",
+                    (
+                        json.dumps(state, ensure_ascii=False),
+                        utc_timestamp() + timer if timer else 0,
+                        raw["id"],
+                    ),
+                )
+        self.connection.commit()
 
     def _slave_count_locked(self, chat_id: int, owner_id: int) -> int:
         return int(
@@ -844,6 +863,7 @@ class ArenaMixin(ArenaMarketMixin):
             for k in ("a", "b")
         ]
         state = create_battle_state(*sources, classes=classes, skills=skills)
+        state["turn_timer_seconds"] = ARENA_TURN_SECONDS
         a_speed, b_speed = (
             effective_stat(state["sides"][k], "speed") for k in ("a", "b")
         )
@@ -913,7 +933,7 @@ class ArenaMixin(ArenaMarketMixin):
                     stake,
                     stake,
                     now,
-                    now + ARENA_TURN_SECONDS,
+                    now + ARENA_PREPARATION_SECONDS,
                 ),
             )
             if stake:
@@ -937,6 +957,7 @@ class ArenaMixin(ArenaMarketMixin):
             row = self._arena_row_locked(token)
             if (
                 row["status"] in {"pending", "active"}
+                and row["mode"] != "wasteland"
                 and row["deadline"] <= utc_timestamp()
             ):
                 self._arena_expire_locked()
@@ -1055,6 +1076,10 @@ class ArenaMixin(ArenaMarketMixin):
             xp = (
                 1 if low_reward else (10 if winner == k else 8 if winner is None else 7)
             )
+            if state.get("finish_reason") == "turn_limit" and not state.get(
+                "had_player_action"
+            ):
+                xp = 0  # Two idle players cannot farm XP by waiting out skips.
             if row["mode"] == "wasteland":
                 xp = (
                     0
@@ -1113,8 +1138,12 @@ class ArenaMixin(ArenaMarketMixin):
             row = self._arena_row_locked(token)
             if row["status"] != "active":
                 raise ValueError("Бой не активен.")
-            if row["deadline"] <= utc_timestamp():
-                raise ValueError("Время хода истекло.")
+            if row["mode"] != "wasteland" and row["deadline"] <= utc_timestamp():
+                self._arena_expire_locked()
+                self.connection.commit()
+                row = self._arena_row_locked(token)
+                if row["status"] != "active":
+                    raise ValueError("Бой завершён.")
             if row["revision"] != revision:
                 raise ValueError("Ход уже изменился. Обновите бой.")
             state = json.loads(row["state_json"])
@@ -1184,7 +1213,15 @@ class ArenaMixin(ArenaMarketMixin):
                     "UPDATE arena_battles SET state_json=?,revision=revision+1,deadline=? WHERE id=?",
                     (
                         json.dumps(state, ensure_ascii=False),
-                        utc_timestamp() + ARENA_TURN_SECONDS,
+                        (
+                            (
+                                row["deadline"]
+                                if skill_id == "potion"
+                                else utc_timestamp() + ARENA_TURN_SECONDS
+                            )
+                            if row["mode"] != "wasteland"
+                            else 0
+                        ),
                         row["id"],
                     ),
                 )
@@ -1196,9 +1233,10 @@ class ArenaMixin(ArenaMarketMixin):
 
     def _arena_expire_locked(self) -> list[dict]:
         expired = []
+        now = utc_timestamp()
         for raw in self.connection.execute(
-            "SELECT * FROM arena_battles WHERE status IN ('pending','active') AND (deadline<=? OR (mode<>'wasteland' AND message_id IS NULL AND created_at<=?))",
-            (utc_timestamp(), utc_timestamp() - 60),
+            "SELECT * FROM arena_battles WHERE mode<>'wasteland' AND status IN ('pending','active') AND (deadline<=? OR (message_id IS NULL AND created_at<=?))",
+            (now, now - 60),
         ).fetchall():
             row = dict(raw)
             invalid_owner = row["mode"] == "slaves" and any(
@@ -1214,17 +1252,16 @@ class ArenaMixin(ArenaMarketMixin):
                 self._arena_refund_locked(row, "cancelled")
             elif row["status"] == "active" and row["state_json"]:
                 state = json.loads(row["state_json"])
-                state["finished"] = True
-                state["finish_reason"] = "timeout"
-                state["winner"] = (
-                    ("b" if state["active_side"] == "a" else "a")
-                    if state["log"]
-                    else None
-                )
-                self._arena_finish_locked(row, state)
+                skip_turn(state)
+                if state["finished"]:
+                    self._arena_finish_locked(row, state)
                 self.connection.execute(
-                    "UPDATE arena_battles SET state_json=?,revision=revision+1 WHERE id=?",
-                    (json.dumps(state, ensure_ascii=False), row["id"]),
+                    "UPDATE arena_battles SET state_json=?,deadline=?,revision=revision+1 WHERE id=?",
+                    (
+                        json.dumps(state, ensure_ascii=False),
+                        now + ARENA_TURN_SECONDS,
+                        row["id"],
+                    ),
                 )
             else:
                 self._arena_refund_locked(row, "expired")
@@ -1305,6 +1342,7 @@ class ArenaMixin(ArenaMarketMixin):
                 )
             token = secrets.token_urlsafe(16)
             now = utc_timestamp()
+            state["turn_timer_seconds"] = 0
             self.connection.execute(
                 """INSERT INTO arena_battles(token,chat_id,mode,a_owner,b_owner,a_fighter,b_fighter,a_control,b_accepted,status,state_json,floor,created_at,deadline)
                    VALUES(?,?,'wasteland',?,0,?,0,?,1,'active',?,?,?,?)""",
@@ -1317,7 +1355,7 @@ class ArenaMixin(ArenaMarketMixin):
                     json.dumps(state, ensure_ascii=False),
                     floor,
                     now,
-                    now + ARENA_TURN_SECONDS,
+                    0,
                 ),
             )
             self.connection.execute(

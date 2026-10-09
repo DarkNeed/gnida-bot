@@ -833,12 +833,78 @@ def _tick(side: dict) -> None:
     # Resource can still be restored by skills with an explicit resource effect.
 
 
+def _advance_turn(state: dict, side_key: str) -> None:
+    other = "b" if side_key == "a" else "a"
+    target = state["sides"][other]
+    state["turn"] += 1
+    state["active_side"] = other
+    if target["hp"] <= 0:
+        state.update(finished=True, winner=side_key)
+    elif state["turn"] > 200:
+        state.update(finished=True, winner=None, finish_reason="turn_limit")
+    elif any(e["kind"] == "stun" for e in target["effects"]):
+        _tick(target)
+        state["log"].append(
+            {
+                "seq": state["turn"],
+                "side": other,
+                "text": "Ошеломление: ход пропущен.",
+                "damage": 0,
+                "hit": False,
+            }
+        )
+        state["turn"] += 1
+        state["active_side"] = side_key
+
+
+def skip_turn(state: dict) -> None:
+    """Server-only timeout: consumes a turn, not resource or an attack/passive proc."""
+    if state["finished"]:
+        raise ValueError("Бой завершён.")
+    key = state["active_side"]
+    actor = state["sides"][key]
+    target = state["sides"]["b" if key == "a" else "a"]
+    state.setdefault("had_player_action", any(e.get("skill_id") for e in state["log"]))
+    before = {
+        k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
+    }
+    _tick(actor)
+    # As with a normal action, damage-over-time is applied as the next side starts.
+    bleed_damage = min(
+        target["hp"],
+        sum(max(0, int(e["value"])) for e in target["effects"] if e["kind"] == "bleed"),
+    )
+    target["hp"] -= bleed_damage
+    text = "Время вышло: ход пропущен (3 минуты)."
+    if bleed_damage:
+        text += f" · кровотечение: −{bleed_damage} HP"
+    state["log"].append(
+        dict(
+            seq=state["turn"],
+            side=key,
+            action_kind="turn_timeout",
+            text=text,
+            damage=0,
+            hit=False,
+            bleed_damage=bleed_damage,
+            before=before,
+            after={
+                k: {"hp": s["hp"], "resource": s["resource"]}
+                for k, s in state["sides"].items()
+            },
+        )
+    )
+    state["log"] = state["log"][-60:]
+    _advance_turn(state, key)
+
+
 def resolve_skill(
     state: dict, side_key: str, skill_id: str, skills=None, rng=None
 ) -> dict:
     """Resolve one tap entirely on the server. No directional/confirmation phase."""
     rng = rng or random.SystemRandom()
     skill = validate_skill(state, side_key, skill_id, skills)
+    state["had_player_action"] = True
     actor = state["sides"][side_key]
     other = "b" if side_key == "a" else "a"
     target = state["sides"][other]
@@ -1007,25 +1073,7 @@ def resolve_skill(
     }
     state["log"].append(event)
     state["log"] = state["log"][-60:]
-    state["turn"] += 1
-    state["active_side"] = other
-    if target["hp"] <= 0:
-        state.update(finished=True, winner=side_key)
-    elif state["turn"] > 200:
-        state.update(finished=True, winner=None)
-    elif any(e["kind"] == "stun" for e in target["effects"]):
-        _tick(target)
-        state["log"].append(
-            {
-                "seq": state["turn"],
-                "side": other,
-                "text": "Ошеломление: ход пропущен.",
-                "damage": 0,
-                "hit": False,
-            }
-        )
-        state["turn"] += 1
-        state["active_side"] = side_key
+    _advance_turn(state, side_key)
     return event
 
 

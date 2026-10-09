@@ -79,11 +79,14 @@ async def main() -> None:
     arena_task = None
 
     async def arena_timeouts() -> None:
+        last_merchant_sweep = float("-inf")
         while True:
             try:
                 for battle in await database.arena_expire():
                     await publisher.changed(battle["token"])
-                if webapp_url:
+                sweep_time = asyncio.get_running_loop().time()
+                if webapp_url and sweep_time - last_merchant_sweep >= 30:
+                    last_merchant_sweep = sweep_time
                     for visit in await database.arena_due_merchants():
                         try:
                             await bot.send_message(
@@ -110,7 +113,7 @@ async def main() -> None:
                             )
             except Exception:
                 logging.exception("Arena timeout sweep failed")
-            await asyncio.sleep(30)
+            await asyncio.sleep(5)
 
     logging.info("GnidaBot is starting")
     try:

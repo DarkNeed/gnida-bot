@@ -8,6 +8,7 @@ const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const adminDraft={};
 let spriteDraft=null;
 let inspectSide=null,classUsePending=null,skillUsePending=null,resetPending=null;
+let serverClockOffset=0;
 const rarityNames={common:"Обычный",uncommon:"Необычный",rare:"Редкий",epic:"Эпический"};
 const statNames={max_hp:"Макс. HP",resource_max:"Макс. энергия",physical_attack:"Физ. атака",magic_attack:"Маг. атака",physical_defense:"Физ. защита",magic_defense:"Маг. защита",speed:"Скорость",evasion:"Уклонение"};
 const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",physical_attack_pct:"Физ. атака",evasion_flat:"Уклонение",resource:"Энергия",resource_leech:"Похищение энергии (возврат половины)",next_magic_damage:"Следующая магическая атака",stun:"Ошеломление",bleed:"Кровотечение"};
@@ -49,6 +50,7 @@ async function api(path,body){
   const response=await fetch(path,{method:body?"POST":"GET",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":tg?.initData||""},body:body?JSON.stringify(body):undefined,cache:"no-store"});
   const data=await response.json();
   if(!response.ok)throw new Error(data.error||"Сервер недоступен.");
+  if(Number.isFinite(data.server_time))serverClockOffset=data.server_time*1000-Date.now();
   return data;
 }
 function hud(s,key){
@@ -60,7 +62,7 @@ function battleScreen(data){
   near=(data.own_side==="b"||(!data.own_side&&(data.state.sides.b.controller_id===data.actor_id||data.consent_side==="b")))?"b":"a";
   const far=near==="a"?"b":"a",a=data.state.sides[near],b=data.state.sides[far];
   app.innerHTML='<section class="battle">'+top("Арена",data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":"БЕЗ СТАВКИ")+'</span>')+
-    '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'</div><div class="turnbanner" id="turn"></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+button("В меню","menu","small")+'</footer></section>';
+    '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'</div><div class="turnbanner" id="turn"></div><div class="turn-timer" id="turn-timer" role="timer" hidden></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+button("В меню","menu","small")+'</footer></section>';
   renderActions();
   if(inspectSide)showStats(inspectSide);
 }
@@ -84,6 +86,15 @@ function renderActions(){
     panel.innerHTML='<div class="battlelog">'+(current.own_side||current.consent_side?"Ход соперника…":"Ты наблюдаешь за боем.")+'<div class="muted">'+esc(st.log.at(-1)?.text||"Первый ход скоро начнётся.")+'</div></div>';
   }
   if(!st.finished&&Object.values(st.sides).some(s=>s.controller_id===current.actor_id))panel.innerHTML+='<div class="row surrender-row">'+button("Сдаться","surrender","small danger")+'</div>';
+  updateTurnTimer();
+}
+function updateTurnTimer(){
+  const el=document.getElementById('turn-timer');if(!el)return;
+  const enabled=current?.status==='active'&&current?.state&&!current.state.finished&&current.mode!=='wasteland'&&current.deadline>0;
+  el.hidden=!enabled;if(!enabled)return;
+  const remaining=Math.max(0,Math.ceil((current.deadline*1000-Date.now()-serverClockOffset)/1000));
+  el.textContent=remaining?'⏳ '+String(Math.floor(remaining/60)).padStart(2,'0')+':'+String(remaining%60).padStart(2,'0')+' · затем пропуск хода':'Время вышло · обновляем ход…';
+  el.classList?.toggle('urgent',remaining<=30);
 }
 function setupScreen(data){
   const status={cancelled:"Вызов отменён",expired:"Время вызова истекло",refused:"Вызов отклонён"};
@@ -106,6 +117,7 @@ async function animateEvent(event){
   document.getElementById("turn").textContent=userTurn?"Твой ход":"Ход: "+current.state.sides[event.side].name;
   document.getElementById("round").textContent="ХОД "+event.seq;
   panel.innerHTML='<div class="battlelog">'+esc(event.skill_name||event.text)+'</div>';
+  if(event.action_kind==='turn_timeout'){await sleep(1000);return;}
   const attacker=document.getElementById("sprite-"+event.side);
   const other=event.side==="a"?"b":"a",target=document.getElementById("sprite-"+other);
   attacker?.classList.add("attack");
@@ -389,5 +401,6 @@ async function boot(){
   }catch(error){app.innerHTML='<div class="loading"><h2>Не удалось открыть арену</h2><p>'+esc(error.message)+'</p></div>';}
 }
 setInterval(poll,1800);
+setInterval(updateTurnTimer,1000);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)poll();});
 boot();

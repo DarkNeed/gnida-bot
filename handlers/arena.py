@@ -85,6 +85,8 @@ class ArenaPublisher:
             text += "\nНа подготовку — 3 часа. Зрители тоже могут открыть бой."
         elif row["status"] == "active":
             text = f"⚔️ {names}\nБой идёт — откройте арену для игры или просмотра."
+            if row["mode"] != "wasteland":
+                text += "\nНа ход — 3 минуты. Не успел — ход пропускается."
         elif row["status"] == "finished" and state:
             winner = state.get("winner")
             text = f"🏁 {names}\n" + (

@@ -179,6 +179,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             "b_accepted",
         )
     } | dict(
+        server_time=int(time.time()),
         state=state,
         names=names,
         own_side=own_side,

@@ -5,7 +5,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
@@ -242,7 +242,10 @@ class FingerStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(("class", cls), self.db._arena_shop_catalog_locked())
             await self.db.arena_edit_profile(1, 10, 10, True, "reset_class", True)
 
-    async def test_reset_preserves_property_and_other_profiles(self):
+    @patch("arena_store.utc_timestamp")
+    async def test_reset_preserves_property_and_other_profiles(self, clock):
+        # A real second of passive accrual must not look like a reset side effect.
+        clock.return_value = int(time.time())
         await self.level()
         await self.db.arena_edit_profile(1, 10, 10, True, "class", "thumb")
         self.db._arena_add_item_locked(1, 10, "candy", "experience", "common", 2)

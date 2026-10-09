@@ -160,17 +160,17 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 0)
         self.assertEqual((await self.db.arena_menu(1, 10))["personal"]["xp"], 0)
 
-    async def test_timeout_no_xp_and_natural_loss_still_rewards(self):
+    async def test_pve_has_no_timeout_and_natural_loss_still_rewards(self):
         row = await self.db.arena_wasteland(1, 10)
-        with patch("arena_store.utc_timestamp", return_value=row["deadline"] + 1):
-            await self.db.arena_expire()
-        self.assertEqual(
-            json.loads((await self.db.arena_get(row["token"]))["state_json"])[
-                "rewards"
-            ]["a"],
-            0,
-        )
-        row = await self.db.arena_wasteland(1, 10)
+        self.assertEqual(row["deadline"], 0)
+        with patch(
+            "arena_store.utc_timestamp", return_value=row["created_at"] + 7 * 86400
+        ):
+            self.assertEqual(await self.db.arena_expire(), [])
+            self.assertEqual(
+                (await self.db.arena_get(row["token"]))["status"], "active"
+            )
+        self.assertNotIn("rewards", json.loads(row["state_json"]))
         state = json.loads(row["state_json"])
         state["sides"]["a"]["hp"] = 1
         state["sides"]["b"]["hp"] = 1000
