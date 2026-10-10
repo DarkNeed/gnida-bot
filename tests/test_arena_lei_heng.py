@@ -29,6 +29,7 @@ from arena_raid_engine import (
     BOSS_SKILLS,
 )
 from arena_raid_web import raid_view
+from arena_progression import pending_choice
 from handlers.raids import RAID_RE, RaidPublisher, create_raid_router
 from tools.preview_arena import raid_preview
 
@@ -62,6 +63,37 @@ def state():
 
 
 class LeiEngineTests(unittest.TestCase):
+    def test_boss_level_floor_changes_stats_but_not_players_or_iron(self):
+        participants = [
+            dict(actor_id=i, fighter_id=i, personal=True, slave_owner=i)
+            for i in (1, 2, 3)
+        ]
+        for level in (1, 10, 16, 18, 20):
+            sources = [
+                dict(slave_id=i, owner_id=i, class_id="ragamuffin", level=level)
+                for i in (1, 2, 3)
+            ]
+            lei = create_raid_state(
+                participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS, "lei_heng"
+            )
+            iron = create_raid_state(
+                participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS
+            )
+            self.assertEqual(lei["boss"]["level"], 20)
+            self.assertEqual(iron["boss"]["level"], level)
+            self.assertEqual(
+                [p["fighter"]["level"] for p in lei["players"].values()], [level] * 3
+            )
+            if level < 20:
+                self.assertGreater(
+                    lei["boss"]["stats"]["physical_attack"],
+                    iron["boss"]["stats"]["physical_attack"],
+                )
+                self.assertGreater(
+                    lei["boss"]["stats"]["physical_defense"],
+                    iron["boss"]["stats"]["physical_defense"],
+                )
+
     def test_distinct_boss_and_command_aliases(self):
         data = state()
         self.assertIn("Лей Хенг", data["boss"]["name"])
@@ -130,7 +162,7 @@ class LeiEngineTests(unittest.TestCase):
                 if e["round"] == 4 and e["actor"] == "1"
             )
 
-        self.assertAlmostEqual(hit(attacking) / hit(normal), 1.25, delta=0.08)
+        self.assertAlmostEqual(hit(attacking), hit(normal) * 1.25, delta=1)
         self.assertFalse(
             any(e.get("id") == "lei_overheat" for e in attacking["boss"]["effects"])
         )
@@ -273,6 +305,11 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
     balance = test_arena.ArenaStoreTests.balance
 
     async def start(self, boss_id="lei_heng", chat=1):
+        for actor in (10, 20, 50):
+            if pending_choice(dict(self.db._arena_profile_locked(chat, actor, True))):
+                await self.db.arena_edit_profile(
+                    chat, actor, actor, True, "progression", "stay"
+                )
         row = await self.db.arena_raid_create(chat, 10, boss_id)
         await self.db.arena_raid_set_message(row["token"], 99)
         for actor in (20, 50):
@@ -346,7 +383,8 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
             public["data"]["boss"]["class_avatar_url"], "/static/assets/lei_heng.png"
         )
         self.assertEqual(public["boss_id"], "lei_heng")
-        self.assertEqual(public["recommended_level"], 10)
+        self.assertEqual(public["recommended_level"], 18)
+        self.assertEqual(public["data"]["boss"]["level"], 20)
         self.db.connection.execute("ALTER TABLE arena_raids DROP COLUMN boss_id")
         self.db._connect_raids()
         row = await self.db.arena_raid_get(row["token"])

@@ -22,7 +22,8 @@ BOSSES = {
         name="Лей Хенг — Охотник на тигров",
         sprite="/static/assets/lei_heng.png",
         skills=("lei_double_slash", "lei_explosive_slash", "lei_perfected_flurry"),
-        recommended_level=10,
+        recommended_level=18,
+        minimum_level=20,
     ),
 }
 BOSS_SKILLS = {
@@ -164,7 +165,10 @@ def set_intent(data):
 def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
     if boss_id not in BOSSES:
         raise ValueError("Неизвестный босс.")
-    level = max(1, min(20, round(sum(s["level"] for s in sources) / len(sources))))
+    level = max(
+        BOSSES[boss_id].get("minimum_level", 1),
+        min(20, round(sum(s["level"] for s in sources) / len(sources))),
+    )
     enemy = dict(
         slave_id=0, owner_id=0, class_id="middle", level=level, passive_details=[]
     )

@@ -109,7 +109,7 @@ def main():
     parser.add_argument("--boss", choices=("iron", "lei_heng"), default="iron")
     args = parser.parse_args()
     results = []
-    for level in (1, 5, 10, 20):
+    for level in (1, 5, 10, 16, 18, 20):
         teams = (
             [("ragamuffin",) * 3]
             if level == 1

@@ -133,7 +133,7 @@ def raid_preview(phase="active"):
             slave_id=i,
             owner_id=i,
             class_id=cls,
-            level=12,
+            level=18 if phase.startswith("lei_heng") else 12,
             archclass_id=branch,
             archclass_stage=10,
             loadout={
@@ -242,6 +242,7 @@ def raid_preview(phase="active"):
         server_time=now,
         boss_name=boss_info["name"],
         boss_id=boss_id,
+        recommended_level=boss_info.get("recommended_level", 1),
         participants=participants if phase != "lobby" else participants[:2],
         choices=[dict(fighter_id=1, personal=True, name="Мой личный персонаж")],
         data=None if phase == "lobby" else data,
