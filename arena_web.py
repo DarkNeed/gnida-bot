@@ -22,6 +22,7 @@ from arena_engine import (
     effective_stat,
     effective_skill,
     completed_turns,
+    skill_restriction,
     RARITY_LABELS,
     MAX_FIGHTER_LEVEL,
     VISIBLE_CLASS_ALIASES,
@@ -150,7 +151,10 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                             description=variant.description,
                         )
                 side["skill_details"].append(
-                    dict(asdict(variant), cost=gift_cost(side, variant), evolution=info)
+                    dict(
+                        asdict(variant), cost=gift_cost(side, variant), evolution=info,
+                        unavailable_reason=skill_restriction(side, variant, completed_turns(state, key)),
+                    )
                 )
             side["mirror_gift_details"] = [
                 dict(name=GIFTS[k][0], description=GIFTS[k][1])
@@ -191,6 +195,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                     gift_cost(side, effective_skill(state, key, s, skills))
                     <= side["resource"]
                     and not side["cooldowns"].get(s, 0)
+                    and not skill_restriction(side, skills[s], completed_turns(state, key))
                     for s in side["loadout"]
                     if s in skills
                 )

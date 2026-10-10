@@ -348,7 +348,10 @@ class ArenaMarketMixin:
             )
         }
         # Branch skills unlock through progression, not tradable cross-branch scrolls.
-        public_skills = {k for k, s in BUILTIN_SKILLS.items() if not skill_branch(s)}
+        public_skills = {
+            k for k, s in BUILTIN_SKILLS.items()
+            if not skill_branch(s) and "raid_loot" not in s.tags
+        }
         for row in self.connection.execute(
             "SELECT skill_id,definition_json FROM custom_fighter_skills"
         ):

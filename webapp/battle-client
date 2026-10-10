@@ -37,11 +37,11 @@ function fighterStatuses(side){
   for(const e of side.effects||[]){
     const duration=Number(e.duration),kind=String(e.kind||'effect');
     if(!Number.isFinite(duration)||duration<=0||duration>=10000||['resource','resource_leech'].includes(kind))continue;
-    const direction=statusStatNames[kind]&&Number(e.value)!==0&&Number.isFinite(Number(e.value))?(Number(e.value)<0?'down':'up'):'';
+    const direction=kind==='damage_taken_pct'?'down':statusStatNames[kind]&&Number(e.value)!==0&&Number.isFinite(Number(e.value))?(Number(e.value)<0?'down':'up'):'';
     const name=e.id==='adoration'?'Умиление':e.name||(direction?(direction==='down'?'Понижение ':'Повышение ')+statusStatNames[kind]:effectNames[kind]||'Особый эффект');
     let detail=e.description?esc(e.description):kind==='stun'?'Пропускает ход из-за ошеломления.':kind==='bleed'?'Кровотечение: '+esc(e.value)+' урона при начале хода этого бойца.':kind==='prepared_attack'?'Усилена следующая подходящая атака; подготовка расходуется по условиям навыка.':describeEffect({...e,target:'self',turns:0,chance:1});
     detail+='<br>Осталось ходов этого бойца: '+esc(duration)+'.';
-    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:String(duration),detail});
+    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:String(duration),detail});
   }
   const m=side.mechanics||{};
   for(const [id,name,icon,trait] of [['order','Субординация',11,'subordination'],['grudge','Обиды',12,'revenge'],['focus','Созвездие',13,'constellation']]){
@@ -86,7 +86,7 @@ function skillInfo(s){const e=s.evolution;return '<div class="muted">'+(s.cost!=
 function battleSkillButton(skill,side){
   const evolved=skill.evolution?.active, prescribed=side.mechanics?.prescript===skill.skill_id, enemyOrder=side.mechanics?.enemy_prescript?.skill_id===skill.skill_id;
   const label=prescribed?'ПРЕДПИСАНИЕ':enemyOrder?'ПРЕДПИСАНИЕ ВРАГА':skill.damage_type==='magic'?'МАГИЯ':skill.damage_type==='physical'?'АТАКА':'ЭФФЕКТ';
-  return '<button class="skill'+(evolved?' evolved':'')+((prescribed||enemyOrder)?' prescribed':'')+'" data-skill="'+esc(skill.skill_id)+'" '+(skill.evolution?'title="'+esc(skill.evolution.condition)+'" ':'')+(side.resource<skill.cost||side.cooldowns[skill.skill_id]?'disabled':'')+'><span class="type">'+(evolved?(skill.evolution.specialization?'ВЕТКА · ':'УСИЛЕНО · '):'')+label+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?' · ещё '+side.cooldowns[skill.skill_id]+' х.':'')+'</span></button>';
+  return '<button class="skill'+(evolved?' evolved':'')+((prescribed||enemyOrder)?' prescribed':'')+'" data-skill="'+esc(skill.skill_id)+'" '+(skill.evolution?'title="'+esc(skill.evolution.condition)+'" ':'')+(side.resource<skill.cost||side.cooldowns[skill.skill_id]||skill.unavailable_reason?'disabled':'')+'><span class="type">'+(evolved?(skill.evolution.specialization?'ВЕТКА · ':'УСИЛЕНО · '):'')+label+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?' · ещё '+side.cooldowns[skill.skill_id]+' х.':'')+(skill.unavailable_reason?' · '+esc(skill.unavailable_reason):'')+'</span></button>';
 }
 function archInfo(p){
   const a=p.archclass;
@@ -212,7 +212,12 @@ async function animateEvent(event){
     document.querySelector(".field").append(projectile);setTimeout(()=>projectile.remove(),600);
   }
   await sleep(430);attacker?.classList.remove("attack");
-  if(event.hit&&event.damage){target?.classList.add("hurt");const number=document.createElement("div");number.className="damage";number.textContent="−"+event.damage;if(other===near){number.style.left="23%";number.style.top="65%";}document.querySelector(".field").append(number);setTimeout(()=>number.remove(),1000);}
+  if(event.hit&&event.damage){
+    for(const amount of event.hits||[event.damage]){
+      target?.classList.add("hurt");const number=document.createElement("div");number.className="damage";number.textContent="−"+amount;if(other===near){number.style.left="23%";number.style.top="65%";}document.querySelector(".field").append(number);setTimeout(()=>number.remove(),1000);
+      if(event.hits){await slashImpact(target);target?.classList.remove("hurt");}
+    }
+  }
   if(event.after)for(const key of ["a","b"]){
     const s=current.state.sides[key],values=event.after[key];
     document.getElementById("health-"+key).firstElementChild.style.width=100*values.hp/s.stats.max_hp+"%";
@@ -588,7 +593,7 @@ function raidScreen(data){
   const me=data.participants.find(p=>p.actor_id===data.actor_id);
   let body='';
   if(data.status==='lobby'){
-    body='<div class="card"><h2>'+esc(data.boss_name)+'</h2><p>Отряд: '+data.participants.length+' / 3</p><div class="stack">'+data.participants.map(p=>'<div>'+esc(p.name)+' · '+(p.personal?'личный персонаж':'раб: '+esc(p.fighter_name))+'</div>').join('')+'</div><p class="muted">Три игрока против одного босса. Вход бесплатный. Каждый выбирает одно действие за раунд одновременно с остальными.</p><p class="muted">На сбор — 10 минут. На выбор в бою — 2 минуты. После трёх пропусков подряд награды отключаются; для награды нужны минимум два ручных действия.</p></div>';
+    body='<div class="card"><h2>'+esc(data.boss_name)+'</h2>'+(data.boss_id==='lei_heng'?'<p class="muted">Рекомендуемый уровень: 10+. Трактат поступи тигробоя: 20% за победу; пятая победа без выпадения гарантирует трактат.</p>':'')+'<p>Отряд: '+data.participants.length+' / 3</p><div class="stack">'+data.participants.map(p=>'<div>'+esc(p.name)+' · '+(p.personal?'личный персонаж':'раб: '+esc(p.fighter_name))+'</div>').join('')+'</div><p class="muted">Три игрока против одного босса. Вход бесплатный. Каждый выбирает одно действие за раунд одновременно с остальными.</p><p class="muted">На сбор — 10 минут. На выбор в бою — 2 минуты. После трёх пропусков подряд награды отключаются; для награды нужны минимум два ручных действия.</p></div>';
     body+='<div class="card"><h3>'+(me?'Твой боец':'Присоединиться')+'</h3><div class="stack">'+data.choices.map(c=>raidButton(esc(c.name),'join:'+(c.personal?'p':'s')+':'+c.fighter_id,me?.fighter_id===c.fighter_id&&me?.personal===c.personal?'primary':'',!me&&data.participants.length>=3)).join('')+'</div><p class="muted">Перед стартом заверши обязательный выбор класса в меню арены. Раб должен быть экипирован и снят с работы.</p></div>';
     if(data.actor_id===data.creator_id)body+='<div class="row">'+raidButton('Начать рейд','start','primary',data.participants.length!==3)+raidButton('Отменить сбор','cancel','danger')+'</div>';
     else if(me)body+=raidButton('Выйти из отряда','leave');
@@ -602,7 +607,7 @@ function raidScreen(data){
         if(own.ready)body+='<h3>Действие принято — ждём отряд</h3><p class="muted">Когда все выберут навыки, раунд разыграется по скорости.</p>';
         else{
           const f=own.fighter;
-          body+='<h3>Выбери действие</h3><div class="raid-skillgrid">'+f.skill_details.map(s=>raidButton('<span class="skill-type">'+(s.damage_type==='physical'?'АТАКА':s.damage_type==='magic'?'МАГИЯ':'ЭФФЕКТ')+'</span><strong>'+esc(s.name)+'</strong><small>'+s.cost+' '+esc(f.resource_name)+(f.cooldowns[s.skill_id]?' · ещё '+f.cooldowns[s.skill_id]+' х.':'')+'</small>','skill:'+s.skill_id,'skill'+(s.evolution?.active?' evolved':''),s.cost>f.resource||!!f.cooldowns[s.skill_id])).join('')+'</div>'+raidButton('Защищаться · +35% защит','skill:defend');
+          body+='<h3>Выбери действие</h3><div class="raid-skillgrid">'+f.skill_details.map(s=>raidButton('<span class="skill-type">'+(s.damage_type==='physical'?'АТАКА':s.damage_type==='magic'?'МАГИЯ':'ЭФФЕКТ')+'</span><strong>'+esc(s.name)+'</strong><small>'+s.cost+' '+esc(f.resource_name)+(f.cooldowns[s.skill_id]?' · ещё '+f.cooldowns[s.skill_id]+' х.':'')+(s.unavailable_reason?' · '+esc(s.unavailable_reason):'')+'</small>','skill:'+s.skill_id,'skill'+(s.evolution?.active?' evolved':''),s.cost>f.resource||!!f.cooldowns[s.skill_id]||!!s.unavailable_reason)).join('')+'</div>'+raidButton('Защищаться · +35% защит','skill:defend');
         }
         body+='<div class="surrender-row row">'+raidButton('Покинуть бой без награды','skill:surrender','danger small')+'</div>';
       }else body+='<h3>Наблюдение за рейдом</h3><p class="muted">'+(own?'Твой боец выбыл. Отряд может продолжить бой.':'Ты зритель. Выбор действий доступен участникам отряда.')+'</p>';
@@ -654,9 +659,21 @@ async function raidAnimate(event){
   }else if(event.skill&&actor){
     actor.classList.add('raid-cast');await sleep(350);actor.classList.remove('raid-cast');
   }
-  if(event.damage){target?.classList.add('raid-hit');raidPopup(event.target,event.damage);}
+  if(event.damage){
+    for(const amount of event.hits||[event.damage]){
+      target?.classList.add('raid-hit');raidPopup(event.target,amount);
+      if(event.hits){await slashImpact(target);target?.classList.remove('raid-hit');}
+    }
+  }
   if(event.self_damage){actor?.classList.add('raid-hit');raidPopup(event.actor,event.self_damage);}
   await sleep(450);target?.classList.remove('raid-hit');actor?.classList.remove('raid-hit');
+}
+async function slashImpact(target){
+  const host=target?.parentElement;if(!host)return;
+  const slash=document.createElement('span');slash.className='combat-slash';host.append(slash);
+  const t=target.getBoundingClientRect(),h=host.getBoundingClientRect();
+  slash.style.left=(t.x-h.x+t.width*.15)+'px';slash.style.top=(t.y-h.y+t.height*.45)+'px';slash.style.width=(t.width*.7)+'px';
+  await sleep(190);slash.remove();
 }
 async function receiveRaid(data){
   const previous=raidCurrent,events=raidNewEvents(previous,data);
@@ -718,7 +735,7 @@ app.addEventListener('click',async event=>{
   const b=event.target.closest('[data-raid]');if(!b||b.disabled||busy||raidPlaying)return;
   const [cmd,...parts]=b.dataset.raid.split(':'),arg=parts.join(':');
   if(cmd==='inspect'){showRaidDetails(arg);return;}
-  if(cmd==='preview'&&demo){await receiveRaid(await api('/demo/raid/animation'));return;}
+  if(cmd==='preview'&&demo){await receiveRaid(await api('/demo/raid/'+(raidCurrent.boss_id==='lei_heng'?'lei_heng_animation':'animation')));return;}
   if(cmd==='menu'){closeRaidDetails();raidCurrent=null;await openMenu();return;}
   if(cmd==='open'||cmd==='refresh'){
     closeRaidDetails();const id=cmd==='open'?arg:raidCurrent.token;busy=true;

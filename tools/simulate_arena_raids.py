@@ -57,7 +57,7 @@ def choose(player, boss):
     return max(candidates)[1] if candidates else "defend"
 
 
-def simulate(level, class_ids, seed):
+def simulate(level, class_ids, seed, boss_id="iron"):
     rng = random.Random(seed)
     members = [
         dict(actor_id=i, fighter_id=i, personal=True, slave_owner=i) for i in (1, 2, 3)
@@ -90,10 +90,15 @@ def simulate(level, class_ids, seed):
                 archclass_stage=10,
             )
         )
-    data = create_raid_state(members, sources, FIGHTER_CLASSES, BUILTIN_SKILLS)
+    data = create_raid_state(members, sources, FIGHTER_CLASSES, BUILTIN_SKILLS, boss_id)
     while not data["finished"]:
-        for p in alive_players(data).values():
-            p["selected"] = choose(p, data["boss"])
+        for key, p in alive_players(data).items():
+            p["selected"] = (
+                "defend"
+                if data["intent"].get("skill") == "lei_perfected_flurry"
+                and key in data["intent"]["targets"]
+                else choose(p, data["boss"])
+            )
         resolve_round(data, BUILTIN_SKILLS, rng)
     return data
 
@@ -101,6 +106,7 @@ def simulate(level, class_ids, seed):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=int, default=30)
+    parser.add_argument("--boss", choices=("iron", "lei_heng"), default="iron")
     args = parser.parse_args()
     results = []
     for level in (1, 5, 10, 20):
@@ -110,7 +116,7 @@ def main():
             else [("jock", "cutie", "nerd"), ("middle", "pinky", "ring")]
         )
         for team in teams:
-            games = [simulate(level, team, n) for n in range(args.seeds)]
+            games = [simulate(level, team, n, args.boss) for n in range(args.seeds)]
             results.append(
                 dict(
                     level=level,

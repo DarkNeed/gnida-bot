@@ -4,23 +4,28 @@ from dataclasses import asdict
 import json
 import time
 
-from arena_engine import effective_stat, effective_skill
+from arena_engine import effective_stat, effective_skill, skill_restriction
 from arena_evolution import evolution_info
 from arena_archclasses import archclass_view, class_title
 from arena_progression import choice_avatar
-from arena_raid_engine import BOSS_NAME, BOSS_SKILLS, pair_state
+from arena_raid_engine import BOSSES, BOSS_SKILLS, pair_state
 from arena_mirror_effects import gift_cost
 
 
 async def raid_view(db, row, actor):
     classes, skills = await db.get_fighter_catalog()
     data = json.loads(row["data_json"]) if row["data_json"] else None
+    boss_info = BOSSES.get(row.get("boss_id", "iron"), BOSSES["iron"])
 
     async def decorate(side, fighter, boss=False):
         cls = classes.get(side["class_id"], classes["ragamuffin"])
         user = await db.get_user(row["chat_id"], fighter) if fighter else None
         side.update(
-            name=BOSS_NAME if boss else user["display_name"] if user else str(fighter),
+            name=(
+                boss_info["name"]
+                if boss
+                else user["display_name"] if user else str(fighter)
+            ),
             class_name="Рейдовый босс" if boss else class_title(side, cls.name),
             class_avatar_url=choice_avatar(
                 side["class_id"], side.get("archclass_id", "")
@@ -44,6 +49,8 @@ async def raid_view(db, row, actor):
         )
         if not boss:
             side.update(await db.arena_sprite_info(row["chat_id"], fighter))
+        elif boss_info.get("sprite"):
+            side["class_avatar_url"] = boss_info["sprite"]
         side["skill_details"] = []
         target = (
             data["boss"]
@@ -60,6 +67,7 @@ async def raid_view(db, row, actor):
                 gift_cost(side, effective_skill(pair, "a", sid, catalog))
                 <= side["resource"]
                 and not side["cooldowns"].get(sid, 0)
+                and not skill_restriction(side, catalog[sid])
                 for sid in ids
                 if sid in catalog
             )
@@ -79,7 +87,12 @@ async def raid_view(db, row, actor):
                         name=variant.name, cost=variant.cost, power=variant.power
                     )
             side["skill_details"].append(
-                dict(asdict(variant), cost=gift_cost(side, variant), evolution=info)
+                dict(
+                    asdict(variant),
+                    cost=gift_cost(side, variant),
+                    evolution=info,
+                    unavailable_reason=skill_restriction(side, variant),
+                )
             )
 
     participants = []
@@ -135,7 +148,9 @@ async def raid_view(db, row, actor):
         revision=row["revision"],
         deadline=row["deadline"],
         server_time=int(time.time()),
-        boss_name=BOSS_NAME,
+        boss_name=boss_info["name"],
+        boss_id=row.get("boss_id", "iron"),
+        recommended_level=boss_info.get("recommended_level", 1),
         participants=participants,
         choices=choices,
         data=data,

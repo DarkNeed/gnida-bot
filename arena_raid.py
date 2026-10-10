@@ -9,6 +9,7 @@ from arena_engine import BUILTIN_PASSIVES, BUILTIN_SKILLS, validate_skill
 from arena_raid_engine import (
     RAID_SIZE,
     RAID_ROUND_SECONDS,
+    BOSSES,
     create_raid_state,
     alive_players,
     pair_state,
@@ -39,7 +40,19 @@ class RaidMixin:
                 PRIMARY KEY(token,actor_id), UNIQUE(token,fighter_id)
             );
             CREATE INDEX IF NOT EXISTS idx_raid_players_user ON arena_raid_players(actor_id,fighter_id);
+            CREATE TABLE IF NOT EXISTS arena_raid_loot_pity (
+                chat_id INTEGER NOT NULL, actor_id INTEGER NOT NULL, boss_id TEXT NOT NULL,
+                misses INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(chat_id,actor_id,boss_id)
+            );
         """)
+        columns = {
+            r["name"] for r in self.connection.execute("PRAGMA table_info(arena_raids)")
+        }
+        if "boss_id" not in columns:
+            self.connection.execute(
+                "ALTER TABLE arena_raids ADD COLUMN boss_id TEXT NOT NULL DEFAULT 'iron'"
+            )
         self.connection.commit()
 
     def _raid_row_locked(self, token):
@@ -118,7 +131,9 @@ class RaidMixin:
             pool = [
                 ("skill", s.skill_id, s.rarity, s.name)
                 for s in BUILTIN_SKILLS.values()
-                if s.class_id != "ragamuffin" and not skill_branch(s)
+                if s.class_id != "ragamuffin"
+                and not skill_branch(s)
+                and "raid_loot" not in s.tags
             ]
             pool += [
                 ("passive", p.skill_id, p.rarity, p.name)
@@ -148,7 +163,34 @@ class RaidMixin:
                 francs = 40 + 3 * data["boss"]["level"]
                 self._add_francs_locked(chat, player["actor_id"], francs)
                 loot = ""
-                if pool and rng.random() < 0.3:
+                if row.get("boss_id", "iron") == "lei_heng":
+                    pity = self.connection.execute(
+                        "SELECT misses FROM arena_raid_loot_pity WHERE chat_id=? AND actor_id=? AND boss_id=?",
+                        (chat, player["actor_id"], "lei_heng"),
+                    ).fetchone()
+                    misses = pity["misses"] if pity else 0
+                    dropped = misses >= 4 or rng.random() < 0.2
+                    self.connection.execute(
+                        """INSERT INTO arena_raid_loot_pity VALUES(?,?,?,?)
+                        ON CONFLICT(chat_id,actor_id,boss_id) DO UPDATE SET misses=excluded.misses""",
+                        (
+                            chat,
+                            player["actor_id"],
+                            "lei_heng",
+                            0 if dropped else misses + 1,
+                        ),
+                    )
+                    if dropped:
+                        tractate = BUILTIN_SKILLS["tigerslayer_flurry"]
+                        loot = tractate.name
+                        self._arena_add_item_locked(
+                            chat,
+                            player["actor_id"],
+                            "skill",
+                            tractate.skill_id,
+                            tractate.rarity,
+                        )
+                elif pool and rng.random() < 0.3:
                     kind, content, rarity, loot = rng.choice(pool)
                     self._arena_add_item_locked(
                         chat, player["actor_id"], kind, content, rarity
@@ -268,7 +310,9 @@ class RaidMixin:
             )
             self.connection.commit()
 
-    async def arena_raid_create(self, chat, actor):
+    async def arena_raid_create(self, chat, actor, boss_id="iron"):
+        if boss_id not in BOSSES:
+            raise ValueError("Неизвестный босс.")
         async with self._lock:
             try:
                 self._raid_expire_locked()
@@ -277,8 +321,8 @@ class RaidMixin:
                 self._arena_profile_locked(chat, actor, True)
                 now, token = int(time.time()), secrets.token_urlsafe(12)
                 self.connection.execute(
-                    "INSERT INTO arena_raids(token,chat_id,creator_id,created_at,deadline) VALUES(?,?,?,?,?)",
-                    (token, chat, actor, now, now + RAID_LOBBY_SECONDS),
+                    "INSERT INTO arena_raids(token,chat_id,creator_id,created_at,deadline,boss_id) VALUES(?,?,?,?,?,?)",
+                    (token, chat, actor, now, now + RAID_LOBBY_SECONDS, boss_id),
                 )
                 self.connection.execute(
                     "INSERT INTO arena_raid_players VALUES(?,?,?,?,?)",
@@ -372,7 +416,9 @@ class RaidMixin:
                                 )
                             )
                         classes, skills = self._fighter_catalog_locked()
-                        data = create_raid_state(members, sources, classes, skills)
+                        data = create_raid_state(
+                            members, sources, classes, skills, row["boss_id"]
+                        )
                         self._raid_save_locked(row, data, "active")
                 else:
                     raise ValueError("Действие недоступно.")

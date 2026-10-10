@@ -305,7 +305,7 @@ class MirrorMixin:
                     pool = [
                         ("skill", s.skill_id, s.rarity, s.name)
                         for s in BUILTIN_SKILLS.values()
-                        if s.class_id != "ragamuffin"
+                        if s.class_id != "ragamuffin" and "raid_loot" not in s.tags
                     ]
                     pool += [
                         ("passive", p.skill_id, p.rarity, p.name)

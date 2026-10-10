@@ -16,12 +16,47 @@ RAID_SIZE = 3
 RAID_ROUND_SECONDS = 120
 RAID_MAX_ROUNDS = 40
 BOSS_NAME = "Железный сборщик"
+BOSSES = {
+    "iron": dict(name=BOSS_NAME, skills=("raid_sweep", "raid_crush", "raid_rampage")),
+    "lei_heng": dict(
+        name="Лей Хенг — Охотник на тигров",
+        sprite="/static/assets/lei_heng.png",
+        skills=("lei_double_slash", "lei_explosive_slash", "lei_perfected_flurry"),
+        recommended_level=10,
+    ),
+}
 BOSS_SKILLS = {
     s.skill_id: s
     for s in (
         Skill("raid_sweep", "Размах цепью", "middle", 1, "physical", 8, 95, 0, 0),
         Skill("raid_crush", "Дробящий удар", "middle", 1, "physical", 17, 95, 0, 0),
         Skill("raid_rampage", "Яростный размах", "middle", 1, "physical", 10, 95, 0, 0),
+        Skill(
+            "lei_double_slash", "Двойной разрез", "middle", 1, "physical", 17, 95, 0, 0
+        ),
+        Skill(
+            "lei_explosive_slash",
+            "Взрывной разрез",
+            "middle",
+            1,
+            "physical",
+            8,
+            95,
+            0,
+            0,
+        ),
+        Skill(
+            "lei_perfected_flurry",
+            "Совершенная поступь тигробоя",
+            "middle",
+            1,
+            "physical",
+            32,
+            95,
+            0,
+            0,
+            tags=("triple_strike",),
+        ),
     )
 }
 
@@ -65,6 +100,39 @@ def set_intent(data):
     phase = 2 if boss["hp"] <= boss["stats"]["max_hp"] // 2 else 1
     data["phase"] = phase
     pattern = (data["round"] - 1) % 3
+    for player in data["players"].values():
+        fighter = player["fighter"]
+        fighter["effects"] = [
+            e for e in fighter["effects"] if e.get("id") != "lei_prey"
+        ]
+    if data.get("boss_id", "iron") == "lei_heng":
+        keys = list(living)
+        target = keys[((data["round"] - 1) // 3) % len(keys)]
+        if pattern == 2:
+            living[target]["fighter"]["effects"].append(
+                dict(
+                    id="lei_prey",
+                    kind="raid_prey",
+                    value=1,
+                    duration=1,
+                    name="Добыча",
+                    description="Цель поступи тигробоя. Защита снижает урон этой атаки на 60%.",
+                )
+            )
+        data["intent"] = dict(
+            kind="attack",
+            phase=phase,
+            skill=("lei_explosive_slash", "lei_double_slash", "lei_perfected_flurry")[
+                pattern
+            ],
+            targets=keys if pattern == 0 else [target],
+            text=(
+                "Готовит взрывной разрез по всему отряду.",
+                "Готовит двойной разрез по отмеченному бойцу.",
+                "Добыча отмечена: готовит поступь тигробоя. Защищайтесь: −60% урона атаки!",
+            )[pattern],
+        )
+        return
     if pattern == 0:
         intent = dict(
             kind="attack",
@@ -93,7 +161,9 @@ def set_intent(data):
     data["intent"] = intent
 
 
-def create_raid_state(participants, sources, classes, skills):
+def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
+    if boss_id not in BOSSES:
+        raise ValueError("Неизвестный босс.")
     level = max(1, min(20, round(sum(s["level"] for s in sources) / len(sources))))
     enemy = dict(
         slave_id=0, owner_id=0, class_id="middle", level=level, passive_details=[]
@@ -122,11 +192,12 @@ def create_raid_state(participants, sources, classes, skills):
     for stat in ("physical_defense", "magic_defense"):
         boss["stats"][stat] *= 0.7
     boss["stats"]["physical_attack"] *= 0.85
-    boss["loadout"] = list(BOSS_SKILLS)
-    boss["name"] = BOSS_NAME
+    boss["loadout"] = list(BOSSES[boss_id]["skills"])
+    boss["name"] = BOSSES[boss_id]["name"]
     boss["mechanics"] = {}
     data = dict(
         players=players,
+        boss_id=boss_id,
         boss=boss,
         round=1,
         phase=1,
@@ -274,6 +345,7 @@ def resolve_round(data, skills, rng=None):
             self_damage=event["self_damage"],
             skill=selected,
             damage_type=event["damage_type"],
+            **({"hits": event["hits"]} if "hits" in event else {}),
         )
         control = any(e["kind"] == "stun" for e in boss["effects"])
         boss["effects"] = [e for e in boss["effects"] if e["kind"] != "stun"]
@@ -336,6 +408,18 @@ def resolve_round(data, skills, rng=None):
                 boss_after = None
                 for key in targets:
                     attacker = deepcopy(original)
+                    if intent["skill"] == "lei_perfected_flurry" and any(
+                        e.get("id") == "raid_guard_physical"
+                        for e in data["players"][key]["fighter"]["effects"]
+                    ):
+                        attacker["effects"].append(
+                            dict(
+                                id="lei_guard_reduction",
+                                kind="final_damage_multiplier",
+                                value=0.4,
+                                duration=1,
+                            )
+                        )
                     if intent["phase"] == 2:
                         attacker["effects"].append(
                             dict(
@@ -362,12 +446,30 @@ def resolve_round(data, skills, rng=None):
                         damage=event["damage"],
                         skill=intent["skill"],
                         damage_type=event["damage_type"],
+                        **({"hits": event["hits"]} if "hits" in event else {}),
                     )
                 if boss_after is not None:
                     boss.clear()
                     boss.update(boss_after)
                 else:
                     _tick(boss)
+                if intent["skill"] == "lei_perfected_flurry" and targets:
+                    boss["effects"].append(
+                        dict(
+                            id="lei_overheat",
+                            kind="damage_taken_pct",
+                            value=0.25,
+                            duration=1,
+                            name="Перегрев",
+                            description="Получает на 25% больше урона до следующего действия босса.",
+                        )
+                    )
+                    log_event(
+                        data,
+                        "boss",
+                        "boss",
+                        "Перегрев: босс получает на 25% больше урона в следующем раунде.",
+                    )
             data["control_lock"] = max(0, data["control_lock"] - 1)
     if not finish_if_needed(data) and data["round"] >= RAID_MAX_ROUNDS:
         data.update(

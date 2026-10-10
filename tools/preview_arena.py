@@ -19,6 +19,8 @@ from arena_engine import (
 )
 from arena_mirror_effects import GIFTS, NORMAL_GIFTS
 from arena_raid_engine import (
+    BOSSES,
+    set_intent,
     create_raid_state,
     pair_state,
     resolve_round,
@@ -146,7 +148,14 @@ def raid_preview(phase="active"):
             (3, "cutie", "princess"),
         )
     ]
-    data = create_raid_state(participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS)
+    boss_id = "lei_heng" if phase.startswith("lei_heng") else "iron"
+    boss_info = BOSSES[boss_id]
+    data = create_raid_state(
+        participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS, boss_id
+    )
+    if boss_id == "lei_heng":
+        data["round"] = 3
+        set_intent(data)
     names = {"1": "Хакер", "2": "Мге-браток", "3": "Принцесса"}
     for p in participants:
         p.update(name=names[str(p["actor_id"])], fighter_name=names[str(p["actor_id"])])
@@ -155,7 +164,7 @@ def raid_preview(phase="active"):
     ]:
         cls = FIGHTER_CLASSES[f["class_id"]]
         f.update(
-            name=BOSS_NAME if key == "boss" else names[key],
+            name=boss_info["name"] if key == "boss" else names[key],
             class_name="Рейдовый босс" if key == "boss" else class_title(f, cls.name),
             sprite=f["class_id"],
             class_avatar_url=choice_avatar(f["class_id"], f.get("archclass_id", "")),
@@ -163,6 +172,8 @@ def raid_preview(phase="active"):
             class_rarity=cls.rarity,
             effective_stats={k: effective_stat(f, k) for k in f["stats"]},
         )
+        if key == "boss" and boss_info.get("sprite"):
+            f["class_avatar_url"] = boss_info["sprite"]
         target = data["players"]["1"]["fighter"] if key == "boss" else data["boss"]
         catalog = BOSS_SKILLS if key == "boss" else BUILTIN_SKILLS
         ids = f["loadout"]
@@ -188,6 +199,14 @@ def raid_preview(phase="active"):
     data["players"]["1"]["fighter"]["effects"].append(
         dict(id="guard", kind="physical_defense_pct", value=0.35, duration=1)
     )
+    if boss_id == "lei_heng":
+        data["log"] = []
+        data["boss"]["effects"] = []
+        data["players"]["1"]["fighter"]["effects"] = [
+            e
+            for e in data["players"]["1"]["fighter"]["effects"]
+            if e.get("id") == "lei_prey"
+        ]
     if phase == "finished":
         data.update(
             finished=True,
@@ -196,12 +215,14 @@ def raid_preview(phase="active"):
             rewards={str(i): dict(xp=58, francs=76, loot="") for i in (1, 2, 3)},
         )
         data["boss"]["hp"] = 0
-    if phase == "animation":
+    if phase in {"animation", "lei_heng_animation"}:
         import random
 
         data["log"] = []
         for key, sid in (("1", "humiliate"), ("2", "smack"), ("3", "meow")):
-            data["players"][key]["selected"] = sid
+            data["players"][key]["selected"] = (
+                "defend" if boss_id == "lei_heng" and key == "1" else sid
+            )
         resolve_round(data, BUILTIN_SKILLS, random.Random(7))
         for player in data["players"].values():
             player["ready"] = False
@@ -216,10 +237,11 @@ def raid_preview(phase="active"):
             if phase == "lobby"
             else "finished" if phase == "finished" else "active"
         ),
-        revision=1 if phase == "animation" else 0,
+        revision=1 if phase.endswith("animation") else 0,
         deadline=now + 120,
         server_time=now,
-        boss_name=BOSS_NAME,
+        boss_name=boss_info["name"],
+        boss_id=boss_id,
         participants=participants if phase != "lobby" else participants[:2],
         choices=[dict(fighter_id=1, personal=True, name="Мой личный персонаж")],
         data=None if phase == "lobby" else data,
@@ -228,7 +250,15 @@ def raid_preview(phase="active"):
 
 async def demo_raid(request):
     phase = request.match_info["phase"]
-    if phase not in {"lobby", "active", "spectator", "finished", "animation"}:
+    if phase not in {
+        "lobby",
+        "active",
+        "spectator",
+        "finished",
+        "animation",
+        "lei_heng",
+        "lei_heng_animation",
+    }:
         raise web.HTTPNotFound()
     return web.json_response(raid_preview(phase))
 

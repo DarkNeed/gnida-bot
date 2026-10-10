@@ -400,6 +400,13 @@ _finger_classes, _finger_skills = build_catalog(FighterClass, Skill, effect)
 FIGHTER_CLASSES.update(_finger_classes)
 BUILTIN_SKILLS.update(_finger_skills)
 BUILTIN_SKILLS.update(build_arch_skills(Skill))
+BUILTIN_SKILLS["tigerslayer_flurry"] = Skill(
+    "tigerslayer_flurry", "Совершенная поступь тигробоя", "raid", 10,
+    "physical", 28, 95, 45, 4, rarity="epic",
+    description="Три последовательных разреза. Общий урон одной мощной атаки; "
+    "доступно с третьего собственного действия. Трактат добывается у Лей Хенга.",
+    tags=("raid_loot", "triple_strike", "third_action"),
+)
 VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _finger_classes.items()})
 # Old names remain valid input; stable IDs keep inventory and saved builds intact.
 VISIBLE_CLASS_ALIASES.update(
@@ -892,11 +899,24 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
     ):
         raise ValueError("Навык недоступен этому архиклассу или уровню.")
     skill = effective_skill(state, side_key, skill_id, catalog)
+    restriction = skill_restriction(side, skill, completed_turns(state, side_key))
+    if restriction:
+        raise ValueError(restriction)
     if side["resource"] < gift_cost(side, skill):
         raise ValueError("Недостаточно выносливости.")
     if side["cooldowns"].get(skill_id, 0) > 0:
         raise ValueError("Навык восстанавливается.")
     return skill
+
+
+def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
+    if "raid_loot" in skill.tags and side["level"] < skill.unlock_level:
+        return f"Нужен {skill.unlock_level} уровень."
+    if "third_action" in skill.tags and (
+        side.get("own_turns", 0) if own_turns is None else own_turns
+    ) < 2:
+        return "Доступно с третьего собственного действия."
+    return ""
 
 
 def _tick(side: dict) -> None:
@@ -1090,6 +1110,14 @@ def resolve_skill(
                 * max(0.1, 1 + boost + extra_boost + class_boost)
                 * reduction
                 * mirror_multiplier
+                * math.prod(
+                    max(0.1, e.get("value", 1)) for e in actor["effects"]
+                    if e.get("kind") == "final_damage_multiplier"
+                )
+                * max(0.1, 1 + sum(
+                    e.get("value", 0) for e in target["effects"]
+                    if e.get("kind") == "damage_taken_pct"
+                ))
                 * (1.5 if critical else 1)
                 * rng.uniform(0.95, 1.05)
             ),
@@ -1229,6 +1257,8 @@ def resolve_skill(
         },
         "status_after": battle_status_snapshot(state),
     }
+    if "triple_strike" in skill.tags:
+        event["hits"] = [damage // 3 + int(i < damage % 3) for i in range(3)]
     state["log"].append(event)
     state["log"] = state["log"][-60:]
     if advance_turn:

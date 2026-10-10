@@ -12,10 +12,12 @@ from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 
 from arena_links import arena_link
 from arena_web import require_member
-from arena_raid_engine import BOSS_NAME
+from arena_raid_engine import BOSSES
 from handlers.routes import text_or_caption_regexp
 
-RAID_RE = re.compile(r"^\s*/(?:рейд|raid)(?:@\w+)?\s*$", re.I)
+RAID_RE = re.compile(
+    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng))?\s*$", re.I
+)
 
 
 class RaidPublisher:
@@ -77,13 +79,19 @@ class RaidPublisher:
             names[str(p["actor_id"])] = html.escape(
                 user["display_name"] if user else str(p["actor_id"])
             )
-        text = f"👹 <b>{BOSS_NAME}</b> · командный рейд\n"
+        boss = BOSSES.get(row.get("boss_id", "iron"), BOSSES["iron"])
+        text = f"👹 <b>{html.escape(boss['name'])}</b> · командный рейд\n"
         if row["status"] == "lobby":
             text += f"Участники: {len(names)}/3\n" + "\n".join(
                 "• " + n for n in names.values()
             )
             return (
                 text
+                + (
+                    "\nРекомендуемый уровень: 10+. 📜 Трактат поступи тигробоя: шанс 20%, гарантирован на пятой победе без выпадения."
+                    if row.get("boss_id") == "lei_heng"
+                    else ""
+                )
                 + "\n\nВыберите личного персонажа или экипированного раба в «Открыть рейд».\nСоздатель начинает бой, когда собраны трое. На сбор — 10 минут."
             )
         if row["status"] == "cancelled":
@@ -176,7 +184,16 @@ def create_raid_router(db, bot, enabled, publisher):
             return
         try:
             await require_member(bot, message.chat.id, message.from_user.id)
-            row = await db.arena_raid_create(message.chat.id, message.from_user.id)
+            match = RAID_RE.fullmatch(
+                getattr(message, "text", None)
+                or getattr(message, "caption", None)
+                or ""
+            )
+            row = await db.arena_raid_create(
+                message.chat.id,
+                message.from_user.id,
+                "lei_heng" if match and match.group("boss") else "iron",
+            )
             try:
                 sent = await message.answer(
                     await publisher.body(row),
