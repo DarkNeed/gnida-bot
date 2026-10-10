@@ -14,6 +14,7 @@ from arena_engine import (
 )
 from arena_wasteland import enemy_source, victory_xp
 from arena_archclasses import class_title
+from arena_archprogress import skill_branch
 from arena_web import battle_view
 from database import Database
 
@@ -44,7 +45,11 @@ class EnemySourceTests(unittest.TestCase):
                         len(source["loadout"]), len(set(source["loadout"]))
                     )
                     self.assertTrue(
-                        set(source["loadout"]).issubset(unlocked_skill_ids(cls, level))
+                        set(source["loadout"]).issubset(
+                            unlocked_skill_ids(
+                                cls, level, archclass_id=source["archclass_id"]
+                            )
+                        )
                     )
                     self.assertTrue(
                         any(BUILTIN_SKILLS[k].damage_type for k in source["loadout"])
@@ -92,7 +97,10 @@ class EnemySourceTests(unittest.TestCase):
             seen = set()
             for _ in range(40):
                 seen.update(enemy_source(20, rng=rng)["loadout"])
-            native = {s.skill_id for s in BUILTIN_SKILLS.values() if s.class_id == cls}
+            native = {
+                s.skill_id for s in BUILTIN_SKILLS.values()
+                if s.class_id == cls and not skill_branch(s)
+            }
             self.assertTrue(native.issubset(seen), cls)
 
 

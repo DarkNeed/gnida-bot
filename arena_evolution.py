@@ -100,7 +100,7 @@ def evolution_info(skill, class_id, source=None, target=None, own_turns=0):
         return None
     info = dict(
         name=rule["name"],
-        min_level=EVOLUTION_LEVEL,
+        min_level=rule.get("min_level", EVOLUTION_LEVEL),
         condition=rule["condition"],
         description=rule["description"],
         cost=rule["changes"].get("cost", skill.cost),
@@ -126,7 +126,7 @@ def rule_active(rule, skill, actor, target, own_turns):
     if (
         not rule
         or actor["class_id"] != skill.class_id
-        or actor["level"] < EVOLUTION_LEVEL
+        or actor["level"] < rule.get("min_level", EVOLUTION_LEVEL)
     ):
         return False
     effects = target["effects"]

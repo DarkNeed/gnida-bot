@@ -15,6 +15,7 @@ from arena_class_mechanics import class_modifiers, class_after_action, has_adora
 from arena_mirror_effects import gift_cost, gift_modifiers, gift_after_action
 from arena_evolution import skill_variant, evolution_after_action
 from arena_archclasses import arch_after_action, obey_enemy_prescript, selected_branch
+from arena_archprogress import build_arch_skills, branch_skill_allowed, skill_branch
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -395,6 +396,7 @@ BUILTIN_SKILLS = {
 _finger_classes, _finger_skills = build_catalog(FighterClass, Skill, effect)
 FIGHTER_CLASSES.update(_finger_classes)
 BUILTIN_SKILLS.update(_finger_skills)
+BUILTIN_SKILLS.update(build_arch_skills(Skill))
 VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _finger_classes.items()})
 # Old names remain valid input; stable IDs keep inventory and saved builds intact.
 VISIBLE_CLASS_ALIASES.update(
@@ -691,6 +693,7 @@ def unlocked_skill_ids(
     skills: dict[str, Skill] | None = None,
     granted: Iterable[str] = (),
     known: Iterable[str] | None = None,
+    archclass_id: str = "",
 ) -> list[str]:
     catalog = skills or BUILTIN_SKILLS
     allowed_classes = {"ragamuffin"}
@@ -707,6 +710,7 @@ def unlocked_skill_ids(
             or skill.skill_id in granted
         )
         and skill.unlock_level <= level
+        and branch_skill_allowed(skill, archclass_id, level)
         and (known is None or skill.skill_id in known)
     ]
 
@@ -718,8 +722,9 @@ def normalize_loadout(
     skills: dict[str, Skill] | None = None,
     granted: Iterable[str] = (),
     known: Iterable[str] | None = None,
+    archclass_id: str = "",
 ) -> list[str]:
-    unlocked = unlocked_skill_ids(class_id, level, skills, granted, known)
+    unlocked = unlocked_skill_ids(class_id, level, skills, granted, known, archclass_id)
     selected: list[str] = []
     for skill_id in requested or ():
         if skill_id in unlocked and skill_id not in selected:
@@ -800,6 +805,7 @@ def create_battle_state(
                 skill_catalog,
                 source.get("granted_skills", ()),
                 source.get("known_skills"),
+                source.get("archclass_id", ""),
             ),
             "effects": starting_effects,
             "passive_details": passive_details,
@@ -869,6 +875,19 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
         skill_id not in side["loadout"] and skill_id != "bum_punch"
     ) or skill_id not in catalog:
         raise ValueError("Навык недоступен.")
+    if (
+        not branch_skill_allowed(
+            catalog[skill_id], side.get("archclass_id", ""), side["level"]
+        )
+        or (
+            skill_branch(catalog[skill_id])
+            and (
+                not selected_branch(side)
+                or catalog[skill_id].class_id != side["class_id"]
+            )
+        )
+    ):
+        raise ValueError("Навык недоступен этому архиклассу или уровню.")
     skill = effective_skill(state, side_key, skill_id, catalog)
     if side["resource"] < gift_cost(side, skill):
         raise ValueError("Недостаточно выносливости.")

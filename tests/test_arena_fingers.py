@@ -20,6 +20,7 @@ from arena_engine import (
     unlocked_skill_ids,
 )
 from arena_fingers import FINGER_IDS
+from arena_archprogress import skill_branch
 from arena_web import menu_view, create_arena_app
 from database import Database
 from test_arena import signed, TOKEN
@@ -62,7 +63,7 @@ class FingerEngineTests(unittest.TestCase):
                 state = self.state(cls)
                 self.assertEqual(len(state["sides"]["a"]["passive_details"]), 2)
                 for skill in BUILTIN_SKILLS.values():
-                    if skill.class_id != cls or not skill.cost:
+                    if skill.class_id != cls or not skill.cost or skill_branch(skill):
                         continue
                     state = self.state(cls, passives=[])
                     self.tap(state, skill.skill_id)

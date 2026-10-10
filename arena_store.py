@@ -697,6 +697,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 skills,
                 granted_skills,
                 self._arena_known_skills_locked(chat_id, slave_id, False),
+                profile["archclass_id"],
             )
             self.connection.execute(
                 """UPDATE slave_profiles SET loadout=?, skills_pending_at=NULL, updated_at=?
@@ -1734,6 +1735,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                     skills,
                     self._arena_grants_locked(chat, user, personal),
                     self._arena_known_skills_locked(chat, user, personal),
+                    profile["archclass_id"],
                 )
                 if any(k not in unlocked for k in value):
                     raise ValueError("Навык ещё не открыт.")
@@ -1744,6 +1746,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                     skills,
                     self._arena_grants_locked(chat, user, personal),
                     self._arena_known_skills_locked(chat, user, personal),
+                    profile["archclass_id"],
                 )
                 self.connection.execute(
                     f"UPDATE {table} SET loadout=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?",
@@ -1779,6 +1782,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                         profile["level"],
                         skills,
                         self._arena_grants_locked(chat, user, personal),
+                        archclass_id=profile["archclass_id"],
                     )
                     known = self._arena_known_skills_locked(chat, user, personal)
                 else:
@@ -1814,9 +1818,10 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                         skills,
                         self._arena_grants_locked(chat, user, personal),
                         known,
+                        profile["archclass_id"],
                     )
                 self.connection.execute(
-                    f"UPDATE {table} SET {column}=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?",
+                    f"UPDATE {table} SET {column}=? WHERE chat_id=? AND user_id=?",
                     (json.dumps(selected), chat, user),
                 )
             elif action != "progression":

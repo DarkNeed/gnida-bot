@@ -20,6 +20,7 @@ from arena_engine import (
     normalize_loadout,
     unlocked_skill_ids,
 )
+from arena_archprogress import branch_skill_allowed, skill_branch
 
 MSK = timezone(timedelta(hours=3))
 MERCHANT_DURATION = 2 * 3600
@@ -245,7 +246,17 @@ class ArenaMarketMixin:
             profile["level"],
             skills,
             self._arena_grants_locked(chat, user, personal),
+            archclass_id=profile["archclass_id"],
         )
+        # An update may introduce a skill to an existing capped-level profile.
+        # Start the normal delegation clock once, even when memory is full.
+        seen = set(json.loads(profile["skill_seen"]))
+        if any(skill_branch(skills[key]) and key not in seen for key in eligible):
+            table = "personal_profiles" if personal else "slave_profiles"
+            self.connection.execute(
+                f"UPDATE {table} SET skills_pending_at=COALESCE(skills_pending_at,?) WHERE chat_id=? AND user_id=?",
+                (market_now(), chat, user),
+            )
         return self._arena_memory_locked(
             chat, user, personal, "skill", eligible, profile
         )
@@ -336,7 +347,8 @@ class ArenaMarketMixin:
                 "SELECT class_id FROM custom_fighter_classes WHERE hidden=0"
             )
         }
-        public_skills = set(BUILTIN_SKILLS)
+        # Branch skills unlock through progression, not tradable cross-branch scrolls.
+        public_skills = {k for k, s in BUILTIN_SKILLS.items() if not skill_branch(s)}
         for row in self.connection.execute(
             "SELECT skill_id,definition_json FROM custom_fighter_skills"
         ):
@@ -702,6 +714,12 @@ class ArenaMarketMixin:
                     if content not in catalog:
                         raise ValueError("Навык больше недоступен.")
                     if kind == "skill":
+                        if not branch_skill_allowed(
+                            catalog[content], profile["archclass_id"], profile["level"]
+                        ):
+                            raise ValueError(
+                                "Навык доступен только своей ветке с 15 уровня. Трактат не потрачен."
+                            )
                         if catalog[content].unlock_level > profile["level"]:
                             raise ValueError(
                                 f"Для изучения нужен уровень {catalog[content].unlock_level}. Трактат не потрачен."
@@ -763,6 +781,7 @@ class ArenaMarketMixin:
                             skills,
                             self._arena_grants_locked(chat, user, personal),
                             self._arena_known_skills_locked(chat, user, personal),
+                            profile["archclass_id"],
                         )
                         self.connection.execute(
                             f"UPDATE {table} SET loadout=?,skills_pending_at=? WHERE chat_id=? AND user_id=?",
@@ -826,6 +845,7 @@ class ArenaMarketMixin:
                 profile["level"],
                 skills,
                 self._arena_grants_locked(chat, user, personal),
+                archclass_id=profile["archclass_id"],
             )
             result = dict(
                 passives=list(passives.values()),
@@ -846,6 +866,7 @@ class ArenaMarketMixin:
                     skills,
                     self._arena_grants_locked(chat, user, personal),
                     known,
+                    profile["archclass_id"],
                 ),
                 passive_loadout=[
                     k

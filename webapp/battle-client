@@ -30,7 +30,7 @@ function battleSkillButton(skill,side){
 }
 function archInfo(p){
   const a=p.archclass;
-  if(a)return '<div class="note"><b>'+esc(a.title)+' · ступень '+a.stage+'</b><p>'+esc(a.description)+'</p><p class="muted">'+(a.stage===20?'Развитие 20 уровня: ':'На 20 уровне: ')+esc(a.final_description)+'</p></div>';
+  if(a)return '<div class="note"><b>'+esc(a.title)+' · ступень '+a.stage+'</b><p>'+esc(a.description)+'</p>'+((a.progression||[]).map(m=>'<p class="muted">'+(m.unlocked?'✓ ':'🔒 ')+m.level+' уровень: '+esc(m.description)+'</p>').join(''))+'<p class="muted">'+(a.stage===20?'Развитие 20 уровня: ':'На 20 уровне: ')+esc(a.final_description)+'</p></div>';
   const choices=p.archclass_options||[];
   if(!choices.length)return '';
   if(p.level<10)return '<p class="muted">Архикласс откроется на 10 уровне. Высшая ступень — на 20.</p>';
@@ -302,7 +302,8 @@ function menuScreen(data){
     body+='<details><summary>Освободить место / вернуть навык</summary><p class="muted">Забытый навык перестаёт действовать. Ранее открытые навыки можно вернуть при свободном месте; трактат повторно не нужен. Бесплатный удар занимает одно место и не забывается.</p><div class="stack">';
     for(const s of p.skills.filter(s=>s.skill_id!=='bum_punch'))body+=button('Забыть: '+esc(s.name),'forget_skill:'+s.skill_id,'small');
     for(const s of p.passives||[])body+=button('Забыть пассивку: '+esc(s.name),'forget_passive:'+s.skill_id,'small');
-    for(const s of p.available_skills||[])body+=button('Изучить: '+esc(s.name),'learn_skill:'+s.skill_id,'small',p.skills.length>=6);
+    for(const s of p.available_skills||[])body+=button('Изучить: '+esc(s.name)+skillInfo(s),'learn_skill:'+s.skill_id,'small',p.skills.length>=6);
+    if(p.skills.length>=6&&(p.available_skills||[]).length)body+='<p class="note">Все 6 мест заняты. Можно забыть ненужный навык кнопкой выше, затем изучить открывшийся. Бесплатный удар остаётся.</p>';
     for(const s of p.available_passives||[])body+=button('Изучить пассивку: '+esc(s.name),'learn_passive:'+s.skill_id,'small',(p.passives||[]).length>=3);
     body+='</div></details>'+button('Сбросить класс и уровень','resetprofile','small danger');
     if(!p.personal&&p.user_id!==tg?.initDataUnsafe?.user?.id)body+='<p class="muted">Владелец может выбирать класс и навыки за раба после 48 часов ожидания.</p>'+button("Дать конфету · 30 XP","candy");

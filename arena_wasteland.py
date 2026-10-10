@@ -2,6 +2,7 @@
 
 import random
 from arena_archclasses import branch_options, ARCHCLASS_LEVEL
+from arena_archprogress import branch_skill_allowed
 
 from arena_engine import (
     FIGHTER_CLASSES,
@@ -23,10 +24,17 @@ def enemy_source(level: int, previous_class: str | None = None, rng=None) -> dic
     if len(pool) > 1 and previous_class in pool:
         pool.remove(previous_class)
     class_id = rng.choice(pool)
+    archclass_id = (
+        rng.choice(branch_options(class_id))["id"]
+        if level >= ARCHCLASS_LEVEL and branch_options(class_id)
+        else ""
+    )
     native = [
         s.skill_id
         for s in BUILTIN_SKILLS.values()
-        if s.class_id == class_id and s.unlock_level <= level
+        if s.class_id == class_id
+        and s.unlock_level <= level
+        and branch_skill_allowed(s, archclass_id, level)
     ]
     # At least one attack, then varied native skills rather than always the
     # first four low-level skills. Fill remaining slots with inherited skills.
@@ -47,11 +55,7 @@ def enemy_source(level: int, previous_class: str | None = None, rng=None) -> dic
         owner_id=0,
         controlled=False,
         class_id=class_id,
-        archclass_id=(
-            rng.choice(branch_options(class_id))["id"]
-            if level >= ARCHCLASS_LEVEL and branch_options(class_id)
-            else ""
-        ),
+        archclass_id=archclass_id,
         level=level,
         loadout=loadout,
     )

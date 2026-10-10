@@ -146,11 +146,14 @@ def archclass_view(source):
     if not entry:
         return None
     final = final_stage(source)
+    from arena_archprogress import milestones
+
     return dict(
         entry,
         id=source["archclass_id"],
         stage=20 if final else 10,
         title=entry["final_name"] if final else entry["name"],
+        progression=milestones(source),
     )
 
 
@@ -183,6 +186,10 @@ def arch_rule(skill, source):
     entry = selected_branch(source)
     if not entry or skill.class_id != source["class_id"]:
         return None
+    from arena_archprogress import improve_rule, skill_branch, unique_rule
+
+    if skill_branch(skill):
+        return unique_rule(skill, source)
     key, final = source["archclass_id"], final_stage(source)
     rule = dict(
         trigger="always",
@@ -349,7 +356,7 @@ def arch_rule(skill, source):
         return None
     rule["name"] = changes.pop("name")
     rule["changes"] = changes
-    return rule
+    return improve_rule(rule, source, skill)
 
 
 def obey_enemy_prescript(actor, skill_id):
@@ -397,9 +404,11 @@ def arch_after_action(actor, target, skill, hit, skills, rng):
             )
         )
         if choices:
+            from arena_archprogress import prescript_penalty
+
             chosen = rng.choice(choices)
             target.setdefault("mechanics", {})["enemy_prescript"] = dict(
-                skill_id=chosen, penalty=12 if final_stage(actor) else 8
+                skill_id=chosen, penalty=prescript_penalty(actor)
             )
             notes.append("предписание врагу: «" + skills[chosen].name + "»")
     return notes

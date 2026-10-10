@@ -305,6 +305,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
                 skills,
                 grants,
                 profile["known_skills"],
+                profile["archclass_id"],
             )
         ]
         profile["classes"] = [
