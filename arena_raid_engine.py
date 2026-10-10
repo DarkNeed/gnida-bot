@@ -142,9 +142,36 @@ def create_raid_state(participants, sources, classes, skills):
     return data
 
 
+def raid_snapshot(data):
+    """Small detached visual state; never expose hidden action selections."""
+    fighters = {"boss": data["boss"]} | {
+        k: p["fighter"] for k, p in data["players"].items()
+    }
+    return {
+        k: deepcopy(
+            {
+                field: f.get(field, {})
+                for field in ("hp", "resource", "effects", "mechanics", "cooldowns")
+            }
+        )
+        for k, f in fighters.items()
+    }
+
+
 def log_event(data, actor, target, text, **extra):
+    data["event_seq"] = data.get("event_seq", 0) + 1
+    first = not data["log"] or data["log"][-1]["round"] != data["round"]
     data["log"].append(
-        dict(round=data["round"], actor=actor, target=target, text=text, **extra)
+        dict(
+            round=data["round"],
+            actor=actor,
+            target=target,
+            text=text,
+            seq=data["event_seq"],
+            after=raid_snapshot(data),
+            **({"before": data["round_before"]} if first else {}),
+            **extra,
+        )
     )
 
 
@@ -183,6 +210,7 @@ def resolve_round(data, skills, rng=None):
     if data["finished"]:
         raise ValueError("Рейд завершён.")
     rng = rng or random.SystemRandom()
+    data["round_before"] = raid_snapshot(data)
     boss = data["boss"]
     stunned = False
     living = alive_players(data)
@@ -245,6 +273,7 @@ def resolve_round(data, skills, rng=None):
             damage=event["damage"],
             self_damage=event["self_damage"],
             skill=selected,
+            damage_type=event["damage_type"],
         )
         control = any(e["kind"] == "stun" for e in boss["effects"])
         boss["effects"] = [e for e in boss["effects"] if e["kind"] != "stun"]
@@ -325,7 +354,15 @@ def resolve_round(data, skills, rng=None):
                     )
                     if boss_after is None:
                         boss_after = attacker
-                    log_event(data, "boss", key, event["text"], damage=event["damage"])
+                    log_event(
+                        data,
+                        "boss",
+                        key,
+                        event["text"],
+                        damage=event["damage"],
+                        skill=intent["skill"],
+                        damage_type=event["damage_type"],
+                    )
                 if boss_after is not None:
                     boss.clear()
                     boss.update(boss_after)
@@ -339,6 +376,7 @@ def resolve_round(data, skills, rng=None):
             result="Босс ушёл: достигнут предел 40 раундов. Без наград.",
         )
     data["log"] = data["log"][-80:]
+    data.pop("round_before", None)
     if not data["finished"]:
         data["round"] += 1
         for player in data["players"].values():

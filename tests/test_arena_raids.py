@@ -2,8 +2,10 @@ import asyncio
 import json
 import random
 import shutil
+import subprocess
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -45,6 +47,29 @@ class RaidEngineTests(unittest.TestCase):
         for p in data["players"].values():
             p["fighter"]["hp"] = p["fighter"]["stats"]["max_hp"] = 10000
 
+    def test_visual_snapshots_detached_sequenced_and_hide_choices(self):
+        data = self.state()
+        self.sturdy(data)
+        initial = data["boss"]["hp"]
+        for p in data["players"].values():
+            p["selected"] = "bum_punch"
+        resolve_round(data, BUILTIN_SKILLS, Roll())
+        first = data["log"][0]
+        self.assertEqual(first["before"]["boss"]["hp"], initial)
+        self.assertLess(first["after"]["boss"]["hp"], initial)
+        self.assertNotIn("selected", json.dumps(first["after"]))
+        last = data["event_seq"]
+        saved = json.dumps(first)
+        data["players"]["10"]["fighter"]["effects"].append(
+            dict(id="later", kind="bleed", value=1, duration=2)
+        )
+        self.assertEqual(json.dumps(first), saved)
+        resolve_round(data, BUILTIN_SKILLS, Roll())
+        seqs = [e["seq"] for e in data["log"]]
+        self.assertEqual(seqs, list(range(1, data["event_seq"] + 1)))
+        self.assertIn("before", data["log"][last])
+        self.assertNotIn("round_before", data)
+
     def test_snapshot_independent_fighters_and_scaling(self):
         data = self.state()
         self.assertEqual(
@@ -66,7 +91,7 @@ class RaidEngineTests(unittest.TestCase):
             dict(id="buff", kind="damage_pct", value=0.2, duration=4)
         ]
         resolve_round(data, BUILTIN_SKILLS, Roll())
-        hits = [e for e in data["log"] if e.get("skill")]
+        hits = [e for e in data["log"] if e.get("skill") and e["actor"] != "boss"]
         self.assertEqual([e["actor"] for e in hits], ["30", "20", "10"])
         self.assertEqual(len([e for e in data["log"] if e["actor"] == "boss"]), 3)
         self.assertEqual(data["boss"]["own_turns"], 1)
@@ -347,7 +372,9 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         row = await self.db.arena_raid_get(row["token"])
         data = json.loads(row["data_json"])
         self.assertEqual(data["round"], 2)
-        self.assertEqual(len([e for e in data["log"] if e.get("skill")]), 3)
+        self.assertEqual(
+            len([e for e in data["log"] if e.get("skill") and e["actor"] != "boss"]), 3
+        )
         self.assertTrue(all(p["manual_turns"] == 1 for p in data["players"].values()))
         with self.assertRaisesRegex(ValueError, "Раунд"):
             await self.db.arena_raid_action(row["token"], 20, 1, "bum_punch")
@@ -621,6 +648,84 @@ class RaidClientTests(unittest.TestCase):
         self.assertNotIn("подтвердить", body.lower())
         self.assertNotIn('data-do="skill', body)
         self.assertIn('data-raid="inspect:boss"', body)
+        self.assertIn("raid-ally slot-0 raid-own", body)
+        self.assertIn("raid-ally slot-1", body)
+        self.assertIn("raid-ally slot-2", body)
+        self.assertIn("raid-enemy", body)
+        self.assertNotIn('class="raid-party"', body)
+        self.assertNotIn('class="raid-boss"', body)
+
+    def test_visual_events_do_not_replay_or_mutate_source(self):
+        payload = {"previous": raid_preview(), "next": raid_preview("animation")}
+        result = client_tests.ArenaMarketClientTests().run_client(
+            "const events=raidNewEvents(input.previous,input.next);"
+            "const before=JSON.stringify(input.next);"
+            "const frame=raidVisual(input.next,events[0].before);frame.data.boss.hp=1;"
+            "out=JSON.stringify({count:events.length,initial:raidNewEvents(null,input.next).length,"
+            "replay:raidNewEvents(input.next,input.next).length,other:raidNewEvents({...input.previous,token:'other'},input.next).length,"
+            "unchanged:JSON.stringify(input.next)===before});",
+            payload,
+        )
+        result = json.loads(result)
+        self.assertGreater(result["count"], 3)
+        self.assertEqual(result["initial"], 0)
+        self.assertEqual(result["replay"], 0)
+        self.assertEqual(result["other"], 0)
+        self.assertTrue(result["unchanged"])
+
+    def test_animation_finishes_at_authoritative_state_even_after_error(self):
+        source = (
+            (Path(__file__).resolve().parents[1] / "webapp" / "battle-client")
+            .read_text(encoding="utf-8")
+            .rsplit("boot();", 1)[0]
+        )
+        script = """
+const vm=require('node:vm'), input=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const element={style:{},setAttribute(){},getBoundingClientRect:()=>({height:300})};
+const app={addEventListener(){}};
+const c={window:{Telegram:undefined,matchMedia:()=>({matches:true})},document:{
+getElementById:()=>null,querySelector:()=>element,addEventListener(){}},
+location:{search:'',hostname:'example.test'},URLSearchParams,URL,
+setInterval(){},setTimeout(cb){cb()},clearTimeout(){},input};
+c.document.getElementById=id=>id==='app'?app:null;
+vm.runInNewContext(input.source+`
+let played=0,frames=[];
+raidScreen=function(data){raidCurrent=data;frames.push(data)};
+raidAnimate=async function(e){played++;if(input.fail)throw Error('interrupted animation')};
+raidCurrent=input.previous;
+(async()=>{try{await receiveRaid(input.next)}catch{}
+return {played,locked:raidPlaying,hp:raidCurrent.data.boss.hp,
+round:raidCurrent.data.round,lastLog:raidCurrent.data.log.length,
+firstLog:frames[0].data.log.length,frames:frames.length}})();`,c)
+.then(result=>process.stdout.write(JSON.stringify(result))).catch(e=>{console.error(e);process.exit(1)});
+"""
+        next_view = raid_preview("animation")
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                result = subprocess.run(
+                    [shutil.which("node"), "-e", script],
+                    input=json.dumps(
+                        dict(
+                            source=source,
+                            previous=raid_preview(),
+                            next=next_view,
+                            fail=fail,
+                        )
+                    ),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    check=True,
+                )
+                result = json.loads(result.stdout)
+                self.assertFalse(result["locked"])
+                self.assertEqual(result["hp"], next_view["data"]["boss"]["hp"])
+                self.assertEqual(result["round"], next_view["data"]["round"])
+                self.assertEqual(result["lastLog"], len(next_view["data"]["log"]))
+                self.assertEqual(result["firstLog"], 1)
+                self.assertEqual(
+                    result["played"], 1 if fail else len(next_view["data"]["log"])
+                )
 
     def test_spectator_has_no_action_buttons(self):
         body = self.render(raid_preview("spectator"))

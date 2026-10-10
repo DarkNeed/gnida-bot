@@ -18,7 +18,13 @@ from arena_engine import (
     effective_stat,
 )
 from arena_mirror_effects import GIFTS, NORMAL_GIFTS
-from arena_raid_engine import create_raid_state, pair_state, BOSS_NAME, BOSS_SKILLS
+from arena_raid_engine import (
+    create_raid_state,
+    pair_state,
+    resolve_round,
+    BOSS_NAME,
+    BOSS_SKILLS,
+)
 from arena_engine import effective_skill
 from arena_archclasses import class_title
 from arena_progression import choice_avatar
@@ -190,6 +196,15 @@ def raid_preview(phase="active"):
             rewards={str(i): dict(xp=58, francs=76, loot="") for i in (1, 2, 3)},
         )
         data["boss"]["hp"] = 0
+    if phase == "animation":
+        import random
+
+        data["log"] = []
+        for key, sid in (("1", "humiliate"), ("2", "smack"), ("3", "meow")):
+            data["players"][key]["selected"] = sid
+        resolve_round(data, BUILTIN_SKILLS, random.Random(7))
+        for player in data["players"].values():
+            player["ready"] = False
     now = int(time.time())
     return dict(
         token="preview",
@@ -201,7 +216,7 @@ def raid_preview(phase="active"):
             if phase == "lobby"
             else "finished" if phase == "finished" else "active"
         ),
-        revision=0,
+        revision=1 if phase == "animation" else 0,
         deadline=now + 120,
         server_time=now,
         boss_name=BOSS_NAME,
@@ -213,7 +228,7 @@ def raid_preview(phase="active"):
 
 async def demo_raid(request):
     phase = request.match_info["phase"]
-    if phase not in {"lobby", "active", "spectator", "finished"}:
+    if phase not in {"lobby", "active", "spectator", "finished", "animation"}:
         raise web.HTTPNotFound()
     return web.json_response(raid_preview(phase))
 
