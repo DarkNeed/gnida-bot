@@ -257,13 +257,52 @@ out=JSON.stringify(fighterStatuses(statusSide('a')));
         )
         self.assertEqual([e["count"] for e in json.loads(out)], ["3", "2/3"])
 
-    def test_approved_atlas_is_present(self):
-        from PIL import Image
+    def test_all_vector_icons_are_present_without_raster_or_external_content(self):
+        from xml.etree import ElementTree as ET
 
         asset = (
-            Path(__file__).resolve().parents[1] / "webapp/assets/status-effects-v1.png"
+            Path(__file__).resolve().parents[1] / "webapp/assets/status-effects-v2.svg"
         )
-        with Image.open(asset) as image:
-            self.assertEqual(image.mode, "RGBA")
-            self.assertEqual(image.width, image.height)
-            self.assertEqual(image.getchannel("A").getextrema(), (0, 255))
+        root = ET.parse(asset).getroot()
+        symbols = root.findall("{http://www.w3.org/2000/svg}symbol")
+        self.assertEqual(
+            [s.attrib["id"] for s in symbols], [f"status-{i}" for i in range(16)]
+        )
+        for symbol in symbols:
+            self.assertEqual(symbol.attrib["viewBox"], "0 0 32 32")
+            self.assertGreater(len(list(symbol)), 0)
+        for element in root.iter():
+            self.assertIn(
+                element.tag.rsplit("}", 1)[-1], {"svg", "symbol", "g", "path", "circle"}
+            )
+            self.assertFalse(
+                any(
+                    key.lower().startswith("on") or "href" in key
+                    for key in element.attrib
+                )
+            )
+        self.assertLess(asset.stat().st_size, 10_000)
+
+    def test_status_markup_uses_vector_symbols_and_vector_direction_arrows(self):
+        for index in range(16):
+            with self.subTest(index=index):
+                markup = self.run_client("out=statusIcon(input);", index)
+                self.assertIn('<svg class="status-icon"', markup)
+                self.assertIn(
+                    f"/static/assets/status-effects-v2.svg#status-{index}", markup
+                )
+                self.assertNotIn(".png", markup)
+        markup = self.run_client("out=statusIcon(3,'down');", {})
+        self.assertIn("status-down", markup)
+        self.assertIn("#ef5366", markup)
+        self.assertIn('<path d="M26 20v8', markup)
+        markup = self.run_client("out=statusIcon(3,'up');", {})
+        self.assertIn("status-up", markup)
+        self.assertIn('<path d="M26 28v-8', markup)
+
+    def test_invalid_vector_icon_indexes_use_safe_fallback(self):
+        for index in (-1, 16, None, '"/><script>'):
+            with self.subTest(index=index):
+                markup = self.run_client("out=statusIcon(input);", index)
+                self.assertIn("#status-15", markup)
+                self.assertNotIn("<script>", markup)

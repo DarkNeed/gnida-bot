@@ -43,12 +43,10 @@ dialog.stats-dialog{position:fixed;inset:0;margin:auto;width:min(620px,calc(100%
 .status-row:empty{display:none}.status-row.enemy{left:75%;bottom:45%}.status-row.player{left:25%;bottom:1%}
 .status-token{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:auto;min-width:0;min-height:44px;height:44px;padding:2px;gap:1px;background:transparent;border:0;border-radius:0;box-shadow:none}
 .status-token:hover{background:transparent;border:0;filter:brightness(1.25)}.status-token:focus-visible{outline:1px dashed var(--accent);outline-offset:-1px}
-.status-icon{display:block;flex-shrink:0;width:26px;height:26px;background-image:url('/static/assets/status-effects-v1.png');background-repeat:no-repeat;background-size:400% 400%;background-position:var(--icon-x) var(--icon-y)}
-.status-icon.status-down,.status-icon.status-up{position:relative}.status-icon.status-down{filter:brightness(0) saturate(100%) invert(36%) sepia(97%) saturate(1800%) hue-rotate(330deg) brightness(102%) contrast(106%)}
-.status-icon.status-down::after,.status-icon.status-up::after{position:absolute;right:-1px;bottom:0;font-size:12px;line-height:1;font-weight:900;text-shadow:0 1px 2px #000;content:'↓'}.status-icon.status-up::after{content:'↑';color:#b3e5ff}.effect-dialog .status-icon::after{font-size:22px}.detail-status .status-icon::after{font-size:14px}
+.status-icon{display:block;flex-shrink:0;width:32px;height:32px;overflow:visible}
 .status-count{font-size:12px;font-weight:800;line-height:1;color:#fff;white-space:nowrap;text-shadow:0 1px 2px #000,0 0 3px #000;font-variant-numeric:tabular-nums}
 dialog.effect-dialog{inset:0;margin:auto;width:min(360px,calc(100% - 28px));max-height:calc(100dvh - 32px);overflow-y:auto;background:var(--card);color:var(--ink);border:1px solid #566781;border-radius:18px;padding:20px;overscroll-behavior:contain}
 dialog.effect-dialog:not([open]){display:none}dialog.effect-dialog::backdrop{background:#050b18bb}
 .effect-dialog h2{font-size:17px;margin:12px 0}.effect-dialog p{font-size:13px;line-height:1.7}.effect-dialog .status-icon{width:64px;height:64px}.effect-dialog button{float:right;min-height:32px;padding:5px 12px}
 .detail-status{display:flex;gap:10px;align-items:flex-start;margin:12px 0}.detail-status .status-icon{width:32px;height:32px}.detail-status p{margin:4px 0}
-@media(max-width:550px){.status-row{gap:1px}.status-token .status-icon{width:23px;height:23px}.status-count{font-size:11px}}
+@media(max-width:550px){.status-row{gap:1px}.status-token{padding:1px}.status-token .status-icon{width:28px;height:28px}.status-count{font-size:11px}}

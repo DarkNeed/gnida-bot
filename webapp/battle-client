@@ -25,7 +25,12 @@ function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames
 function describeEffect(e){if(e.description)return esc(e.description);const kind=String(e.kind||'effect'),value=kind.endsWith("_pct")||kind==='next_magic_damage'||kind==='next_physical_damage'?Math.round(e.value*100)+"%":e.value+(kind==='accuracy_flat'||kind==='evasion_flat'?'%':'');return esc(effectNames[kind]||kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');}
 const statusIcons={bleed:1,stun:2,accuracy_flat:3,damage_pct:4,physical_attack_pct:4,magic_attack_pct:5,physical_defense_pct:6,magic_defense_pct:6,evasion_flat:7,speed_pct:8,resource:9,resource_leech:9,prepared_attack:10,next_physical_damage:10,next_magic_damage:5};
 const statusStatNames={accuracy_flat:'точности',damage_pct:'урона',physical_attack_pct:'физ. атаки',magic_attack_pct:'маг. атаки',physical_defense_pct:'физ. защиты',magic_defense_pct:'маг. защиты',evasion_flat:'уклонения',speed_pct:'скорости',next_physical_damage:'следующей физ. атаки',next_magic_damage:'следующей маг. атаки'};
-function statusIcon(index,direction=''){return '<span class="status-icon'+(direction==='down'||direction==='up'?' status-'+direction:'')+'" aria-hidden="true" style="--icon-x:'+(index%4)*100/3+'%;--icon-y:'+Math.floor(index/4)*100/3+'%"></span>';}
+const statusColors=['#ef5366','#ef5366','#f4cb75','#93d9ef','#93d9ef','#c59bf1','#93d9ef','#93d9ef','#93d9ef','#c59bf1','#f4cb75','#f4cb75','#ef5366','#c59bf1','#f4cb75','#93d9ef'];
+function statusIcon(index,direction=''){
+  const glyph=Number.isInteger(index)&&index>=0&&index<statusColors.length?index:15;
+  const marked=direction==='down'||direction==='up',arrow=direction==='down'?'M26 20v8m-3-3 3 3 3-3':'M26 28v-8m-3 3 3-3 3 3';
+  return '<svg class="status-icon'+(marked?' status-'+direction:'')+'" aria-hidden="true" focusable="false" viewBox="0 0 32 32" style="color:'+(direction==='down'?'#ef5366':statusColors[glyph])+'"><use href="/static/assets/status-effects-v2.svg#status-'+glyph+'"/>'+(marked?'<g fill="none" stroke-linecap="square" stroke-linejoin="miter"><path d="'+arrow+'" stroke="#101b2b" stroke-width="5"/><path d="'+arrow+'" stroke="currentColor" stroke-width="2.5"/></g>':'')+'</svg>';
+}
 function fighterStatuses(side){
   const items=[];
   for(const e of side.effects||[]){
