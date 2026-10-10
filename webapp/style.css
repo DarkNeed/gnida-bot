@@ -66,9 +66,10 @@ dialog.effect-dialog:not([open]){display:none}dialog.effect-dialog::backdrop{bac
 .raid-intent{margin-bottom:0}.raid-field{position:relative;display:block;padding:0;height:490px;overflow:hidden;border:1px solid #456278;border-radius:22px;margin-bottom:4px;background:radial-gradient(ellipse at 20% 95%,#577780,transparent 65%),linear-gradient(#182c45,#385568 67%,#405a65)}
 .raid-field:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,#b9d8cb25,transparent 35%),linear-gradient(145deg,transparent 45%,#203b4e55 45%,transparent 55%);pointer-events:none}
 .raid-fighter{position:absolute;width:23%;padding:0;border:0;border-radius:0;background:none;text-align:center;z-index:2}
-.raid-fighter.slot-0{left:1%;bottom:13%}.raid-fighter.slot-1{left:24%;bottom:8%}.raid-fighter.slot-2{left:47%;bottom:3%}
-.raid-enemy{left:70%;width:28%;top:10px}.raid-art{position:relative;height:200px;isolation:isolate}.raid-enemy .raid-art{height:220px}
+.raid-fighter.slot-0{left:1%;bottom:19%}.raid-fighter.slot-1{left:24%;bottom:14%}.raid-fighter.slot-2{left:47%;bottom:9%}
+.raid-enemy{left:70%;width:28%;top:10px}.raid-art{position:relative;display:flex;align-items:flex-end;justify-content:center;height:200px;isolation:isolate}.raid-enemy .raid-art{height:220px}
 .raid-art .raid-sprite{position:relative;z-index:2;height:100%;width:100%;max-width:100%;object-fit:contain;transform-origin:50% 90%;animation:raid-idle 3s ease-in-out infinite}
+.raid-ally .raid-sprite{height:75%;width:75%}
 .raid-enemy .raid-sprite{transform:scaleX(-1);animation:raid-enemy-idle 3s ease-in-out infinite}
 .raid-ground{position:absolute;z-index:0;bottom:-3px;left:5%;width:90%;height:20px;border-radius:50%;background:#9abbab25;border:1px solid #b0c6b340;box-shadow:0 9px 12px #10253644}
 .raid-own .raid-ground{border-color:#f7ca75;box-shadow:0 0 20px #f7ca7555;background:#f7ca7522}
@@ -82,4 +83,4 @@ dialog.effect-dialog:not([open]){display:none}dialog.effect-dialog::backdrop{bac
 .raid-enemy .raid-hud{position:absolute;right:calc(100% + 12px);top:18px;width:190px;max-width:none;text-align:left}.raid-enemy .raid-hud .row{justify-content:space-between}
 @keyframes raid-idle{50%{transform:translateY(-3px)}}@keyframes raid-enemy-idle{50%{transform:scaleX(-1) translateY(-3px)}}
 @media(max-width:550px){.raid-screen .content{padding:4px 10px;gap:12px}.raid-field{height:430px;border-radius:18px}.raid-fighter{width:25%}.raid-fighter.slot-0{left:1%;bottom:12%}.raid-fighter.slot-1{left:26%;bottom:7%}.raid-fighter.slot-2{left:51%;bottom:2%}.raid-enemy{left:61%;width:37%;top:8px}.raid-art{height:140px}.raid-enemy .raid-art{height:170px}.raid-hud strong{font-size:10px}.raid-hud .muted{font-size:8px}.raid-hud .barline{font-size:8px}.raid-ready{font-size:8px}.raid-effects{min-height:27px}.raid-effect .status-icon{width:25px;height:25px}.raid-effect .status-count{font-size:10px}.raid-intent{padding:12px}.raid-intent h3{font-size:14px}.raid-fighter .stat-button{width:19px;min-width:19px;height:19px;min-height:19px}.raid-damage{font-size:22px}}
-@media(max-width:550px){.raid-field{height:460px}.raid-enemy{left:69%;width:29%}.raid-enemy .raid-hud{width:160px;max-width:45vw;top:10px}.raid-art{height:130px}.raid-enemy .raid-art{height:165px}}
+@media(max-width:550px){.raid-field{height:460px}.raid-enemy{left:69%;width:29%}.raid-enemy .raid-hud{width:160px;max-width:45vw;top:10px}.raid-art{height:130px}.raid-enemy .raid-art{height:165px}.raid-fighter.slot-0{bottom:18%}.raid-fighter.slot-1{bottom:13%}.raid-fighter.slot-2{bottom:8%}}
