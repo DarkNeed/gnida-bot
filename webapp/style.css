@@ -26,5 +26,5 @@ dialog.stats-dialog{position:fixed;inset:0;margin:auto;width:min(620px,calc(100%
 /* Saved mirror run choices reuse the arena's responsive menu cards. */
 .skill.evolved { border-color: #f3cc79; }
 .evolution-note { margin-top: 8px; color: #f3cc79; font-size: 12px; }
-.mirror-choice { text-align: left; white-space: normal; }
-.mirror-choice .muted { display: block; margin-top: 6px; font-size: 12px; font-weight: 400; }
+.mirror-choice, .arch-choice { text-align: left; white-space: normal; }
+.mirror-choice .muted, .arch-choice .muted { display: block; margin-top: 6px; font-size: 12px; font-weight: 400; }

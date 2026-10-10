@@ -22,7 +22,7 @@ def build_catalog(FighterClass, Skill, effect):
     specs = (
         (
             "thumb",
-            "Капо",
+            "Солдато Большого пальца",
             "Боезапас",
             (52, 13, 5, 12, 9, 7, 4),
             (5, 1.5, 0.4, 1.1, 0.8, 0.5, 0.2),
@@ -41,7 +41,7 @@ def build_catalog(FighterClass, Skill, effect):
         ),
         (
             "index",
-            "Исполнитель",
+            "Прозелит Указательного пальца",
             "Воля",
             (44, 12, 9, 8, 11, 13, 10),
             (4.5, 1.4, 0.7, 0.8, 1, 1, 0.3),
@@ -60,7 +60,7 @@ def build_catalog(FighterClass, Skill, effect):
         ),
         (
             "middle",
-            "Мститель семьи",
+            "Младший брат Среднего пальца",
             "Ярость",
             (58, 14, 4, 12, 8, 8, 4),
             (5.5, 1.6, 0.3, 1.2, 0.7, 0.6, 0.2),
@@ -79,7 +79,7 @@ def build_catalog(FighterClass, Skill, effect):
         ),
         (
             "ring",
-            "Маэстро",
+            "Студент Кольца",
             "Вдохновение",
             (42, 7, 14, 7, 10, 12, 11),
             (4, 0.6, 1.7, 0.7, 1, 1, 0.3),
@@ -378,12 +378,14 @@ def has_trait(side, kind):
     )
 
 
+def negative_effect(effect):
+    return (
+        effect["kind"] in {"bleed", "stun"} or effect.get("value", 0) < 0
+    ) and effect.get("duration", 0) < 10000
+
+
 def negative_kinds(side):
-    return {
-        e["kind"]
-        for e in side["effects"]
-        if e["kind"] in {"bleed", "stun"} or e.get("value", 0) < 0
-    }
+    return {e["kind"] for e in side["effects"] if negative_effect(e)}
 
 
 def combat_modifiers(actor, target, skill, rng):
@@ -396,8 +398,10 @@ def combat_modifiers(actor, target, skill, rng):
         and memory.get("last_attack") not in {None, skill.skill_id}
     ):
         accuracy += 10
-    if skill.skill_id in {"warning_shot", "senior_verdict"} and has_trait(
-        actor, "subordination"
+    if (
+        skill.skill_id in {"warning_shot", "senior_verdict"}
+        and has_trait(actor, "subordination")
+        and "no_order_bonus" not in skill.tags
     ):
         boost += 0.08 * memory.get("order", 0)
     if skill.skill_id in {"answer_for_it", "whole_family"} and has_trait(
@@ -442,14 +446,16 @@ def after_action(
         m["last_attack"] = skill.skill_id
     if hit and critical:
         m["focus"] = 0
+    if "consume_focus" in skill.tags:
+        m["focus"] = 0
     if skill.skill_id == "calm_breath" and has_trait(actor, "constellation"):
         m["focus"] = min(3, m.get("focus", 0) + 1)
     if hit and skill.skill_id == "last_stroke":
-        target_negatives = negative_kinds(target)
         target["effects"] = [
-            dict(e, duration=e["duration"] - 1) if e["kind"] in target_negatives else e
+            dict(e, duration=e["duration"] - 1) if negative_effect(e) else e
             for e in target["effects"]
-            if e["kind"] not in target_negatives or e["duration"] > 1
+            if not negative_effect(e)
+            or ("consume_negatives" not in skill.tags and e["duration"] > 1)
         ]
     refund = 0
     if hit and has_trait(actor, "muse") and negative_kinds(target) - previous_negatives:

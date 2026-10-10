@@ -22,7 +22,20 @@ function fighterImage(p,cls="",id=""){
 function clearSpriteDraft(){if(spriteDraft)URL.revokeObjectURL(spriteDraft.url);spriteDraft=null;}
 function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames,r)?r:"common")+'">'+esc(rarityNames[r]||r||"Обычный")+'</span>';}
 function describeEffect(e){if(e.description)return esc(e.description);const value=e.kind.endsWith("_pct")||e.kind==='next_magic_damage'||e.kind==='next_physical_damage'?Math.round(e.value*100)+"%":e.value;return esc(effectNames[e.kind]||e.kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');}
-function skillInfo(s){const e=s.evolution;return '<div class="muted">'+(s.cost!==undefined?'Энергия '+s.cost+' · точность '+s.accuracy+'% · сила '+s.power+' · перезарядка '+s.cooldown+' х.':'')+'</div>'+(s.description?'<div class="muted">'+esc(s.description)+'</div>':'')+((s.effects||[]).map(e=>'<div class="muted">'+describeEffect(e)+'</div>').join(''))+(e?'<div class="evolution-note"><b>'+(e.active?'Усиленная версия':'Превращение с '+e.min_level+' уровня: '+esc(e.name))+'</b><div>'+esc(e.condition)+'</div>'+(!e.active?'<div>Энергия '+esc(e.cost)+' · сила '+esc(e.power)+'. '+esc(e.description)+'</div>':'')+'</div>':'');}
+function skillInfo(s){const e=s.evolution;return '<div class="muted">'+(s.cost!==undefined?'Энергия '+s.cost+' · точность '+s.accuracy+'% · сила '+s.power+' · перезарядка '+s.cooldown+' х.':'')+'</div>'+(s.description?'<div class="muted">'+esc(s.description)+'</div>':'')+((s.effects||[]).map(e=>'<div class="muted">'+describeEffect(e)+'</div>').join(''))+(e?'<div class="evolution-note"><b>'+(e.active?(e.specialization?'Навык архикласса':'Усиленная версия'):'Превращение с '+e.min_level+' уровня: '+esc(e.name))+'</b><div>'+esc(e.condition)+'</div>'+(!e.active?'<div>Энергия '+esc(e.cost)+' · сила '+esc(e.power)+'. '+esc(e.description)+'</div>':'')+'</div>':'');}
+function battleSkillButton(skill,side){
+  const evolved=skill.evolution?.active, prescribed=side.mechanics?.prescript===skill.skill_id, enemyOrder=side.mechanics?.enemy_prescript?.skill_id===skill.skill_id;
+  const label=prescribed?'ПРЕДПИСАНИЕ':enemyOrder?'ПРЕДПИСАНИЕ ВРАГА':skill.damage_type==='magic'?'МАГИЯ':skill.damage_type==='physical'?'АТАКА':'ЭФФЕКТ';
+  return '<button class="skill'+(evolved?' evolved':'')+((prescribed||enemyOrder)?' prescribed':'')+'" data-skill="'+esc(skill.skill_id)+'" '+(skill.evolution?'title="'+esc(skill.evolution.condition)+'" ':'')+(side.resource<skill.cost||side.cooldowns[skill.skill_id]?'disabled':'')+'><span class="type">'+(evolved?(skill.evolution.specialization?'ВЕТКА · ':'УСИЛЕНО · '):'')+label+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?' · ещё '+side.cooldowns[skill.skill_id]+' х.':'')+'</span></button>';
+}
+function archInfo(p){
+  const a=p.archclass;
+  if(a)return '<div class="note"><b>'+esc(a.title)+' · ступень '+a.stage+'</b><p>'+esc(a.description)+'</p><p class="muted">'+(a.stage===20?'Развитие 20 уровня: ':'На 20 уровне: ')+esc(a.final_description)+'</p></div>';
+  const choices=p.archclass_options||[];
+  if(!choices.length)return '';
+  if(p.level<10)return '<p class="muted">Архикласс откроется на 10 уровне. Высшая ступень — на 20.</p>';
+  return '<h3>Выбери архикласс</h3><p class="muted">Выбор сохраняется до смены или сброса класса. Навыки и боевые слоты сохраняются.</p><div class="stack">'+choices.map(a=>button('<b>'+esc(a.name)+'</b><div class="muted">'+esc(a.description)+'</div><div class="muted">20 уровень: '+esc(a.final_name)+' · '+esc(a.final_description)+'</div>','archclass:'+a.id,'arch-choice',!p.archclass_can_choose)).join('')+'</div>'+(!p.archclass_can_choose?'<p class="muted">Раб может выбрать сейчас; владелец — после 48 часов ожидания.</p>':'');
+}
 function itemInfo(item){const d=item.details||{};return d.description?'<p class="muted">'+esc(d.description)+'</p>':item.kind==='class'?'<p class="muted">Меняет класс, сбрасывает уровень до 1, весь опыт, изученные активные и пассивные навыки. Инвентарь и спрайт сохраняются.</p>':'<p class="muted">'+(item.kind==='passive'?'Пассивный навык · максимум 2 в бою':'Активный навык · нужен уровень '+(d.unlock_level||1))+'</p>'+skillInfo(d);}
 function fighterDetails(s,key){
   const effective=s.effective_stats||s.stats;
@@ -39,7 +52,7 @@ function showStats(key){
     overlay.addEventListener('click',e=>{const r=overlay.getBoundingClientRect();if(e.target.closest('[data-close-stats]')||(e.target===overlay&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)))closeStats();});document.body.append(overlay);
   }
   const scroll=overlay.scrollTop;
-  overlay.innerHTML='<header class="stats-header"><b>О бойце</b><button class="small close-stats" data-close-stats aria-label="Закрыть детали">Закрыть ✕</button></header>'+fighterDetails(s,key);
+  overlay.innerHTML='<header class="stats-header"><b>О бойце</b><button class="small close-stats" data-close-stats aria-label="Закрыть детали">Закрыть ✕</button></header>'+archInfo(s)+fighterDetails(s,key);
   overlay.scrollTop=scroll;
   if(fresh){overlay.showModal();document.documentElement.classList.add('fighter-details-open');overlay.querySelector('[data-close-stats]').focus({preventScroll:true});}
 }
@@ -79,9 +92,10 @@ function renderActions(){
       (st.mirror_token?(current.actor_id===st.sides.a.controller_id?button("Итоги / продолжить забег","mirror:"+st.mirror_token,"primary"):""):current.mode==="wasteland"&&st.winner==="a"?button("Следующий этаж","next","primary"):"");
     for(const k of ["a","b"])document.getElementById("sprite-"+k).classList.toggle("defeated",st.sides[k].hp===0);
   }else if(mine){
-    panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>'<button class="skill'+(skill.evolution?.active?' evolved':'')+(side.mechanics?.prescript===skill.skill_id?' prescribed':'')+'" data-skill="'+esc(skill.skill_id)+'" '+(skill.evolution?'title="'+esc(skill.evolution.condition)+'" ':'')+(side.resource<skill.cost||side.cooldowns[skill.skill_id]?"disabled":"")+'><span class="type">'+(skill.evolution?.active?'УСИЛЕНО · ':'')+(side.mechanics?.prescript===skill.skill_id?'ПРЕДПИСАНИЕ':skill.damage_type==="magic"?"МАГИЯ":skill.damage_type==="physical"?"АТАКА":"ЭФФЕКТ")+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?" · ещё "+side.cooldowns[skill.skill_id]+" х.":"")+"</span></button>").join("")+'</div>';
+    panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>battleSkillButton(skill,side)).join('')+'</div>';
     const m=side.mechanics||{},charges=[m.order?'Субординация: '+m.order+'/3':'',m.grudge?'Обиды: '+m.grudge+'/3':'',m.focus?'Созвездие: '+m.focus+'/3':''].filter(Boolean);
     if(charges.length)panel.innerHTML+='<p class="muted">'+charges.join(' · ')+'</p>';
+    if(m.enemy_prescript)panel.innerHTML+='<p class="note">Предписание противника: <b>'+esc(side.enemy_prescript_name||m.enemy_prescript.skill_id)+'</b>. Другое действие или пропуск: до '+esc(m.enemy_prescript.penalty)+' энергии штрафа. Зелье не расходует предписание.</p>';
     if(side.mirror_gift_details?.length)panel.innerHTML+='<details><summary>Дары зеркала · '+side.mirror_gift_details.length+'</summary>'+side.mirror_gift_details.map(g=>'<p class="muted"><b>'+esc(g.name)+'</b> · '+esc(g.description)+'</p>').join('')+'</details>';
     if(side.can_use_potion&&!side.potion_used)panel.innerHTML+='<div class="row" style="margin-top:8px">'+button("Зелье · 30% HP","potion","small")+'</div>';
   }else{
@@ -271,6 +285,7 @@ function menuScreen(data){
     if(!p){page="personal";menuScreen(data);return;}
     body+='<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p class="muted">Навыки открываются с уровнем. До четырёх навыков на бой; обычный удар доступен бесплатно.</p>';
     body+=rarityBadge(p.class_rarity);
+    body+=archInfo(p);
     if(p.level>=5&&p.class_id==="ragamuffin")body+='<div class="stack">'+p.classes.map(c=>button(esc(c.name)+' '+rarityBadge(c.rarity),"class:"+c.id)).join("")+'<input id="hidden-class" placeholder="Название скрытого класса">'+button("Выбрать скрытый класс","hidden")+'</div>';
     body+='<p class="muted">Изучено: активных '+p.skills.length+' / 6 · пассивных '+(p.passives||[]).length+' / 3. В бою: до 4 активных и 2 пассивных.</p>';
     body+='<h3 style="margin-top:20px">Активные навыки</h3><div class="stack">'+p.skills.map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),"toggle:"+s.skill_id,p.loadout.includes(s.skill_id)?"selected-skill":"")).join("")+button("Сохранить навыки","save","primary")+'</div>';
@@ -377,6 +392,12 @@ app.addEventListener("click",async event=>{
   if(cmd==='replaceitem'){const pending=skillUsePending;if(!pending)return;if(await menuAction('use_item',{...pending,replace_skill:arg})){skillUsePending=null;page='inventory';menuScreen(menu);}return;}
   if(cmd==="equip"||cmd==="unequip"){await menuAction("equipment",{user:Number(arg),equipped:cmd==="equip"});return;}
   const p=activeProfile();
+  if(cmd==='archclass'){
+    if(!p)return;
+    const a=(p.archclass_options||[]).find(a=>a.id===arg);if(!a)return;
+    if(!window.confirm('Выбрать «'+a.name+'»? Другая ветка станет доступна только после смены или сброса класса.'))return;
+    await menuAction('archclass',{user:p.user_id,personal:p.personal,value:arg});return;
+  }
   if(['forget_skill','forget_passive','learn_skill','learn_passive'].includes(cmd)){
     if(cmd.startsWith('forget_')&&!window.confirm('Забыть навык и освободить место? Его можно изучить повторно.'))return;
     await menuAction(cmd,{user:p.user_id,personal:p.personal,value:arg});return;

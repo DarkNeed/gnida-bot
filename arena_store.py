@@ -36,6 +36,7 @@ from arena_engine import (
     effective_skill,
 )
 from arena_mirror_effects import gift_cost
+from arena_archclasses import ARCHCLASSES, ARCHCLASS_LEVEL, branch_options
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -162,6 +163,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
         )
         self.connection.commit()
 
+        for table in ("slave_profiles", "personal_profiles"):
+            self._ensure_column(table, "archclass_id", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(table, "archclass_pending_at", "INTEGER")
         self._connect_arena_market()
         self._connect_mirror()
         # Upgrade live battles once. Restarting must never renew a PvP deadline.
@@ -253,6 +257,11 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 f"UPDATE {table} SET skills_pending_at=COALESCE(skills_pending_at, ?) WHERE chat_id=? AND user_id=?",
                 (utc_timestamp(), chat_id, user_id),
             )
+            if new_level >= ARCHCLASS_LEVEL and branch_options(before["class_id"]):
+                self.connection.execute(
+                    f"UPDATE {table} SET archclass_pending_at=COALESCE(archclass_pending_at,?) WHERE chat_id=? AND user_id=? AND archclass_id=''",
+                    (utc_timestamp(), chat_id, user_id),
+                )
         if table != "owner_profiles" and old_level < CLASS_SELECTION_LEVEL <= new_level:
             self.connection.execute(
                 f"""UPDATE {table}
@@ -514,7 +523,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
             )
             table = "personal_profiles" if personal else "slave_profiles"
             self.connection.execute(
-                f"UPDATE {table} SET class_id=?,loadout=?,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
+                f"UPDATE {table} SET class_id=?,loadout=?,archclass_id='',archclass_pending_at=NULL,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
                 (content_id, json.dumps(loadout), utc_timestamp(), chat, user),
             )
             classes, _ = self._fighter_catalog_locked()
@@ -625,7 +634,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
             self.connection.execute(
                 """UPDATE slave_profiles
                    SET class_id=?, loadout=?, class_choice_pending_at=NULL,
-                       skills_pending_at=?, updated_at=?
+                       skills_pending_at=?, updated_at=?,archclass_id='',archclass_pending_at=NULL
                    WHERE chat_id=? AND user_id=?""",
                 (
                     class_id,
@@ -703,16 +712,33 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
 
     def _arena_profile_locked(self, chat_id: int, user_id: int, personal=False):
         if not personal:
-            return self._ensure_slave_profile_locked(chat_id, user_id)
-        self.connection.execute(
-            """INSERT OR IGNORE INTO personal_profiles(chat_id,user_id,level,xp,class_id,loadout,updated_at)
-               VALUES(?,?,1,0,'ragamuffin','["bum_punch"]',?)""",
-            (chat_id, user_id, utc_timestamp()),
-        )
-        return self.connection.execute(
-            "SELECT * FROM personal_profiles WHERE chat_id=? AND user_id=?",
+            self._ensure_slave_profile_locked(chat_id, user_id)
+        else:
+            self.connection.execute(
+                """INSERT OR IGNORE INTO personal_profiles(chat_id,user_id,level,xp,class_id,loadout,updated_at)
+                   VALUES(?,?,1,0,'ragamuffin','["bum_punch"]',?)""",
+                (chat_id, user_id, utc_timestamp()),
+            )
+        table = "personal_profiles" if personal else "slave_profiles"
+        row = self.connection.execute(
+            f"SELECT * FROM {table} WHERE chat_id=? AND user_id=?",
             (chat_id, user_id),
         ).fetchone()
+        if (
+            row["level"] >= ARCHCLASS_LEVEL
+            and not row["archclass_id"]
+            and row["archclass_pending_at"] is None
+            and branch_options(row["class_id"])
+        ):
+            self.connection.execute(
+                f"UPDATE {table} SET archclass_pending_at=? WHERE chat_id=? AND user_id=?",
+                (utc_timestamp(), chat_id, user_id),
+            )
+            row = self.connection.execute(
+                f"SELECT * FROM {table} WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            ).fetchone()
+        return row
 
     def _arena_row_locked(self, token: str) -> dict:
         row = self.connection.execute(
@@ -848,6 +874,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
             owner_id=owner,
             controlled=controlled,
             class_id=profile["class_id"],
+            archclass_id=profile["archclass_id"],
             level=profile["level"],
             loadout=json.loads(profile["loadout"]),
             granted_skills=self._arena_grants_locked(chat, user, personal),
@@ -1504,7 +1531,11 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 pending = (
                     profile["class_choice_pending_at"]
                     if action == "class"
-                    else profile["skills_pending_at"]
+                    else (
+                        profile["archclass_pending_at"]
+                        if action == "archclass"
+                        else profile["skills_pending_at"]
+                    )
                 )
                 if (
                     personal
@@ -1529,7 +1560,21 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 self._arena_reset_profile_locked(chat, user, personal)
                 self.connection.commit()
                 return "Класс сброшен: Оборванец, уровень 1, опыт 0. Прежние навыки забыты."
-            if action == "class":
+            if action == "archclass":
+                if profile["level"] < ARCHCLASS_LEVEL:
+                    raise ValueError("Архикласс открывается с 10 уровня.")
+                if profile["archclass_id"]:
+                    raise ValueError(
+                        "Архикласс уже выбран. Изменить ветку можно после сброса или смены класса."
+                    )
+                entry = ARCHCLASSES.get(value) if isinstance(value, str) else None
+                if not entry or entry["class_id"] != profile["class_id"]:
+                    raise ValueError("Архикласс недоступен этому классу.")
+                self.connection.execute(
+                    f"UPDATE {table} SET archclass_id=?,archclass_pending_at=NULL,updated_at=? WHERE chat_id=? AND user_id=?",
+                    (value, utc_timestamp(), chat, user),
+                )
+            elif action == "class":
                 if profile["level"] < 5 or profile["class_id"] != "ragamuffin":
                     raise ValueError("Класс выбирается один раз, с 5 уровня.")
                 allowed = set(
@@ -1543,6 +1588,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                         and (
                             k == value
                             or classes[k].name.casefold() == str(value).casefold()
+                            or VISIBLE_CLASS_ALIASES.get(str(value).casefold()) == k
                         )
                     ),
                     None,
@@ -1560,7 +1606,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                     ),
                 )
                 self.connection.execute(
-                    f"UPDATE {table} SET class_id=?,loadout=?,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
+                    f"UPDATE {table} SET class_id=?,loadout=?,archclass_id='',archclass_pending_at=NULL,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
                     (chosen, json.dumps(loadout), utc_timestamp(), chat, user),
                 )
                 self._arena_equip_class_passives_locked(chat, user, personal, chosen)

@@ -618,7 +618,7 @@ class ArenaMarketMixin:
             (chat, user, int(personal)),
         )
         self.connection.execute(
-            f"""UPDATE {table} SET class_id=?,level=1,xp=0,loadout='["bum_punch"]',
+            f"""UPDATE {table} SET class_id=?,archclass_id='',archclass_pending_at=NULL,level=1,xp=0,loadout='["bum_punch"]',
                 passive_loadout='[]',skills_reset=1,class_choice_pending_at=NULL,
                 skills_pending_at=?,updated_at=?,skill_memory=NULL,passive_memory=NULL,
                 skill_seen='[]',passive_seen='[]' WHERE chat_id=? AND user_id=?""",

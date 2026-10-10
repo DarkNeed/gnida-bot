@@ -21,15 +21,18 @@ from arena_engine import (
     stats_for,
     effective_stat,
     effective_skill,
+    completed_turns,
     RARITY_LABELS,
     MAX_FIGHTER_LEVEL,
     VISIBLE_CLASS_ALIASES,
+    SKILL_DELEGATION_SECONDS,
 )
 from arena_fingers import FINGER_IDS
 from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from arena_images import MAX_SPRITE_BYTES, normalize_sprite
 from arena_mirror_effects import GIFTS, gift_cost, gift_modifiers
 from arena_evolution import evolution_info
+from arena_archclasses import archclass_view, class_title, branch_options
 
 ROOT = Path(__file__).parent / "webapp"
 ACTOR = web.RequestKey("arena_actor", int)
@@ -105,9 +108,10 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                     if state.get("mirror_token") and row["floor"] == 5
                     else "Зеркало" if state.get("mirror_token") else "Пустошь"
                 )
-                side["name"] = f"{prefix} · {cls.name}"
+                side["name"] = f"{prefix} · {class_title(side, cls.name)}"
                 names["b_fighter"] = side["name"]
-            side["class_name"] = cls.name
+            side["archclass"] = archclass_view(side)
+            side["class_name"] = class_title(side, cls.name)
             side["resource_name"] = cls.resource_name
             side["class_rarity"] = cls.rarity
             side["class_rarity_name"] = RARITY_LABELS[cls.rarity]
@@ -124,9 +128,22 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 if s not in skills:
                     continue
                 variant = effective_skill(state, key, s, skills)
-                info = evolution_info(skills[s], side["class_id"])
+                info = evolution_info(
+                    skills[s],
+                    side["class_id"],
+                    side,
+                    state["sides"]["b" if key == "a" else "a"],
+                    completed_turns(state, key),
+                )
                 if info:
                     info["active"] = variant is not skills[s]
+                    if info["active"]:
+                        info.update(
+                            name=variant.name,
+                            cost=variant.cost,
+                            power=variant.power,
+                            description=variant.description,
+                        )
                 side["skill_details"].append(
                     dict(asdict(variant), cost=gift_cost(side, variant), evolution=info)
                 )
@@ -157,12 +174,21 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side["can_use_potion"] = side["controller_id"] == actor and bool(
                 await db.arena_potion_count(row["chat_id"], actor)
             )
-            if "bum_punch" not in side["loadout"] and not any(
-                gift_cost(side, effective_skill(state, key, s, skills))
-                <= side["resource"]
-                and not side["cooldowns"].get(s, 0)
-                for s in side["loadout"]
-                if s in skills
+            order = side.get("mechanics", {}).get("enemy_prescript")
+            side["enemy_prescript_name"] = (
+                skills[order["skill_id"]].name
+                if order and order.get("skill_id") in skills
+                else ""
+            )
+            if "bum_punch" not in side["loadout"] and (
+                (order and order["skill_id"] == "bum_punch")
+                or not any(
+                    gift_cost(side, effective_skill(state, key, s, skills))
+                    <= side["resource"]
+                    and not side["cooldowns"].get(s, 0)
+                    for s in side["loadout"]
+                    if s in skills
+                )
             ):
                 side["skill_details"].append(asdict(skills["bum_punch"]))
     own_side = (
@@ -233,6 +259,16 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         profile["class_name"] = classes.get(
             profile["class_id"], classes["ragamuffin"]
         ).name
+        profile["base_class_name"] = profile["class_name"]
+        profile["archclass"] = archclass_view(profile)
+        profile["class_name"] = class_title(profile, profile["class_name"])
+        profile["archclass_options"] = branch_options(profile["class_id"])
+        pending = profile.get("archclass_pending_at")
+        profile["archclass_can_choose"] = profile["user_id"] == actor or (
+            not personal
+            and pending is not None
+            and time.time() >= pending + SKILL_DELEGATION_SECONDS
+        )
         profile["class_rarity"] = classes.get(
             profile["class_id"], classes["ragamuffin"]
         ).rarity
@@ -253,7 +289,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         profile["skills"] = [
             dict(
                 asdict(skills[k]),
-                evolution=evolution_info(skills[k], profile["class_id"]),
+                evolution=evolution_info(skills[k], profile["class_id"], profile),
             )
             for k in unlocked_skill_ids(
                 profile["class_id"],
@@ -508,6 +544,7 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
             notice = await db.arena_equip_slave(chat, actor, fighter, equipped)
         elif action in {
             "class",
+            "archclass",
             "reset_class",
             "loadout",
             "passives",

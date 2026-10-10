@@ -21,6 +21,7 @@ from arena_engine import (
 )
 from arena_fingers import combat_modifiers, has_trait
 from arena_class_mechanics import class_modifiers, JOCK_PREPARATION_SKILLS
+from arena_archclasses import ARCHCLASSES
 
 BUILDS = {
     "jock": [
@@ -49,6 +50,8 @@ def damage_estimate(actor, target, skill):
     extra_accuracy, boost, pierce, _, _ = combat_modifiers(
         actor, target, skill, random.Random(0)
     )
+    if skill.pierce is not None:
+        pierce = skill.pierce
     c_accuracy, c_boost = class_modifiers(actor, target, skill)
     chance = max(
         0.05,
@@ -74,6 +77,7 @@ def damage_estimate(actor, target, skill):
         if has_trait(actor, "constellation")
         else 0
     )
+    critical = 0 if "no_critical" in skill.tags else min(0.75, critical)
     return (
         chance
         * max(
@@ -124,6 +128,12 @@ def select_skill(state, style):
         if style == "tactical":
             energy_value = 0.07 if actor["resource"] >= 40 else 0.18
             value -= skill.cost * energy_value
+            enemy_order = actor.get("mechanics", {}).get("enemy_prescript")
+            if enemy_order and enemy_order["skill_id"] != skill.skill_id:
+                value -= (
+                    min(actor["resource"] - skill.cost, enemy_order["penalty"])
+                    * energy_value
+                )
             for e in skill.effects:
                 recipient = actor if e.get("target") == "self" else target
                 old = next(
@@ -237,6 +247,9 @@ def match(
     jock_passives=True,
 ):
     def source(cls, user):
+        archclass_id = cls if cls in ARCHCLASSES else ""
+        if archclass_id:
+            cls = ARCHCLASSES[archclass_id]["class_id"]
         builds = BUILDS[cls]
         build = list(builds[seed % len(builds)])
         if foreign:
@@ -246,6 +259,7 @@ def match(
             slave_id=user,
             owner_id=user,
             class_id=cls,
+            archclass_id=archclass_id,
             level=level,
             controlled=controlled,
             loadout=build,
@@ -275,7 +289,11 @@ def match(
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--samples", type=int, default=200)
-    p.add_argument("--classes", default=",".join(BUILDS))
+    p.add_argument(
+        "--classes",
+        default=",".join(BUILDS),
+        help="Comma-separated class IDs or archclass IDs, e.g. femboy,princess,mge_bro",
+    )
     p.add_argument("--levels", default="5,10,20")
     p.add_argument("--style", choices=("damage", "tactical"), default="tactical")
     p.add_argument("--controlled", action="store_true")
@@ -287,6 +305,10 @@ def main():
     )
     args = p.parse_args()
     classes = args.classes.split(",")
+    if args.samples < 1 or any(
+        k not in BUILDS and k not in ARCHCLASSES for k in classes
+    ):
+        p.error("Use positive samples and known class/archclass IDs.")
     results = []
     for level in map(int, args.levels.split(",")):
         for i, first in enumerate(classes):

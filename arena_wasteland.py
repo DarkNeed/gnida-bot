@@ -1,6 +1,7 @@
 """Built-in PvE opponents; author-exclusive content is never added to the pool."""
 
 import random
+from arena_archclasses import branch_options, ARCHCLASS_LEVEL
 
 from arena_engine import (
     FIGHTER_CLASSES,
@@ -46,6 +47,11 @@ def enemy_source(level: int, previous_class: str | None = None, rng=None) -> dic
         owner_id=0,
         controlled=False,
         class_id=class_id,
+        archclass_id=(
+            rng.choice(branch_options(class_id))["id"]
+            if level >= ARCHCLASS_LEVEL and branch_options(class_id)
+            else ""
+        ),
         level=level,
         loadout=loadout,
     )

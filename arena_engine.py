@@ -14,6 +14,7 @@ from arena_fingers import (
 from arena_class_mechanics import class_modifiers, class_after_action, has_adoration
 from arena_mirror_effects import gift_cost, gift_modifiers, gift_after_action
 from arena_evolution import skill_variant, evolution_after_action
+from arena_archclasses import arch_after_action, obey_enemy_prescript, selected_branch
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -59,6 +60,8 @@ class Skill:
     effects: tuple[dict[str, Any], ...] = ()
     rarity: str = "common"
     description: str = ""
+    pierce: float | None = None
+    tags: tuple[str, ...] = ()
 
     @property
     def hostile(self) -> bool:
@@ -393,6 +396,15 @@ _finger_classes, _finger_skills = build_catalog(FighterClass, Skill, effect)
 FIGHTER_CLASSES.update(_finger_classes)
 BUILTIN_SKILLS.update(_finger_skills)
 VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _finger_classes.items()})
+# Old names remain valid input; stable IDs keep inventory and saved builds intact.
+VISIBLE_CLASS_ALIASES.update(
+    {
+        "капо": "thumb",
+        "исполнитель": "index",
+        "мститель семьи": "middle",
+        "маэстро": "ring",
+    }
+)
 
 FIGHTER_CLASSES["cutie"] = replace(
     FIGHTER_CLASSES["cutie"],
@@ -773,6 +785,9 @@ def create_battle_state(
             ),
             "controlled": controlled,
             "class_id": class_id,
+            "archclass_id": (
+                source.get("archclass_id", "") if selected_branch(source) else ""
+            ),
             "level": min(MAX_FIGHTER_LEVEL, int(source["level"])),
             "stats": stats,
             "hp": stats["max_hp"],
@@ -883,12 +898,14 @@ def _advance_turn(state: dict, side_key: str) -> None:
     elif state["turn"] > 200:
         state.update(finished=True, winner=None, finish_reason="turn_limit")
     elif any(e["kind"] == "stun" for e in target["effects"]):
+        order_note = obey_enemy_prescript(target, None)
         _tick(target)
         state["log"].append(
             {
                 "seq": state["turn"],
                 "side": other,
-                "text": "Ошеломление: ход пропущен.",
+                "text": "Ошеломление: ход пропущен."
+                + (" · " + order_note if order_note else ""),
                 "damage": 0,
                 "hit": False,
             }
@@ -909,6 +926,7 @@ def skip_turn(state: dict) -> None:
     before = {
         k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
     }
+    order_note = obey_enemy_prescript(actor, None)
     _tick(actor)
     # As with a normal action, damage-over-time is applied as the next side starts.
     bleed_damage = min(
@@ -919,6 +937,8 @@ def skip_turn(state: dict) -> None:
     text = "Время вышло: ход пропущен (2 минуты)."
     if bleed_damage:
         text += f" · кровотечение: −{bleed_damage} HP"
+    if order_note:
+        text += " · " + order_note
     state["log"].append(
         dict(
             seq=state["turn"],
@@ -963,6 +983,10 @@ def resolve_skill(
     extra_accuracy, extra_boost, pierce, critical, obeyed = combat_modifiers(
         actor, target, skill, rng
     )
+    if skill.pierce is not None:
+        pierce = skill.pierce
+    if "no_critical" in skill.tags:
+        critical = False
     accuracy_bonus = sum(
         e.get("value", 0) for e in actor["effects"] if e.get("kind") == "accuracy_flat"
     )
@@ -985,6 +1009,7 @@ def resolve_skill(
         skill.damage_type and not hit and roll < max(5, min(95, raw_accuracy))
     )
     actor["resource"] -= actual_cost
+    order_note = obey_enemy_prescript(actor, skill_id)
     damage = 0
     if hit and skill.damage_type:
         attack = effective_stat(actor, skill.damage_type + "_attack")
@@ -1091,6 +1116,9 @@ def resolve_skill(
         skills or BUILTIN_SKILLS,
         rng,
     )
+    arch_notes = arch_after_action(
+        actor, target, skill, hit, skills or BUILTIN_SKILLS, rng
+    )
     # Damage-over-time ticks when the affected fighter is about to act, including
     # a stunned turn. It cannot be avoided by using a utility skill.
     bleed_damage = min(
@@ -1112,6 +1140,10 @@ def resolve_skill(
         text += " · предписание исполнено"
     if bleed_damage:
         text += f" · кровотечение: −{bleed_damage} HP"
+    if order_note:
+        text += " · " + order_note
+    if arch_notes:
+        text += " · " + " · ".join(arch_notes)
     event = {
         "seq": state["turn"],
         "side": side_key,

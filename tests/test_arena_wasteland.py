@@ -13,6 +13,7 @@ from arena_engine import (
     unlocked_skill_ids,
 )
 from arena_wasteland import enemy_source, victory_xp
+from arena_archclasses import class_title
 from arena_web import battle_view
 from database import Database
 
@@ -129,7 +130,7 @@ class WastelandStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(enemy["class_id"], cls)
             self.assertEqual(enemy["sprite"], cls)
             self.assertEqual(enemy["resource_name"], catalog.resource_name)
-            self.assertIn(catalog.name, enemy["name"])
+            self.assertIn(class_title(enemy, catalog.name), enemy["name"])
             with patch(
                 "arena_store.random.choice", side_effect=lambda choices: choices[0]
             ):
