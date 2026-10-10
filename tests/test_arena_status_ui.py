@@ -137,12 +137,65 @@ class StatusClientTests(unittest.TestCase):
         self.assertIn("effect:&quot;x:unknown", buttons)
         self.assertNotIn('data-status-id="effect:"x', buttons)
 
-    def test_flat_effects_are_percentage_points(self):
+    def test_accuracy_penalty_has_direction_and_percent(self):
         item = self.statuses(
             dict(effects=[dict(id="dust", kind="accuracy_flat", value=-20, duration=3)])
         )[0]
         self.assertEqual(item["icon"], 3)
-        self.assertIn("процентных пунктах", item["detail"])
+        self.assertEqual(item["name"], "Понижение точности")
+        self.assertEqual(item["direction"], "down")
+        self.assertIn("Точность: -20%", item["detail"])
+        self.assertNotIn("процент", item["detail"])
+
+    def test_stat_buffs_and_debuffs_have_distinct_names_and_icon_marks(self):
+        for kind, label in (
+            ("evasion_flat", "уклонения"),
+            ("damage_pct", "урона"),
+            ("speed_pct", "скорости"),
+            ("physical_defense_pct", "физ. защиты"),
+            ("magic_attack_pct", "маг. атаки"),
+        ):
+            with self.subTest(kind=kind):
+                side = dict(
+                    effects=[
+                        dict(id="negative", kind=kind, value=-0.2, duration=2),
+                        dict(id="positive", kind=kind, value=0.2, duration=2),
+                    ]
+                )
+                items = self.statuses(side)
+                self.assertEqual(
+                    [e["name"] for e in items],
+                    ["Понижение " + label, "Повышение " + label],
+                )
+                self.assertEqual([e["direction"] for e in items], ["down", "up"])
+                buttons = self.run_client("out=statusButtons(input,'a');", side)
+                self.assertIn("status-down", buttons)
+                self.assertIn("status-up", buttons)
+
+    def test_percent_units_do_not_affect_energy_or_custom_names(self):
+        out = self.run_client(
+            "out=describeEffect(input);", dict(kind="resource", value=20)
+        )
+        self.assertEqual(out, "Энергия: +20")
+        out = self.run_client(
+            "out=describeEffect(input);", dict(kind="evasion_flat", value=20)
+        )
+        self.assertEqual(out, "Уклонение: +20%")
+        item = self.statuses(
+            dict(
+                effects=[
+                    dict(
+                        id="custom",
+                        name="Пыль в глаза",
+                        kind="accuracy_flat",
+                        value=-20,
+                        duration=3,
+                    )
+                ]
+            )
+        )[0]
+        self.assertEqual(item["name"], "Пыль в глаза")
+        self.assertEqual(item["direction"], "down")
 
     def test_preparation_and_magic_attack_have_icons(self):
         items = self.statuses(
