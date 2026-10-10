@@ -8,11 +8,12 @@ const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const adminDraft={};
 let spriteDraft=null;
 let inspectSide=null,classUsePending=null,skillUsePending=null,resetPending=null;
+let inspectEffect=null,statusViews=null;
 let serverClockOffset=0;
 let mirrorRun=null,mirrorAbandonConfirm=false;
 const rarityNames={common:"Обычный",uncommon:"Необычный",rare:"Редкий",epic:"Эпический"};
 const statNames={max_hp:"Макс. HP",resource_max:"Макс. энергия",physical_attack:"Физ. атака",magic_attack:"Маг. атака",physical_defense:"Физ. защита",magic_defense:"Маг. защита",speed:"Скорость",evasion:"Уклонение"};
-const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",physical_attack_pct:"Физ. атака",evasion_flat:"Уклонение",resource:"Энергия",resource_leech:"Похищение энергии (возврат половины)",next_magic_damage:"Следующая магическая атака",next_physical_damage:"Следующая физическая атака",stun:"Ошеломление",bleed:"Кровотечение"};
+const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",physical_attack_pct:"Физ. атака",magic_attack_pct:"Маг. атака",evasion_flat:"Уклонение",resource:"Энергия",resource_leech:"Похищение энергии (возврат половины)",next_magic_damage:"Следующая магическая атака",next_physical_damage:"Следующая физическая атака",prepared_attack:"Подготовленная атака",stun:"Ошеломление",bleed:"Кровотечение"};
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,reduced?Math.min(50,ms):ms));
 const sprite=c=>c&&typeof c==="object"&&/^\/sprites\/[0-9a-f]{64}\.png$/.test(c.sprite_url||"")?c.sprite_url:c&&typeof c==='object'&&/^\/static\/assets\/(archclasses\/)?[a-z_]+\.png$/.test(c.class_avatar_url||'')?c.class_avatar_url:"/static/assets/"+(["cutie","jock","nerd","thumb","index","middle","ring","pinky"].includes(typeof c==="object"?c?.sprite:c)?(typeof c==="object"?c.sprite:c):"ragamuffin")+".png";
@@ -21,7 +22,59 @@ function fighterImage(p,cls="",id=""){
 }
 function clearSpriteDraft(){if(spriteDraft)URL.revokeObjectURL(spriteDraft.url);spriteDraft=null;}
 function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames,r)?r:"common")+'">'+esc(rarityNames[r]||r||"Обычный")+'</span>';}
-function describeEffect(e){if(e.description)return esc(e.description);const value=e.kind.endsWith("_pct")||e.kind==='next_magic_damage'||e.kind==='next_physical_damage'?Math.round(e.value*100)+"%":e.value;return esc(effectNames[e.kind]||e.kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');}
+function describeEffect(e){if(e.description)return esc(e.description);const kind=String(e.kind||'effect'),value=kind.endsWith("_pct")||kind==='next_magic_damage'||kind==='next_physical_damage'?Math.round(e.value*100)+"%":e.value;return esc(effectNames[kind]||kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');}
+const statusIcons={bleed:1,stun:2,accuracy_flat:3,damage_pct:4,physical_attack_pct:4,magic_attack_pct:5,physical_defense_pct:6,magic_defense_pct:6,evasion_flat:7,speed_pct:8,resource:9,resource_leech:9,prepared_attack:10,next_physical_damage:10,next_magic_damage:5};
+function statusIcon(index){return '<span class="status-icon" aria-hidden="true" style="--icon-x:'+(index%4)*100/3+'%;--icon-y:'+Math.floor(index/4)*100/3+'%"></span>';}
+function fighterStatuses(side){
+  const items=[];
+  for(const e of side.effects||[]){
+    const duration=Number(e.duration),kind=String(e.kind||'effect');
+    if(!Number.isFinite(duration)||duration<=0||duration>=10000||['resource','resource_leech'].includes(kind))continue;
+    const name=e.id==='adoration'?'Умиление':e.name||effectNames[kind]||'Особый эффект';
+    let detail=e.description?esc(e.description):kind==='stun'?'Пропускает ход из-за ошеломления.':kind==='bleed'?'Кровотечение: '+esc(e.value)+' урона при начале хода этого бойца.':kind==='prepared_attack'?'Усилена следующая подходящая атака; подготовка расходуется по условиям навыка.':describeEffect({...e,target:'self',turns:0,chance:1});
+    if(kind.endsWith('_flat'))detail+=' Изменение указано в процентных пунктах.';
+    detail+='<br>Осталось ходов этого бойца: '+esc(duration)+'.';
+    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:e.id==='adoration'?0:(statusIcons[kind]??15),count:String(duration),detail});
+  }
+  const m=side.mechanics||{};
+  for(const [id,name,icon,trait] of [['order','Субординация',11,'subordination'],['grudge','Обиды',12,'revenge'],['focus','Созвездие',13,'constellation']]){
+    const count=Number(m[id]);if(!Number.isFinite(count)||count<=0)continue;
+    const passive=(side.passive_details||[]).flatMap(p=>p.effects||[]).find(e=>e.kind===trait);
+    items.push({id:'mechanic:'+id,name,icon,count:count+'/3',detail:'Заряды: '+esc(count)+' / 3. Это не длительность в ходах.'+(passive?.description?'<br>'+esc(passive.description):'')});
+  }
+  const skillName=id=>(side.skill_details||[]).find(s=>s.skill_id===id)?.name||id;
+  if(m.prescript)items.push({id:'mechanic:prescript',name:'Предписание',icon:14,count:'1',detail:'Следующее действие: «'+esc(skillName(m.prescript))+'». Предписание действует на одно действие; выполнение активирует соответствующие бонусы бойца.'});
+  if(m.enemy_prescript?.skill_id)items.push({id:'mechanic:enemy_prescript',name:'Предписание противника',icon:14,count:'1',detail:'Используй «'+esc(skillName(m.enemy_prescript.skill_id))+'». Другое действие или пропуск: до '+esc(m.enemy_prescript.penalty)+' энергии штрафа. Зелье не расходует предписание.'});
+  return items;
+}
+function statusSide(key){return statusViews?.[key]||current?.state?.sides?.[key];}
+function statusButtons(side,key){return fighterStatuses(side).map(e=>'<button class="status-token" data-status-side="'+key+'" data-status-id="'+esc(e.id)+'" aria-label="'+esc(e.name)+' · '+esc(e.count)+'" title="'+esc(e.name)+'">'+statusIcon(e.icon)+'<span class="status-count">'+esc(e.count)+'</span></button>').join('');}
+function statusDetails(side){return fighterStatuses(side).map(e=>'<div class="detail-status">'+statusIcon(e.icon)+'<div><b>'+esc(e.name)+'</b><p class="muted">'+e.detail+'</p></div></div>').join('')||'<p class="muted">Нет временных эффектов или накопленных зарядов.</p>';}
+function renderBattleStatuses(snapshot){
+  if(snapshot)statusViews=Object.fromEntries(['a','b'].map(key=>[key,{...current.state.sides[key],...(snapshot[key]||{})}]));
+  for(const key of ['a','b']){const row=document.getElementById('statuses-'+key),side=statusSide(key);if(row&&side)row.innerHTML=statusButtons(side,key);}
+  if(inspectEffect)showEffect(inspectEffect.side,inspectEffect.id);
+}
+function closeEffect(){
+  const selected=inspectEffect,dialog=document.getElementById('battle-effect');
+  if(dialog?.tagName==='DIALOG'){dialog.close();dialog.remove();}
+  inspectEffect=null;
+  if(selected)for(const b of app.querySelectorAll?.('[data-status-id]')||[])if(b.dataset.statusSide===selected.side&&b.dataset.statusId===selected.id){b.focus({preventScroll:true});break;}
+}
+function showEffect(key,id){
+  const side=statusSide(key),item=side&&fighterStatuses(side).find(e=>e.id===id);
+  if(!item){closeEffect();return;}
+  if(inspectSide)closeStats();
+  inspectEffect={side:key,id};
+  let dialog=document.getElementById('battle-effect');const fresh=!dialog;
+  if(fresh){
+    dialog=document.createElement('dialog');dialog.id='battle-effect';dialog.className='effect-dialog';dialog.setAttribute('aria-label','Описание эффекта');
+    dialog.addEventListener('cancel',e=>{e.preventDefault();closeEffect();});
+    dialog.addEventListener('click',e=>{const r=dialog.getBoundingClientRect();if(e.target.closest('[data-close-effect]')||(e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)))closeEffect();});document.body.append(dialog);
+  }
+  dialog.innerHTML='<button class="small" data-close-effect aria-label="Закрыть эффект">✕</button>'+statusIcon(item.icon)+'<h2>'+esc(item.name)+'</h2><p class="muted">'+esc(side.name)+'</p><p>'+item.detail+'</p>';
+  if(fresh){dialog.showModal();dialog.querySelector('[data-close-effect]').focus({preventScroll:true});}
+}
 function skillInfo(s){const e=s.evolution;return '<div class="muted">'+(s.cost!==undefined?'Энергия '+s.cost+' · точность '+s.accuracy+'% · сила '+s.power+' · перезарядка '+s.cooldown+' х.':'')+'</div>'+(s.description?'<div class="muted">'+esc(s.description)+'</div>':'')+((s.effects||[]).map(e=>'<div class="muted">'+describeEffect(e)+'</div>').join(''))+(e?'<div class="evolution-note"><b>'+(e.active?(e.specialization?'Навык архикласса':'Усиленная версия'):'Превращение с '+e.min_level+' уровня: '+esc(e.name))+'</b><div>'+esc(e.condition)+'</div>'+(!e.active?'<div>Энергия '+esc(e.cost)+' · сила '+esc(e.power)+'. '+esc(e.description)+'</div>':'')+'</div>':'');}
 function battleSkillButton(skill,side){
   const evolved=skill.evolution?.active, prescribed=side.mechanics?.prescript===skill.skill_id, enemyOrder=side.mechanics?.enemy_prescript?.skill_id===skill.skill_id;
@@ -45,10 +98,11 @@ function progressionScreen(p){
 function itemInfo(item){const d=item.details||{};return d.description?'<p class="muted">'+esc(d.description)+'</p>':item.kind==='class'?'<p class="muted">Меняет класс, сбрасывает уровень до 1, весь опыт, изученные активные и пассивные навыки. Инвентарь и спрайт сохраняются.</p>':'<p class="muted">'+(item.kind==='passive'?'Пассивный навык · максимум 2 в бою':'Активный навык · нужен уровень '+(d.unlock_level||1))+'</p>'+skillInfo(d);}
 function fighterDetails(s,key){
   const effective=s.effective_stats||s.stats;
-  return '<div class="profile fighter-detail">'+fighterImage(s)+'<div><h2>'+esc(s.name)+'</h2><div class="muted">'+esc(s.class_name)+' · Lv.'+s.level+'</div>'+rarityBadge(s.class_rarity)+'<p>HP '+s.hp+' / '+s.stats.max_hp+'<br>'+esc(s.resource_name)+': '+s.resource+' / '+s.stats.resource_max+'</p></div></div><div class="stats-grid">'+Object.entries(statNames).map(([id,label])=>'<div><span>'+label+'</span><b>'+esc(Math.round((effective[id]??s.stats[id]??0)*100)/100)+(effective[id]!==s.stats[id]?' <small>(база '+esc(s.stats[id])+')</small>':'')+'</b></div>').join('')+'</div><p class="muted">'+(s.controlled?'Контроль: все характеристики −20%. ':'')+'Бонус точности: '+(s.accuracy_bonus||0)+' · бонус урона: '+Math.round((s.damage_bonus||0)*100)+'%.<br>Автоматического восстановления энергии нет. Уклонение и точность указаны в процентных пунктах.</p><h3>Активные навыки</h3>'+s.skill_details.map(skill=>'<div class="detail-skill"><b>'+esc(skill.name)+'</b> '+rarityBadge(skill.rarity)+skillInfo(skill)+(s.cooldowns[skill.skill_id]?'<div class="muted">Восстановится через '+s.cooldowns[skill.skill_id]+' х.</div>':'')+'</div>').join('')+'<h3>Пассивные навыки · '+(s.passive_details||[]).length+' / 2</h3>'+((s.passive_details||[]).map(p=>'<div class="detail-skill"><b>'+esc(p.name)+'</b> '+rarityBadge(p.rarity)+skillInfo(p)+'</div>').join('')||'<p class="muted">Не экипированы.</p>')+'<h3>Эффекты</h3>'+((s.effects||[]).filter(e=>e.duration<10000).map(e=>'<p class="muted">'+describeEffect(e)+' · осталось '+e.duration+' х.</p>').join('')||'<p class="muted">Нет временных эффектов.</p>')+'<p class="muted">Владелец/игрок: '+esc(current?.names?.[key+'_owner']||s.name)+'</p>';
+  return '<div class="profile fighter-detail">'+fighterImage(s)+'<div><h2>'+esc(s.name)+'</h2><div class="muted">'+esc(s.class_name)+' · Lv.'+s.level+'</div>'+rarityBadge(s.class_rarity)+'<p>HP '+s.hp+' / '+s.stats.max_hp+'<br>'+esc(s.resource_name)+': '+s.resource+' / '+s.stats.resource_max+'</p></div></div><div class="stats-grid">'+Object.entries(statNames).map(([id,label])=>'<div><span>'+label+'</span><b>'+esc(Math.round((effective[id]??s.stats[id]??0)*100)/100)+(effective[id]!==s.stats[id]?' <small>(база '+esc(s.stats[id])+')</small>':'')+'</b></div>').join('')+'</div><p class="muted">'+(s.controlled?'Контроль: все характеристики −20%. ':'')+'Бонус точности: '+(s.accuracy_bonus||0)+' · бонус урона: '+Math.round((s.damage_bonus||0)*100)+'%.<br>Автоматического восстановления энергии нет. Уклонение и точность указаны в процентных пунктах.</p><h3>Активные навыки</h3>'+s.skill_details.map(skill=>'<div class="detail-skill"><b>'+esc(skill.name)+'</b> '+rarityBadge(skill.rarity)+skillInfo(skill)+(s.cooldowns[skill.skill_id]?'<div class="muted">Восстановится через '+s.cooldowns[skill.skill_id]+' х.</div>':'')+'</div>').join('')+'<h3>Пассивные навыки · '+(s.passive_details||[]).length+' / 2</h3>'+((s.passive_details||[]).map(p=>'<div class="detail-skill"><b>'+esc(p.name)+'</b> '+rarityBadge(p.rarity)+skillInfo(p)+'</div>').join('')||'<p class="muted">Не экипированы.</p>')+'<h3>Эффекты</h3>'+statusDetails(s)+'<p class="muted">Владелец/игрок: '+esc(current?.names?.[key+'_owner']||s.name)+'</p>';
 }
 function closeStats(){const key=inspectSide,overlay=document.getElementById('fighter-stats');if(overlay){overlay.close();overlay.remove();}document.documentElement.classList.remove('fighter-details-open');app.inert=false;inspectSide=null;if(key)app.querySelector('[data-inspect="'+key+'"]')?.focus({preventScroll:true});}
 function showStats(key){
+  if(inspectEffect)closeEffect();
   const s=current?.state?.sides[key];if(!s)return;inspectSide=key;
   let overlay=document.getElementById('fighter-stats');
   const fresh=!overlay;
@@ -62,7 +116,7 @@ function showStats(key){
   overlay.scrollTop=scroll;
   if(fresh){overlay.showModal();document.documentElement.classList.add('fighter-details-open');overlay.querySelector('[data-close-stats]').focus({preventScroll:true});}
 }
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeStats();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(inspectEffect)closeEffect();else closeStats();}});
 function toast(text){const box=document.getElementById("toast");box.textContent=text;box.hidden=false;setTimeout(()=>box.hidden=true,3500);}
 function button(label,id,cls="",disabled=false){return '<button class="'+cls+'" data-do="'+id+'"'+(disabled?' disabled':'')+'>'+label+"</button>";}
 function top(title,tag,right){return '<header class="top"><div><div class="eyebrow">'+tag+'</div><h1>'+title+'</h1></div>'+right+"</header>";}
@@ -77,12 +131,15 @@ function hud(s,key){
   return '<div class="hud '+(key===near?"player":"enemy")+'"><div class="row"><div class="name">'+esc(s.name)+'</div><span class="badge">Lv.'+s.level+'</span><button class="stat-button" data-inspect="'+key+'" aria-label="Статистика '+esc(s.name)+'">ⓘ</button></div><div class="meta">'+esc(s.class_name)+(s.controlled?" · контроль −20%":"")+'</div><div class="barline"><span>HP</span><span id="hp-'+key+'">'+s.hp+" / "+s.stats.max_hp+'</span></div><div class="bar" id="health-'+key+'"><i style="width:'+100*s.hp/s.stats.max_hp+'%"></i></div><div class="barline"><span>'+esc(s.resource_name)+'</span><span id="mp-'+key+'">'+s.resource+" / "+s.stats.resource_max+'</span></div><div class="bar mana" id="mana-'+key+'"><i style="width:'+100*s.resource/s.stats.resource_max+'%"></i></div></div>';
 }
 function battleScreen(data){
+  if(current?.token!==data.token||!data.state)closeEffect();
   current=data; token=data.token; chat=data.chat_id;
-  if(!data.state||!["active","finished"].includes(data.status)){setupScreen(data);return;}
+  statusViews=null;
+  if(!data.state||!["active","finished"].includes(data.status)){closeEffect();setupScreen(data);return;}
   near=(data.own_side==="b"||(!data.own_side&&(data.state.sides.b.controller_id===data.actor_id||data.consent_side==="b")))?"b":"a";
   const far=near==="a"?"b":"a",a=data.state.sides[near],b=data.state.sides[far];
   app.innerHTML='<section class="battle">'+top("Арена",data.state.mirror_token?'ЗЕРКАЛО · '+(data.floor===5?'БОСС':'ЭТАЖ '+data.floor+' / 5'):data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":"БЕЗ СТАВКИ")+'</span>')+
-    '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'</div><div class="turnbanner" id="turn"></div><div class="turn-timer" id="turn-timer" role="timer" hidden></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+(data.state.mirror_token&&data.actor_id===data.state.sides.a.controller_id?button("К забегу","mirror:"+data.state.mirror_token,"small"):"")+button("В меню","menu","small")+'</footer></section>';
+    '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'<div class="status-row enemy" id="statuses-'+far+'" aria-label="Эффекты противника"></div><div class="status-row player" id="statuses-'+near+'" aria-label="Эффекты твоего бойца"></div></div><div class="turnbanner" id="turn"></div><div class="turn-timer" id="turn-timer" role="timer" hidden></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+(data.state.mirror_token&&data.actor_id===data.state.sides.a.controller_id?button("К забегу","mirror:"+data.state.mirror_token,"small"):"")+button("В меню","menu","small")+'</footer></section>';
+  renderBattleStatuses();
   renderActions();
   if(inspectSide)showStats(inspectSide);
 }
@@ -99,8 +156,7 @@ function renderActions(){
     for(const k of ["a","b"])document.getElementById("sprite-"+k).classList.toggle("defeated",st.sides[k].hp===0);
   }else if(mine){
     panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>battleSkillButton(skill,side)).join('')+'</div>';
-    const m=side.mechanics||{},charges=[m.order?'Субординация: '+m.order+'/3':'',m.grudge?'Обиды: '+m.grudge+'/3':'',m.focus?'Созвездие: '+m.focus+'/3':''].filter(Boolean);
-    if(charges.length)panel.innerHTML+='<p class="muted">'+charges.join(' · ')+'</p>';
+    const m=side.mechanics||{};
     if(m.enemy_prescript)panel.innerHTML+='<p class="note">Предписание противника: <b>'+esc(side.enemy_prescript_name||m.enemy_prescript.skill_id)+'</b>. Другое действие или пропуск: до '+esc(m.enemy_prescript.penalty)+' энергии штрафа. Зелье не расходует предписание.</p>';
     if(side.mirror_gift_details?.length)panel.innerHTML+='<details><summary>Дары зеркала · '+side.mirror_gift_details.length+'</summary>'+side.mirror_gift_details.map(g=>'<p class="muted"><b>'+esc(g.name)+'</b> · '+esc(g.description)+'</p>').join('')+'</details>';
     if(side.can_use_potion&&!side.potion_used)panel.innerHTML+='<div class="row" style="margin-top:8px">'+button("Зелье · 30% HP","potion","small")+'</div>';
@@ -140,7 +196,7 @@ async function animateEvent(event){
   document.getElementById("turn").textContent=userTurn?"Твой ход":"Ход: "+current.state.sides[event.side].name;
   document.getElementById("round").textContent="ХОД "+event.seq;
   panel.innerHTML='<div class="battlelog">'+esc(event.skill_name||event.text)+'</div>';
-  if(event.action_kind==='turn_timeout'){await sleep(1000);return;}
+  if(event.action_kind==='turn_timeout'){if(event.status_after)renderBattleStatuses(event.status_after);await sleep(1000);return;}
   const attacker=document.getElementById("sprite-"+event.side);
   const other=event.side==="a"?"b":"a",target=document.getElementById("sprite-"+other);
   attacker?.classList.add("attack");
@@ -158,12 +214,15 @@ async function animateEvent(event){
     document.getElementById("mana-"+key).firstElementChild.style.width=100*values.resource/s.stats.resource_max+"%";
     document.getElementById("mp-"+key).textContent=values.resource+" / "+s.stats.resource_max;
   }
+  if(event.status_after)renderBattleStatuses(event.status_after);
   await sleep(450);target?.classList.remove("hurt");panel.innerHTML='<div class="battlelog">'+esc(event.text)+'</div>';await sleep(700);
 }
 async function applyBattle(data,animate=true){
   if(current&&data.token===current.token&&data.revision<current.revision)return;
   const events=data.state?.log.filter(e=>e.seq>lastSeq)||[];
   if(!current?.state||!data.state){lastSeq=data.state?.log.at(-1)?.seq||0;battleScreen(data);return;}
+  if(current.token!==data.token)closeEffect();
+  statusViews=current.state.sides;
   current=data;
   if(animate){
     for(const event of events){await animateEvent(event);lastSeq=event.seq;}
@@ -183,12 +242,16 @@ async function action(action,extra={}){
       }
       const key=current.state.active_side,other=key==="a"?"b":"a",s=current.state.sides;
       const used=s[key].skill_details.find(x=>x.skill_id===extra.skill)||s[key].skill_details[0];
+      const demoStatus=side=>{side.effects=(side.effects||[]).filter(e=>e.duration>1).map(e=>({...e,duration:e.duration-1}));};
+      const demoSnapshot=()=>structuredClone(Object.fromEntries(['a','b'].map(k=>[k,{effects:s[k].effects,mechanics:s[k].mechanics||{}}])));
+      demoStatus(s[key]);
       s[other].hp=Math.max(0,s[other].hp-12);
-      current.state.log.push({seq:current.state.turn++,side:key,skill_name:used.name,damage_type:used.damage_type,text:"Попадание · −12 HP",hit:true,damage:12,after:{a:{hp:s.a.hp,resource:s.a.resource},b:{hp:s.b.hp,resource:s.b.resource}}});
+      current.state.log.push({seq:current.state.turn++,side:key,skill_name:used.name,damage_type:used.damage_type,text:"Попадание · −12 HP",hit:true,damage:12,status_after:demoSnapshot(),after:{a:{hp:s.a.hp,resource:s.a.resource},b:{hp:s.b.hp,resource:s.b.resource}}});
       current.state.active_side=other;current.revision++;data=current;
       if(!current.state.finished){
         const enemyMove=s[other].skill_details[0];s[key].hp=Math.max(0,s[key].hp-8);
-        current.state.log.push({seq:current.state.turn++,side:other,skill_name:enemyMove.name,damage_type:"physical",text:"Ответ противника · −8 HP",hit:true,damage:8,after:{a:{hp:s.a.hp,resource:s.a.resource},b:{hp:s.b.hp,resource:s.b.resource}}});
+        demoStatus(s[other]);
+        current.state.log.push({seq:current.state.turn++,side:other,skill_name:enemyMove.name,damage_type:"physical",text:"Ответ противника · −8 HP",hit:true,damage:8,status_after:demoSnapshot(),after:{a:{hp:s.a.hp,resource:s.a.resource},b:{hp:s.b.hp,resource:s.b.resource}}});
         current.state.active_side=key;
       }
     }else data=await api("/api/battle/"+token,{action,revision:current.revision,...extra});
@@ -197,6 +260,7 @@ async function action(action,extra={}){
   finally{busy=false;renderActions();}
 }
 function mirrorScreen(data){
+  closeEffect();statusViews=null;
   closeStats();mirrorRun=data;current=null;token="";chat=data.chat_id;
   const choice=(name,id,description,disabled=false)=>button(esc(name)+'<span class="muted">'+esc(description)+'</span>',id,'mirror-choice',disabled);
   let body='<div class="card"><h2>Этаж '+data.floor+' / '+data.total_floors+'</h2><p>HP '+data.hp+' / '+data.max_hp+' · Энергия '+data.resource+' / '+data.resource_max+'</p><p>Осколки: '+data.shards+' · Получено: '+data.xp+' XP</p><p class="muted">Осколки и дары временные. Энергия +30 после победы; здоровье сохраняется. Таймера нет.</p></div>';
@@ -318,6 +382,7 @@ function menuScreen(data){
   }
 }
 async function openMenu(){
+  closeEffect();statusViews=null;
   if(!chat)return;lastSeq=0;current=null;token="";
   try{menuScreen(await api("/api/menu/"+chat));}catch(error){toast(error.message);}
 }
@@ -359,6 +424,7 @@ app.addEventListener("change",event=>{
   document.querySelector('[data-do="upload_sprite"]').disabled=false;
 });
 app.addEventListener("click",async event=>{
+  const effect=event.target.closest('[data-status-id]');if(effect){showEffect(effect.dataset.statusSide,effect.dataset.statusId);return;}
   const inspect=event.target.closest('[data-inspect]');if(inspect){showStats(inspect.dataset.inspect);return;}
   const b=event.target.closest("button");if(!b||b.disabled||busy)return;
   if(b.dataset.skill){await action("skill",{skill:b.dataset.skill});return;}
@@ -366,7 +432,7 @@ app.addEventListener("click",async event=>{
   if(["accept","cancel","refuse","consent"].includes(cmd)){await action(cmd);return;}
   if(cmd==="select"||cmd==="selected"){await action("select",{fighter:Number(arg),controlled:document.getElementById("control").checked});return;}
   if(cmd==="potion"||cmd==="surrender"){await action("skill",{skill:cmd});return;}
-  if(cmd==="menu"||cmd==="refresh"){closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
+  if(cmd==="menu"||cmd==="refresh"){closeEffect();statusViews=null;closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
   if(cmd==="tab"){page=arg;menuScreen(menu);return;}
   if(cmd==="appearance"){clearSpriteDraft();page="appearance";menuScreen(menu);return;}
   if(cmd==="choose_sprite"){document.getElementById("sprite-file").click();return;}
@@ -441,7 +507,12 @@ async function poll(){
 function startDemo(){
   const skill=(id,name,type,cost)=>({skill_id:id,name,damage_type:type,cost,power:10,accuracy:85,cooldown:0,effects:[],rarity:'common'});
   const side=(name,classId,level)=>({name,class_name:classId==="nerd"?"Задрот":"Оборванец",sprite:classId,class_id:classId,class_rarity:classId==='nerd'?'uncommon':'common',level,hp:60,resource:100,stats:{max_hp:60,resource_max:100,physical_attack:12,magic_attack:20,physical_defense:14,magic_defense:10,speed:12,evasion:8},effects:[],passive_details:[],resource_name:classId==="nerd"?"Энергосы":"Выносливость",controller_id:1,controlled:false,loadout:["bum_punch"],cooldowns:{},potion_used:false,skill_details:[skill("bum_punch","Удар бомжа","physical",0),skill("humiliate","Унизить","magic",20),skill("dust","Пыль в глаза",null,20),skill("store","Сходить в магаз",null,0)]});
-  battleScreen({token:"demo",chat_id:-1,mode:"personal",status:"active",revision:0,stake:50,actor_id:1,own_side:"a",state:{turn:1,active_side:"a",finished:false,sides:{a:side("Мистер Недосып","nerd",7),b:side("Пустошь","ragamuffin",7)},log:[]}});
+  const sides={a:side("Мистер Недосып","nerd",7),b:side("Пустошь","ragamuffin",7)};
+  if(new URLSearchParams(location.search).get('effects')==='1'){
+    Object.assign(sides.a,{name:'Твой персонаж',class_name:'Принцесса',class_avatar_url:'/static/assets/archclasses/princess.png',resource_name:'Любовь',level:15,effects:[{id:'barrier',kind:'physical_defense_pct',value:.3,duration:2},{id:'pose',kind:'evasion_flat',value:8,duration:2}]});
+    Object.assign(sides.b,{name:'Старший брат',class_name:'Книга мести',class_avatar_url:'/static/assets/archclasses/middle_revenge.png',level:15,effects:[{id:'adoration',kind:'damage_pct',value:-.4,duration:2},{id:'bleed',kind:'bleed',value:4,duration:3},{id:'dust',kind:'accuracy_flat',value:-20,duration:2}],mechanics:{grudge:2}});
+  }
+  battleScreen({token:"demo",chat_id:-1,mode:"personal",status:"active",revision:0,stake:50,actor_id:1,own_side:"a",state:{turn:1,active_side:"a",finished:false,sides,log:[]}});
 }
 function startDemoMenu(){
   if(!current?.state)startDemo();

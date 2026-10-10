@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Any, Iterable
 from arena_fingers import (
@@ -908,6 +909,36 @@ def _tick(side: dict) -> None:
     # Resource can still be restored by skills with an explicit resource effect.
 
 
+def battle_status_snapshot(state: dict) -> dict:
+    """Small detached UI snapshot: no passive sentinels or instant resource changes."""
+    return {
+        key: {
+            "effects": deepcopy(
+                [
+                    e
+                    for e in side.get("effects", [])
+                    if 0 < e.get("duration", 0) < 10_000
+                    and e.get("kind") not in {"resource", "resource_leech"}
+                ]
+            ),
+            "mechanics": deepcopy(
+                {
+                    name: side["mechanics"][name]
+                    for name in (
+                        "order",
+                        "grudge",
+                        "focus",
+                        "prescript",
+                        "enemy_prescript",
+                    )
+                    if name in side.get("mechanics", {})
+                }
+            ),
+        }
+        for key, side in state["sides"].items()
+    }
+
+
 def _advance_turn(state: dict, side_key: str) -> None:
     other = "b" if side_key == "a" else "a"
     target = state["sides"][other]
@@ -928,6 +959,7 @@ def _advance_turn(state: dict, side_key: str) -> None:
                 + (" · " + order_note if order_note else ""),
                 "damage": 0,
                 "hit": False,
+                "status_after": battle_status_snapshot(state),
             }
         )
         state["turn"] += 1
@@ -973,6 +1005,7 @@ def skip_turn(state: dict) -> None:
                 k: {"hp": s["hp"], "resource": s["resource"]}
                 for k, s in state["sides"].items()
             },
+            status_after=battle_status_snapshot(state),
         )
     )
     state["log"] = state["log"][-60:]
@@ -1182,6 +1215,7 @@ def resolve_skill(
             k: {"hp": s["hp"], "resource": s["resource"]}
             for k, s in state["sides"].items()
         },
+        "status_after": battle_status_snapshot(state),
     }
     state["log"].append(event)
     state["log"] = state["log"][-60:]
