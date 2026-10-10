@@ -52,21 +52,21 @@ class EvolutionEngineTests(unittest.TestCase):
         skill = effective_skill(state, "a", "uwu")
         self.assertEqual(
             (skill.skill_id, skill.name, skill.cost, skill.cooldown),
-            ("uwu", "Ты уже мой", 20, BUILTIN_SKILLS["uwu"].cooldown),
+            ("uwu", "Ты уже мой", 15, BUILTIN_SKILLS["uwu"].cooldown),
         )
 
-    def test_charm_hit_consumes_effect_and_uses_stronger_cost_no_charm_refund(self):
+    def test_charm_hit_preserves_effect_and_uses_new_cost_no_charm_refund(self):
         state = self.state()
         self.tap(state, "uwu")
         self.assertEqual(state["sides"]["a"]["resource"], 95)
         event = self.tap(state, "uwu")
         self.assertTrue(event["evolved"])
         self.assertEqual(event["skill_name"], "Ты уже мой")
-        self.assertEqual(state["sides"]["a"]["resource"], 75)
-        self.assertFalse(
+        self.assertEqual(state["sides"]["a"]["resource"], 80)
+        self.assertTrue(
             any(e.get("id") == "adoration" for e in state["sides"]["b"]["effects"])
         )
-        self.assertIs(effective_skill(state, "a", "uwu"), BUILTIN_SKILLS["uwu"])
+        self.assertEqual(effective_skill(state, "a", "uwu").name, "Ты уже мой")
 
     def test_charm_miss_keeps_condition_and_mirror_refunds_real_cost(self):
         state = self.state()
@@ -76,12 +76,12 @@ class EvolutionEngineTests(unittest.TestCase):
         self.assertEqual(state["sides"]["a"]["resource"], 100)
         self.assertEqual(effective_skill(state, "a", "uwu").name, "Ты уже мой")
         self.tap(state, "uwu", roll=0.99)
-        self.assertEqual(state["sides"]["a"]["resource"], 80)
+        self.assertEqual(state["sides"]["a"]["resource"], 85)
 
     def test_energy_validation_does_not_silently_fall_back_to_cheaper_base(self):
         state = self.state()
         self.charm(state)
-        state["sides"]["a"]["resource"] = 19
+        state["sides"]["a"]["resource"] = 14
         before = copy.deepcopy(state)
         with self.assertRaisesRegex(ValueError, "выносливости"):
             resolve_skill(state, "a", "uwu")
@@ -161,7 +161,7 @@ class EvolutionEngineTests(unittest.TestCase):
         self.assertEqual(state["turn"], 9)
         skill = effective_skill(state, "a", "meow")
         self.assertEqual(
-            (skill.name, skill.cost, skill.cooldown), ("Кульминация: Мяу", 40, 2)
+            (skill.name, skill.cost, skill.cooldown), ("Кульминация: Мяу", 35, 2)
         )
         self.tap(state, "meow")
         self.assertEqual(state["sides"]["a"]["cooldowns"]["meow"], 2)
@@ -250,12 +250,12 @@ class EvolutionStoreTests(unittest.IsolatedAsyncioTestCase):
                 skill["cost"],
                 skill["evolution"]["active"],
             ),
-            ("uwu", "Ты уже мой", 20, True),
+            ("uwu", "Ты уже мой", 15, True),
         )
         with patch("arena_engine.random.SystemRandom", return_value=FixedRoll()):
             row = await self.db.arena_action(row["token"], 10, row["revision"], "uwu")
         saved = json.loads(row["state_json"])
-        self.assertEqual(saved["sides"]["a"]["resource"], 80)
+        self.assertEqual(saved["sides"]["a"]["resource"], 85)
         self.assertEqual(saved["log"][0]["skill_name"], "Ты уже мой")
         with self.assertRaises(ValueError):
             await self.db.arena_action(row["token"], 10, row["revision"] - 1, "uwu")
@@ -306,7 +306,7 @@ class EvolutionClientTests(unittest.TestCase):
         skill = dict(
             skill_id="uwu",
             name="Ты уже мой",
-            cost=20,
+            cost=15,
             damage_type="magic",
             evolution=dict(active=True, condition="Умиление"),
         )
@@ -314,7 +314,7 @@ class EvolutionClientTests(unittest.TestCase):
             name="Игрок",
             controller_id=10,
             resource_name="Любовь",
-            resource=19,
+            resource=14,
             cooldowns={},
             skill_details=[skill],
         )
@@ -331,7 +331,7 @@ class EvolutionClientTests(unittest.TestCase):
         self.assertIn("skill evolved", body)
         self.assertIn("УСИЛЕНО", body)
         self.assertIn("Ты уже мой", body)
-        self.assertIn("20 Любовь", body)
+        self.assertIn("15 Любовь", body)
         self.assertIn("disabled", body)
 
     def test_skill_description_shows_condition_and_escapes_text(self):
@@ -343,7 +343,7 @@ class EvolutionClientTests(unittest.TestCase):
                 min_level=10,
                 condition="<img src=x>",
                 description="Усиленная атака",
-                cost=20,
+                cost=15,
                 power=12,
                 active=False,
             ),
@@ -352,6 +352,6 @@ class EvolutionClientTests(unittest.TestCase):
             self, "out=skillInfo(input);", skill
         )
         self.assertIn("Превращение с 10 уровня", body)
-        self.assertIn("Энергия 20", body)
+        self.assertIn("Энергия 15", body)
         self.assertNotIn("<img", body)
         self.assertIn("&lt;img", body)

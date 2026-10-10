@@ -199,13 +199,14 @@ class ArchEngineTests(unittest.TestCase):
         self.tap(state, "senior_verdict", roll=0.99)
         self.assertEqual(a["mechanics"]["order"], 0)
 
-    def test_middle_revenge_replaces_guard_instead_of_stacking(self):
+    def test_middle_revenge_replaces_defense_risk_with_self_damage(self):
         state = self.state("middle_revenge")
         self.prepare(state)
-        self.tap(state, "whole_family")
+        event = self.tap(state, "whole_family")
         a = state["sides"]["a"]
         self.assertEqual(a["mechanics"]["grudge"], 0)
-        self.assertTrue(any(e["id"].startswith("revenge_risk") for e in a["effects"]))
+        self.assertEqual(event["self_damage"], (event["damage"] + 4) // 5)
+        self.assertFalse(any(e["id"].startswith("revenge_risk") for e in a["effects"]))
         self.assertFalse(any(e["id"].startswith("revenge_guard") for e in a["effects"]))
 
     def test_ring_consumes_negatives_on_hit_only(self):
@@ -252,7 +253,7 @@ class ArchEngineTests(unittest.TestCase):
         self.assertNotIn("enemy_prescript", b["mechanics"])
         self.assertEqual(state["active_side"], "a")
 
-    def test_pinky_precision_no_crit_and_both_paths_spend_focus_on_miss(self):
+    def test_pinky_precision_no_crit_and_both_paths_spend_two_only_on_hit(self):
         for branch, sid in (
             ("pinky_dihui", "moon_arc"),
             ("pinky_tiansha", "falling_star"),
@@ -261,7 +262,9 @@ class ArchEngineTests(unittest.TestCase):
                 state = self.state(branch, 20)
                 self.prepare(state)
                 event = self.tap(state, sid, roll=roll)
-                self.assertEqual(state["sides"]["a"]["mechanics"]["focus"], 0)
+                self.assertEqual(
+                    state["sides"]["a"]["mechanics"]["focus"], 1 if event["hit"] else 3
+                )
                 if branch == "pinky_dihui":
                     self.assertFalse(event["critical"])
 

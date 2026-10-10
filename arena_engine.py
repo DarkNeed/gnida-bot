@@ -15,7 +15,9 @@ from arena_fingers import (
 from arena_class_mechanics import class_modifiers, class_after_action, has_adoration
 from arena_mirror_effects import gift_cost, gift_modifiers, gift_after_action
 from arena_evolution import skill_variant, evolution_after_action
-from arena_archclasses import arch_after_action, obey_enemy_prescript, selected_branch
+from arena_archclasses import (
+    arch_after_action, obey_enemy_prescript, selected_branch, revenge_recoil,
+)
 from arena_archprogress import build_arch_skills, branch_skill_allowed, skill_branch
 
 BASE_RESOURCE = 100
@@ -944,7 +946,12 @@ def _advance_turn(state: dict, side_key: str) -> None:
     target = state["sides"][other]
     state["turn"] += 1
     state["active_side"] = other
-    if target["hp"] <= 0:
+    actor = state["sides"][side_key]
+    if actor["hp"] <= 0 and target["hp"] <= 0:
+        state.update(finished=True, winner=None, finish_reason="mutual_knockout")
+    elif actor["hp"] <= 0:
+        state.update(finished=True, winner=other, finish_reason="self_damage")
+    elif target["hp"] <= 0:
         state.update(finished=True, winner=side_key)
     elif state["turn"] > 200:
         state.update(finished=True, winner=None, finish_reason="turn_limit")
@@ -1172,6 +1179,7 @@ def resolve_skill(
     arch_notes = arch_after_action(
         actor, target, skill, hit, skills or BUILTIN_SKILLS, rng
     )
+    self_damage = revenge_recoil(actor, min(before[other]["hp"], damage))
     # Damage-over-time ticks when the affected fighter is about to act, including
     # a stunned turn. It cannot be avoided by using a utility skill.
     bleed_damage = min(
@@ -1193,6 +1201,8 @@ def resolve_skill(
         text += " · предписание исполнено"
     if bleed_damage:
         text += f" · кровотечение: −{bleed_damage} HP"
+    if self_damage:
+        text += f" · самоурон: −{self_damage} HP"
     if order_note:
         text += " · " + order_note
     if arch_notes:
@@ -1209,6 +1219,7 @@ def resolve_skill(
         "damage": damage,
         "critical": bool(hit and critical),
         "bleed_damage": bleed_damage,
+        "self_damage": self_damage,
         "text": text,
         "before": before,
         "after": {

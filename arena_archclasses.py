@@ -96,8 +96,8 @@ ARCHCLASSES = {
         "middle",
         "Старший брат: Книга мести",
         "Великий брат: Книга мести",
-        "При трёх обидах «За всю семью» становится «Долг крови»: сила 19, цена 45, но обе собственные защиты −20% на один свой ход. Обычное усиление обидами сохраняется; защитный эффект базового превращения заменяется.",
-        "Сила 20, цена 50; уязвимость сохраняется.",
+        "После каждой попавшей атаки теряет 20% фактически снятого у цели HP (округление вверх). Самоурон не даёт обид и может убить. При трёх обидах «За всю семью» становится «Долг крови»: сила 19, цена 45, прежний бонус обид, без изменения собственных защит.",
+        "Сила 20, цена 50; самоурон сохраняется.",
     ),
     "ring_pointillist": branch(
         "ring",
@@ -117,15 +117,15 @@ ARCHCLASSES = {
         "pinky",
         "Звезда Дихуэй",
         "Звезда Дихуэй",
-        "При трёх зарядах сосредоточенности «Лунная дуга» становится «Затмение»: сила 12, точность 95%, цена 25, пробитие 45%. Заряды расходуются даже при промахе; эта атака не критует.",
-        "Пробитие 55%, цена 30.",
+        "При трёх зарядах сосредоточенности «Лунная дуга» становится «Затмение»: сила 13, точность 95%, цена 20, пробитие 45%. Расходует 2 заряда только при попадании; эта атака не критует.",
+        "Пробитие 55%, цена остаётся 20.",
     ),
     "pinky_tiansha": branch(
         "pinky",
         "Звезда Тяньган",
         "Звезда Тяньган",
-        "При трёх зарядах сосредоточенности «Падающая звезда» становится «Рассечь небеса»: сила 19, цена 50. Заряды расходуются даже при промахе; прежний шанс критического удара, максимум 75%.",
-        "Сила 21, цена 55.",
+        "При трёх зарядах сосредоточенности «Падающая звезда» становится «Рассечь небеса»: сила 21, цена 45. Расходует 2 заряда только при попадании; прежний шанс критического удара, максимум 75%.",
+        "Сила 22, цена остаётся 45.",
     ),
 }
 
@@ -312,10 +312,7 @@ def arch_rule(skill, source):
             name="Долг крови",
             power=20 if final else 19,
             cost=50 if final else 45,
-            effects=tuple(
-                e("revenge_risk_" + dtype, dtype + "_defense_pct", -0.20, 1, "self")
-                for dtype in ("physical", "magic")
-            ),
+            effects=(),
         )
     elif key == "ring_pointillist" and skill.skill_id == "red_etude":
         changes = dict(
@@ -338,9 +335,9 @@ def arch_rule(skill, source):
         rule.update(trigger="focus", condition="Накоплены три заряда сосредоточенности")
         changes = dict(
             name="Затмение",
-            power=12,
+            power=13,
             accuracy=95,
-            cost=30 if final else 25,
+            cost=20,
             pierce=0.55 if final else 0.45,
             tags=("consume_focus", "no_critical"),
         )
@@ -348,8 +345,8 @@ def arch_rule(skill, source):
         rule.update(trigger="focus", condition="Накоплены три заряда сосредоточенности")
         changes = dict(
             name="Рассечь небеса",
-            power=21 if final else 19,
-            cost=55 if final else 50,
+            power=22 if final else 21,
+            cost=45,
             tags=("consume_focus",),
         )
     if changes is None:
@@ -357,6 +354,19 @@ def arch_rule(skill, source):
     rule["name"] = changes.pop("name")
     rule["changes"] = changes
     return improve_rule(rule, source, skill)
+
+
+def revenge_recoil(actor, direct_damage):
+    """HP payment, not an incoming attack: cannot proc grudges or be mitigated."""
+    if (
+        direct_damage <= 0
+        or actor.get("archclass_id") != "middle_revenge"
+        or not selected_branch(actor)
+    ):
+        return 0
+    loss = min(actor["hp"], (direct_damage + 4) // 5)
+    actor["hp"] -= loss
+    return loss
 
 
 def obey_enemy_prescript(actor, skill_id):

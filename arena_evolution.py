@@ -46,20 +46,20 @@ EVOLUTIONS = {
         condition="Накоплены три заряда сосредоточенности",
         trigger="focus",
         changes=dict(
-            power=12,
-            cost=25,
+            power=13,
+            cost=20,
             accuracy=95,
             pierce=0.45,
             tags=("consume_focus", "no_critical"),
         ),
-        description="Пробивает 45% защиты, не критует. Все заряды расходуются даже при промахе.",
+        description="Пробивает 45% защиты, не критует. Расходует 2 заряда только при попадании.",
     ),
     "uwu": dict(
         name="Ты уже мой",
         condition="Противник под умилением",
         trigger="adoration",
-        changes=dict(power=12, cost=20, effects=()),
-        description="Усиленная атака. При попадании снимает умиление; при промахе оно сохраняется.",
+        changes=dict(power=12, cost=15, effects=()),
+        description="Усиленная атака за 15 Любви. Не снимает и не обновляет умиление: оно действует до обычного истечения.",
     ),
     "smack": dict(
         name="Последний подход",
@@ -79,7 +79,7 @@ EVOLUTIONS = {
         name="Кульминация: Мяу",
         condition="Завершены четыре собственных хода бойца",
         trigger="turns",
-        changes=dict(power=19, cost=40),
+        changes=dict(power=22, cost=35),
         description="Усиленная версия до конца боя. Против умилённой цели сохраняются +25% урона и снятие умиления при попадании.",
     ),
 }
@@ -226,8 +226,6 @@ def apply_rule(skill, rule):
 
 
 def evolution_after_action(actor, target, skill, hit, evolved):
-    if evolved and skill.skill_id == "uwu" and hit:
-        target["effects"] = [e for e in target["effects"] if e.get("id") != "adoration"]
     # All physical attempts consume the charge, as with Right Version: choosing
     # another physical attack cannot save the same preparation for a second hit.
     if skill.damage_type == "physical":

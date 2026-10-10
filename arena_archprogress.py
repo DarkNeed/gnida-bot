@@ -14,11 +14,11 @@ UPGRADES_12 = {
     "index_proxy": "«Предписание исполнено»: дополнительный возврат 7 вместо 5 Воли.",
     "index_messenger": "За нарушение чужого предписания отнимается до 10 вместо 8 энергии.",
     "middle_guardian": "«За спиной семьи»: физическая защита +40%, магическая +30%.",
-    "middle_revenge": "«Долг крови»: точность +5; риск снижения защит сохраняется.",
+    "middle_revenge": "«Долг крови»: точность +5; самоурон сохраняется.",
     "ring_pointillist": "«Точка за точкой»: кровотечение 5 вместо 4.",
     "ring_fauvist": "«Завершённый шедевр»: точность +5.",
     "pinky_dihui": "«Затмение»: пробитие 50% вместо 45%.",
-    "pinky_tiansha": "«Рассечь небеса»: сила 20 вместо 19.",
+    "pinky_tiansha": "«Рассечь небеса»: сила 22 вместо 21.",
 }
 
 
@@ -357,7 +357,7 @@ def improve_rule(rule, source, skill):
     elif key == "pinky_dihui":
         changes["pierce"] = max(changes["pierce"], 0.50)
     elif key == "pinky_tiansha":
-        changes["power"] = max(changes["power"], 20)
+        changes["power"] = max(changes["power"], 22)
     rule["description"] += " Развитие 12 уровня: " + UPGRADES_12[key]
     return rule
 

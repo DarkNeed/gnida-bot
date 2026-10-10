@@ -106,7 +106,7 @@ def build_catalog(FighterClass, Skill, effect):
                 passive(
                     "constellation",
                     "Созвездие",
-                    "Дыхание добавляет заряд (до 3): +12% шанса критического удара за заряд. Крит расходует заряды.",
+                    "Дыхание даёт 2 заряда, попадание обычной родной атакой — 1 (до 3). Каждый заряд даёт +12% шанса крита. Криты не расходуют заряды; усиленная атака расходует 2 только при попадании.",
                 ),
                 passive(
                     "blade_loyalty",
@@ -340,7 +340,7 @@ def build_catalog(FighterClass, Skill, effect):
             0,
             3,
             (effect("focus", "resource", 35, target="self"),),
-            "Добавляет заряд Созвездия, если эта пассивка экипирована.",
+            "Добавляет 2 заряда Созвездия, если эта пассивка экипирована.",
         ),
         s(
             "pinky",
@@ -444,12 +444,14 @@ def after_action(
     m["last_skill"] = skill.skill_id
     if skill.damage_type:
         m["last_attack"] = skill.skill_id
-    if hit and critical:
-        m["focus"] = 0
     if "consume_focus" in skill.tags:
-        m["focus"] = 0
-    if skill.skill_id == "calm_breath" and has_trait(actor, "constellation"):
-        m["focus"] = min(3, m.get("focus", 0) + 1)
+        if hit:
+            m["focus"] = max(0, m.get("focus", 0) - 2)
+    elif has_trait(actor, "constellation"):
+        if skill.skill_id == "calm_breath":
+            m["focus"] = min(3, m.get("focus", 0) + 2)
+        elif damage and skill.class_id == actor["class_id"] == "pinky":
+            m["focus"] = min(3, m.get("focus", 0) + 1)
     if hit and skill.skill_id == "last_stroke":
         target["effects"] = [
             dict(e, duration=e["duration"] - 1) if negative_effect(e) else e

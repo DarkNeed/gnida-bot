@@ -151,14 +151,14 @@ class FingerEngineTests(unittest.TestCase):
         self.assertEqual(state["winner"], "a")
         self.assertEqual(target["hp"], 0)
 
-    def test_pinky_focus_critical_consumed_and_foreign_skill_no_traits(self):
+    def test_pinky_focus_critical_retained_and_foreign_skill_no_traits(self):
         state = self.state("pinky")
         actor = state["sides"]["a"]
         self.tap(state, "calm_breath")
-        self.assertEqual(actor["mechanics"]["focus"], 1)
+        self.assertEqual(actor["mechanics"]["focus"], 2)
         event = self.tap(state, "silent_cut")
         self.assertTrue(event["critical"])
-        self.assertEqual(actor["mechanics"]["focus"], 0)
+        self.assertEqual(actor["mechanics"]["focus"], 3)
         foreign = self.state("ragamuffin", passives=[])
         foreign["sides"]["a"]["loadout"].append("calm_breath")
         foreign["sides"]["a"]["resource"] = 10
