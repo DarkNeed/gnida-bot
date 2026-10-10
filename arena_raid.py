@@ -391,8 +391,10 @@ class RaidMixin:
                             (int(time.time()), token),
                         )
                     else:
-                        if len(members) != RAID_SIZE:
-                            raise ValueError("Для старта нужны три участника.")
+                        if not 1 <= len(members) <= RAID_SIZE:
+                            raise ValueError(
+                                "Для старта нужны от одного до трёх участников."
+                            )
                         sources = []
                         for p in members:
                             self._raid_validate_fighter_locked(

@@ -1,4 +1,4 @@
-"""Three-player PvE rounds. Native skills use the same server combat resolver."""
+"""One-to-three-player PvE rounds. Native skills share the combat resolver."""
 
 from copy import deepcopy
 import random
@@ -165,6 +165,8 @@ def set_intent(data):
 def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
     if boss_id not in BOSSES:
         raise ValueError("Неизвестный босс.")
+    if not 1 <= len(participants) <= RAID_SIZE or len(sources) != len(participants):
+        raise ValueError("Для старта нужны от одного до трёх участников и их бойцы.")
     level = max(
         BOSSES[boss_id].get("minimum_level", 1),
         min(20, round(sum(s["level"] for s in sources) / len(sources))),

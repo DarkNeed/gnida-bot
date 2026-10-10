@@ -13,6 +13,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from arena_engine import FIGHTER_CLASSES, BUILTIN_SKILLS, Skill
 from arena_raid_engine import create_raid_state, resolve_round, set_intent
 from arena_raid_web import raid_view
+from arena_progression import pending_choice
 from arena_web import create_arena_app
 from database import Database
 from handlers.raids import RAID_RE, RaidPublisher, create_raid_router
@@ -30,17 +31,59 @@ class Roll(random.Random):
 
 
 class RaidEngineTests(unittest.TestCase):
-    def state(self, classes=("ragamuffin",) * 3, level=1):
+    def state(self, classes=("ragamuffin",) * 3, level=1, boss_id="iron"):
         participants = [
             dict(actor_id=i, fighter_id=i, personal=True, slave_owner=i)
-            for i in (10, 20, 30)
+            for i, _ in zip((10, 20, 30), classes)
         ]
         sources = [
             dict(slave_id=i, owner_id=i, class_id=cls, level=level)
             for i, cls in zip((10, 20, 30), classes)
         ]
-        data = create_raid_state(participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS)
+        data = create_raid_state(
+            participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS, boss_id
+        )
         return data
+
+    def test_small_parties_scale_hp_and_resolve_all_boss_patterns(self):
+        for boss_id in ("iron", "lei_heng"):
+            for size in (1, 2):
+                with self.subTest(boss_id=boss_id, size=size):
+                    data = self.state(("ragamuffin",) * size, 18, boss_id)
+                    self.assertEqual(len(data["players"]), size)
+                    self.assertEqual(
+                        data["boss"]["hp"],
+                        round(
+                            sum(p["fighter"]["hp"] for p in data["players"].values())
+                            * 1.4
+                        ),
+                    )
+                    self.assertEqual(
+                        data["boss"]["level"], 20 if boss_id == "lei_heng" else 18
+                    )
+                    self.sturdy(data)
+                    for _ in range(3):
+                        for player in data["players"].values():
+                            player["selected"] = "defend"
+                        resolve_round(data, BUILTIN_SKILLS, Roll())
+                    self.assertEqual(data["round"], 4)
+                    self.assertFalse(data["finished"])
+                    self.assertTrue(
+                        all(k in data["players"] for k in data["intent"]["targets"])
+                    )
+
+    def test_engine_rejects_empty_oversized_or_mismatched_parties(self):
+        member = dict(actor_id=10, fighter_id=10, personal=True, slave_owner=10)
+        source = dict(slave_id=10, owner_id=10, class_id="ragamuffin", level=1)
+        for participants, sources in (
+            ([], []),
+            ([member] * 4, [source] * 4),
+            ([member], []),
+        ):
+            with self.assertRaises(ValueError):
+                create_raid_state(
+                    participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS
+                )
 
     def sturdy(self, data):
         data["boss"]["hp"] = data["boss"]["stats"]["max_hp"] = 10000
@@ -265,8 +308,8 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_lobby_limits_permissions_and_revision(self):
         row = await self.lobby()
-        with self.assertRaisesRegex(ValueError, "три участника"):
-            await self.db.arena_raid_setup(row["token"], 10, "start")
+        with self.assertRaisesRegex(ValueError, "создателю"):
+            await self.db.arena_raid_setup(row["token"], 20, "start")
         with self.assertRaises(ValueError):
             await self.db.arena_raid_setup(row["token"], 20, "cancel")
         await self.db.arena_raid_setup(row["token"], 20, "join")
@@ -282,6 +325,76 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             len((await self.db.arena_raid_get(row["token"]))["participants"]), 2
         )
         await self.db.arena_raid_setup(row["token"], 10, "cancel")
+        self.assertFalse(self.db._arena_busy_locked(1, 10))
+
+    async def test_small_party_start_rounds_and_rewards(self):
+        for boss_id in ("iron", "lei_heng"):
+            for actors in ((10,), (10, 20)):
+                with self.subTest(boss_id=boss_id, actors=actors):
+                    for actor in actors:
+                        if pending_choice(
+                            dict(self.db._arena_profile_locked(1, actor, True))
+                        ):
+                            await self.db.arena_edit_profile(
+                                1, actor, actor, True, "progression", "stay"
+                            )
+                    row = await self.db.arena_raid_create(1, 10, boss_id)
+                    if len(actors) == 2:
+                        row = await self.db.arena_raid_setup(row["token"], 20, "join")
+                    row = await self.db.arena_raid_setup(
+                        row["token"], 10, "start", expected_revision=row["revision"]
+                    )
+                    self.assertEqual(row["status"], "active")
+                    self.assertEqual(
+                        len(json.loads(row["data_json"])["players"]), len(actors)
+                    )
+                    for i, actor in enumerate(actors):
+                        row = await self.db.arena_raid_action(
+                            row["token"], actor, 1, "defend"
+                        )
+                        self.assertEqual(row["round"], 2 if i == len(actors) - 1 else 1)
+                    data = json.loads(row["data_json"])
+                    expected_francs = 40 + 3 * data["boss"]["level"]
+                    data["boss"]["hp"] = 1
+                    for player in data["players"].values():
+                        player["manual_turns"] = 2
+                    self.save(row, data)
+                    before = {actor: self.balance(actor) for actor in actors}
+                    with patch(
+                        "arena_raid_engine.random.SystemRandom", return_value=Roll()
+                    ):
+                        for actor in actors:
+                            row = await self.db.arena_raid_action(
+                                row["token"], actor, 2, "bum_punch"
+                            )
+                    self.assertEqual(row["status"], "finished")
+                    self.assertEqual(
+                        set(json.loads(row["data_json"])["rewards"]),
+                        {str(a) for a in actors},
+                    )
+                    for actor in actors:
+                        self.assertEqual(
+                            self.balance(actor) - before[actor],
+                            expected_francs,
+                        )
+                    with self.assertRaises(ValueError):
+                        await self.db.arena_raid_action(
+                            row["token"], 10, 2, "bum_punch"
+                        )
+                    self.assertFalse(self.db._arena_busy_locked(1, 10))
+
+    async def test_solo_surrender_and_timeout(self):
+        row = await self.lobby()
+        row = await self.db.arena_raid_setup(row["token"], 10, "start")
+        self.save(row, json.loads(row["data_json"]), int(time.time()) - 1)
+        await self.db.arena_raid_expire()
+        row = await self.db.arena_raid_get(row["token"])
+        self.assertEqual(row["round"], 2)
+        self.assertEqual(json.loads(row["data_json"])["players"]["10"]["missed"], 1)
+        row = await self.db.arena_raid_action(row["token"], 10, 2, "surrender")
+        self.assertEqual(row["status"], "finished")
+        self.assertEqual(json.loads(row["data_json"])["rewards"], {})
+        self.assertEqual(self.balance(10), 0)
         self.assertFalse(self.db._arena_busy_locked(1, 10))
 
     async def test_lobby_allows_mandatory_choice_but_active_raid_locks_profile(self):
@@ -734,7 +847,7 @@ firstLog:frames[0].data.log.length,frames:frames.length}})();`,c)
 
     def test_lobby_finished_and_escaped_names(self):
         body = self.render(raid_preview("lobby"))
-        self.assertIn('data-raid="start" class="primary" disabled', body)
+        self.assertIn('data-raid="start" class="primary">', body)
         self.assertIn('data-raid="join:p:1"', body)
         data = raid_preview("finished")
         data["data"]["players"]["1"]["fighter"]["name"] = "<script>x</script>"
@@ -742,6 +855,29 @@ firstLog:frames[0].data.log.length,frames:frames.length}})();`,c)
         self.assertIn("Босс повержен", body)
         self.assertIn("&lt;script&gt;x&lt;/script&gt;", body)
         self.assertNotIn('data-raid="skill:', body)
+
+    def test_start_enabled_for_one_to_three_players_only_and_creator_only(self):
+        data = raid_preview("lobby")
+        member = data["participants"][0]
+        for size in (0, 1, 2, 3, 4):
+            data["participants"] = [dict(member, actor_id=i + 1) for i in range(size)]
+            body = self.render(data)
+            self.assertIn(
+                'data-raid="start" class="primary"'
+                + (">" if 1 <= size <= 3 else " disabled>"),
+                body,
+            )
+        data["actor_id"] = 99
+        self.assertNotIn('data-raid="start"', self.render(data))
+
+    def test_small_party_arena_renders_only_present_fighters(self):
+        for size in (1, 2):
+            data = raid_preview()
+            data["data"]["players"] = dict(list(data["data"]["players"].items())[:size])
+            data["data"]["intent"]["targets"] = list(data["data"]["players"])
+            body = self.render(data)
+            self.assertEqual(body.count('class="raid-fighter'), size + 1)
+            self.assertIn('data-raid="skill:defend"', body)
 
     def test_command_matching(self):
         for text in ("/рейд", "/raid", "/рейд@GnidoBot", " /RAID  "):
