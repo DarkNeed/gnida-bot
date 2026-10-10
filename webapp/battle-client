@@ -15,7 +15,7 @@ const statNames={max_hp:"Макс. HP",resource_max:"Макс. энергия",p
 const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",physical_attack_pct:"Физ. атака",evasion_flat:"Уклонение",resource:"Энергия",resource_leech:"Похищение энергии (возврат половины)",next_magic_damage:"Следующая магическая атака",next_physical_damage:"Следующая физическая атака",stun:"Ошеломление",bleed:"Кровотечение"};
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,reduced?Math.min(50,ms):ms));
-const sprite=c=>c&&typeof c==="object"&&/^\/sprites\/[0-9a-f]{64}\.png$/.test(c.sprite_url||"")?c.sprite_url:"/static/assets/"+(["cutie","jock","nerd","thumb","index","middle","ring","pinky"].includes(typeof c==="object"?c?.sprite:c)?(typeof c==="object"?c.sprite:c):"ragamuffin")+".png";
+const sprite=c=>c&&typeof c==="object"&&/^\/sprites\/[0-9a-f]{64}\.png$/.test(c.sprite_url||"")?c.sprite_url:c&&typeof c==='object'&&/^\/static\/assets\/(archclasses\/)?[a-z_]+\.png$/.test(c.class_avatar_url||'')?c.class_avatar_url:"/static/assets/"+(["cutie","jock","nerd","thumb","index","middle","ring","pinky"].includes(typeof c==="object"?c?.sprite:c)?(typeof c==="object"?c.sprite:c):"ragamuffin")+".png";
 function fighterImage(p,cls="",id=""){
   return '<img class="'+cls+(p.sprite_url&&p.pixel_art?' pixel-art':'')+'"'+(id?' id="'+id+'"':'')+' src="'+sprite(p)+'" data-fallback="'+sprite(p.sprite)+'" alt="'+esc(p.class_name)+'">';
 }
@@ -34,7 +34,13 @@ function archInfo(p){
   const choices=p.archclass_options||[];
   if(!choices.length)return '';
   if(p.level<10)return '<p class="muted">Архикласс откроется на 10 уровне. Высшая ступень — на 20.</p>';
-  return '<h3>Выбери архикласс</h3><p class="muted">Выбор сохраняется до смены или сброса класса. Навыки и боевые слоты сохраняются.</p><div class="stack">'+choices.map(a=>button('<b>'+esc(a.name)+'</b><div class="muted">'+esc(a.description)+'</div><div class="muted">20 уровень: '+esc(a.final_name)+' · '+esc(a.final_description)+'</div>','archclass:'+a.id,'arch-choice',!p.archclass_can_choose)).join('')+'</div>'+(!p.archclass_can_choose?'<p class="muted">Раб может выбрать сейчас; владелец — после 48 часов ожидания.</p>':'');
+  return '<p class="muted">Текущий класс сохранён. Следующий выбор развития — на 20 уровне. Для нового пути можно сбросить или сменить класс.</p>';
+}
+function progressionScreen(p){
+  const choice=p.progression_choice;
+  profileId=p.user_id;page=p.personal?'personalProfile':'slaveProfile';
+  const options=choice.options||[];
+  app.innerHTML='<section class="menu progression">'+top('Выбор '+(choice.level===5?'класса':'подкласса'),'УРОВЕНЬ '+choice.level)+'<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p>Выбери развитие или останься в текущем классе. Уровень, опыт и изученные навыки не сбрасываются.</p><p class="muted">До решения этот боец не может начать новый бой. Карточки прокручиваются вбок.</p><div class="class-row" role="group" aria-label="Варианты класса">'+options.map(c=>'<button class="class-option'+(c.current?' current-class':'')+'" data-do="progression:'+esc(c.id)+'" '+(!choice.can_choose?'disabled':'')+'><img src="'+esc(c.avatar_url)+'" data-fallback="/static/assets/ragamuffin.png" alt="'+esc(c.name)+'"><span class="class-label">'+esc(c.name)+'</span><span class="pill">'+(c.current?'ОСТАТЬСЯ':choice.level===20?'РАЗВИТЬ':'ВЫБРАТЬ')+'</span><span class="muted">'+esc(c.description||'')+'</span></button>').join('')+'</div>'+(!choice.can_choose?'<p class="note">'+(choice.busy?'Сначала заверши текущий бой / зеркальный забег.':'Раб выбирает самостоятельно; владелец сможет принять решение после 48 часов ожидания.')+'</p>'+button('Вернуться в меню','choiceback','small'):'')+'</div></section>';
 }
 function itemInfo(item){const d=item.details||{};return d.description?'<p class="muted">'+esc(d.description)+'</p>':item.kind==='class'?'<p class="muted">Меняет класс, сбрасывает уровень до 1, весь опыт, изученные активные и пассивные навыки. Инвентарь и спрайт сохраняются.</p>':'<p class="muted">'+(item.kind==='passive'?'Пассивный навык · максимум 2 в бою':'Активный навык · нужен уровень '+(d.unlock_level||1))+'</p>'+skillInfo(d);}
 function fighterDetails(s,key){
@@ -120,7 +126,8 @@ function setupScreen(data){
   if(data.mode==="slaves"&&data.own_side){
     const key=data.own_side;
     box.innerHTML+='<label class="check"><input type="checkbox" id="control" checked> Управлять самому · все характеристики −20%</label><div class="muted">Без контроля раб должен согласиться и самостоятельно выбирать навыки.</div>';
-    box.innerHTML+=data.available.map(s=>button(esc(s.name)+" · Lv."+s.level,(s.id===data[key+"_fighter"]?"selected:":"select:")+s.id,s.id===data[key+"_fighter"]?"primary":"")).join("");
+    box.innerHTML+=data.available.map(s=>button(esc(s.name)+" · Lv."+s.level+(s.choice_required?' · сначала выбор класса':''),(s.id===data[key+"_fighter"]?"selected:":"select:")+s.id,s.id===data[key+"_fighter"]?"primary":"",s.choice_required)).join("");
+    if(data.available.some(s=>s.choice_required))box.innerHTML+='<p class="note">Открой Меню → Рабы → Класс и навыки, чтобы завершить выбор. Вызов останется доступен.</p>';
     if(!data.available.length)box.innerHTML+='<div class="note">Нет экипированных бойцов. Открой меню → Рабы и займи свободный боевой слот. При экипировке раб снимается с работы.</div>';
   }
   if(data.consent_side&&!data[data.consent_side+"_consent"])box.innerHTML+=button("Согласен сражаться сам","consent","primary");
@@ -232,6 +239,9 @@ function profileCard(p,title,owned=false){
 function activeProfile(){return [...(menu?.slaves||[]),menu?.self_slave,menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
 function menuScreen(data){
   menu=data;chat=data.chat_id;token="";
+  const selected=(page==='personalProfile'||page==='slaveProfile')?activeProfile():null;
+  const required=(page==='personalProfile'||page==='slaveProfile')&&selected?.progression_choice?selected:[data.personal,data.self_slave].find(p=>p?.progression_choice?.can_choose);
+  if(required){progressionScreen(required);return;}
   if(page!=="appearance")clearSpriteDraft();
   let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+button("Рабы","tab:slaves",page==="slaves"?"selected":"")+button("Владелец","tab:owner",page==="owner"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+'</div>';
   if(page==="personal")body+=profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Личный персонаж есть у всех, раб не нужен. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
@@ -286,7 +296,6 @@ function menuScreen(data){
     body+='<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p class="muted">Навыки открываются с уровнем. До четырёх навыков на бой; обычный удар доступен бесплатно.</p>';
     body+=rarityBadge(p.class_rarity);
     body+=archInfo(p);
-    if(p.level>=5&&p.class_id==="ragamuffin")body+='<div class="stack">'+p.classes.map(c=>button(esc(c.name)+' '+rarityBadge(c.rarity),"class:"+c.id)).join("")+'<input id="hidden-class" placeholder="Название скрытого класса">'+button("Выбрать скрытый класс","hidden")+'</div>';
     body+='<p class="muted">Изучено: активных '+p.skills.length+' / 6 · пассивных '+(p.passives||[]).length+' / 3. В бою: до 4 активных и 2 пассивных.</p>';
     body+='<h3 style="margin-top:20px">Активные навыки</h3><div class="stack">'+p.skills.map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),"toggle:"+s.skill_id,p.loadout.includes(s.skill_id)?"selected-skill":"")).join("")+button("Сохранить навыки","save","primary")+'</div>';
     body+='<h3 style="margin-top:20px">Пассивные навыки · '+(p.passive_loadout||[]).length+' / 2</h3><div class="stack">'+(p.passives||[]).map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),'togglepassive:'+s.skill_id,(p.passive_loadout||[]).includes(s.skill_id)?'selected-skill':'')).join('')+button('Сохранить пассивки','savepassives','primary')+'</div><p class="muted">Новые навыки изучаются через трактаты из инвентаря. Пассивки действуют автоматически весь бой.</p>';
@@ -392,6 +401,12 @@ app.addEventListener("click",async event=>{
   if(cmd==='replaceitem'){const pending=skillUsePending;if(!pending)return;if(await menuAction('use_item',{...pending,replace_skill:arg})){skillUsePending=null;page='inventory';menuScreen(menu);}return;}
   if(cmd==="equip"||cmd==="unequip"){await menuAction("equipment",{user:Number(arg),equipped:cmd==="equip"});return;}
   const p=activeProfile();
+  if(cmd==='choiceback'){page='slaves';menuScreen(menu);return;}
+  if(cmd==='progression'){
+    if(!p?.progression_choice?.can_choose)return;
+    if(!p.progression_choice.options.some(c=>c.id===arg))return;
+    await menuAction('progression',{user:p.user_id,personal:p.personal,value:arg});return;
+  }
   if(cmd==='archclass'){
     if(!p)return;
     const a=(p.archclass_options||[]).find(a=>a.id===arg);if(!a)return;

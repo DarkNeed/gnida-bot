@@ -122,8 +122,8 @@ ARCHCLASSES = {
     ),
     "pinky_tiansha": branch(
         "pinky",
-        "Звезда Тяньша",
-        "Звезда Тяньша",
+        "Звезда Тяньган",
+        "Звезда Тяньган",
         "При трёх зарядах сосредоточенности «Падающая звезда» становится «Рассечь небеса»: сила 19, цена 50. Заряды расходуются даже при промахе; прежний шанс критического удара, максимум 75%.",
         "Сила 21, цена 55.",
     ),
@@ -145,7 +145,7 @@ def archclass_view(source):
     entry = selected_branch(source)
     if not entry:
         return None
-    final = source["level"] >= ARCHCLASS_FINAL_LEVEL
+    final = final_stage(source)
     return dict(
         entry,
         id=source["archclass_id"],
@@ -157,6 +157,14 @@ def archclass_view(source):
 def class_title(source, base_name):
     view = archclass_view(source)
     return view["title"] if view else base_name
+
+
+def final_stage(source):
+    # Old battle snapshots and NPCs retain their level-based behavior.
+    return (
+        source["level"] >= ARCHCLASS_FINAL_LEVEL
+        and source.get("archclass_stage", 20) >= 20
+    )
 
 
 def branch_options(class_id):
@@ -175,7 +183,7 @@ def arch_rule(skill, source):
     entry = selected_branch(source)
     if not entry or skill.class_id != source["class_id"]:
         return None
-    key, final = source["archclass_id"], source["level"] >= 20
+    key, final = source["archclass_id"], final_stage(source)
     rule = dict(
         trigger="always",
         condition="Выбрана специализация «" + entry["name"] + "»",
@@ -391,7 +399,7 @@ def arch_after_action(actor, target, skill, hit, skills, rng):
         if choices:
             chosen = rng.choice(choices)
             target.setdefault("mechanics", {})["enemy_prescript"] = dict(
-                skill_id=chosen, penalty=12 if actor["level"] >= 20 else 8
+                skill_id=chosen, penalty=12 if final_stage(actor) else 8
             )
             notes.append("предписание врагу: «" + skills[chosen].name + "»")
     return notes

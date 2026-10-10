@@ -368,6 +368,9 @@ class ArchStoreTests(unittest.IsolatedAsyncioTestCase):
             "UPDATE personal_profiles SET archclass_id='thumb_execution' WHERE chat_id=1 AND user_id=10"
         )
         result = (await menu_view(self.db, 1, 10))["personal"]
+        self.assertEqual(result["progression_choice"]["level"], 20)
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "advance")
+        result = (await menu_view(self.db, 1, 10))["personal"]
         self.assertEqual(result["archclass"]["stage"], 20)
         self.assertEqual(result["class_name"], "Соттокапо: Расстрел")
 
@@ -462,8 +465,11 @@ class ArchStoreTests(unittest.IsolatedAsyncioTestCase):
 
         con = sqlite3.connect(Path(self.temp.name) / "test.sqlite3")
         for table in ("personal_profiles", "slave_profiles"):
-            con.execute(f"ALTER TABLE {table} DROP COLUMN archclass_id")
-            con.execute(f"ALTER TABLE {table} DROP COLUMN archclass_pending_at")
+            for column in (
+                "archclass_id", "archclass_pending_at", "progression_level",
+                "archclass_stage", "progression_pending_level", "progression_pending_at",
+            ):
+                con.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         con.commit()
         con.close()
         await self.db.connect()
@@ -472,8 +478,10 @@ class ArchStoreTests(unittest.IsolatedAsyncioTestCase):
             (p["level"], p["class_id"], p["archclass_id"]), (10, "jock", "")
         )
         self.assertEqual(len(p["archclass_options"]), 2)
+        self.assertEqual(p["progression_choice"]["level"], 10)
+        self.assertEqual(p["archclass_stage"], 10)
 
-    async def test_level_crossing_starts_wait_and_promotes_automatically(self):
+    async def test_level_crossing_requires_explicit_final_promotion(self):
         self.profile("thumb", 9)
         async with self.db._lock:
             before, after = self.db._grant_profile_xp_locked(
@@ -484,6 +492,10 @@ class ArchStoreTests(unittest.IsolatedAsyncioTestCase):
         p = (await menu_view(self.db, 1, 10))["personal"]
         self.assertIsNotNone(p["archclass_pending_at"])
         await self.choose("thumb_discipline")
+        p = (await menu_view(self.db, 1, 10))["personal"]
+        self.assertEqual(p["archclass"]["stage"], 10)
+        self.assertEqual(p["progression_choice"]["level"], 20)
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "advance")
         p = (await menu_view(self.db, 1, 10))["personal"]
         self.assertEqual(p["class_name"], "Соттокапо: Дисциплина")
         self.assertEqual(p["archclass"]["stage"], 20)
@@ -540,9 +552,8 @@ class ArchClientTests(unittest.TestCase):
         body = runner.run_client(
             'page="personalProfile";profileId=10;menuScreen(input);', data
         )
-        self.assertIn('data-do="archclass:mge_bro"', body)
-        self.assertIn("Гачи-актёр", body)
-        self.assertIn("Выбери архикласс", body)
+        self.assertNotIn('data-do="archclass:', body)
+        self.assertIn("Текущий класс сохранён", body)
         p["archclass_id"] = "mge_bro"
         p["archclass"] = archclass_view(p)
         body = runner.run_client(

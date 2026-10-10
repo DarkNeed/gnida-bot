@@ -33,6 +33,7 @@ from arena_images import MAX_SPRITE_BYTES, normalize_sprite
 from arena_mirror_effects import GIFTS, gift_cost, gift_modifiers
 from arena_evolution import evolution_info
 from arena_archclasses import archclass_view, class_title, branch_options
+from arena_progression import pending_choice, choice_avatar
 
 ROOT = Path(__file__).parent / "webapp"
 ACTOR = web.RequestKey("arena_actor", int)
@@ -112,6 +113,9 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 names["b_fighter"] = side["name"]
             side["archclass"] = archclass_view(side)
             side["class_name"] = class_title(side, cls.name)
+            side["class_avatar_url"] = choice_avatar(
+                side["class_id"], side.get("archclass_id", "")
+            )
             side["resource_name"] = cls.resource_name
             side["class_rarity"] = cls.rarity
             side["class_rarity_name"] = RARITY_LABELS[cls.rarity]
@@ -203,6 +207,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                     name=slave["name"],
                     level=slave["level"],
                     slot=slave["combat_slot"],
+                    choice_required=bool(pending_choice(slave)),
                 )
             )
     consent = next(
@@ -262,6 +267,9 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         profile["base_class_name"] = profile["class_name"]
         profile["archclass"] = archclass_view(profile)
         profile["class_name"] = class_title(profile, profile["class_name"])
+        profile["class_avatar_url"] = choice_avatar(
+            profile["class_id"], profile.get("archclass_id", "")
+        )
         profile["archclass_options"] = branch_options(profile["class_id"])
         pending = profile.get("archclass_pending_at")
         profile["archclass_can_choose"] = profile["user_id"] == actor or (
@@ -300,11 +308,75 @@ async def menu_view(db, chat: int, actor: int) -> dict:
             )
         ]
         profile["classes"] = [
-            dict(id=k, name=c.name, rarity=c.rarity)
+            dict(
+                id=k,
+                name=c.name,
+                rarity=c.rarity,
+                avatar_url=choice_avatar(k),
+                description="Ресурс: " + c.resource_name,
+            )
             for k, c in classes.items()
             if (k in set(VISIBLE_CLASS_ALIASES.values()) and k != "ragamuffin")
             or k in class_grants
         ]
+        stage = pending_choice(profile)
+        pending_at = profile.get("progression_pending_at")
+        async with db._lock:
+            blocked = db._arena_choice_busy_locked(chat, profile["user_id"])
+        can_choose = not blocked and (
+            profile["user_id"] == actor
+            or (
+                not personal
+                and pending_at is not None
+                and time.time() >= pending_at + SKILL_DELEGATION_SECONDS
+            )
+        )
+        options = []
+        if stage:
+            current_name = (
+                profile["archclass"]["name"]
+                if profile["archclass"]
+                else profile["base_class_name"]
+            )
+            options.append(
+                dict(
+                    id="stay",
+                    name=current_name,
+                    avatar_url=profile["class_avatar_url"],
+                    description="Остаться в текущем классе без изменений.",
+                    current=True,
+                )
+            )
+            if stage == 5:
+                options.extend(profile["classes"])
+            elif stage == 20 and profile["archclass"]:
+                a = profile["archclass"]
+                options.append(
+                    dict(
+                        id="advance",
+                        name=a["final_name"],
+                        avatar_url=profile["class_avatar_url"],
+                        description=a["final_description"],
+                        current=False,
+                    )
+                )
+            else:
+                options.extend(
+                    dict(
+                        id=a["id"],
+                        name=a["final_name"] if stage == 20 else a["name"],
+                        avatar_url=choice_avatar(profile["class_id"], a["id"]),
+                        description=a["description"]
+                        + (" " + a["final_description"] if stage == 20 else ""),
+                        current=False,
+                    )
+                    for a in profile["archclass_options"]
+                )
+        profile["progression_choice"] = (
+            dict(level=stage, can_choose=can_choose, busy=blocked, options=options)
+            if stage
+            else None
+        )
     result["chat_id"] = chat
     result["actor_id"] = actor
     result["admin"] = actor == CUSTOM_COMMAND_OWNER_ID
@@ -545,6 +617,7 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
         elif action in {
             "class",
             "archclass",
+            "progression",
             "reset_class",
             "loadout",
             "passives",

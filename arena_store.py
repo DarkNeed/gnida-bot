@@ -37,6 +37,7 @@ from arena_engine import (
 )
 from arena_mirror_effects import gift_cost
 from arena_archclasses import ARCHCLASSES, ARCHCLASS_LEVEL, branch_options
+from arena_progression import pending_choice
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -166,6 +167,14 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
         for table in ("slave_profiles", "personal_profiles"):
             self._ensure_column(table, "archclass_id", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(table, "archclass_pending_at", "INTEGER")
+            self._ensure_column(
+                table, "progression_level", "INTEGER NOT NULL DEFAULT 0"
+            )
+            self._ensure_column(table, "archclass_stage", "INTEGER NOT NULL DEFAULT 10")
+            self._ensure_column(
+                table, "progression_pending_level", "INTEGER NOT NULL DEFAULT 0"
+            )
+            self._ensure_column(table, "progression_pending_at", "INTEGER")
         self._connect_arena_market()
         self._connect_mirror()
         # Upgrade live battles once. Restarting must never renew a PvP deadline.
@@ -257,7 +266,11 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 f"UPDATE {table} SET skills_pending_at=COALESCE(skills_pending_at, ?) WHERE chat_id=? AND user_id=?",
                 (utc_timestamp(), chat_id, user_id),
             )
-            if new_level >= ARCHCLASS_LEVEL and branch_options(before["class_id"]):
+            if (
+                new_level >= ARCHCLASS_LEVEL
+                and branch_options(before["class_id"])
+                and before["progression_level"] < 10
+            ):
                 self.connection.execute(
                     f"UPDATE {table} SET archclass_pending_at=COALESCE(archclass_pending_at,?) WHERE chat_id=? AND user_id=? AND archclass_id=''",
                     (utc_timestamp(), chat_id, user_id),
@@ -270,6 +283,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                    WHERE chat_id=? AND user_id=? AND class_id='ragamuffin'""",
                 (utc_timestamp(), utc_timestamp(), chat_id, user_id),
             )
+        if table != "owner_profiles":
+            self._arena_profile_locked(chat_id, user_id, table == "personal_profiles")
         return old_level, new_level
 
     def _material_capacity_for_level(self, level: int) -> int:
@@ -523,7 +538,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
             )
             table = "personal_profiles" if personal else "slave_profiles"
             self.connection.execute(
-                f"UPDATE {table} SET class_id=?,loadout=?,archclass_id='',archclass_pending_at=NULL,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
+                f"UPDATE {table} SET class_id=?,loadout=?,archclass_id='',archclass_stage=10,progression_level=5,progression_pending_level=0,progression_pending_at=NULL,archclass_pending_at=NULL,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
                 (content_id, json.dumps(loadout), utc_timestamp(), chat, user),
             )
             classes, _ = self._fighter_catalog_locked()
@@ -598,10 +613,12 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
     ) -> str:
         normalized = " ".join(requested_name.casefold().split())
         async with self._lock:
-            profile = self._ensure_slave_profile_locked(chat_id, user_id)
+            profile = self._arena_profile_locked(chat_id, user_id)
             if int(profile["level"]) < CLASS_SELECTION_LEVEL:
                 return "low_level"
-            if profile["class_id"] != "ragamuffin":
+            if profile["class_id"] != "ragamuffin" or pending_choice(dict(profile)) != 5:
+                return "already_chosen"
+            if self._arena_choice_busy_locked(chat_id, user_id):
                 return "already_chosen"
             class_id = VISIBLE_CLASS_ALIASES.get(normalized)
             if class_id is None:
@@ -634,7 +651,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
             self.connection.execute(
                 """UPDATE slave_profiles
                    SET class_id=?, loadout=?, class_choice_pending_at=NULL,
-                       skills_pending_at=?, updated_at=?,archclass_id='',archclass_pending_at=NULL
+                       skills_pending_at=?, updated_at=?,archclass_id='',archclass_stage=10,progression_level=5,progression_pending_level=0,progression_pending_at=NULL,archclass_pending_at=NULL
                    WHERE chat_id=? AND user_id=?""",
                 (
                     class_id,
@@ -724,8 +741,26 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
             f"SELECT * FROM {table} WHERE chat_id=? AND user_id=?",
             (chat_id, user_id),
         ).fetchone()
+        stage = pending_choice(dict(row))
+        if stage != row["progression_pending_level"]:
+            stamp = utc_timestamp() if stage else None
+            # Preserve an already running delegation clock on migration.
+            if stage in {5, 10}:
+                previous_stamp = row[
+                    "class_choice_pending_at" if stage == 5 else "archclass_pending_at"
+                ]
+                if previous_stamp is not None:
+                    stamp = previous_stamp
+            self.connection.execute(
+                f"UPDATE {table} SET progression_pending_level=?,progression_pending_at=? WHERE chat_id=? AND user_id=?",
+                (stage, stamp, chat_id, user_id),
+            )
+            row = self.connection.execute(
+                f"SELECT * FROM {table} WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            ).fetchone()
         if (
-            row["level"] >= ARCHCLASS_LEVEL
+            stage == 10
             and not row["archclass_id"]
             and row["archclass_pending_at"] is None
             and branch_options(row["class_id"])
@@ -768,6 +803,26 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 (chat, user, user),
             ).fetchone()
         )
+
+    def _arena_choice_busy_locked(self, chat, user):
+        return bool(
+            self.connection.execute(
+                "SELECT 1 FROM arena_battles WHERE chat_id=? AND status='active' AND (a_owner=? OR b_owner=? OR a_fighter=? OR b_fighter=?)",
+                (chat, user, user, user, user),
+            ).fetchone()
+            or self.connection.execute(
+                "SELECT 1 FROM arena_mirror_runs WHERE chat_id=? AND status='active' AND (actor_id=? OR fighter_id=?)",
+                (chat, user, user),
+            ).fetchone()
+        )
+
+    def _arena_require_choice_locked(self, chat, user, personal):
+        profile = self._arena_profile_locked(chat, user, personal)
+        stage = pending_choice(dict(profile))
+        if stage:
+            raise ValueError(
+                f"Боец {user}: сначала сделайте выбор класса / подкласса {stage} уровня в арене → «Класс и навыки». Можно оставить текущий класс."
+            )
 
     def _arena_combat_slot_locked(self, chat: int, owner: int, slave: int):
         row = self.connection.execute(
@@ -875,6 +930,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
             controlled=controlled,
             class_id=profile["class_id"],
             archclass_id=profile["archclass_id"],
+            archclass_stage=profile["archclass_stage"],
             level=profile["level"],
             loadout=json.loads(profile["loadout"]),
             granted_skills=self._arena_grants_locked(chat, user, personal),
@@ -895,6 +951,10 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 if not row[key + "_control"] and not row[key + "_consent"]:
                     return
         classes, skills = self._fighter_catalog_locked()
+        for key in ("a", "b"):
+            self._arena_require_choice_locked(
+                row["chat_id"], row[key + "_fighter"], row["mode"] == "personal"
+            )
         sources = [
             self._arena_source_locked(
                 row["chat_id"],
@@ -947,6 +1007,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 or not self._slave_count_locked(chat, target)
             ):
                 raise ValueError("Для боя рабов у обоих владельцев должен быть раб.")
+            if mode == "personal":
+                for user in (actor, target):
+                    self._arena_require_choice_locked(chat, user, True)
             if stake:
                 for user in (actor, target):
                     balance = self.connection.execute(
@@ -1037,6 +1100,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
             elif action == "accept":
                 if key != "b":
                     raise ValueError("Принять может соперник.")
+                if row["mode"] == "personal":
+                    for user in (row["a_fighter"], row["b_fighter"]):
+                        self._arena_require_choice_locked(row["chat_id"], user, True)
                 if not row["b_accepted"]:
                     stake = row["stake"]
                     if stake:
@@ -1060,6 +1126,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 if self._arena_busy_locked(row["chat_id"], fighter, row["id"]):
                     raise ValueError("Этот боец уже участвует в другом бою.")
                 self._arena_require_combat_locked(row["chat_id"], actor, fighter)
+                self._arena_require_choice_locked(row["chat_id"], fighter, False)
                 self.connection.execute(
                     f"UPDATE arena_battles SET {key}_fighter=?,{key}_control=?,{key}_consent=0 WHERE id=?",
                     (fighter, int(controlled), row["id"]),
@@ -1387,6 +1454,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                         (chat, actor),
                     ).fetchone()["owner_id"]
                 self._arena_require_combat_locked(chat, owner, fighter)
+            self._arena_require_choice_locked(chat, fighter, personal)
             source = self._arena_source_locked(chat, fighter, actor, False, personal)
             source["controlled"] = False
             enemy = enemy_source(source["level"] + floor - 1, previous_class)
@@ -1527,14 +1595,19 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
     ) -> str:
         async with self._lock:
             profile = self._arena_profile_locked(chat, user, personal)
+            choice_action = action in {"progression", "class", "archclass"}
             if actor != user:
                 pending = (
-                    profile["class_choice_pending_at"]
-                    if action == "class"
+                    profile["progression_pending_at"]
+                    if action == "progression"
                     else (
-                        profile["archclass_pending_at"]
-                        if action == "archclass"
-                        else profile["skills_pending_at"]
+                        profile["class_choice_pending_at"]
+                        if action == "class"
+                        else (
+                            profile["archclass_pending_at"]
+                            if action == "archclass"
+                            else profile["skills_pending_at"]
+                        )
                     )
                 )
                 if (
@@ -1546,10 +1619,15 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                     raise ValueError(
                         "Владелец может выбрать за раба после 48 часов ожидания."
                     )
-            if self._arena_busy_locked(chat, user):
+            if (
+                self._arena_choice_busy_locked(chat, user)
+                if choice_action
+                else self._arena_busy_locked(chat, user)
+            ):
                 raise ValueError("Нельзя менять навыки во время боя.")
             classes, skills = self._fighter_catalog_locked()
             table = "personal_profiles" if personal else "slave_profiles"
+            progression_stage = None
             if action == "reset_class":
                 if value is not True:
                     raise ValueError(
@@ -1560,6 +1638,33 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 self._arena_reset_profile_locked(chat, user, personal)
                 self.connection.commit()
                 return "Класс сброшен: Оборванец, уровень 1, опыт 0. Прежние навыки забыты."
+            if action == "progression":
+                stage = pending_choice(dict(profile))
+                progression_stage = stage
+                if not stage or not isinstance(value, str):
+                    raise ValueError("Этот выбор уже сделан или ещё не открыт.")
+                if value == "stay":
+                    pass
+                elif stage == 5:
+                    # Reuse the existing class validation and initialization.
+                    action = "class"
+                elif stage == 20 and profile["archclass_id"]:
+                    if value != "advance":
+                        raise ValueError(
+                            "Можно развить выбранную ветку или оставить её текущую ступень."
+                        )
+                    self.connection.execute(
+                        f"UPDATE {table} SET archclass_stage=20 WHERE chat_id=? AND user_id=?",
+                        (chat, user),
+                    )
+                else:
+                    entry = ARCHCLASSES.get(value)
+                    if not entry or entry["class_id"] != profile["class_id"]:
+                        raise ValueError("Подкласс недоступен этому классу.")
+                    self.connection.execute(
+                        f"UPDATE {table} SET archclass_id=?,archclass_stage=? WHERE chat_id=? AND user_id=?",
+                        (value, stage, chat, user),
+                    )
             if action == "archclass":
                 if profile["level"] < ARCHCLASS_LEVEL:
                     raise ValueError("Архикласс открывается с 10 уровня.")
@@ -1567,15 +1672,21 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                     raise ValueError(
                         "Архикласс уже выбран. Изменить ветку можно после сброса или смены класса."
                     )
+                if pending_choice(dict(profile)) != 10:
+                    raise ValueError("Выбор уже сохранён. Новый выбор доступен на следующей ступени развития.")
                 entry = ARCHCLASSES.get(value) if isinstance(value, str) else None
                 if not entry or entry["class_id"] != profile["class_id"]:
                     raise ValueError("Архикласс недоступен этому классу.")
                 self.connection.execute(
-                    f"UPDATE {table} SET archclass_id=?,archclass_pending_at=NULL,updated_at=? WHERE chat_id=? AND user_id=?",
+                    f"UPDATE {table} SET archclass_id=?,archclass_stage=10,progression_level=MAX(progression_level,10),archclass_pending_at=NULL,updated_at=? WHERE chat_id=? AND user_id=?",
                     (value, utc_timestamp(), chat, user),
                 )
             elif action == "class":
-                if profile["level"] < 5 or profile["class_id"] != "ragamuffin":
+                if (
+                    profile["level"] < 5
+                    or profile["class_id"] != "ragamuffin"
+                    or pending_choice(dict(profile)) != 5
+                ):
                     raise ValueError("Класс выбирается один раз, с 5 уровня.")
                 allowed = set(
                     VISIBLE_CLASS_ALIASES.values()
@@ -1606,7 +1717,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                     ),
                 )
                 self.connection.execute(
-                    f"UPDATE {table} SET class_id=?,loadout=?,archclass_id='',archclass_pending_at=NULL,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
+                    f"UPDATE {table} SET class_id=?,loadout=?,archclass_id='',archclass_stage=10,progression_level=5,progression_pending_level=0,progression_pending_at=NULL,archclass_pending_at=NULL,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
                     (chosen, json.dumps(loadout), utc_timestamp(), chat, user),
                 )
                 self._arena_equip_class_passives_locked(chat, user, personal, chosen)
@@ -1708,7 +1819,13 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                     f"UPDATE {table} SET {column}=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?",
                     (json.dumps(selected), chat, user),
                 )
-            else:
+            elif action != "progression":
                 raise ValueError("Неизвестное действие.")
+            if progression_stage:
+                self.connection.execute(
+                    f"UPDATE {table} SET progression_level=?,progression_pending_level=0,progression_pending_at=NULL,class_choice_pending_at=NULL,archclass_pending_at=NULL,updated_at=? WHERE chat_id=? AND user_id=?",
+                    (progression_stage, utc_timestamp(), chat, user),
+                )
+            self._arena_profile_locked(chat, user, personal)
             self.connection.commit()
             return "Сохранено."

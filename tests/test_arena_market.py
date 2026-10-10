@@ -264,6 +264,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
     async def test_learn_cross_class_active_and_two_passive_slots(self):
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 100)
         self.db.connection.commit()
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
         item = self.add("skill", "smack")
         await self.db.arena_use_item(1, 10, item, 10)
         view = await menu_view(self.db, 1, 10)
@@ -309,6 +310,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_menu(1, 10)
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 10**6)
         self.db.connection.commit()
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
         for key in ("smack", "humiliate", "uwu", "posing"):
             await self.db.arena_use_item(1, 10, self.add("skill", key), 10)
         view = (await menu_view(self.db, 1, 10))["personal"]

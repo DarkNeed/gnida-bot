@@ -788,6 +788,7 @@ def create_battle_state(
             "archclass_id": (
                 source.get("archclass_id", "") if selected_branch(source) else ""
             ),
+            "archclass_stage": source.get("archclass_stage", 20),
             "level": min(MAX_FIGHTER_LEVEL, int(source["level"])),
             "stats": stats,
             "hp": stats["max_hp"],

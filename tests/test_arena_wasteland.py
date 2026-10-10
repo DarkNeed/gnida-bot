@@ -107,6 +107,7 @@ class WastelandStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_menu(1, 10)
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, fighter_xp_limit())
         self.db.connection.commit()
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
 
     async def asyncTearDown(self):
         await self.db.close()
@@ -159,6 +160,7 @@ class WastelandStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.db.force_enslave(1, 30, 10)
         await self.db.arena_equip_slave(1, 10, 30, True)
         await self.db.grant_slave_xp(1, 30, fighter_xp_limit())
+        await self.db.arena_edit_profile(1, 30, 30, False, "progression", "stay")
         row = await self.db.arena_wasteland(1, 10, 30, personal=False)
         state = json.loads(row["state_json"])
         previous_class = state["sides"]["b"]["class_id"]
@@ -256,6 +258,7 @@ class WastelandRewardTests(unittest.IsolatedAsyncioTestCase):
     async def test_level_twenty_player_does_not_accumulate_more_xp(self):
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, fighter_xp_limit())
         self.db.connection.commit()
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
         row = await self.win(20)
         self.assertEqual(json.loads(row["state_json"])["rewards"], {"a": 0})
         self.assertEqual(

@@ -198,6 +198,7 @@ class MirrorMixin:
                         raise ValueError("Вы не состоите в рабстве.")
                     slave_owner = int(owner["owner_id"])
                 self._arena_require_combat_locked(chat, slave_owner, fighter)
+            self._arena_require_choice_locked(chat, fighter, personal)
             source = self._arena_source_locked(
                 chat, fighter, actor, not personal and fighter != actor, personal
             )
