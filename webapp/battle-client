@@ -29,7 +29,7 @@ const statusColors=['#ef5366','#ef5366','#f4cb75','#93d9ef','#93d9ef','#c59bf1',
 function statusIcon(index,direction=''){
   const glyph=Number.isInteger(index)&&index>=0&&index<statusColors.length?index:15;
   const marked=direction==='down'||direction==='up',arrow=direction==='down'?'M26 20v8m-3-3 3 3 3-3':'M26 28v-8m-3 3 3-3 3 3';
-  return '<svg class="status-icon'+(marked?' status-'+direction:'')+'" aria-hidden="true" focusable="false" viewBox="0 0 32 32" style="color:'+(direction==='down'?'#ef5366':statusColors[glyph])+'"><use href="/static/assets/status-effects-v2.svg#status-'+glyph+'"/>'+(marked?'<g fill="none" stroke-linecap="square" stroke-linejoin="miter"><path d="'+arrow+'" stroke="#101b2b" stroke-width="5"/><path d="'+arrow+'" stroke="currentColor" stroke-width="2.5"/></g>':'')+'</svg>';
+  return '<svg class="status-icon'+(marked?' status-'+direction:'')+'" aria-hidden="true" focusable="false" viewBox="0 0 32 32" style="color:'+(direction==='down'?'#ef5366':statusColors[glyph])+'"><image class="status-drawing" href="/static/assets/status-effects-v3/'+glyph+'.png" width="32" height="32"/>'+(marked?'<g fill="none" stroke-linecap="square" stroke-linejoin="miter"><path d="'+arrow+'" stroke="#101b2b" stroke-width="5"/><path d="'+arrow+'" stroke="currentColor" stroke-width="2.5"/></g>':'')+'</svg>';
 }
 function fighterStatuses(side){
   const items=[];
@@ -517,6 +517,12 @@ function startDemo(){
   if(new URLSearchParams(location.search).get('effects')==='1'){
     Object.assign(sides.a,{name:'Твой персонаж',class_name:'Принцесса',class_avatar_url:'/static/assets/archclasses/princess.png',resource_name:'Любовь',level:15,effects:[{id:'barrier',kind:'physical_defense_pct',value:.3,duration:2},{id:'pose',kind:'evasion_flat',value:8,duration:2}]});
     Object.assign(sides.b,{name:'Старший брат',class_name:'Книга мести',class_avatar_url:'/static/assets/archclasses/middle_revenge.png',level:15,effects:[{id:'adoration',kind:'damage_pct',value:-.4,duration:2},{id:'bleed',kind:'bleed',value:4,duration:3},{id:'dust',kind:'accuracy_flat',value:-20,duration:2}],mechanics:{grudge:2}});
+  }
+  if(new URLSearchParams(location.search).get('layout')==='1'){
+    sides.a.skill_details.push(skill('layout_one','Длинное название дополнительного навыка','magic',20),skill('layout_two','Ещё один боевой навык','physical',15));
+    sides.a.can_use_potion=true;
+    sides.a.mechanics={enemy_prescript:{skill_id:'bum_punch',penalty:10}};
+    sides.a.enemy_prescript_name='Удар бомжа';
   }
   battleScreen({token:"demo",chat_id:-1,mode:"personal",status:"active",revision:0,stake:50,actor_id:1,own_side:"a",state:{turn:1,active_side:"a",finished:false,sides,log:[]}});
 }

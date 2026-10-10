@@ -283,15 +283,14 @@ out=JSON.stringify(fighterStatuses(statusSide('a')));
             )
         self.assertLess(asset.stat().st_size, 10_000)
 
-    def test_status_markup_uses_vector_symbols_and_vector_direction_arrows(self):
+    def test_status_markup_uses_original_drawings_and_vector_direction_arrows(self):
         for index in range(16):
             with self.subTest(index=index):
                 markup = self.run_client("out=statusIcon(input);", index)
                 self.assertIn('<svg class="status-icon"', markup)
-                self.assertIn(
-                    f"/static/assets/status-effects-v2.svg#status-{index}", markup
-                )
-                self.assertNotIn(".png", markup)
+                self.assertIn(f"/static/assets/status-effects-v3/{index}.png", markup)
+                self.assertIn('<image class="status-drawing"', markup)
+                self.assertNotIn("<use", markup)
         markup = self.run_client("out=statusIcon(3,'down');", {})
         self.assertIn("status-down", markup)
         self.assertIn("#ef5366", markup)
@@ -304,5 +303,53 @@ out=JSON.stringify(fighterStatuses(statusSide('a')));
         for index in (-1, 16, None, '"/><script>'):
             with self.subTest(index=index):
                 markup = self.run_client("out=statusIcon(input);", index)
-                self.assertIn("#status-15", markup)
+                self.assertIn("/15.png", markup)
                 self.assertNotIn("<script>", markup)
+
+
+class OriginalStatusArtworkTests(unittest.TestCase):
+    def test_short_windows_scroll_without_shrinking_skill_controls(self):
+        css = (Path(__file__).resolve().parents[1] / "webapp/style.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".battle{height:auto;min-height:100dvh;overflow:visible}", css)
+        self.assertIn(".battle .field{flex:0 0 auto;", css)
+        self.assertIn(".battle>.panel,.battle>.foot,.panel>*{flex-shrink:0}", css)
+
+    def test_prepared_original_icons_have_transparency_and_retina_resolution(self):
+        from PIL import Image
+
+        folder = Path(__file__).resolve().parents[1] / "webapp/assets/status-effects-v3"
+        self.assertEqual(len(list(folder.glob("*.png"))), 16)
+        for index in range(16):
+            with self.subTest(index=index), Image.open(folder / f"{index}.png") as icon:
+                self.assertEqual(icon.mode, "RGBA")
+                self.assertEqual(icon.size, (144, 144))
+                alpha = icon.getchannel("A")
+                self.assertEqual(alpha.getextrema(), (0, 255))
+                self.assertIsNotNone(alpha.getbbox())
+                self.assertEqual(alpha.getpixel((0, 0)), 0)
+
+    def test_cleanup_preserves_artwork_colour_and_removes_faint_noise(self):
+        from PIL import Image, ImageDraw
+        from tools.prepare_status_icons import clean_icon
+
+        original = Image.new("RGBA", (64, 64))
+        draw = ImageDraw.Draw(original)
+        draw.rectangle((12, 12, 40, 40), fill=(100, 160, 200, 255))
+        draw.rectangle((45, 45, 54, 54), fill=(100, 160, 200, 255))
+        draw.rectangle((2, 2, 6, 6), fill=(255, 0, 0, 30))
+        original.putpixel((58, 2), (255, 255, 0, 255))
+        cleaned = clean_icon(original)
+        self.assertLess(cleaned.width, 50)
+        self.assertLess(cleaned.height, 50)
+        self.assertEqual(cleaned.getpixel((10, 10)), (100, 160, 200, 255))
+        self.assertGreater(cleaned.getchannel("A").getpixel((38, 38)), 0)
+        self.assertEqual(original.getpixel((58, 2)), (255, 255, 0, 255))
+
+    def test_empty_icon_fails_instead_of_producing_an_invisible_asset(self):
+        from PIL import Image
+        from tools.prepare_status_icons import clean_icon
+
+        with self.assertRaisesRegex(ValueError, "empty"):
+            clean_icon(Image.new("RGBA", (32, 32)))
