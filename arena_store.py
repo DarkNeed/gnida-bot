@@ -33,7 +33,9 @@ from arena_engine import (
     MAX_PASSIVE_SKILLS,
     fighter_xp_limit,
     effective_stat,
+    effective_skill,
 )
+from arena_mirror_effects import gift_cost
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -1232,7 +1234,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                     choices = [
                         s
                         for s in ai["loadout"]
-                        if skills[s].cost <= ai["resource"]
+                        if gift_cost(ai, effective_skill(state, "b", s, skills))
+                        <= ai["resource"]
                         and not ai["cooldowns"].get(s, 0)
                     ]
                     resolve_skill(

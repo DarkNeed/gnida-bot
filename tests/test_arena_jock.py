@@ -80,7 +80,9 @@ class JockEngineTests(unittest.TestCase):
             boosted = self.tap(state, "smack", roll)["damage"]
             self.assertAlmostEqual(boosted, full * 1.15, delta=1)
             self.assertEqual(self.boost(state), 0)
-            self.assertEqual(state["sides"]["a"]["resource"], 73)
+            self.assertEqual(
+                state["sides"]["a"]["resource"], 68
+            )  # Prepared version costs 15 from level 10.
 
     def test_bonus_refreshes_without_stacking(self):
         state = self.state()

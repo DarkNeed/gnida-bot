@@ -64,6 +64,7 @@ class RebalanceEngineTests(unittest.TestCase):
     def test_charm_refresh_not_stack_and_refund_once(self):
         state = self.state("cutie")
         actor, target = state["sides"].values()
+        actor["level"] = 9  # Isolate base UWU, before conditional versions unlock.
         self.tap(state, "uwu")
         self.assertEqual(actor["resource"], 95)
         self.tap(state, "uwu")

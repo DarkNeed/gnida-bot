@@ -20,6 +20,7 @@ from arena_engine import (
     unlocked_skill_ids,
     stats_for,
     effective_stat,
+    effective_skill,
     RARITY_LABELS,
     MAX_FIGHTER_LEVEL,
     VISIBLE_CLASS_ALIASES,
@@ -28,6 +29,7 @@ from arena_fingers import FINGER_IDS
 from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from arena_images import MAX_SPRITE_BYTES, normalize_sprite
 from arena_mirror_effects import GIFTS, gift_cost, gift_modifiers
+from arena_evolution import evolution_info
 
 ROOT = Path(__file__).parent / "webapp"
 ACTOR = web.RequestKey("arena_actor", int)
@@ -117,11 +119,17 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side.update(
                 await db.arena_sprite_info(row["chat_id"], row[key + "_fighter"] or 0)
             )
-            side["skill_details"] = [
-                dict(asdict(skills[s]), cost=gift_cost(side, skills[s]))
-                for s in side["loadout"]
-                if s in skills
-            ]
+            side["skill_details"] = []
+            for s in side["loadout"]:
+                if s not in skills:
+                    continue
+                variant = effective_skill(state, key, s, skills)
+                info = evolution_info(skills[s], side["class_id"])
+                if info:
+                    info["active"] = variant is not skills[s]
+                side["skill_details"].append(
+                    dict(asdict(variant), cost=gift_cost(side, variant), evolution=info)
+                )
             side["mirror_gift_details"] = [
                 dict(name=GIFTS[k][0], description=GIFTS[k][1])
                 for k in side.get("mirror_gifts", [])
@@ -150,7 +158,8 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 await db.arena_potion_count(row["chat_id"], actor)
             )
             if "bum_punch" not in side["loadout"] and not any(
-                gift_cost(side, skills[s]) <= side["resource"]
+                gift_cost(side, effective_skill(state, key, s, skills))
+                <= side["resource"]
                 and not side["cooldowns"].get(s, 0)
                 for s in side["loadout"]
                 if s in skills
@@ -242,7 +251,10 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         async with db._lock:
             class_grants = db._granted_content_locked(chat, profile["user_id"], "class")
         profile["skills"] = [
-            asdict(skills[k])
+            dict(
+                asdict(skills[k]),
+                evolution=evolution_info(skills[k], profile["class_id"]),
+            )
             for k in unlocked_skill_ids(
                 profile["class_id"],
                 profile["level"],

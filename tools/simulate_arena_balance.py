@@ -16,6 +16,7 @@ from arena_engine import (
     FIGHTER_CLASSES,
     create_battle_state,
     effective_stat,
+    effective_skill,
     resolve_skill,
 )
 from arena_fingers import combat_modifiers, has_trait
@@ -92,19 +93,21 @@ def select_skill(state, style):
     key = state["active_side"]
     actor, target = state["sides"][key], state["sides"]["b" if key == "a" else "a"]
     candidates = [
-        BUILTIN_SKILLS[k]
+        effective_skill(state, key, k)
         for k in actor["loadout"]
-        if BUILTIN_SKILLS[k].cost <= actor["resource"]
+        if effective_skill(state, key, k).cost <= actor["resource"]
         and not actor["cooldowns"].get(k, 0)
     ]
     if not candidates:
         candidates = [BUILTIN_SKILLS["bum_punch"]]
     enemy_peak = max(
-        damage_estimate(target, actor, BUILTIN_SKILLS[k])
+        damage_estimate(
+            target, actor, effective_skill(state, "b" if key == "a" else "a", k)
+        )
         for k in target["loadout"] + ["bum_punch"]
     )
     own_peak = max(
-        damage_estimate(actor, target, BUILTIN_SKILLS[k])
+        damage_estimate(actor, target, effective_skill(state, key, k))
         for k in actor["loadout"] + ["bum_punch"]
     )
     best, score = None, -float("inf")

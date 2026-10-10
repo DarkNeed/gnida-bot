@@ -13,6 +13,7 @@ from arena_fingers import (
 )
 from arena_class_mechanics import class_modifiers, class_after_action, has_adoration
 from arena_mirror_effects import gift_cost, gift_modifiers, gift_after_action
+from arena_evolution import skill_variant, evolution_after_action
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -788,6 +789,7 @@ def create_battle_state(
             "passive_details": passive_details,
             "cooldowns": {},
             "potion_used": False,
+            "own_turns": 0,
         }
     return {
         "turn": 1,
@@ -821,6 +823,27 @@ def effective_stat(side: dict, name: str) -> float:
     return max(0, value * max(0, 1 + pct) + flat)
 
 
+def completed_turns(state: dict, side_key: str) -> int:
+    side = state["sides"][side_key]
+    # Legacy battles have a bounded log but need only a threshold of four.
+    return side.get("own_turns", sum(e.get("side") == side_key for e in state["log"]))
+
+
+def _initialize_turn_counts(state: dict) -> None:
+    for key, side in state["sides"].items():
+        side.setdefault("own_turns", completed_turns(state, key))
+
+
+def effective_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Skill:
+    skill = (skills or BUILTIN_SKILLS)[skill_id]
+    return skill_variant(
+        skill,
+        state["sides"][side_key],
+        state["sides"]["b" if side_key == "a" else "a"],
+        completed_turns(state, side_key),
+    )
+
+
 def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Skill:
     catalog = skills or BUILTIN_SKILLS
     if state["finished"] or state["active_side"] != side_key:
@@ -830,7 +853,7 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
         skill_id not in side["loadout"] and skill_id != "bum_punch"
     ) or skill_id not in catalog:
         raise ValueError("Навык недоступен.")
-    skill = catalog[skill_id]
+    skill = effective_skill(state, side_key, skill_id, catalog)
     if side["resource"] < gift_cost(side, skill):
         raise ValueError("Недостаточно выносливости.")
     if side["cooldowns"].get(skill_id, 0) > 0:
@@ -839,6 +862,7 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
 
 
 def _tick(side: dict) -> None:
+    side["own_turns"] = side.get("own_turns", 0) + 1
     side["effects"] = [
         dict(e, duration=e["duration"] - 1)
         for e in side["effects"]
@@ -877,6 +901,7 @@ def skip_turn(state: dict) -> None:
     """Server-only timeout: consumes a turn, not resource or an attack/passive proc."""
     if state["finished"]:
         raise ValueError("Бой завершён.")
+    _initialize_turn_counts(state)
     key = state["active_side"]
     actor = state["sides"][key]
     target = state["sides"]["b" if key == "a" else "a"]
@@ -920,6 +945,8 @@ def resolve_skill(
     """Resolve one tap entirely on the server. No directional/confirmation phase."""
     rng = rng or random.SystemRandom()
     skill = validate_skill(state, side_key, skill_id, skills)
+    _initialize_turn_counts(state)
+    evolved = skill is not (skills or BUILTIN_SKILLS)[skill_id]
     state["had_player_action"] = True
     actor = state["sides"][side_key]
     other = "b" if side_key == "a" else "a"
@@ -1051,6 +1078,7 @@ def resolve_skill(
         actor["cooldowns"][skill_id] = skill.cooldown
     class_after_action(actor, target, skill, hit, dodged, adored, charmed)
     gift_after_action(actor, target, skill, hit, damage, actual_cost, bleeding, charmed)
+    evolution_after_action(actor, target, skill, hit, evolved)
     after_action(
         actor,
         target,
@@ -1089,6 +1117,7 @@ def resolve_skill(
         "side": side_key,
         "skill_id": skill_id,
         "skill_name": skill.name,
+        "evolved": evolved,
         "damage_type": skill.damage_type,
         "hit": hit,
         "dodged": dodged,
