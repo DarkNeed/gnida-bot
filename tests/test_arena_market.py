@@ -4,6 +4,7 @@ import logging
 import tempfile
 import time
 import unittest
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -19,6 +20,7 @@ from arena_engine import (
     stats_for,
 )
 from arena_web import menu_view, battle_view, create_arena_app
+from arena_market import MSK
 from database import Database
 from handlers.arena import ITEM_TRANSFER_RE, create_arena_router, ArenaPublisher
 from test_arena import signed, TOKEN
@@ -67,6 +69,10 @@ class FighterCapTests(unittest.TestCase):
 class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         logging.getLogger("asyncio").setLevel(logging.ERROR)
+        self.now = int(datetime(2026, 10, 10, 12, tzinfo=MSK).timestamp())
+        self.market_clock = patch("arena_market.market_now", return_value=self.now)
+        self.market_clock.start()
+        self.addCleanup(self.market_clock.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.db = Database(Path(self.temp.name) / "bot.sqlite3")
         await self.db.connect()
@@ -113,7 +119,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         visit = self.db.connection.execute(
             "SELECT * FROM arena_merchant_visits WHERE chat_id=1 ORDER BY starts LIMIT 1"
         ).fetchone()
-        now = int(time.time())
+        now = self.now
         self.db.connection.execute(
             "UPDATE arena_merchant_visits SET starts=?,ends=? WHERE id=?",
             (now - 1, now + 7200, visit["id"]),
@@ -599,7 +605,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
     async def test_merchant_notification_claims_are_persistent_and_once_only(self):
         await self.db.arena_menu(-100, 10)
         await self.db.arena_market_view(-100, 10)
-        now = int(time.time())
+        now = self.now
         self.db.connection.execute("UPDATE arena_merchant_visits SET notified=1")
         self.db.connection.execute(
             "UPDATE arena_merchant_visits SET starts=?,ends=?,notified=0 WHERE chat_id=-100 AND visit=1",
@@ -609,6 +615,159 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         due = await self.db.arena_due_merchants()
         self.assertEqual(len(due), 2)  # Today's and tomorrow's test rows forced active.
         self.assertEqual(await self.db.arena_due_merchants(), [])
+
+    async def test_visit_start_and_end_stay_within_new_moscow_hours(self):
+        for chat, extreme in ((1, "min"), (2, "max")):
+            with patch(
+                "arena_market.random.SystemRandom.randint",
+                side_effect=lambda lo, hi: lo if extreme == "min" else hi,
+            ):
+                await self.db.arena_market_view(chat, 10)
+            visits = self.db.connection.execute(
+                "SELECT * FROM arena_merchant_visits WHERE chat_id=? ORDER BY day,visit",
+                (chat,),
+            ).fetchall()
+            self.assertEqual(len(visits), 4)
+            for visit in visits:
+                start = datetime.fromtimestamp(visit["starts"], MSK)
+                end = datetime.fromtimestamp(visit["ends"], MSK)
+                self.assertGreaterEqual(start.hour, 10)
+                self.assertLessEqual(start.hour, 20)
+                self.assertEqual(end.date(), start.date())
+                self.assertLessEqual(end.hour, 22)
+                self.assertEqual(visit["ends"] - visit["starts"], 7200)
+
+    async def test_view_and_notifications_enforce_exact_open_and_close_boundaries(self):
+        await self.db.arena_menu(-100, 10)
+        await self.db.arena_market_view(-100, 10)
+        visit = self.db.connection.execute(
+            "SELECT id FROM arena_merchant_visits WHERE chat_id=-100 ORDER BY starts LIMIT 1"
+        ).fetchone()["id"]
+        midnight = int(datetime(2026, 10, 10, tzinfo=MSK).timestamp())
+        self.db.connection.execute("UPDATE arena_merchant_visits SET notified=1")
+        self.db.connection.execute(
+            "UPDATE arena_merchant_visits SET starts=?,ends=? WHERE id=?",
+            (midnight, midnight + 86400, visit),
+        )
+        self.db.connection.commit()
+        for offset, available in (
+            (10 * 3600 - 1, False),
+            (10 * 3600, True),
+            (22 * 3600 - 1, True),
+            (22 * 3600, False),
+        ):
+            self.db.connection.execute(
+                "UPDATE arena_merchant_visits SET notified=0 WHERE id=?", (visit,)
+            )
+            self.db.connection.commit()
+            with patch("arena_market.market_now", return_value=midnight + offset):
+                merchant = (await self.db.arena_market_view(-100, 10))["merchant"]
+                due = await self.db.arena_due_merchants()
+            self.assertEqual(bool(merchant["offers"]), available)
+            self.assertEqual(bool(due), available)
+            if available:
+                self.assertEqual([r["id"] for r in due], [visit])
+
+    async def test_closed_hours_cannot_buy_even_with_old_offer_id(self):
+        shop = await self.open_shop()
+        offer = next(o for o in shop["offers"] if o["kind"] == "potion")
+        midnight = int(datetime(2026, 10, 10, tzinfo=MSK).timestamp())
+        self.db.connection.execute(
+            "UPDATE arena_merchant_visits SET starts=?,ends=? WHERE id=?",
+            (midnight, midnight + 86400, shop["visit_id"]),
+        )
+        self.db.connection.commit()
+        before = await self.db.franc_balance(1, 10)
+        for offset in (10 * 3600 - 1, 22 * 3600):
+            with patch("arena_market.market_now", return_value=midnight + offset):
+                with self.assertRaisesRegex(ValueError, "10:00"):
+                    await self.db.arena_buy_item(1, 10, offer["id"])
+        self.assertEqual(await self.db.franc_balance(1, 10), before)
+        with patch("arena_market.market_now", return_value=midnight + 10 * 3600):
+            await self.db.arena_buy_item(1, 10, offer["id"])
+        self.assertEqual(await self.db.franc_balance(1, 10), before - offer["price"])
+
+    async def test_existing_visits_migrate_once_without_resetting_offers_or_claims(
+        self,
+    ):
+        shop = await self.open_shop()
+        offer = next(o for o in shop["offers"] if o["kind"] == "potion")
+        await self.db.arena_buy_item(1, 10, offer["id"])
+        midnight = int(datetime(2026, 10, 10, tzinfo=MSK).timestamp())
+        self.db.connection.execute(
+            "DELETE FROM arena_market_migrations WHERE name='merchant_hours_10_22_v1'"
+        )
+        self.db.connection.execute(
+            "UPDATE arena_merchant_visits SET starts=?,ends=?,notified=1 WHERE id=?",
+            (midnight + 7 * 3600, midnight + 9 * 3600, shop["visit_id"]),
+        )
+        evening = self.db.connection.execute(
+            "SELECT id FROM arena_merchant_visits WHERE chat_id=1 AND day='2026-10-10' AND visit=2"
+        ).fetchone()["id"]
+        self.db.connection.execute(
+            "UPDATE arena_merchant_visits SET starts=?,ends=?,notified=0 WHERE id=?",
+            (midnight + 22 * 3600, midnight + 24 * 3600, evening),
+        )
+        self.db.connection.commit()
+        # At 06:00 both old visits are pending: move them, retain IDs and data.
+        with patch("arena_market.market_now", return_value=midnight + 6 * 3600):
+            await self.db.close()
+            await self.db.connect()
+        moved = self.db.connection.execute(
+            "SELECT * FROM arena_merchant_visits WHERE id=?", (shop["visit_id"],)
+        ).fetchone()
+        self.assertEqual(
+            (moved["starts"], moved["ends"], moved["notified"]),
+            (midnight + 10 * 3600, midnight + 12 * 3600, 1),
+        )
+        moved_evening = self.db.connection.execute(
+            "SELECT * FROM arena_merchant_visits WHERE id=?", (evening,)
+        ).fetchone()
+        self.assertEqual(
+            (moved_evening["starts"], moved_evening["ends"]),
+            (midnight + 20 * 3600, midnight + 22 * 3600),
+        )
+        reopened = (await self.db.arena_market_view(1, 10))["merchant"]
+        self.assertEqual(
+            reopened["offers"], []
+        )  # Closed exactly at noon for this visit.
+        with patch("arena_market.market_now", return_value=midnight + 11 * 3600):
+            reopened = (await self.db.arena_market_view(1, 10))["merchant"]
+        self.assertEqual(
+            [o["id"] for o in reopened["offers"]], [o["id"] for o in shop["offers"]]
+        )
+        bought = next(o for o in reopened["offers"] if o["id"] == offer["id"])
+        self.assertEqual(bought["remaining"], 2)
+        await self.db.close()
+        await self.db.connect()
+        self.assertEqual(
+            dict(
+                self.db.connection.execute(
+                    "SELECT * FROM arena_merchant_visits WHERE id=?",
+                    (shop["visit_id"],),
+                ).fetchone()
+            ),
+            dict(moved),
+        )
+
+    async def test_migration_does_not_revive_expired_visit(self):
+        shop = await self.open_shop()
+        midnight = int(datetime(2026, 10, 10, tzinfo=MSK).timestamp())
+        self.db.connection.execute(
+            "DELETE FROM arena_market_migrations WHERE name='merchant_hours_10_22_v1'"
+        )
+        self.db.connection.execute(
+            "UPDATE arena_merchant_visits SET starts=?,ends=? WHERE id=?",
+            (midnight + 7 * 3600, midnight + 9 * 3600, shop["visit_id"]),
+        )
+        self.db.connection.commit()
+        await self.db.close()
+        await self.db.connect()  # Fixed clock: 12:00 MSK, already expired.
+        row = self.db.connection.execute(
+            "SELECT starts,ends FROM arena_merchant_visits WHERE id=?",
+            (shop["visit_id"],),
+        ).fetchone()
+        self.assertEqual(tuple(row), (midnight + 7 * 3600, midnight + 9 * 3600))
 
     async def test_transfer_command_reply_tag_and_private_selected_chat(self):
         router = create_arena_router(

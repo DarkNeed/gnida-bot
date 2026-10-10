@@ -23,6 +23,9 @@ from arena_engine import (
 
 MSK = timezone(timedelta(hours=3))
 MERCHANT_DURATION = 2 * 3600
+MERCHANT_OPEN_HOUR = 10
+MERCHANT_CLOSE_HOUR = 22
+MERCHANT_WINDOWS = ((1, MERCHANT_OPEN_HOUR, 13), (2, 15, 20))
 CLASS_SCROLL_CHANCE = 0.03
 PRICES = {"common": 80, "uncommon": 140, "rare": 260, "epic": 500}
 CLASS_PRICES = {"common": 500, "uncommon": 750, "rare": 1200, "epic": 2000}
@@ -31,6 +34,14 @@ WEIGHTS = {"common": 6, "uncommon": 3, "rare": 1, "epic": 0.2}
 
 def market_now() -> int:
     return int(time.time())
+
+
+def merchant_is_open(now: int) -> bool:
+    return (
+        MERCHANT_OPEN_HOUR
+        <= datetime.fromtimestamp(now, MSK).hour
+        < MERCHANT_CLOSE_HOUR
+    )
 
 
 class ArenaMarketMixin:
@@ -113,6 +124,31 @@ class ArenaMarketMixin:
                         )
             self.connection.execute(
                 "INSERT INTO arena_market_migrations VALUES('inventory_v1')"
+            )
+        if not self.connection.execute(
+            "SELECT 1 FROM arena_market_migrations WHERE name='merchant_hours_10_22_v1'"
+        ).fetchone():
+            # Keep offer IDs, purchases and notification claims when moving old
+            # unexpired visits into the new hours. Never revive expired visits.
+            for row in self.connection.execute(
+                "SELECT * FROM arena_merchant_visits WHERE ends>?", (market_now(),)
+            ).fetchall():
+                day = datetime.fromisoformat(row["day"]).date()
+                midnight = int(
+                    datetime.combine(day, datetime.min.time(), tzinfo=MSK).timestamp()
+                )
+                _, lo, hi = next(w for w in MERCHANT_WINDOWS if w[0] == row["visit"])
+                starts = max(
+                    midnight + lo * 3600, min(row["starts"], midnight + hi * 3600)
+                )
+                ends = starts + MERCHANT_DURATION
+                if (starts, ends) != (row["starts"], row["ends"]):
+                    self.connection.execute(
+                        "UPDATE arena_merchant_visits SET starts=?,ends=? WHERE id=?",
+                        (starts, ends, row["id"]),
+                    )
+            self.connection.execute(
+                "INSERT INTO arena_market_migrations VALUES('merchant_hours_10_22_v1')"
             )
         self.connection.commit()
 
@@ -394,7 +430,7 @@ class ArenaMarketMixin:
             datetime.combine(day, datetime.min.time(), tzinfo=MSK).timestamp()
         )
         catalog = self._arena_shop_catalog_locked()
-        for visit, lo, hi in ((1, 7, 13), (2, 15, 22)):
+        for visit, lo, hi in MERCHANT_WINDOWS:
             if self.connection.execute(
                 "SELECT 1 FROM arena_merchant_visits WHERE chat_id=? AND day=? AND visit=?",
                 (chat, day.isoformat(), visit),
@@ -462,6 +498,8 @@ class ArenaMarketMixin:
             "SELECT * FROM arena_merchant_visits WHERE chat_id=? AND starts<=? AND ends>? ORDER BY starts DESC LIMIT 1",
             (chat, now, now),
         ).fetchone()
+        if not merchant_is_open(now):
+            visit = None
         next_visit = self.connection.execute(
             "SELECT starts FROM arena_merchant_visits WHERE chat_id=? AND starts>? ORDER BY starts LIMIT 1",
             (chat, now),
@@ -493,6 +531,9 @@ class ArenaMarketMixin:
             ).fetchall()
             for row in chats:
                 self._arena_make_visits_locked(row["chat_id"], day)
+            if not merchant_is_open(now):
+                self.connection.commit()
+                return []
             due = [
                 dict(r)
                 for r in self.connection.execute(
@@ -513,6 +554,8 @@ class ArenaMarketMixin:
         async with self._lock:
             try:
                 now = market_now()
+                if not merchant_is_open(now):
+                    raise ValueError("Торговец доступен только с 10:00 до 22:00 МСК.")
                 row = self.connection.execute(
                     """SELECT o.* FROM arena_merchant_offers o JOIN arena_merchant_visits v ON v.id=o.visit_id
                     WHERE o.id=? AND v.chat_id=? AND v.starts<=? AND v.ends>?""",
