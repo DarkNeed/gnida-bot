@@ -15,6 +15,7 @@ from aiogram.types import (
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from arena_links import arena_link
 from arena_web import require_member
+from handlers.raids import RaidPublisher, create_raid_router
 from handlers.routes import (
     message_content,
     text_or_caption_regexp,
@@ -39,6 +40,10 @@ class ArenaPublisher:
         self.lock = asyncio.Lock()
         self.last_edit = 0.0
         self.active_published = set()
+        self.raids = RaidPublisher(db, bot, username)
+
+    async def raid_changed(self, token):
+        await self.raids.changed(token)
 
     def keyboard(self, row):
         buttons = [
@@ -359,4 +364,5 @@ def create_arena_router(db, bot, username, enabled, publisher):
         except ValueError as error:
             await callback.answer(str(error), show_alert=True)
 
+    router.include_router(create_raid_router(db, bot, enabled, publisher.raids))
     return router

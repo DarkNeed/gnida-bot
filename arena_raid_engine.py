@@ -1,0 +1,347 @@
+"""Three-player PvE rounds. Native skills use the same server combat resolver."""
+
+from copy import deepcopy
+import random
+
+from arena_engine import (
+    Skill,
+    create_battle_state,
+    effective_stat,
+    effective_skill,
+    resolve_skill,
+    _tick,
+)
+
+RAID_SIZE = 3
+RAID_ROUND_SECONDS = 120
+RAID_MAX_ROUNDS = 40
+BOSS_NAME = "Железный сборщик"
+BOSS_SKILLS = {
+    s.skill_id: s
+    for s in (
+        Skill("raid_sweep", "Размах цепью", "middle", 1, "physical", 8, 95, 0, 0),
+        Skill("raid_crush", "Дробящий удар", "middle", 1, "physical", 17, 95, 0, 0),
+        Skill("raid_rampage", "Яростный размах", "middle", 1, "physical", 10, 95, 0, 0),
+    )
+}
+
+
+def alive_players(data):
+    return {
+        k: p
+        for k, p in data["players"].items()
+        if not p.get("withdrawn") and p["fighter"]["hp"] > 0
+    }
+
+
+def pair_state(actor, target):
+    return dict(
+        sides={"a": actor, "b": target},
+        active_side="a",
+        turn=1,
+        log=[],
+        finished=False,
+        winner=None,
+    )
+
+
+def native_attack(actor, target, skill_id, skills, rng):
+    return resolve_skill(
+        pair_state(actor, target),
+        "a",
+        skill_id,
+        skills,
+        rng,
+        advance_turn=False,
+        tick_target_bleed=False,
+    )
+
+
+def set_intent(data):
+    living = alive_players(data)
+    if not living:
+        return
+    boss = data["boss"]
+    phase = 2 if boss["hp"] <= boss["stats"]["max_hp"] // 2 else 1
+    data["phase"] = phase
+    pattern = (data["round"] - 1) % 3
+    if pattern == 0:
+        intent = dict(
+            kind="attack",
+            skill="raid_rampage" if phase == 2 else "raid_sweep",
+            targets=list(living),
+            text="Готовит удар цепью по всему отряду.",
+        )
+    elif pattern == 1:
+        keys = list(living)
+        target = keys[(data["round"] // 3) % len(keys)]
+        intent = dict(
+            kind="attack",
+            skill="raid_crush",
+            targets=[target],
+            text="Готовит дробящий удар по отмеченному бойцу.",
+        )
+    else:
+        intent = dict(
+            kind="shield",
+            targets=[],
+            text="Поднимет щит: обе защиты +30% на два раунда.",
+        )
+    # Phase is announced before choices; crossing 50% during this round cannot
+    # silently strengthen the already announced attack.
+    intent["phase"] = phase
+    data["intent"] = intent
+
+
+def create_raid_state(participants, sources, classes, skills):
+    level = max(1, min(20, round(sum(s["level"] for s in sources) / len(sources))))
+    enemy = dict(
+        slave_id=0, owner_id=0, class_id="middle", level=level, passive_details=[]
+    )
+    players = {}
+    for p, source in zip(participants, sources):
+        state = create_battle_state(source, enemy, classes=classes, skills=skills)
+        players[str(p["actor_id"])] = dict(
+            actor_id=p["actor_id"],
+            fighter_id=p["fighter_id"],
+            personal=bool(p["personal"]),
+            slave_owner=p["slave_owner"],
+            fighter=state["sides"]["a"],
+            selected=None,
+            manual_turns=0,
+            missed=0,
+            reward_blocked=False,
+            withdrawn=False,
+        )
+    boss = state["sides"]["b"]
+    boss["stats"]["max_hp"] = max(
+        1, round(sum(p["fighter"]["stats"]["max_hp"] for p in players.values()) * 1.4)
+    )
+    boss["hp"] = boss["stats"]["max_hp"]
+    boss["stats"]["evasion"] = 0
+    for stat in ("physical_defense", "magic_defense"):
+        boss["stats"][stat] *= 0.7
+    boss["stats"]["physical_attack"] *= 0.85
+    boss["loadout"] = list(BOSS_SKILLS)
+    boss["name"] = BOSS_NAME
+    boss["mechanics"] = {}
+    data = dict(
+        players=players,
+        boss=boss,
+        round=1,
+        phase=1,
+        log=[],
+        result="",
+        finished=False,
+        won=False,
+        rewards={},
+        control_resistance=0,
+        control_lock=0,
+    )
+    set_intent(data)
+    return data
+
+
+def log_event(data, actor, target, text, **extra):
+    data["log"].append(
+        dict(round=data["round"], actor=actor, target=target, text=text, **extra)
+    )
+
+
+def defend(fighter):
+    _tick(fighter)
+    fighter["effects"] = [
+        e for e in fighter["effects"] if not e.get("id", "").startswith("raid_guard_")
+    ]
+    for dtype in ("physical", "magic"):
+        fighter["effects"].append(
+            dict(
+                id="raid_guard_" + dtype,
+                kind=dtype + "_defense_pct",
+                value=0.35,
+                duration=1,
+                target="self",
+            )
+        )
+
+
+def finish_if_needed(data):
+    living = alive_players(data)
+    if data["boss"]["hp"] <= 0 or not living:
+        data["finished"] = True
+        data["won"] = data["boss"]["hp"] <= 0 and bool(living)
+        data["result"] = (
+            "Босс повержен!" if data["won"] else "Отряд потерпел поражение."
+        )
+        if data["boss"]["hp"] <= 0 and not living:
+            data["result"] = "Босс и отряд погибли. Ничья, без наград."
+        return True
+    return False
+
+
+def resolve_round(data, skills, rng=None):
+    if data["finished"]:
+        raise ValueError("Рейд завершён.")
+    rng = rng or random.SystemRandom()
+    boss = data["boss"]
+    stunned = False
+    living = alive_players(data)
+    order = sorted(
+        living, key=lambda k: (-effective_stat(living[k]["fighter"], "speed"), int(k))
+    )
+    for key in order:
+        if finish_if_needed(data):
+            break
+        player = living[key]
+        actor = player["fighter"]
+        selected = player["selected"]
+        dot = min(
+            actor["hp"],
+            sum(
+                max(0, int(e["value"]))
+                for e in actor["effects"]
+                if e["kind"] == "bleed"
+            ),
+        )
+        if dot:
+            actor["hp"] -= dot
+            log_event(data, key, key, f"Кровотечение: −{dot} HP.", damage=dot)
+        if actor["hp"] <= 0:
+            continue
+        if selected is None:
+            player["missed"] += 1
+            player["reward_blocked"] |= player["missed"] >= 3
+        else:
+            player["manual_turns"] += 1
+            player["missed"] = 0
+        if any(e["kind"] == "stun" for e in actor["effects"]):
+            _tick(actor)
+            log_event(data, key, key, "Ошеломление: действие пропущено.")
+            continue
+        if selected is None or selected == "defend":
+            defend(actor)
+            log_event(
+                data,
+                key,
+                key,
+                "Защита: обе защиты +35%."
+                + (" Время выбора истекло." if selected is None else ""),
+            )
+            continue
+        # Resource/cooldowns were validated at submission. Enemy disruption can
+        # change the applicable variant before this fighter acts: do not charge
+        # or execute an unaffordable ability, and never abort the whole round.
+        try:
+            event = native_attack(actor, boss, selected, skills, rng)
+        except ValueError:
+            defend(actor)
+            log_event(data, key, key, "Навык недоступен после изменений в бою: защита.")
+            continue
+        log_event(
+            data,
+            key,
+            "boss",
+            event["text"],
+            damage=event["damage"],
+            self_damage=event["self_damage"],
+            skill=selected,
+        )
+        control = any(e["kind"] == "stun" for e in boss["effects"])
+        boss["effects"] = [e for e in boss["effects"] if e["kind"] != "stun"]
+        if control:
+            chance = max(0.1, 1 - 0.25 * data["control_resistance"])
+            accepted = (
+                not data["control_lock"] and not stunned and rng.random() < chance
+            )
+            data["control_resistance"] = min(4, data["control_resistance"] + 1)
+            if accepted:
+                stunned = True
+            else:
+                log_event(data, "boss", "boss", "Босс сопротивляется ошеломлению.")
+    if not finish_if_needed(data):
+        dot = min(
+            boss["hp"],
+            sum(
+                max(0, int(e["value"])) for e in boss["effects"] if e["kind"] == "bleed"
+            ),
+        )
+        if dot:
+            boss["hp"] -= dot
+            log_event(data, "boss", "boss", f"Кровотечение: −{dot} HP.", damage=dot)
+    if not finish_if_needed(data):
+        if stunned:
+            _tick(boss)
+            data["control_lock"] = 2
+            log_event(data, "boss", "boss", "Босс ошеломлён: намерение сорвано.")
+        else:
+            intent = data["intent"]
+            if intent["kind"] == "shield":
+                _tick(boss)
+                boss["effects"] = [
+                    e
+                    for e in boss["effects"]
+                    if not e.get("id", "").startswith("raid_shield_")
+                ]
+                for dtype in ("physical", "magic"):
+                    boss["effects"].append(
+                        dict(
+                            id="raid_shield_" + dtype,
+                            kind=dtype + "_defense_pct",
+                            value=0.3,
+                            duration=2,
+                            target="self",
+                        )
+                    )
+                log_event(
+                    data,
+                    "boss",
+                    "boss",
+                    "Босс поднял щит: обе защиты +30% на два раунда.",
+                )
+            else:
+                targets = [k for k in intent["targets"] if k in alive_players(data)]
+                if not targets:
+                    targets = list(alive_players(data))[:1]
+                # An area attack is one boss action, not three ticks of its buffs.
+                original = deepcopy(boss)
+                boss_after = None
+                for key in targets:
+                    attacker = deepcopy(original)
+                    if intent["phase"] == 2:
+                        attacker["effects"].append(
+                            dict(
+                                id="raid_fury",
+                                kind="damage_pct",
+                                value=0.25,
+                                duration=1,
+                            )
+                        )
+                    event = native_attack(
+                        attacker,
+                        data["players"][key]["fighter"],
+                        intent["skill"],
+                        BOSS_SKILLS,
+                        rng,
+                    )
+                    if boss_after is None:
+                        boss_after = attacker
+                    log_event(data, "boss", key, event["text"], damage=event["damage"])
+                if boss_after is not None:
+                    boss.clear()
+                    boss.update(boss_after)
+                else:
+                    _tick(boss)
+            data["control_lock"] = max(0, data["control_lock"] - 1)
+    if not finish_if_needed(data) and data["round"] >= RAID_MAX_ROUNDS:
+        data.update(
+            finished=True,
+            won=False,
+            result="Босс ушёл: достигнут предел 40 раундов. Без наград.",
+        )
+    data["log"] = data["log"][-80:]
+    if not data["finished"]:
+        data["round"] += 1
+        for player in data["players"].values():
+            player["selected"] = None
+        set_intent(data)
+    return data

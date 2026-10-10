@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 from arena_market import ArenaMarketMixin
 from arena_mirror import MirrorMixin
+from arena_raid import RaidMixin
 from arena_wasteland import enemy_source, victory_xp
 from arena_engine import (
     FIGHTER_CLASSES,
@@ -50,7 +51,7 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin(ArenaMarketMixin, MirrorMixin):
+class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin):
     def _connect_arena(self) -> None:
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (
@@ -177,6 +178,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
             self._ensure_column(table, "progression_pending_at", "INTEGER")
         self._connect_arena_market()
         self._connect_mirror()
+        self._connect_raids()
         # Upgrade live battles once. Restarting must never renew a PvP deadline.
         for raw in self.connection.execute(
             "SELECT id,mode,state_json FROM arena_battles WHERE status='active' AND state_json IS NOT NULL"
@@ -792,13 +794,14 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
             ).fetchone()
         )
 
-    def _arena_busy_locked(self, chat: int, user: int, exclude=0) -> bool:
+    def _arena_busy_locked(self, chat: int, user: int, exclude=0, raid_exclude="") -> bool:
         return bool(
             self.connection.execute(
                 """SELECT 1 FROM arena_battles WHERE chat_id=? AND status IN ('pending','active')
                AND id<>? AND (a_owner=? OR b_owner=? OR a_fighter=? OR b_fighter=?)""",
                 (chat, exclude, user, user, user, user),
             ).fetchone()
+            or self._raid_busy_locked(chat, user, raid_exclude)
             or self.connection.execute(
                 "SELECT 1 FROM arena_mirror_runs WHERE chat_id=? AND status='active' AND (actor_id=? OR fighter_id=?)",
                 (chat, user, user),
@@ -811,6 +814,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin):
                 "SELECT 1 FROM arena_battles WHERE chat_id=? AND status='active' AND (a_owner=? OR b_owner=? OR a_fighter=? OR b_fighter=?)",
                 (chat, user, user, user, user),
             ).fetchone()
+            or self._raid_busy_locked(chat, user, active_only=True)
             or self.connection.execute(
                 "SELECT 1 FROM arena_mirror_runs WHERE chat_id=? AND status='active' AND (actor_id=? OR fighter_id=?)",
                 (chat, user, user),

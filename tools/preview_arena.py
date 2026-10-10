@@ -3,6 +3,7 @@
 from pathlib import Path
 from dataclasses import asdict
 import argparse
+import time
 import sys
 from aiohttp import web
 
@@ -17,6 +18,10 @@ from arena_engine import (
     effective_stat,
 )
 from arena_mirror_effects import GIFTS, NORMAL_GIFTS
+from arena_raid_engine import create_raid_state, pair_state, BOSS_NAME, BOSS_SKILLS
+from arena_engine import effective_skill
+from arena_archclasses import class_title
+from arena_progression import choice_avatar
 
 app = web.Application()
 
@@ -110,10 +115,114 @@ async def demo_mirror(request):
     )
 
 
+def raid_preview(phase="active"):
+    """Detached synthetic raid; no player data or Telegram credentials."""
+    participants = [
+        dict(actor_id=i, fighter_id=i, personal=True, slave_owner=i) for i in (1, 2, 3)
+    ]
+    sources = [
+        dict(
+            slave_id=i,
+            owner_id=i,
+            class_id=cls,
+            level=12,
+            archclass_id=branch,
+            archclass_stage=10,
+            loadout={
+                "nerd": ["humiliate", "charging", "mother_joke", "go_to_store"],
+                "jock": ["smack", "wallop", "flex_chest", "clench"],
+                "cutie": ["uwu", "posing", "air_kiss", "meow"],
+            }[cls],
+        )
+        for i, cls, branch in (
+            (1, "nerd", "hacker"),
+            (2, "jock", "mge_bro"),
+            (3, "cutie", "princess"),
+        )
+    ]
+    data = create_raid_state(participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS)
+    names = {"1": "Хакер", "2": "Мге-браток", "3": "Принцесса"}
+    for p in participants:
+        p.update(name=names[str(p["actor_id"])], fighter_name=names[str(p["actor_id"])])
+    for key, f in [("boss", data["boss"])] + [
+        (k, p["fighter"]) for k, p in data["players"].items()
+    ]:
+        cls = FIGHTER_CLASSES[f["class_id"]]
+        f.update(
+            name=BOSS_NAME if key == "boss" else names[key],
+            class_name="Рейдовый босс" if key == "boss" else class_title(f, cls.name),
+            sprite=f["class_id"],
+            class_avatar_url=choice_avatar(f["class_id"], f.get("archclass_id", "")),
+            resource_name=cls.resource_name,
+            class_rarity=cls.rarity,
+            effective_stats={k: effective_stat(f, k) for k in f["stats"]},
+        )
+        target = data["players"]["1"]["fighter"] if key == "boss" else data["boss"]
+        catalog = BOSS_SKILLS if key == "boss" else BUILTIN_SKILLS
+        ids = f["loadout"]
+        f["skill_details"] = [
+            asdict(effective_skill(pair_state(f, target), "a", sid, catalog))
+            for sid in ids
+        ]
+    for p in data["players"].values():
+        p["ready"] = False
+    data["players"]["2"].update(ready=True, selected=None)
+    data["log"] = [
+        dict(
+            round=1,
+            actor="1",
+            target="boss",
+            text="Унизить: −18 HP · энергия противника −15",
+        ),
+        dict(round=1, actor="boss", target="3", text="Размах цепью: −12 HP"),
+    ]
+    data["boss"]["effects"].append(
+        dict(id="dust", kind="accuracy_flat", value=-20, duration=2)
+    )
+    data["players"]["1"]["fighter"]["effects"].append(
+        dict(id="guard", kind="physical_defense_pct", value=0.35, duration=1)
+    )
+    if phase == "finished":
+        data.update(
+            finished=True,
+            won=True,
+            result="Босс повержен!",
+            rewards={str(i): dict(xp=58, francs=76, loot="") for i in (1, 2, 3)},
+        )
+        data["boss"]["hp"] = 0
+    now = int(time.time())
+    return dict(
+        token="preview",
+        chat_id=-1,
+        creator_id=1,
+        actor_id=99 if phase == "spectator" else 1,
+        status=(
+            "lobby"
+            if phase == "lobby"
+            else "finished" if phase == "finished" else "active"
+        ),
+        revision=0,
+        deadline=now + 120,
+        server_time=now,
+        boss_name=BOSS_NAME,
+        participants=participants if phase != "lobby" else participants[:2],
+        choices=[dict(fighter_id=1, personal=True, name="Мой личный персонаж")],
+        data=None if phase == "lobby" else data,
+    )
+
+
+async def demo_raid(request):
+    phase = request.match_info["phase"]
+    if phase not in {"lobby", "active", "spectator", "finished"}:
+        raise web.HTTPNotFound()
+    return web.json_response(raid_preview(phase))
+
+
 app.router.add_get("/", index)
 app.router.add_get("/static/client.js", client)
 app.router.add_get("/demo/fighter/{class_id}", demo_fighter)
 app.router.add_get("/demo/mirror/{phase}", demo_mirror)
+app.router.add_get("/demo/raid/{phase}", demo_raid)
 app.router.add_static("/static/", ROOT)
 
 if __name__ == "__main__":

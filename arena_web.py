@@ -34,6 +34,7 @@ from arena_mirror_effects import GIFTS, gift_cost, gift_modifiers
 from arena_evolution import evolution_info
 from arena_archclasses import archclass_view, class_title, branch_options
 from arena_progression import pending_choice, choice_avatar
+from arena_raid_web import raid_view
 
 ROOT = Path(__file__).parent / "webapp"
 ACTOR = web.RequestKey("arena_actor", int)
@@ -384,10 +385,11 @@ async def menu_view(db, chat: int, actor: int) -> dict:
     result["max_level"] = MAX_FIGHTER_LEVEL
     result.update(await db.arena_market_view(chat, actor))
     result["mirror_runs"] = mirror_runs
+    result["raids"] = await db.arena_raid_list(chat, actor)
     return result
 
 
-def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
+def create_arena_app(db, bot, token: str, changed=None, raid_changed=None) -> web.Application:
     member_cache: dict[tuple[int, int], float] = {}
 
     async def read_member(chat: int, actor: int) -> None:
@@ -508,6 +510,47 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
         actor = request[ACTOR]
         await read_member(chat, actor)
         return web.json_response(await menu_view(db, chat, actor))
+
+    async def get_raid(request):
+        row = await db.arena_raid_get(request.match_info["token"])
+        await read_member(row["chat_id"], request[ACTOR])
+        return web.json_response(await raid_view(db, row, request[ACTOR]))
+
+    async def post_raid(request):
+        actor = request[ACTOR]
+        row = await db.arena_raid_get(request.match_info["token"])
+        member = await require_member(bot, row["chat_id"], actor)
+        if member.user.is_bot:
+            raise ValueError("Боты не могут участвовать в рейде.")
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("action"), str):
+            raise ValueError("Некорректный запрос.")
+        action = body["action"]
+        if action == "skill":
+            participant = next((p for p in row["participants"] if p["actor_id"] == actor), None)
+            if participant:
+                await require_member(bot, row["chat_id"], participant["fighter_id"])
+            row = await db.arena_raid_action(row["token"], actor, int_field(body, "round"), body.get("skill"))
+        else:
+            personal = body.get("personal", True)
+            if type(personal) is not bool:
+                raise ValueError("Некорректный выбор бойца.")
+            fighter = int_field(body, "fighter", actor)
+            if action == "join":
+                selected = await require_member(bot, row["chat_id"], fighter)
+                if selected.user.is_bot:
+                    raise ValueError("Бот не может быть бойцом рейда.")
+            if action == "start":
+                for p in row["participants"]:
+                    for user in {p["actor_id"], p["fighter_id"]}:
+                        selected = await require_member(bot, row["chat_id"], user)
+                        if selected.user.is_bot:
+                            raise ValueError("Боты не могут участвовать в рейде.")
+            row = await db.arena_raid_setup(row["token"], actor, action, fighter, personal,
+                                           row["revision"] if action == "start" else None)
+        if raid_changed:
+            await raid_changed(row["token"])
+        return web.json_response(await raid_view(db, row, actor))
 
     async def get_mirror(request):
         run = await db.arena_mirror_get(request.match_info["token"], request[ACTOR])
@@ -699,6 +742,8 @@ def create_arena_app(db, bot, token: str, changed=None) -> web.Application:
     app.router.add_static("/static/", ROOT, show_index=False)
     app.router.add_get("/api/battle/{token}", get_battle)
     app.router.add_post("/api/battle/{token}", post_battle)
+    app.router.add_get("/api/raid/{token}", get_raid)
+    app.router.add_post("/api/raid/{token}", post_raid)
     app.router.add_get("/api/mirror/{token}", get_mirror)
     app.router.add_post("/api/mirror/{token}", post_mirror)
     app.router.add_get("/api/menu/{chat}", get_menu)

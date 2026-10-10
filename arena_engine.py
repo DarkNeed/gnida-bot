@@ -1020,7 +1020,8 @@ def skip_turn(state: dict) -> None:
 
 
 def resolve_skill(
-    state: dict, side_key: str, skill_id: str, skills=None, rng=None
+    state: dict, side_key: str, skill_id: str, skills=None, rng=None,
+    *, advance_turn=True, tick_target_bleed=True,
 ) -> dict:
     """Resolve one tap entirely on the server. No directional/confirmation phase."""
     rng = rng or random.SystemRandom()
@@ -1185,7 +1186,7 @@ def resolve_skill(
     bleed_damage = min(
         target["hp"],
         sum(max(0, int(e["value"])) for e in target["effects"] if e["kind"] == "bleed"),
-    )
+    ) if tick_target_bleed else 0
     if target["hp"] > 0:
         target["hp"] -= bleed_damage
     text = f"{skill.name}: " + (
@@ -1230,7 +1231,8 @@ def resolve_skill(
     }
     state["log"].append(event)
     state["log"] = state["log"][-60:]
-    _advance_turn(state, side_key)
+    if advance_turn:
+        _advance_turn(state, side_key)
     return event
 
 

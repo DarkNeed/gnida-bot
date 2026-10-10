@@ -84,6 +84,9 @@ async def main() -> None:
             try:
                 for battle in await database.arena_expire():
                     await publisher.changed(battle["token"])
+                for raid in await database.arena_raid_expire():
+                    await publisher.raid_changed(raid["token"])
+                await publisher.raids.retry_pending()
                 sweep_time = asyncio.get_running_loop().time()
                 if webapp_url and sweep_time - last_merchant_sweep >= 30:
                     last_merchant_sweep = sweep_time
@@ -122,7 +125,7 @@ async def main() -> None:
             if not 1 <= port <= 65535:
                 raise RuntimeError("PORT must be between 1 and 65535")
             runner = web.AppRunner(
-                create_arena_app(database, bot, token, publisher.changed)
+                create_arena_app(database, bot, token, publisher.changed, publisher.raid_changed)
             )
             await runner.setup()
             await web.TCPSite(runner, "0.0.0.0", port).start()
