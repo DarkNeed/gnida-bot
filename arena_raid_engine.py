@@ -214,6 +214,9 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
     boss["stats"]["max_hp"] = max(
         1, round(sum(p["fighter"]["stats"]["max_hp"] for p in players.values()) * 1.4)
     )
+    if boss_id == "doofenshmirtz":
+        boss["stats"]["max_hp"] = round(boss["stats"]["max_hp"] * 1.05)
+        boss["stats"]["magic_attack"] = round(boss["stats"]["magic_attack"] * 1.05, 2)
     boss["hp"] = boss["stats"]["max_hp"]
     boss["stats"]["evasion"] = 0
     for stat in ("physical_defense", "magic_defense"):

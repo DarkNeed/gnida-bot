@@ -54,6 +54,48 @@ def advance(data, round_number):
 
 
 class DoofEngineTests(unittest.TestCase):
+    def test_modest_buff_only_new_doof_boss_not_party_or_other_bosses(self):
+        for size in (1, 2, 3):
+            members = [
+                dict(actor_id=i, fighter_id=i, personal=True, slave_owner=i)
+                for i in range(1, size + 1)
+            ]
+            sources = [
+                dict(slave_id=i, owner_id=i, class_id="nerd", level=18)
+                for i in range(1, size + 1)
+            ]
+            doof = create_raid_state(
+                members, sources, FIGHTER_CLASSES, BUILTIN_SKILLS, "doofenshmirtz"
+            )
+            party_hp = sum(
+                p["fighter"]["stats"]["max_hp"] for p in doof["players"].values()
+            )
+            self.assertEqual(doof["boss"]["hp"], round(round(party_hp * 1.4) * 1.05))
+            raw = create_battle_state(
+                sources[0], dict(slave_id=0, owner_id=0, class_id="nerd", level=20)
+            )["sides"]["b"]
+            self.assertEqual(
+                doof["boss"]["stats"]["magic_attack"],
+                round(raw["stats"]["magic_attack"] * 1.05, 2),
+            )
+            for boss_id in ("iron", "lei_heng"):
+                other = create_raid_state(
+                    members, sources, FIGHTER_CLASSES, BUILTIN_SKILLS, boss_id
+                )
+                self.assertEqual(other["boss"]["hp"], round(party_hp * 1.4))
+                self.assertEqual(
+                    [p["fighter"]["stats"] for p in other["players"].values()],
+                    [p["fighter"]["stats"] for p in doof["players"].values()],
+                )
+            saved = json.loads(json.dumps(doof))
+            saved["boss"]["hp"] = saved["boss"]["stats"]["max_hp"] = round(
+                party_hp * 1.4
+            )
+            saved["boss"]["stats"]["magic_attack"] = raw["stats"]["magic_attack"]
+            old_stats = deepcopy(saved["boss"]["stats"])
+            set_intent(saved)
+            self.assertEqual(saved["boss"]["stats"], old_stats)
+
     def test_aliases_level_and_telegraphs(self):
         for text in ("/рейд Фуфелшмерц", "/raid doof", "/рейд@GnidoBot фуфел"):
             self.assertEqual(raid_boss_id(RAID_RE.fullmatch(text)), "doofenshmirtz")
