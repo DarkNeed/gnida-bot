@@ -12,12 +12,22 @@ from arena_engine import (
     _tick,
     bleeding_damage,
 )
+from arena_doof import DOOF_SKILLS, set_doof_intent, resolve_doof_action
 
 RAID_SIZE = 3
 RAID_ROUND_SECONDS = 120
 RAID_MAX_ROUNDS = 40
 BOSS_NAME = "Железный сборщик"
 BOSSES = {
+    "doofenshmirtz": dict(
+        name="Фуфелшмерц — Злоба-инкорпорейтед",
+        sprite="/static/assets/doofenshmirtz.png",
+        ally_sprite="/static/assets/perry.png",
+        skills=tuple(DOOF_SKILLS),
+        recommended_level=18,
+        minimum_level=20,
+        loot_skill="deportator_inator",
+    ),
     "iron": dict(name=BOSS_NAME, skills=("raid_sweep", "raid_crush", "raid_rampage")),
     "lei_heng": dict(
         name="Лей Хенг — Охотник на тигров",
@@ -25,6 +35,7 @@ BOSSES = {
         skills=("lei_double_slash", "lei_explosive_slash", "lei_perfected_flurry"),
         recommended_level=18,
         minimum_level=20,
+        loot_skill="tigerslayer_flurry",
     ),
 }
 BOSS_SKILLS = {
@@ -61,6 +72,7 @@ BOSS_SKILLS = {
         ),
     )
 }
+BOSS_SKILLS.update(DOOF_SKILLS)
 
 
 def alive_players(data):
@@ -99,8 +111,12 @@ def set_intent(data):
     if not living:
         return
     boss = data["boss"]
+    boss["is_boss"] = True
     phase = 2 if boss["hp"] <= boss["stats"]["max_hp"] // 2 else 1
     data["phase"] = phase
+    if data.get("boss_id") == "doofenshmirtz":
+        set_doof_intent(data)
+        return
     pattern = (data["round"] - 1) % 3
     for player in data["players"].values():
         fighter = player["fighter"]
@@ -173,7 +189,11 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
         min(20, round(sum(s["level"] for s in sources) / len(sources))),
     )
     enemy = dict(
-        slave_id=0, owner_id=0, class_id="middle", level=level, passive_details=[]
+        slave_id=0,
+        owner_id=0,
+        class_id="nerd" if boss_id == "doofenshmirtz" else "middle",
+        level=level,
+        passive_details=[],
     )
     players = {}
     for p, source in zip(participants, sources):
@@ -202,6 +222,7 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
     boss["loadout"] = list(BOSSES[boss_id]["skills"])
     boss["name"] = BOSSES[boss_id]["name"]
     boss["mechanics"] = {}
+    boss["is_boss"] = True
     data = dict(
         players=players,
         boss_id=boss_id,
@@ -290,6 +311,7 @@ def resolve_round(data, skills, rng=None):
     rng = rng or random.SystemRandom()
     data["round_before"] = raid_snapshot(data)
     boss = data["boss"]
+    boss["is_boss"] = True
     stunned = False
     living = alive_players(data)
     order = sorted(
@@ -301,6 +323,10 @@ def resolve_round(data, skills, rng=None):
         player = living[key]
         actor = player["fighter"]
         selected = player["selected"]
+        if player.get("deported_round") == data["round"]:
+            _tick(actor)
+            log_event(data, key, key, "Депортация: боец вернётся в следующем раунде.")
+            continue
         if selected is None:
             player["missed"] += 1
             player["reward_blocked"] |= player["missed"] >= 3
@@ -312,6 +338,7 @@ def resolve_round(data, skills, rng=None):
             log_event(data, key, key, "Ошеломление: действие пропущено.")
             continue
         if selected is None or selected == "defend":
+            player["previous_skill"] = None
             defend(actor)
             log_event(
                 data,
@@ -342,6 +369,22 @@ def resolve_round(data, skills, rng=None):
             damage_type=event["damage_type"],
             **({"hits": event["hits"]} if "hits" in event else {}),
         )
+        if data.get("boss_id") == "doofenshmirtz":
+            if (
+                player.get("previous_skill") == selected
+                and skills[selected].damage_type
+            ):
+                memory = boss.setdefault("mechanics", {})
+                memory["two_coins"] = min(2, memory.get("two_coins", 0) + 1)
+                log_event(
+                    data,
+                    "boss",
+                    "boss",
+                    "У меня было бы две монетки: следующий удар усилен на "
+                    + str(10 * memory["two_coins"])
+                    + "%.",
+                )
+            player["previous_skill"] = selected
         control = any(e["kind"] == "stun" for e in boss["effects"])
         boss["effects"] = [e for e in boss["effects"] if e["kind"] != "stun"]
         if control:
@@ -359,6 +402,9 @@ def resolve_round(data, skills, rng=None):
             _tick(boss)
             data["control_lock"] = 2
             log_event(data, "boss", "boss", "Босс ошеломлён: намерение сорвано.")
+        elif data.get("boss_id") == "doofenshmirtz":
+            resolve_doof_action(data, rng)
+            data["control_lock"] = max(0, data["control_lock"] - 1)
         else:
             intent = data["intent"]
             if intent["kind"] == "shield":

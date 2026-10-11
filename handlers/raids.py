@@ -16,8 +16,18 @@ from arena_raid_engine import BOSSES
 from handlers.routes import text_or_caption_regexp
 
 RAID_RE = re.compile(
-    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng))?\s*$", re.I
+    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng|фуфелшмерц|фуфел|doofenshmirtz|doof))?\s*$",
+    re.I,
 )
+
+
+def raid_boss_id(match):
+    name = match.group("boss").casefold() if match and match.group("boss") else ""
+    return (
+        "doofenshmirtz"
+        if name.startswith(("фуфел", "doof"))
+        else "lei_heng" if name else "iron"
+    )
 
 
 class RaidPublisher:
@@ -88,8 +98,8 @@ class RaidPublisher:
             return (
                 text
                 + (
-                    f"\nРекомендуемый уровень: {boss['recommended_level']}+. 📜 Трактат поступи тигробоя: шанс 20%, гарантирован на пятой победе без выпадения."
-                    if row.get("boss_id") == "lei_heng"
+                    f"\nРекомендуемый уровень: {boss['recommended_level']}+. 📜 {('Депортатор-инатор · 80 энергии, один раз за бой' if row.get('boss_id') == 'doofenshmirtz' else 'Трактат поступи тигробоя')}: шанс 20%, гарантирован на пятой победе без выпадения."
+                    if boss.get("loot_skill")
                     else ""
                 )
                 + "\n\nВыберите личного персонажа или экипированного раба в «Открыть рейд».\nСоздатель может начать бой с 1–3 участниками, в том числе в одиночку. На сбор — 10 минут."
@@ -192,7 +202,7 @@ def create_raid_router(db, bot, enabled, publisher):
             row = await db.arena_raid_create(
                 message.chat.id,
                 message.from_user.id,
-                "lei_heng" if match and match.group("boss") else "iron",
+                raid_boss_id(match),
             )
             try:
                 sent = await message.answer(

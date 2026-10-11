@@ -429,6 +429,24 @@ BUILTIN_SKILLS["tigerslayer_flurry"] = Skill(
     "доступно с третьего собственного действия. Трактат добывается у Лей Хенга.",
     tags=("raid_loot", "triple_strike", "third_action"),
 )
+BUILTIN_SKILLS["deportator_inator"] = Skill(
+    "deportator_inator",
+    "Депортатор-инатор",
+    "raid",
+    10,
+    "magic",
+    18,
+    95,
+    80,
+    0,
+    effects=(effect("deportator_stun", "stun", 1, 1),),
+    rarity="epic",
+    pierce=0.40,
+    description="Мощный магический удар, игнорирует 40% магической защиты. "
+    "При попадании цель пропускает ход; боссы иммунны к депортации. "
+    "80 энергии, одно применение за бой. Трактат добывается у Фуфелшмерца.",
+    tags=("raid_loot", "once_per_battle", "no_boss_control"),
+)
 VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _finger_classes.items()})
 # Old names remain valid input; stable IDs keep inventory and saved builds intact.
 VISIBLE_CLASS_ALIASES.update(
@@ -929,6 +947,10 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
 
 
 def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
+    if "once_per_battle" in skill.tags and skill.skill_id in side.get(
+        "used_skills", []
+    ):
+        return "Уже использован в этом бою."
     if "raid_loot" in skill.tags and side["level"] < skill.unlock_level:
         return f"Нужен {skill.unlock_level} уровень."
     if (
@@ -1112,6 +1134,8 @@ def resolve_skill(
         skill.damage_type and not hit and roll < max(5, min(95, raw_accuracy))
     )
     actor["resource"] -= actual_cost
+    if "once_per_battle" in skill.tags:
+        actor.setdefault("used_skills", []).append(skill_id)
     order_note = obey_enemy_prescript(actor, skill_id)
     damage = 0
     if hit and skill.damage_type:
@@ -1165,6 +1189,12 @@ def resolve_skill(
     charmed = False
     if hit:
         for effect in skill.effects:
+            if (
+                "no_boss_control" in skill.tags
+                and effect["kind"] == "stun"
+                and target.get("is_boss")
+            ):
+                continue
             if rng.random() >= effect.get("chance", 1):
                 continue
             recipient = target if effect.get("target") == "enemy" else actor
@@ -1216,6 +1246,10 @@ def resolve_skill(
                 }.get(effect["kind"], effect["kind"])
             )
             effects_text.append(label)
+    if hit and damage:
+        target["effects"] = [
+            e for e in target["effects"] if not e.get("consume_on_hit")
+        ]
     if skill.cooldown:
         actor["cooldowns"][skill_id] = skill.cooldown
     class_after_action(actor, target, skill, hit, dodged, adored, charmed)

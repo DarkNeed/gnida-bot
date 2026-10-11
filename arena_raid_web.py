@@ -51,6 +51,8 @@ async def raid_view(db, row, actor):
             side.update(await db.arena_sprite_info(row["chat_id"], fighter))
         elif boss_info.get("sprite"):
             side["class_avatar_url"] = boss_info["sprite"]
+        if boss and boss_info.get("ally_sprite"):
+            side["resource_name"] = "Заряд инатора"
         side["skill_details"] = []
         target = (
             data["boss"]
@@ -151,6 +153,10 @@ async def raid_view(db, row, actor):
         boss_name=boss_info["name"],
         boss_id=row.get("boss_id", "iron"),
         recommended_level=boss_info.get("recommended_level", 1),
+        ally_sprite=boss_info.get("ally_sprite", ""),
+        loot_name=(
+            skills[boss_info["loot_skill"]].name if boss_info.get("loot_skill") else ""
+        ),
         participants=participants,
         choices=choices,
         data=data,

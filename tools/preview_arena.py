@@ -133,7 +133,7 @@ def raid_preview(phase="active"):
             slave_id=i,
             owner_id=i,
             class_id=cls,
-            level=18 if phase.startswith("lei_heng") else 12,
+            level=18 if phase.startswith(("lei_heng", "doof")) else 12,
             archclass_id=branch,
             archclass_stage=10,
             loadout={
@@ -148,7 +148,11 @@ def raid_preview(phase="active"):
             (3, "cutie", "princess"),
         )
     ]
-    boss_id = "lei_heng" if phase.startswith("lei_heng") else "iron"
+    boss_id = (
+        "doofenshmirtz"
+        if phase.startswith("doof")
+        else "lei_heng" if phase.startswith("lei_heng") else "iron"
+    )
     boss_info = BOSSES[boss_id]
     data = create_raid_state(
         participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS, boss_id
@@ -174,6 +178,8 @@ def raid_preview(phase="active"):
         )
         if key == "boss" and boss_info.get("sprite"):
             f["class_avatar_url"] = boss_info["sprite"]
+        if key == "boss" and boss_id == "doofenshmirtz":
+            f["resource_name"] = "Заряд инатора"
         target = data["players"]["1"]["fighter"] if key == "boss" else data["boss"]
         catalog = BOSS_SKILLS if key == "boss" else BUILTIN_SKILLS
         ids = f["loadout"]
@@ -199,14 +205,15 @@ def raid_preview(phase="active"):
     data["players"]["1"]["fighter"]["effects"].append(
         dict(id="guard", kind="physical_defense_pct", value=0.35, duration=1)
     )
-    if boss_id == "lei_heng":
+    if boss_id in {"lei_heng", "doofenshmirtz"}:
         data["log"] = []
-        data["boss"]["effects"] = []
-        data["players"]["1"]["fighter"]["effects"] = [
-            e
-            for e in data["players"]["1"]["fighter"]["effects"]
-            if e.get("id") == "lei_prey"
-        ]
+        if boss_id == "lei_heng":
+            data["boss"]["effects"] = []
+            data["players"]["1"]["fighter"]["effects"] = [
+                e
+                for e in data["players"]["1"]["fighter"]["effects"]
+                if e.get("id") == "lei_prey"
+            ]
     if phase == "finished":
         data.update(
             finished=True,
@@ -215,7 +222,7 @@ def raid_preview(phase="active"):
             rewards={str(i): dict(xp=58, francs=76, loot="") for i in (1, 2, 3)},
         )
         data["boss"]["hp"] = 0
-    if phase in {"animation", "lei_heng_animation"}:
+    if phase in {"animation", "lei_heng_animation", "doof_animation"}:
         import random
 
         data["log"] = []
@@ -243,6 +250,12 @@ def raid_preview(phase="active"):
         boss_name=boss_info["name"],
         boss_id=boss_id,
         recommended_level=boss_info.get("recommended_level", 1),
+        ally_sprite=boss_info.get("ally_sprite", ""),
+        loot_name=(
+            BUILTIN_SKILLS[boss_info["loot_skill"]].name
+            if boss_info.get("loot_skill")
+            else ""
+        ),
         participants=participants if phase != "lobby" else participants[:2],
         choices=[dict(fighter_id=1, personal=True, name="Мой личный персонаж")],
         data=None if phase == "lobby" else data,
@@ -259,6 +272,8 @@ async def demo_raid(request):
         "animation",
         "lei_heng",
         "lei_heng_animation",
+        "doof",
+        "doof_animation",
     }:
         raise web.HTTPNotFound()
     return web.json_response(raid_preview(phase))

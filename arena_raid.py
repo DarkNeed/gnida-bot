@@ -124,7 +124,10 @@ class RaidMixin:
     def _raid_finish_locked(self, row, data):
         # The raid and all grants are saved in the caller's transaction. Replays
         # cannot reach this method once status is finished.
-        if row["status"] != "active":
+        if (
+            row["status"] != "active"
+            or self._raid_row_locked(row["token"])["status"] != "active"
+        ):
             raise ValueError("Рейд уже закрыт.")
         if data["won"]:
             rng = random.SystemRandom()
@@ -163,10 +166,12 @@ class RaidMixin:
                 francs = 40 + 3 * data["boss"]["level"]
                 self._add_francs_locked(chat, player["actor_id"], francs)
                 loot = ""
-                if row.get("boss_id", "iron") == "lei_heng":
+                boss_id = row.get("boss_id", "iron")
+                loot_skill = BOSSES.get(boss_id, {}).get("loot_skill")
+                if loot_skill:
                     pity = self.connection.execute(
                         "SELECT misses FROM arena_raid_loot_pity WHERE chat_id=? AND actor_id=? AND boss_id=?",
-                        (chat, player["actor_id"], "lei_heng"),
+                        (chat, player["actor_id"], boss_id),
                     ).fetchone()
                     misses = pity["misses"] if pity else 0
                     dropped = misses >= 4 or rng.random() < 0.2
@@ -176,12 +181,12 @@ class RaidMixin:
                         (
                             chat,
                             player["actor_id"],
-                            "lei_heng",
+                            boss_id,
                             0 if dropped else misses + 1,
                         ),
                     )
                     if dropped:
-                        tractate = BUILTIN_SKILLS["tigerslayer_flurry"]
+                        tractate = BUILTIN_SKILLS[loot_skill]
                         loot = tractate.name
                         self._arena_add_item_locked(
                             chat,

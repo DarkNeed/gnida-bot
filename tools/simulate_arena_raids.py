@@ -106,7 +106,9 @@ def simulate(level, class_ids, seed, boss_id="iron"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=int, default=30)
-    parser.add_argument("--boss", choices=("iron", "lei_heng"), default="iron")
+    parser.add_argument(
+        "--boss", choices=("iron", "lei_heng", "doofenshmirtz"), default="iron"
+    )
     args = parser.parse_args()
     results = []
     for level in (1, 5, 10, 16, 18, 20):

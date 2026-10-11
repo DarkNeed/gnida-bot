@@ -189,6 +189,7 @@ class MirrorMixin:
             a["resource"] = min(a["stats"]["resource_max"], data["resource"])
         apply_gifts(a, data["gifts"])
         if data["floor"] == MIRROR_FLOORS:
+            b["is_boss"] = True
             for stat in (
                 "physical_attack",
                 "magic_attack",
