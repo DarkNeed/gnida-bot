@@ -11,7 +11,7 @@ from arena_engine import (
     BUILTIN_SKILLS,
     FIGHTER_CLASSES,
     MAX_FIGHTER_LEVEL,
-    MAX_PASSIVE_SKILLS,
+    passive_skill_limit,
     MAX_LEARNED_ACTIVE_SKILLS,
     MAX_LEARNED_PASSIVE_SKILLS,
     PassiveSkill,
@@ -111,13 +111,17 @@ class ArenaMarketMixin:
                     (MAX_FIGHTER_LEVEL, fighter_xp_limit()),
                 )
                 for row in self.connection.execute(
-                    f"SELECT chat_id,user_id,class_id FROM {table}"
+                    f"SELECT chat_id,user_id,class_id,level FROM {table}"
                 ).fetchall():
                     cls = classes.get(row["class_id"])
                     if cls and cls.passives:
                         defaults = [
                             f"inherent:{cls.class_id}:{i}"
-                            for i in range(min(MAX_PASSIVE_SKILLS, len(cls.passives)))
+                            for i in range(
+                                min(
+                                    passive_skill_limit(row["level"]), len(cls.passives)
+                                )
+                            )
                         ]
                         self.connection.execute(
                             f"UPDATE {table} SET passive_loadout=? WHERE chat_id=? AND user_id=?",
@@ -313,12 +317,12 @@ class ArenaMarketMixin:
             k
             for k in dict.fromkeys(json.loads(profile["passive_loadout"]))
             if k in memory
-        ][:MAX_PASSIVE_SKILLS]
+        ][: passive_skill_limit(profile["level"])]
         for key in unseen_inherent:
             if (
                 key in memory
                 and key not in selected
-                and len(selected) < MAX_PASSIVE_SKILLS
+                and len(selected) < passive_skill_limit(profile["level"])
             ):
                 selected.append(key)
         if selected != json.loads(profile["passive_loadout"]):
@@ -337,7 +341,7 @@ class ArenaMarketMixin:
             available[k]
             for k in dict.fromkeys(json.loads(profile["passive_loadout"]))
             if k in available
-        ][:MAX_PASSIVE_SKILLS]
+        ][: passive_skill_limit(profile["level"])]
 
     def _arena_shop_catalog_locked(self):
         classes, skills = self._fighter_catalog_locked()
@@ -349,7 +353,8 @@ class ArenaMarketMixin:
         }
         # Branch skills unlock through progression, not tradable cross-branch scrolls.
         public_skills = {
-            k for k, s in BUILTIN_SKILLS.items()
+            k
+            for k, s in BUILTIN_SKILLS.items()
             if not skill_branch(s) and "raid_loot" not in s.tags
         }
         for row in self.connection.execute(
@@ -646,7 +651,7 @@ class ArenaMarketMixin:
         )
         available = self._arena_passive_catalog_locked(chat, user, personal, profile)
         selected = [k for k in available if k.startswith(f"inherent:{class_id}:")][
-            :MAX_PASSIVE_SKILLS
+            : passive_skill_limit(profile["level"])
         ]
         table = "personal_profiles" if personal else "slave_profiles"
         self.connection.execute(
@@ -794,7 +799,9 @@ class ArenaMarketMixin:
                         loadout = list(
                             dict.fromkeys(json.loads(profile["passive_loadout"]))
                         )
-                        if content not in loadout and len(loadout) < MAX_PASSIVE_SKILLS:
+                        if content not in loadout and len(
+                            loadout
+                        ) < passive_skill_limit(profile["level"]):
                             loadout.append(content)
                             self.connection.execute(
                                 f"UPDATE {table} SET passive_loadout=?,skills_pending_at=? WHERE chat_id=? AND user_id=?",
@@ -875,7 +882,7 @@ class ArenaMarketMixin:
                     k
                     for k in dict.fromkeys(json.loads(profile["passive_loadout"]))
                     if k in passives
-                ][:MAX_PASSIVE_SKILLS],
+                ][: passive_skill_limit(profile["level"])],
                 granted=self._arena_grants_locked(chat, user, personal),
             )
             self.connection.commit()

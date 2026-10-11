@@ -216,7 +216,7 @@ class JockStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         view = await self.db.arena_passive_view(1, 10, True)
         self.assertEqual(view["passive_loadout"], ["steady_hand", "stone_skin"])
-        self.assertEqual(len(view["passives"]), 3)
+        self.assertEqual(len(view["passives"]), 4)
 
 
 @unittest.skipUnless(shutil.which("node"), "Node is needed for client tests")

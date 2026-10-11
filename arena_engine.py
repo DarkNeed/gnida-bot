@@ -16,7 +16,10 @@ from arena_class_mechanics import class_modifiers, class_after_action, has_adora
 from arena_mirror_effects import gift_cost, gift_modifiers, gift_after_action
 from arena_evolution import skill_variant, evolution_after_action
 from arena_archclasses import (
-    arch_after_action, obey_enemy_prescript, selected_branch, revenge_recoil,
+    arch_after_action,
+    obey_enemy_prescript,
+    selected_branch,
+    revenge_recoil,
 )
 from arena_archprogress import build_arch_skills, branch_skill_allowed, skill_branch
 
@@ -24,9 +27,9 @@ BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
 CONTROL_PENALTY = 0.8
 MAX_ACTIVE_SKILLS = 4
-MAX_PASSIVE_SKILLS = 2
+MAX_PASSIVE_SKILLS = 3
 MAX_LEARNED_ACTIVE_SKILLS = 6
-MAX_LEARNED_PASSIVE_SKILLS = 3
+MAX_LEARNED_PASSIVE_SKILLS = 4
 MAX_FIGHTER_LEVEL = 20
 RARITY_LABELS = {
     "common": "Обычный",
@@ -36,6 +39,17 @@ RARITY_LABELS = {
 }
 CLASS_SELECTION_LEVEL = 5
 SKILL_DELEGATION_SECONDS = 48 * 60 * 60
+
+
+def passive_skill_limit(level: int) -> int:
+    return MAX_PASSIVE_SKILLS if level >= 10 else 2
+
+
+def bleeding_damage(side: dict) -> int:
+    return min(
+        side["hp"],
+        sum(max(0, int(e["value"])) for e in side["effects"] if e["kind"] == "bleed"),
+    )
 
 
 @dataclass(frozen=True)
@@ -401,8 +415,16 @@ FIGHTER_CLASSES.update(_finger_classes)
 BUILTIN_SKILLS.update(_finger_skills)
 BUILTIN_SKILLS.update(build_arch_skills(Skill))
 BUILTIN_SKILLS["tigerslayer_flurry"] = Skill(
-    "tigerslayer_flurry", "Совершенная поступь тигробоя", "raid", 10,
-    "physical", 28, 95, 45, 4, rarity="epic",
+    "tigerslayer_flurry",
+    "Совершенная поступь тигробоя",
+    "raid",
+    10,
+    "physical",
+    28,
+    95,
+    45,
+    4,
+    rarity="epic",
     description="Три последовательных разреза. Общий урон одной мощной атаки; "
     "доступно с третьего собственного действия. Трактат добывается у Лей Хенга.",
     tags=("raid_loot", "triple_strike", "third_action"),
@@ -762,6 +784,7 @@ def create_battle_state(
         class_id = str(source["class_id"])
         stats = stats_for(class_id, int(source["level"]), controlled, class_catalog)
         fighter_class = class_catalog.get(class_id, FIGHTER_CLASSES["ragamuffin"])
+        passive_limit = passive_skill_limit(int(source["level"]))
         passive_details = source.get("passive_details")
         if passive_details is None:
             passive_details = [
@@ -771,9 +794,9 @@ def create_battle_state(
                     effects=[p],
                     rarity=fighter_class.rarity,
                 )
-                for i, p in enumerate(fighter_class.passives[:MAX_PASSIVE_SKILLS])
+                for i, p in enumerate(fighter_class.passives[:passive_limit])
             ]
-        passive_details = passive_details[:MAX_PASSIVE_SKILLS]
+        passive_details = passive_details[:passive_limit]
         starting_effects = [
             {
                 **item,
@@ -885,16 +908,12 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
         skill_id not in side["loadout"] and skill_id != "bum_punch"
     ) or skill_id not in catalog:
         raise ValueError("Навык недоступен.")
-    if (
-        not branch_skill_allowed(
-            catalog[skill_id], side.get("archclass_id", ""), side["level"]
-        )
-        or (
-            skill_branch(catalog[skill_id])
-            and (
-                not selected_branch(side)
-                or catalog[skill_id].class_id != side["class_id"]
-            )
+    if not branch_skill_allowed(
+        catalog[skill_id], side.get("archclass_id", ""), side["level"]
+    ) or (
+        skill_branch(catalog[skill_id])
+        and (
+            not selected_branch(side) or catalog[skill_id].class_id != side["class_id"]
         )
     ):
         raise ValueError("Навык недоступен этому архиклассу или уровню.")
@@ -912,9 +931,10 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
 def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
     if "raid_loot" in skill.tags and side["level"] < skill.unlock_level:
         return f"Нужен {skill.unlock_level} уровень."
-    if "third_action" in skill.tags and (
-        side.get("own_turns", 0) if own_turns is None else own_turns
-    ) < 2:
+    if (
+        "third_action" in skill.tags
+        and (side.get("own_turns", 0) if own_turns is None else own_turns) < 2
+    ):
         return "Доступно с третьего собственного действия."
     return ""
 
@@ -1000,22 +1020,13 @@ def skip_turn(state: dict) -> None:
     _initialize_turn_counts(state)
     key = state["active_side"]
     actor = state["sides"][key]
-    target = state["sides"]["b" if key == "a" else "a"]
     state.setdefault("had_player_action", any(e.get("skill_id") for e in state["log"]))
     before = {
         k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
     }
     order_note = obey_enemy_prescript(actor, None)
     _tick(actor)
-    # As with a normal action, damage-over-time is applied as the next side starts.
-    bleed_damage = min(
-        target["hp"],
-        sum(max(0, int(e["value"])) for e in target["effects"] if e["kind"] == "bleed"),
-    )
-    target["hp"] -= bleed_damage
     text = "Время вышло: ход пропущен (2 минуты)."
-    if bleed_damage:
-        text += f" · кровотечение: −{bleed_damage} HP"
     if order_note:
         text += " · " + order_note
     state["log"].append(
@@ -1026,7 +1037,7 @@ def skip_turn(state: dict) -> None:
             text=text,
             damage=0,
             hit=False,
-            bleed_damage=bleed_damage,
+            bleed_damage=0,
             before=before,
             after={
                 k: {"hp": s["hp"], "resource": s["resource"]}
@@ -1040,8 +1051,14 @@ def skip_turn(state: dict) -> None:
 
 
 def resolve_skill(
-    state: dict, side_key: str, skill_id: str, skills=None, rng=None,
-    *, advance_turn=True, tick_target_bleed=True,
+    state: dict,
+    side_key: str,
+    skill_id: str,
+    skills=None,
+    rng=None,
+    *,
+    advance_turn=True,
+    tick_actor_bleed=True,
 ) -> dict:
     """Resolve one tap entirely on the server. No directional/confirmation phase."""
     rng = rng or random.SystemRandom()
@@ -1052,6 +1069,11 @@ def resolve_skill(
     actor = state["sides"][side_key]
     other = "b" if side_key == "a" else "a"
     target = state["sides"][other]
+    # Capture before _tick expires the last turn; utilities and misses without an
+    # attacking skill never trigger it. A missed attack still is an attack.
+    pending_bleed = (
+        bleeding_damage(actor) if tick_actor_bleed and skill.damage_type else 0
+    )
     before = {
         k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
     }
@@ -1111,13 +1133,19 @@ def resolve_skill(
                 * reduction
                 * mirror_multiplier
                 * math.prod(
-                    max(0.1, e.get("value", 1)) for e in actor["effects"]
+                    max(0.1, e.get("value", 1))
+                    for e in actor["effects"]
                     if e.get("kind") == "final_damage_multiplier"
                 )
-                * max(0.1, 1 + sum(
-                    e.get("value", 0) for e in target["effects"]
-                    if e.get("kind") == "damage_taken_pct"
-                ))
+                * max(
+                    0.1,
+                    1
+                    + sum(
+                        e.get("value", 0)
+                        for e in target["effects"]
+                        if e.get("kind") == "damage_taken_pct"
+                    ),
+                )
                 * (1.5 if critical else 1)
                 * rng.uniform(0.95, 1.05)
             ),
@@ -1209,14 +1237,8 @@ def resolve_skill(
         actor, target, skill, hit, skills or BUILTIN_SKILLS, rng
     )
     self_damage = revenge_recoil(actor, min(before[other]["hp"], damage))
-    # Damage-over-time ticks when the affected fighter is about to act, including
-    # a stunned turn. It cannot be avoided by using a utility skill.
-    bleed_damage = min(
-        target["hp"],
-        sum(max(0, int(e["value"])) for e in target["effects"] if e["kind"] == "bleed"),
-    ) if tick_target_bleed else 0
-    if target["hp"] > 0:
-        target["hp"] -= bleed_damage
+    bleed_damage = min(actor["hp"], pending_bleed)
+    actor["hp"] -= bleed_damage
     text = f"{skill.name}: " + (
         f"−{damage} HP"
         if damage
@@ -1229,7 +1251,7 @@ def resolve_skill(
     if obeyed:
         text += " · предписание исполнено"
     if bleed_damage:
-        text += f" · кровотечение: −{bleed_damage} HP"
+        text += f" · кровотечение у атакующего: −{bleed_damage} HP"
     if self_damage:
         text += f" · самоурон: −{self_damage} HP"
     if order_note:

@@ -139,14 +139,29 @@ process.stdout.write(c.out||app.innerHTML);
 
     def test_profile_has_two_passive_slots_and_rarity(self):
         body = self.render("personalProfile")
-        self.assertIn("Пассивные навыки · 1 / 2", body)
+        self.assertIn("Пассивные навыки · 1 / 3", body)
         self.assertIn("Каменная кожа", body)
         self.assertIn("Физ. защита: +15%", body)
         self.assertIn("Необычный", body)
         self.assertIn('data-do="savepassives"', body)
         self.assertIn("активных 0 / 6", body)
-        self.assertIn("пассивных 1 / 3", body)
+        self.assertIn("пассивных 1 / 4", body)
         self.assertIn('data-do="resetprofile"', body)
+
+    def test_passive_limits_follow_level_and_allow_four_learned(self):
+        self.assertEqual(
+            self.run_client("out=String(learnedLimit('passive'));", {}), "4"
+        )
+        self.assertEqual(self.run_client("out=String(learnedLimit('skill'));", {}), "6")
+        for level, limit in ((9, 2), (10, 3), (20, 3)):
+            data = self.menu_data()
+            data["personal"]["level"] = level
+            body = self.run_client(
+                "page='personalProfile';profileId=input.personal.user_id;menuScreen(input);",
+                data,
+            )
+            self.assertIn(f"Пассивные навыки · 1 / {limit}", body)
+            self.assertIn("пассивных 1 / 4", body)
 
     def test_free_class_reset_warning_and_correct_target(self):
         body = self.run_client(
@@ -277,6 +292,6 @@ out=JSON.stringify({kind,shown,closed,focus,returned,scroll,removed:modal===null
         self.assertIn("(база 20)", body)
         self.assertIn("Энергия 20", body)
         self.assertIn("Восстановится через 2 х.", body)
-        self.assertIn("Пассивные навыки · 1 / 2", body)
+        self.assertIn("Пассивные навыки · 1 / 3", body)
         self.assertIn("Точность: -10", body)
         self.assertIn("/static/assets/jock.png", body)

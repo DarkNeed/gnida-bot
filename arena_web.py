@@ -21,6 +21,7 @@ from arena_engine import (
     stats_for,
     effective_stat,
     effective_skill,
+    passive_skill_limit,
     completed_turns,
     skill_restriction,
     RARITY_LABELS,
@@ -152,8 +153,12 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                         )
                 side["skill_details"].append(
                     dict(
-                        asdict(variant), cost=gift_cost(side, variant), evolution=info,
-                        unavailable_reason=skill_restriction(side, variant, completed_turns(state, key)),
+                        asdict(variant),
+                        cost=gift_cost(side, variant),
+                        evolution=info,
+                        unavailable_reason=skill_restriction(
+                            side, variant, completed_turns(state, key)
+                        ),
                     )
                 )
             side["mirror_gift_details"] = [
@@ -161,7 +166,9 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 for k in side.get("mirror_gifts", [])
                 if k in GIFTS
             ]
-            side["passive_details"] = side.get("passive_details", [])[:2]
+            side["passive_details"] = side.get("passive_details", [])[
+                : passive_skill_limit(side["level"])
+            ]
             side["effective_stats"] = {
                 k: effective_stat(side, k) for k in side["stats"]
             }
@@ -195,7 +202,9 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                     gift_cost(side, effective_skill(state, key, s, skills))
                     <= side["resource"]
                     and not side["cooldowns"].get(s, 0)
-                    and not skill_restriction(side, skills[s], completed_turns(state, key))
+                    and not skill_restriction(
+                        side, skills[s], completed_turns(state, key)
+                    )
                     for s in side["loadout"]
                     if s in skills
                 )
@@ -394,7 +403,9 @@ async def menu_view(db, chat: int, actor: int) -> dict:
     return result
 
 
-def create_arena_app(db, bot, token: str, changed=None, raid_changed=None) -> web.Application:
+def create_arena_app(
+    db, bot, token: str, changed=None, raid_changed=None
+) -> web.Application:
     member_cache: dict[tuple[int, int], float] = {}
 
     async def read_member(chat: int, actor: int) -> None:
@@ -532,10 +543,14 @@ def create_arena_app(db, bot, token: str, changed=None, raid_changed=None) -> we
             raise ValueError("Некорректный запрос.")
         action = body["action"]
         if action == "skill":
-            participant = next((p for p in row["participants"] if p["actor_id"] == actor), None)
+            participant = next(
+                (p for p in row["participants"] if p["actor_id"] == actor), None
+            )
             if participant:
                 await require_member(bot, row["chat_id"], participant["fighter_id"])
-            row = await db.arena_raid_action(row["token"], actor, int_field(body, "round"), body.get("skill"))
+            row = await db.arena_raid_action(
+                row["token"], actor, int_field(body, "round"), body.get("skill")
+            )
         else:
             personal = body.get("personal", True)
             if type(personal) is not bool:
@@ -551,8 +566,14 @@ def create_arena_app(db, bot, token: str, changed=None, raid_changed=None) -> we
                         selected = await require_member(bot, row["chat_id"], user)
                         if selected.user.is_bot:
                             raise ValueError("Боты не могут участвовать в рейде.")
-            row = await db.arena_raid_setup(row["token"], actor, action, fighter, personal,
-                                           row["revision"] if action == "start" else None)
+            row = await db.arena_raid_setup(
+                row["token"],
+                actor,
+                action,
+                fighter,
+                personal,
+                row["revision"] if action == "start" else None,
+            )
         if raid_changed:
             await raid_changed(row["token"])
         return web.json_response(await raid_view(db, row, actor))

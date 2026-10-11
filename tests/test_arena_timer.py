@@ -49,7 +49,7 @@ class SkipEngineTests(unittest.TestCase):
             dict(id="bleed", kind="bleed", value=3, duration=3),
         ]
         skip_turn(state)
-        self.assertEqual(target["hp"], original - 3)
+        self.assertEqual(target["hp"], original)
         self.assertEqual((state["turn"], state["active_side"]), (3, "a"))
         self.assertEqual(len(state["log"]), 2)
 

@@ -247,7 +247,7 @@ def build_catalog(FighterClass, Skill, effect):
             0,
             100,
             0,
-            3,
+            2,
             (
                 effect("rage", "resource", 35, target="self"),
                 effect("grit", "physical_defense_pct", 0.25, 1, target="self"),
@@ -287,7 +287,7 @@ def build_catalog(FighterClass, Skill, effect):
             92,
             0,
             0,
-            (effect("bleed", "bleed", 2, 2, chance=0.35),),
+            (effect("bleed", "bleed", 2, 2, chance=0.75),),
         ),
         s(
             "ring",

@@ -125,7 +125,7 @@ class StarsRevengeTests(unittest.TestCase):
             a, b = state["sides"].values()
             b["effects"].append(dict(id="bleed", kind="bleed", value=40, duration=3))
             event = self.tap(state, skill, roll)
-            self.assertEqual(event["bleed_damage"], 40)
+            self.assertEqual(event["bleed_damage"], 0)
             self.assertEqual(event["self_damage"], 0)
             self.assertEqual(a["hp"], 10000)
         state = self.state("middle", "middle_revenge")

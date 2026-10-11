@@ -31,7 +31,7 @@ from arena_engine import (
     xp_for_next_level,
     level_progress,
     MAX_FIGHTER_LEVEL,
-    MAX_PASSIVE_SKILLS,
+    passive_skill_limit,
     fighter_xp_limit,
     effective_stat,
     effective_skill,
@@ -618,7 +618,10 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin):
             profile = self._arena_profile_locked(chat_id, user_id)
             if int(profile["level"]) < CLASS_SELECTION_LEVEL:
                 return "low_level"
-            if profile["class_id"] != "ragamuffin" or pending_choice(dict(profile)) != 5:
+            if (
+                profile["class_id"] != "ragamuffin"
+                or pending_choice(dict(profile)) != 5
+            ):
                 return "already_chosen"
             if self._arena_choice_busy_locked(chat_id, user_id):
                 return "already_chosen"
@@ -794,7 +797,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin):
             ).fetchone()
         )
 
-    def _arena_busy_locked(self, chat: int, user: int, exclude=0, raid_exclude="") -> bool:
+    def _arena_busy_locked(
+        self, chat: int, user: int, exclude=0, raid_exclude=""
+    ) -> bool:
         return bool(
             self.connection.execute(
                 """SELECT 1 FROM arena_battles WHERE chat_id=? AND status IN ('pending','active')
@@ -1678,7 +1683,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin):
                         "Архикласс уже выбран. Изменить ветку можно после сброса или смены класса."
                     )
                 if pending_choice(dict(profile)) != 10:
-                    raise ValueError("Выбор уже сохранён. Новый выбор доступен на следующей ступени развития.")
+                    raise ValueError(
+                        "Выбор уже сохранён. Новый выбор доступен на следующей ступени развития."
+                    )
                 entry = ARCHCLASSES.get(value) if isinstance(value, str) else None
                 if not entry or entry["class_id"] != profile["class_id"]:
                     raise ValueError("Архикласс недоступен этому классу.")
@@ -1759,11 +1766,13 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin):
             elif action == "passives":
                 if (
                     not isinstance(value, list)
-                    or len(value) > MAX_PASSIVE_SKILLS
+                    or len(value) > passive_skill_limit(profile["level"])
                     or any(not isinstance(k, str) for k in value)
                     or len(value) != len(set(value))
                 ):
-                    raise ValueError("Выбери максимум две разные пассивки.")
+                    raise ValueError(
+                        f"Выбери максимум {passive_skill_limit(profile['level'])} разные пассивки."
+                    )
                 available = self._arena_passive_catalog_locked(
                     chat, user, personal, profile
                 )

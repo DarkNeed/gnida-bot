@@ -10,6 +10,7 @@ from arena_engine import (
     effective_skill,
     resolve_skill,
     _tick,
+    bleeding_damage,
 )
 
 RAID_SIZE = 3
@@ -81,7 +82,7 @@ def pair_state(actor, target):
     )
 
 
-def native_attack(actor, target, skill_id, skills, rng):
+def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True):
     return resolve_skill(
         pair_state(actor, target),
         "a",
@@ -89,7 +90,7 @@ def native_attack(actor, target, skill_id, skills, rng):
         skills,
         rng,
         advance_turn=False,
-        tick_target_bleed=False,
+        tick_actor_bleed=tick_actor_bleed,
     )
 
 
@@ -300,19 +301,6 @@ def resolve_round(data, skills, rng=None):
         player = living[key]
         actor = player["fighter"]
         selected = player["selected"]
-        dot = min(
-            actor["hp"],
-            sum(
-                max(0, int(e["value"]))
-                for e in actor["effects"]
-                if e["kind"] == "bleed"
-            ),
-        )
-        if dot:
-            actor["hp"] -= dot
-            log_event(data, key, key, f"Кровотечение: −{dot} HP.", damage=dot)
-        if actor["hp"] <= 0:
-            continue
         if selected is None:
             player["missed"] += 1
             player["reward_blocked"] |= player["missed"] >= 3
@@ -349,6 +337,7 @@ def resolve_round(data, skills, rng=None):
             event["text"],
             damage=event["damage"],
             self_damage=event["self_damage"],
+            bleed_damage=event["bleed_damage"],
             skill=selected,
             damage_type=event["damage_type"],
             **({"hits": event["hits"]} if "hits" in event else {}),
@@ -365,16 +354,6 @@ def resolve_round(data, skills, rng=None):
                 stunned = True
             else:
                 log_event(data, "boss", "boss", "Босс сопротивляется ошеломлению.")
-    if not finish_if_needed(data):
-        dot = min(
-            boss["hp"],
-            sum(
-                max(0, int(e["value"])) for e in boss["effects"] if e["kind"] == "bleed"
-            ),
-        )
-        if dot:
-            boss["hp"] -= dot
-            log_event(data, "boss", "boss", f"Кровотечение: −{dot} HP.", damage=dot)
     if not finish_if_needed(data):
         if stunned:
             _tick(boss)
@@ -411,6 +390,7 @@ def resolve_round(data, skills, rng=None):
                     targets = list(alive_players(data))[:1]
                 # An area attack is one boss action, not three ticks of its buffs.
                 original = deepcopy(boss)
+                pending_bleed = bleeding_damage(original)
                 boss_after = None
                 for key in targets:
                     attacker = deepcopy(original)
@@ -441,6 +421,7 @@ def resolve_round(data, skills, rng=None):
                         intent["skill"],
                         BOSS_SKILLS,
                         rng,
+                        tick_actor_bleed=False,
                     )
                     if boss_after is None:
                         boss_after = attacker
@@ -459,6 +440,12 @@ def resolve_round(data, skills, rng=None):
                     boss.update(boss_after)
                 else:
                     _tick(boss)
+                if boss_after is not None and pending_bleed:
+                    dot = min(boss["hp"], pending_bleed)
+                    boss["hp"] -= dot
+                    log_event(
+                        data, "boss", "boss", f"Кровотечение: −{dot} HP.", damage=dot
+                    )
                 if intent["skill"] == "lei_perfected_flurry" and targets:
                     boss["effects"].append(
                         dict(

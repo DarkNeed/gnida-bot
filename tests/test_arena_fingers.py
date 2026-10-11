@@ -139,14 +139,14 @@ class FingerEngineTests(unittest.TestCase):
         state = self.state("ring")
         actor, target = state["sides"]["a"], state["sides"]["b"]
         event = self.tap(state, "red_etude")
-        self.assertEqual(event["bleed_damage"], 3)
+        self.assertEqual(event["bleed_damage"], 0)
         self.assertEqual(actor["resource"], 88)
         actor["cooldowns"].clear()
         self.tap(state, "red_etude")
         self.assertEqual(actor["resource"], 68)  # refreshing isn't a new type
         target["hp"] = 2
         actor["cooldowns"].clear()
-        self.tap(state, "unfinished_portrait")
+        self.tap(state, "bum_punch", "b")
         self.assertTrue(state["finished"])
         self.assertEqual(state["winner"], "a")
         self.assertEqual(target["hp"], 0)

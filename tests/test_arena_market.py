@@ -321,21 +321,27 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.qty(item), 1)
         for key in ("light_step", "stone_skin", "battle_rhythm"):
             await self.db.arena_use_item(1, 10, self.add("passive", key), 10)
-        other = next(
+        fourth = next(
             k
             for k in BUILTIN_PASSIVES
             if k not in {"light_step", "stone_skin", "battle_rhythm"}
         )
+        await self.db.arena_use_item(1, 10, self.add("passive", fourth), 10)
+        other = next(
+            k
+            for k in BUILTIN_PASSIVES
+            if k not in {"light_step", "stone_skin", "battle_rhythm", fourth}
+        )
         passive = self.add("passive", other)
-        with self.assertRaisesRegex(ValueError, "Максимум 3"):
+        with self.assertRaisesRegex(ValueError, "Максимум 4"):
             await self.db.arena_use_item(1, 10, passive, 10)
         self.assertEqual(self.qty(passive), 1)
         view = (await menu_view(self.db, 1, 10))["personal"]
-        self.assertEqual((len(view["skills"]), len(view["passives"])), (6, 3))
-        self.assertEqual((len(view["loadout"]), len(view["passive_loadout"])), (4, 2))
+        self.assertEqual((len(view["skills"]), len(view["passives"])), (6, 4))
+        self.assertEqual((len(view["loadout"]), len(view["passive_loadout"])), (4, 3))
         battle = await self.db.arena_wasteland(1, 10)
         side = json.loads(battle["state_json"])["sides"]["a"]
-        self.assertEqual((len(side["loadout"]), len(side["passive_details"])), (4, 2))
+        self.assertEqual((len(side["loadout"]), len(side["passive_details"])), (4, 3))
 
     async def test_forget_and_relearn_without_consuming_scroll(self):
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 100)
@@ -392,10 +398,12 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_concurrent_learning_last_slot_and_profile_isolation(self):
-        for key in ("stone_skin", "light_step"):
+        for key in ("stone_skin", "light_step", "battle_rhythm"):
             await self.db.arena_use_item(1, 10, self.add("passive", key), 10)
         candidates = [
-            k for k in BUILTIN_PASSIVES if k not in {"stone_skin", "light_step"}
+            k
+            for k in BUILTIN_PASSIVES
+            if k not in {"stone_skin", "light_step", "battle_rhythm"}
         ][:2]
         items = [self.add("passive", key) for key in candidates]
         outcomes = await asyncio.gather(
@@ -408,7 +416,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
             1, 10, self.add("passive", "stone_skin"), 30, False
         )
         view = await menu_view(self.db, 1, 10)
-        self.assertEqual(len(view["personal"]["passives"]), 3)
+        self.assertEqual(len(view["personal"]["passives"]), 4)
         self.assertEqual(len(view["slaves"][0]["passives"]), 1)
 
     async def test_scroll_replacement_is_atomic_and_keeps_equipped_slot(self):

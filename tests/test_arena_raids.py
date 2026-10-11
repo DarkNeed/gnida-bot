@@ -157,10 +157,11 @@ class RaidEngineTests(unittest.TestCase):
             events = [
                 e
                 for e in data["log"]
-                if e["actor"] == key and "Кровотечение" in e["text"]
+                if e["actor"] == key
+                and (e.get("bleed_damage") or "Кровотечение" in e["text"])
             ]
             self.assertEqual(len(events), 1)
-            self.assertEqual(events[0]["damage"], 7)
+            self.assertEqual(events[0].get("bleed_damage") or events[0]["damage"], 7)
         damage = sum(e.get("damage", 0) for e in data["log"] if e["target"] == "boss")
         self.assertEqual(data["boss"]["hp"], 10000 - damage)
 

@@ -39,7 +39,7 @@ function fighterStatuses(side){
     if(!Number.isFinite(duration)||duration<=0||duration>=10000||['resource','resource_leech'].includes(kind))continue;
     const direction=kind==='damage_taken_pct'?'down':statusStatNames[kind]&&Number(e.value)!==0&&Number.isFinite(Number(e.value))?(Number(e.value)<0?'down':'up'):'';
     const name=e.id==='adoration'?'Умиление':e.name||(direction?(direction==='down'?'Понижение ':'Повышение ')+statusStatNames[kind]:effectNames[kind]||'Особый эффект');
-    let detail=e.description?esc(e.description):kind==='stun'?'Пропускает ход из-за ошеломления.':kind==='bleed'?'Кровотечение: '+esc(e.value)+' урона при начале хода этого бойца.':kind==='prepared_attack'?'Усилена следующая подходящая атака; подготовка расходуется по условиям навыка.':describeEffect({...e,target:'self',turns:0,chance:1});
+    let detail=e.description?esc(e.description):kind==='stun'?'Пропускает ход из-за ошеломления.':kind==='bleed'?'Кровотечение: '+esc(e.value)+' урона при атаке этого бойца.':kind==='prepared_attack'?'Усилена следующая подходящая атака; подготовка расходуется по условиям навыка.':describeEffect({...e,target:'self',turns:0,chance:1});
     detail+='<br>Осталось ходов этого бойца: '+esc(duration)+'.';
     items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:String(duration),detail});
   }
@@ -102,10 +102,12 @@ function progressionScreen(p){
   const options=choice.options||[];
   app.innerHTML='<section class="menu progression">'+top('Выбор '+(choice.level===5?'класса':'подкласса'),'УРОВЕНЬ '+choice.level)+'<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p>Выбери развитие или останься в текущем классе. Уровень, опыт и изученные навыки не сбрасываются.</p><p class="muted">До решения этот боец не может начать новый бой. Карточки прокручиваются вбок.</p><div class="class-row" role="group" aria-label="Варианты класса">'+options.map(c=>'<button class="class-option'+(c.current?' current-class':'')+'" data-do="progression:'+esc(c.id)+'" '+(!choice.can_choose?'disabled':'')+'><img src="'+esc(c.avatar_url)+'" data-fallback="/static/assets/ragamuffin.png" alt="'+esc(c.name)+'"><span class="class-label">'+esc(c.name)+'</span><span class="pill">'+(c.current?'ОСТАТЬСЯ':choice.level===20?'РАЗВИТЬ':'ВЫБРАТЬ')+'</span><span class="muted">'+esc(c.description||'')+'</span></button>').join('')+'</div>'+(!choice.can_choose?'<p class="note">'+(choice.busy?'Сначала заверши текущий бой / зеркальный забег.':'Раб выбирает самостоятельно; владелец сможет принять решение после 48 часов ожидания.')+'</p>'+button('Вернуться в меню','choiceback','small'):'')+'</div></section>';
 }
-function itemInfo(item){const d=item.details||{};return d.description?'<p class="muted">'+esc(d.description)+'</p>':item.kind==='class'?'<p class="muted">Меняет класс, сбрасывает уровень до 1, весь опыт, изученные активные и пассивные навыки. Инвентарь и спрайт сохраняются.</p>':'<p class="muted">'+(item.kind==='passive'?'Пассивный навык · максимум 2 в бою':'Активный навык · нужен уровень '+(d.unlock_level||1))+'</p>'+skillInfo(d);}
+function passiveLimit(f){return f.level>=10?3:2;}
+function learnedLimit(kind){return kind==='skill'?6:4;}
+function itemInfo(item){const d=item.details||{};return d.description?'<p class="muted">'+esc(d.description)+'</p>':item.kind==='class'?'<p class="muted">Меняет класс, сбрасывает уровень до 1, весь опыт, изученные активные и пассивные навыки. Инвентарь и спрайт сохраняются.</p>':'<p class="muted">'+(item.kind==='passive'?'Пассивный навык · 2 в бою, с 10 уровня — 3':'Активный навык · нужен уровень '+(d.unlock_level||1))+'</p>'+skillInfo(d);}
 function fighterDetails(s,key){
   const effective=s.effective_stats||s.stats;
-  return '<div class="profile fighter-detail">'+fighterImage(s)+'<div><h2>'+esc(s.name)+'</h2><div class="muted">'+esc(s.class_name)+' · Lv.'+s.level+'</div>'+rarityBadge(s.class_rarity)+'<p>HP '+s.hp+' / '+s.stats.max_hp+'<br>'+esc(s.resource_name)+': '+s.resource+' / '+s.stats.resource_max+'</p></div></div><div class="stats-grid">'+Object.entries(statNames).map(([id,label])=>'<div><span>'+label+'</span><b>'+esc(Math.round((effective[id]??s.stats[id]??0)*100)/100)+(id==='evasion'?'%':'')+(effective[id]!==s.stats[id]?' <small>(база '+esc(s.stats[id])+(id==='evasion'?'%':'')+')</small>':'')+'</b></div>').join('')+'</div><p class="muted">'+(s.controlled?'Контроль: все характеристики −20%. ':'')+'Бонус точности: '+(s.accuracy_bonus||0)+'% · бонус урона: '+Math.round((s.damage_bonus||0)*100)+'%.<br>Автоматического восстановления энергии нет.</p><h3>Активные навыки</h3>'+s.skill_details.map(skill=>'<div class="detail-skill"><b>'+esc(skill.name)+'</b> '+rarityBadge(skill.rarity)+skillInfo(skill)+(s.cooldowns[skill.skill_id]?'<div class="muted">Восстановится через '+s.cooldowns[skill.skill_id]+' х.</div>':'')+'</div>').join('')+'<h3>Пассивные навыки · '+(s.passive_details||[]).length+' / 2</h3>'+((s.passive_details||[]).map(p=>'<div class="detail-skill"><b>'+esc(p.name)+'</b> '+rarityBadge(p.rarity)+skillInfo(p)+'</div>').join('')||'<p class="muted">Не экипированы.</p>')+'<h3>Эффекты</h3>'+statusDetails(s)+'<p class="muted">Владелец/игрок: '+esc(current?.names?.[key+'_owner']||s.name)+'</p>';
+  return '<div class="profile fighter-detail">'+fighterImage(s)+'<div><h2>'+esc(s.name)+'</h2><div class="muted">'+esc(s.class_name)+' · Lv.'+s.level+'</div>'+rarityBadge(s.class_rarity)+'<p>HP '+s.hp+' / '+s.stats.max_hp+'<br>'+esc(s.resource_name)+': '+s.resource+' / '+s.stats.resource_max+'</p></div></div><div class="stats-grid">'+Object.entries(statNames).map(([id,label])=>'<div><span>'+label+'</span><b>'+esc(Math.round((effective[id]??s.stats[id]??0)*100)/100)+(id==='evasion'?'%':'')+(effective[id]!==s.stats[id]?' <small>(база '+esc(s.stats[id])+(id==='evasion'?'%':'')+')</small>':'')+'</b></div>').join('')+'</div><p class="muted">'+(s.controlled?'Контроль: все характеристики −20%. ':'')+'Бонус точности: '+(s.accuracy_bonus||0)+'% · бонус урона: '+Math.round((s.damage_bonus||0)*100)+'%.<br>Автоматического восстановления энергии нет.</p><h3>Активные навыки</h3>'+s.skill_details.map(skill=>'<div class="detail-skill"><b>'+esc(skill.name)+'</b> '+rarityBadge(skill.rarity)+skillInfo(skill)+(s.cooldowns[skill.skill_id]?'<div class="muted">Восстановится через '+s.cooldowns[skill.skill_id]+' х.</div>':'')+'</div>').join('')+'<h3>Пассивные навыки · '+(s.passive_details||[]).length+' / '+passiveLimit(s)+'</h3>'+((s.passive_details||[]).map(p=>'<div class="detail-skill"><b>'+esc(p.name)+'</b> '+rarityBadge(p.rarity)+skillInfo(p)+'</div>').join('')||'<p class="muted">Не экипированы.</p>')+'<h3>Эффекты</h3>'+statusDetails(s)+'<p class="muted">Владелец/игрок: '+esc(current?.names?.[key+'_owner']||s.name)+'</p>';
 }
 function closeStats(){const key=inspectSide,overlay=document.getElementById('fighter-stats');if(overlay){overlay.close();overlay.remove();}document.documentElement.classList.remove('fighter-details-open');app.inert=false;inspectSide=null;if(key)app.querySelector('[data-inspect="'+key+'"]')?.focus({preventScroll:true});}
 function showStats(key){
@@ -351,7 +353,7 @@ function menuScreen(data){
     const target=[data.personal,...data.slaves,data.self_slave].filter(Boolean).find(p=>p.user_id===pending?.user&&p.personal===pending?.personal);
     if(!row||!target){page='inventory';menuScreen(data);return;}
     const known=row.kind==='skill'?target.skills:(target.passives||[]);
-    body+='<div class="card"><h2>Какой навык заменить?</h2><p>Новый: <b>'+esc(row.name)+'</b></p><p>Боец: '+esc(target.name||target.class_name)+'</p><p class="muted">Лимит изученных '+(row.kind==='skill'?'активных навыков — 6':'пассивных навыков — 3')+'. Выбери замену. До выбора трактат не тратится.</p><div class="stack">';
+    body+='<div class="card"><h2>Какой навык заменить?</h2><p>Новый: <b>'+esc(row.name)+'</b></p><p>Боец: '+esc(target.name||target.class_name)+'</p><p class="muted">Лимит изученных '+(row.kind==='skill'?'активных навыков — 6':'пассивных навыков — 4')+'. Выбери замену. До выбора трактат не тратится.</p><div class="stack">';
     body+=known.filter(s=>s.skill_id!=='bum_punch').map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),'replaceitem:'+s.skill_id)).join('');
     body+=button('Отмена — ничего не менять','tab:inventory')+'</div></div>';
   }else if(page==="resetConfirm"){
@@ -372,15 +374,15 @@ function menuScreen(data){
     body+='<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p class="muted">Навыки открываются с уровнем. До четырёх навыков на бой; обычный удар доступен бесплатно.</p>';
     body+=rarityBadge(p.class_rarity);
     body+=archInfo(p);
-    body+='<p class="muted">Изучено: активных '+p.skills.length+' / 6 · пассивных '+(p.passives||[]).length+' / 3. В бою: до 4 активных и 2 пассивных.</p>';
+    body+='<p class="muted">Изучено: активных '+p.skills.length+' / 6 · пассивных '+(p.passives||[]).length+' / 4. В бою: до 4 активных и '+passiveLimit(p)+' пассивных.</p>';
     body+='<h3 style="margin-top:20px">Активные навыки</h3><div class="stack">'+p.skills.map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),"toggle:"+s.skill_id,p.loadout.includes(s.skill_id)?"selected-skill":"")).join("")+button("Сохранить навыки","save","primary")+'</div>';
-    body+='<h3 style="margin-top:20px">Пассивные навыки · '+(p.passive_loadout||[]).length+' / 2</h3><div class="stack">'+(p.passives||[]).map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),'togglepassive:'+s.skill_id,(p.passive_loadout||[]).includes(s.skill_id)?'selected-skill':'')).join('')+button('Сохранить пассивки','savepassives','primary')+'</div><p class="muted">Новые навыки изучаются через трактаты из инвентаря. Пассивки действуют автоматически весь бой.</p>';
+    body+='<h3 style="margin-top:20px">Пассивные навыки · '+(p.passive_loadout||[]).length+' / '+passiveLimit(p)+'</h3><div class="stack">'+(p.passives||[]).map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),'togglepassive:'+s.skill_id,(p.passive_loadout||[]).includes(s.skill_id)?'selected-skill':'')).join('')+button('Сохранить пассивки','savepassives','primary')+'</div><p class="muted">Новые навыки изучаются через трактаты из инвентаря. Пассивки действуют автоматически весь бой.</p>';
     body+='<details><summary>Освободить место / вернуть навык</summary><p class="muted">Забытый навык перестаёт действовать. Ранее открытые навыки можно вернуть при свободном месте; трактат повторно не нужен. Бесплатный удар занимает одно место и не забывается.</p><div class="stack">';
     for(const s of p.skills.filter(s=>s.skill_id!=='bum_punch'))body+=button('Забыть: '+esc(s.name),'forget_skill:'+s.skill_id,'small');
     for(const s of p.passives||[])body+=button('Забыть пассивку: '+esc(s.name),'forget_passive:'+s.skill_id,'small');
     for(const s of p.available_skills||[])body+=button('Изучить: '+esc(s.name)+skillInfo(s),'learn_skill:'+s.skill_id,'small',p.skills.length>=6);
     if(p.skills.length>=6&&(p.available_skills||[]).length)body+='<p class="note">Все 6 мест заняты. Можно забыть ненужный навык кнопкой выше, затем изучить открывшийся. Бесплатный удар остаётся.</p>';
-    for(const s of p.available_passives||[])body+=button('Изучить пассивку: '+esc(s.name),'learn_passive:'+s.skill_id,'small',(p.passives||[]).length>=3);
+    for(const s of p.available_passives||[])body+=button('Изучить пассивку: '+esc(s.name),'learn_passive:'+s.skill_id,'small',(p.passives||[]).length>=4);
     body+='</div></details>'+button('Сбросить класс и уровень','resetprofile','small danger');
     if(!p.personal&&p.user_id!==tg?.initDataUnsafe?.user?.id)body+='<p class="muted">Владелец может выбирать класс и навыки за раба после 48 часов ожидания.</p>'+button("Дать конфету · 30 XP","candy");
     body+='</div>';
@@ -471,7 +473,7 @@ app.addEventListener("click",async event=>{
     const target=[menu.personal,...menu.slaves,menu.self_slave].filter(Boolean).find(p=>p.user_id===Number(id)&&p.personal===(mode==='p'));
     if(item.kind==='class'){classUsePending={item:item.id,user:Number(id),personal:mode==='p',name:target?.name||(mode==='p'?'Мой личный персонаж':'Мой персонаж-раб')};page='classConfirm';menuScreen(menu);return;}
     if(target&&(item.kind==='skill'||item.kind==='passive')){
-      const known=item.kind==='skill'?target.skills:(target.passives||[]),limit=item.kind==='skill'?6:3;
+      const known=item.kind==='skill'?target.skills:(target.passives||[]),limit=learnedLimit(item.kind);
       if(known.length>=limit&&!known.some(s=>s.skill_id===item.content_id)){
         skillUsePending={item:item.id,user:Number(id),personal:mode==='p'};page='skillReplace';menuScreen(menu);return;
       }
@@ -501,7 +503,7 @@ app.addEventListener("click",async event=>{
   if(cmd==="class"||cmd==="hidden"){await menuAction("class",{user:p.user_id,personal:p.personal,value:cmd==="hidden"?document.getElementById("hidden-class").value:arg});return;}
   if(cmd==="toggle"){if(p.loadout.includes(arg))p.loadout=p.loadout.filter(k=>k!==arg);else if(p.loadout.length<4)p.loadout.push(arg);else toast("Не больше четырёх навыков.");menuScreen(menu);return;}
   if(cmd==="save"){await menuAction("loadout",{user:p.user_id,personal:p.personal,value:p.loadout});return;}
-  if(cmd==="togglepassive"){p.passive_loadout=p.passive_loadout||[];if(p.passive_loadout.includes(arg))p.passive_loadout=p.passive_loadout.filter(k=>k!==arg);else if(p.passive_loadout.length<2)p.passive_loadout.push(arg);else toast('Максимум две пассивки.');menuScreen(menu);return;}
+  if(cmd==="togglepassive"){p.passive_loadout=p.passive_loadout||[];if(p.passive_loadout.includes(arg))p.passive_loadout=p.passive_loadout.filter(k=>k!==arg);else if(p.passive_loadout.length<passiveLimit(p))p.passive_loadout.push(arg);else toast('Максимум '+passiveLimit(p)+' пассивки в бою.');menuScreen(menu);return;}
   if(cmd==="savepassives"){await menuAction('passives',{user:p.user_id,personal:p.personal,value:p.passive_loadout||[]});return;}
   if(cmd==="candy"){await menuAction("candy",{user:p.user_id});return;}
   if(cmd==="create_content"||cmd==="grant_content"){
@@ -665,7 +667,7 @@ async function raidAnimate(event){
       if(event.hits){await slashImpact(target);target?.classList.remove('raid-hit');}
     }
   }
-  if(event.self_damage){actor?.classList.add('raid-hit');raidPopup(event.actor,event.self_damage);}
+  if(event.self_damage||event.bleed_damage){actor?.classList.add('raid-hit');raidPopup(event.actor,(event.self_damage||0)+(event.bleed_damage||0));}
   await sleep(450);target?.classList.remove('raid-hit');actor?.classList.remove('raid-hit');
 }
 async function slashImpact(target){
