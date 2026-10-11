@@ -278,10 +278,11 @@ function mirrorScreen(data){
   closeStats();mirrorRun=data;current=null;token="";chat=data.chat_id;
   const choice=(name,id,description,disabled=false)=>button(esc(name)+'<span class="muted">'+esc(description)+'</span>',id,'mirror-choice',disabled);
   let body='<div class="card"><h2>Этаж '+data.floor+' / '+data.total_floors+'</h2><p>HP '+data.hp+' / '+data.max_hp+' · Энергия '+data.resource+' / '+data.resource_max+'</p><p>Осколки: '+data.shards+' · Получено: '+data.xp+' XP</p><p class="muted">Осколки и дары временные. Энергия +30 после победы; здоровье сохраняется. Таймера нет.</p></div>';
-  if(data.status!=='active')body+='<div class="card"><h2>'+esc(data.result)+'</h2><p>Опыт: '+data.xp+' XP · Франки: '+data.francs+' ₣</p>'+(data.loot?'<p>Трактат в инвентаре: '+esc(data.loot)+'</p>':'')+button('В меню','menu','primary')+'</div>';
+  const itemRewards=(data.item_rewards||[]).map(item=>'<p>'+esc(item.kind==='skill'?'Трактат навыка: ':item.kind==='passive'?'Трактат пассивки: ':'')+esc(item.name)+' ×'+esc(item.quantity)+' '+rarityBadge(item.rarity)+'</p>').join('');
+  if(data.status!=='active')body+='<div class="card"><h2>'+esc(data.result)+'</h2><p>Опыт: '+data.xp+' XP · Франки: '+data.francs+' ₣</p>'+(itemRewards?'<h3>Получено в инвентарь</h3>'+itemRewards:data.loot?'<p>Трактат в инвентаре: '+esc(data.loot)+'</p>':'')+button('В меню','menu','primary')+'</div>';
   else if(mirrorAbandonConfirm)body+='<div class="card"><h2>Оставить забег?</h2><p>Дары и осколки исчезнут. Уже заработанный опыт сохранится, награды за босса не будет.</p>'+button('Оставить забег','mirroraction:abandon','danger')+button('Продолжить','mirrorback')+'</div>';
   else{
-    body+='<div class="card stack">';
+    body+='<div class="card"><p>За все 5 этажей: трактат активного навыка, трактат пассивки, 3 зелья лечения и 2 конфеты опыта, плюс франки. При старте с 10 уровня активный трактат гарантированно редкий.</p></div><div class="card stack">';
     if(data.phase==='combat')body+='<h2>'+(data.floor===5?'Финальный босс':'Бой ждёт тебя')+'</h2>'+button('Открыть бой','battle:'+data.battle_token,'primary');
     if(data.phase==='gift')body+='<h2>Выбери дар зеркала</h2>'+data.choices.map(g=>choice(g.name,'mirrorchoice:gift:'+g.id,g.description)).join('');
     if(data.phase==='route')body+='<h2>Куда пойдёшь дальше?</h2>'+choice('Отдых','mirrorchoice:route:rest','Восстановить 35% HP и 35 энергии')+choice('Событие','mirrorchoice:route:event','Награда с риском или пройти мимо')+choice('Торговец','mirrorchoice:route:merchant','Одна покупка за временные осколки');

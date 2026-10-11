@@ -6,10 +6,58 @@ import secrets
 import time
 
 from arena_engine import create_battle_state, BUILTIN_SKILLS, BUILTIN_PASSIVES
+from arena_archprogress import skill_branch
 from arena_wasteland import enemy_source, victory_xp
 from arena_mirror_effects import GIFTS, NORMAL_GIFTS, apply_gifts
 
 MIRROR_FLOORS = 5
+
+
+def mirror_reward_items(start_level, rng=None):
+    """Permanent boss loot; branch unlocks and exclusive raid drops stay separate."""
+    rng = rng or random.SystemRandom()
+    active = rng.choice(
+        [
+            skill
+            for skill in BUILTIN_SKILLS.values()
+            if skill.class_id != "ragamuffin"
+            and not skill_branch(skill)
+            and "raid_loot" not in skill.tags
+            and skill.rarity
+            in ({"rare"} if start_level >= 10 else {"uncommon", "rare"})
+        ]
+    )
+    passive = rng.choice(list(BUILTIN_PASSIVES.values()))
+    return [
+        dict(
+            kind="skill",
+            content_id=active.skill_id,
+            rarity=active.rarity,
+            name=active.name,
+            quantity=1,
+        ),
+        dict(
+            kind="passive",
+            content_id=passive.skill_id,
+            rarity=passive.rarity,
+            name=passive.name,
+            quantity=1,
+        ),
+        dict(
+            kind="potion",
+            content_id="healing",
+            rarity="common",
+            name="Зелье лечения",
+            quantity=3,
+        ),
+        dict(
+            kind="candy",
+            content_id="experience",
+            rarity="common",
+            name="Конфета опыта",
+            quantity=2,
+        ),
+    ]
 
 
 class MirrorMixin:
@@ -124,6 +172,7 @@ class MirrorMixin:
             },
             gifts=gifts,
             choices=choices,
+            item_rewards=data.get("item_rewards", []),
             total_floors=MIRROR_FLOORS
         )
 
@@ -214,6 +263,7 @@ class MirrorMixin:
                 xp=0,
                 francs=0,
                 loot="",
+                item_rewards=[],
                 result="",
                 event="",
                 battle_token="",
@@ -301,21 +351,20 @@ class MirrorMixin:
                 )
                 data["francs"] = 50 + 5 * data["source"]["level"]
                 self._add_francs_locked(row["chat_id"], row["actor_id"], data["francs"])
-                if random.SystemRandom().random() < 0.30:
-                    pool = [
-                        ("skill", s.skill_id, s.rarity, s.name)
-                        for s in BUILTIN_SKILLS.values()
-                        if s.class_id != "ragamuffin" and "raid_loot" not in s.tags
-                    ]
-                    pool += [
-                        ("passive", p.skill_id, p.rarity, p.name)
-                        for p in BUILTIN_PASSIVES.values()
-                    ]
-                    kind, content, rarity, name = random.SystemRandom().choice(pool)
+                data["item_rewards"] = mirror_reward_items(data["source"]["level"])
+                for item in data["item_rewards"]:
                     self._arena_add_item_locked(
-                        row["chat_id"], row["actor_id"], kind, content, rarity
+                        row["chat_id"],
+                        row["actor_id"],
+                        item["kind"],
+                        item["content_id"],
+                        item["rarity"],
+                        item["quantity"],
                     )
-                    data["loot"] = name
+                # Keep the old field readable for saved clients and older previews.
+                data["loot"] = ", ".join(
+                    item["name"] for item in data["item_rewards"][:2]
+                )
             else:
                 pool = [k for k in NORMAL_GIFTS if k not in data["gifts"]]
                 data.update(

@@ -18,6 +18,8 @@ from arena_engine import (
     effective_stat,
 )
 from arena_mirror_effects import apply_gifts, gift_cost
+from arena_mirror import mirror_reward_items
+from arena_archprogress import skill_branch
 from arena_web import create_arena_app, battle_view, menu_view
 from database import Database
 from test_arena import signed, TOKEN
@@ -35,6 +37,30 @@ class Roll(random.Random):
 class Miss(Roll):
     def random(self):
         return 0.99
+
+
+class MirrorLootTests(unittest.TestCase):
+    def test_eligible_pools_and_level_quality_boundary(self):
+        for level in (1, 9, 10, 20):
+            pools = []
+
+            class InspectChoices:
+                def choice(self, pool):
+                    pools.append(pool)
+                    return pool[0]
+
+            items = mirror_reward_items(level, InspectChoices())
+            self.assertEqual([i["quantity"] for i in items], [1, 1, 3, 2])
+            self.assertEqual(
+                [i["kind"] for i in items], ["skill", "passive", "potion", "candy"]
+            )
+            expected = {"rare"} if level >= 10 else {"uncommon", "rare"}
+            self.assertEqual({skill.rarity for skill in pools[0]}, expected)
+            for skill in pools[0]:
+                self.assertFalse(skill_branch(skill))
+                self.assertNotIn("raid_loot", skill.tags)
+                self.assertNotEqual(skill.class_id, "ragamuffin")
+            self.assertEqual(len(pools[1]), 6)
 
 
 class MirrorEngineTests(unittest.TestCase):
@@ -151,7 +177,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
             run["token"], 10, run["revision"], action, value
         )
 
-    async def win(self, run, hp=10, resource=20):
+    async def win(self, run, hp=10, resource=20, actor=10, rng=None):
         row = await self.db.arena_get(run["battle_token"])
         state = json.loads(row["state_json"])
         state["sides"]["b"]["hp"] = 1
@@ -162,12 +188,24 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
             (json.dumps(state), row["token"]),
         )
         self.db.connection.commit()
-        with patch("arena_engine.random.SystemRandom", return_value=Roll()):
+        with patch("arena_engine.random.SystemRandom", return_value=rng or Roll()):
             done = await self.db.arena_action(
-                row["token"], 10, row["revision"], "bum_punch"
+                row["token"], actor, row["revision"], "bum_punch"
             )
         self.assertEqual(done["status"], "finished")
-        return await self.db.arena_mirror_get(run["token"], 10)
+        return await self.db.arena_mirror_get(run["token"], actor)
+
+    def final_floor(self, run, legacy=False):
+        row = self.db._mirror_row_locked(run["token"])
+        data = json.loads(row["data_json"])
+        data["floor"] = 5
+        if legacy:
+            data.pop("item_rewards", None)
+        self.db.connection.execute(
+            "UPDATE arena_mirror_runs SET data_json=? WHERE token=?",
+            (json.dumps(data), run["token"]),
+        )
+        self.db.connection.commit()
 
     async def gift(self, run):
         return await self.move(run, "gift", run["choices"][0]["id"])
@@ -199,6 +237,10 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
             run = await self.win(run)
             if floor < 5:
                 self.assertEqual(run["francs"], 0)
+                self.assertEqual(run["item_rewards"], [])
+                self.assertEqual(
+                    (await self.db.arena_market_view(1, 10))["inventory"], []
+                )
                 run = await self.gift(run)
                 run = await self.move(run, "route", "rest")
                 run = await self.move(run, "next")
@@ -206,15 +248,110 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run["xp"], sum(5 + 2 * level for level in range(1, 6)))
         self.assertEqual(await self.db.franc_balance(1, 10), 55)
         self.assertTrue(run["loot"])
-        self.assertEqual(len((await self.db.arena_market_view(1, 10))["inventory"]), 1)
+        inventory = (await self.db.arena_market_view(1, 10))["inventory"]
+        self.assertEqual(len(inventory), 4)
+        self.assertEqual(sum(i["quantity"] for i in inventory), 7)
+        self.assertEqual(
+            {(i["kind"], i["content_id"], i["quantity"]) for i in inventory},
+            {(i["kind"], i["content_id"], i["quantity"]) for i in run["item_rewards"]},
+        )
         for action in ("next", "abandon", "gift"):
             with self.assertRaises(ValueError):
                 await self.move(run, action, "edge")
+        battle = await self.db.arena_get(run["battle_token"])
+        for revision in (battle["revision"], battle["revision"] - 1):
+            with self.assertRaises(ValueError):
+                await self.db.arena_action(battle["token"], 10, revision, "bum_punch")
         self.assertEqual(await self.db.franc_balance(1, 10), 55)
+        self.assertEqual(
+            (await self.db.arena_market_view(1, 10))["inventory"], inventory
+        )
+        await self.db.close()
+        await self.db.connect()
+        self.assertEqual(await self.db.arena_mirror_get(run["token"], 10), run)
+        self.assertEqual(
+            (await self.db.arena_market_view(1, 10))["inventory"], inventory
+        )
         profile = (await self.db.arena_menu(1, 10))["personal"]
         self.assertEqual(profile["class_id"], original["class_id"])
         self.assertEqual(profile["loadout"], original["loadout"])
         self.assertFalse(self.db._arena_busy_locked(1, 10))
+
+    async def test_legacy_active_run_gets_loot_but_old_finished_run_is_not_repaid(self):
+        run = await self.db.arena_mirror_start(1, 10)
+        self.final_floor(run, legacy=True)
+        self.assertEqual(
+            (await self.db.arena_mirror_get(run["token"], 10))["item_rewards"], []
+        )
+        run = await self.win(run)
+        self.assertEqual(len(run["item_rewards"]), 4)
+        self.final_floor(run, legacy=True)
+        inventory = (await self.db.arena_market_view(1, 10))["inventory"]
+        old = await self.db.arena_mirror_get(run["token"], 10)
+        self.assertEqual(old["item_rewards"], [])
+        self.assertEqual(old["loot"], run["loot"])
+        self.assertEqual(
+            (await self.db.arena_market_view(1, 10))["inventory"], inventory
+        )
+
+    async def test_loot_failure_rolls_back_partial_items_money_xp_and_can_retry(self):
+        run = await self.db.arena_mirror_start(1, 10)
+        self.final_floor(run)
+        add = self.db._arena_add_item_locked
+        calls = []
+
+        def fail_second(*args):
+            calls.append(args)
+            if len(calls) == 2:
+                raise RuntimeError("item failure")
+            return add(*args)
+
+        with patch.object(self.db, "_arena_add_item_locked", side_effect=fail_second):
+            with self.assertRaises(RuntimeError):
+                await self.win(run)
+        after = await self.db.arena_mirror_get(run["token"], 10)
+        self.assertEqual(
+            (after["status"], after["xp"], after["francs"]), ("active", 0, 0)
+        )
+        self.assertEqual(after["item_rewards"], [])
+        self.assertEqual(await self.db.franc_balance(1, 10), 0)
+        self.assertEqual((await self.db.arena_market_view(1, 10))["inventory"], [])
+        self.assertEqual((await self.db.arena_menu(1, 10))["personal"]["xp"], 0)
+        await self.win(after)
+        self.assertEqual(
+            sum(
+                i["quantity"]
+                for i in (await self.db.arena_market_view(1, 10))["inventory"]
+            ),
+            7,
+        )
+
+    async def test_rewards_stack_only_for_controller_and_current_chat(self):
+        await self.db.force_enslave(1, 30, 10)
+        await self.db.arena_equip_slave(1, 10, 30, True)
+        for _ in range(2):
+            run = await self.db.arena_mirror_start(1, 30, 30, False)
+            self.final_floor(run)
+            run = await self.win(run, actor=30, rng=Roll(123))
+            self.assertEqual(len(run["item_rewards"]), 4)
+        inventory = (await self.db.arena_market_view(1, 30))["inventory"]
+        self.assertEqual(len(inventory), 4)
+        self.assertEqual(
+            {i["kind"]: i["quantity"] for i in inventory},
+            {"skill": 2, "passive": 2, "potion": 6, "candy": 4},
+        )
+        self.assertEqual((await self.db.arena_market_view(1, 10))["inventory"], [])
+        self.assertEqual((await self.db.arena_market_view(2, 30))["inventory"], [])
+
+    async def test_surrender_on_final_floor_gives_no_items(self):
+        run = await self.db.arena_mirror_start(1, 10)
+        self.final_floor(run)
+        battle = await self.db.arena_get(run["battle_token"])
+        await self.db.arena_action(battle["token"], 10, battle["revision"], "surrender")
+        run = await self.db.arena_mirror_get(run["token"], 10)
+        self.assertEqual(run["item_rewards"], [])
+        self.assertEqual((await self.db.arena_market_view(1, 10))["inventory"], [])
+        self.assertEqual(await self.db.franc_balance(1, 10), 0)
 
     async def test_busy_between_fights_blocks_duel_reset_and_parallel_start(self):
         results = await asyncio.gather(
@@ -564,6 +701,35 @@ class MirrorClientTests(unittest.TestCase):
             )
             self.assertIn(text, body)
             self.assertNotIn("<script>", body)
+
+    def test_loot_summary_quantities_rarities_and_legacy_fallback(self):
+        data = self.run_data("ended")
+        data.update(
+            status="finished",
+            item_rewards=mirror_reward_items(10, Roll(123)),
+            loot="legacy",
+        )
+        data["item_rewards"][0]["name"] = "<script>attack</script>"
+        body = client_tests.ArenaMarketClientTests.run_client(
+            self, "closeStats=()=>{};mirrorScreen(input);", data
+        )
+        for text in (
+            "Получено в инвентарь",
+            "Трактат навыка",
+            "Трактат пассивки",
+            "Зелье лечения ×3",
+            "Конфета опыта ×2",
+            "Редкий",
+        ):
+            self.assertIn(text, body)
+        self.assertNotIn("legacy", body)
+        self.assertNotIn("<script>", body)
+        self.assertIn("&lt;script&gt;", body)
+        del data["item_rewards"]
+        body = client_tests.ArenaMarketClientTests.run_client(
+            self, "closeStats=()=>{};mirrorScreen(input);", data
+        )
+        self.assertIn("Трактат в инвентаре: legacy", body)
 
 
 if __name__ == "__main__":
