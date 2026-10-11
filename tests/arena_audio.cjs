@@ -44,12 +44,22 @@ function harness({saved=null,storageFails=false,available=true,rejected=false}={
   const click=async attrs=>{const b=button(attrs);await handlers.click({target:{closest:()=>b}});};
   return {audio:window.ArenaAudio,document,handlers,windowHandlers,contexts,sources,intervals,ramps,click,get stored(){return stored;}};
 }
-test('muted default creates no context, voices, timers or requests',()=>{
-  const h=harness();h.audio.scene('battle');h.audio.effect('hit');
+test('fresh and corrupt preferences default to enabled after first gesture',async()=>{
+  for(const saved of [null,'broken json']){
+    const h=harness({saved});h.audio.scene('battle');h.audio.effect('hit');
+    assert.equal(h.contexts.length,0);assert.equal(h.sources.length,0);assert.equal(h.intervals.size,0);
+    await h.click({});assert.equal(h.contexts.length,1);assert.equal(h.intervals.size,1);
+    assert.ok(h.sources.length>0);
+  }
+});
+test('saved mute is respected on load, gestures and returning to page',async()=>{
+  const h=harness({saved:JSON.stringify({muted:true,music:22,effects:50})});
+  h.audio.scene('battle');await h.click({});h.windowHandlers.pageshow();
+  h.handlers.visibilitychange();h.audio.effect('hit');
   assert.equal(h.contexts.length,0);assert.equal(h.sources.length,0);assert.equal(h.intervals.size,0);
 });
 test('explicit gesture enables once; scene refresh never layers loops',async()=>{
-  const h=harness();await h.click({'data-audio-toggle':''});
+  const h=harness({saved:JSON.stringify({muted:true})});await h.click({'data-audio-toggle':''});
   assert.equal(h.contexts.length,1);assert.equal(h.intervals.size,1);
   assert.equal(JSON.parse(h.stored).muted,false);
   for(let i=0;i<30;i++)h.audio.scene('menu');
@@ -59,13 +69,13 @@ test('explicit gesture enables once; scene refresh never layers loops',async()=>
   h.audio.scene('');assert.equal(h.intervals.size,0);
 });
 test('mute stops all voices immediately and blocks future effects',async()=>{
-  const h=harness();await h.click({'data-audio-toggle':''});h.audio.effect('victory');
+  const h=harness();await h.click({});h.audio.effect('victory');
   await h.click({'data-audio-toggle':''});
   assert.equal(h.intervals.size,0);assert.ok(h.sources.every(s=>s.stopped===0));
   const count=h.sources.length;h.audio.effect('hit');assert.equal(h.sources.length,count);
 });
 test('hidden page suspends context, stops loops and effects; visible resumes',async()=>{
-  const h=harness();await h.click({'data-audio-toggle':''});
+  const h=harness();await h.click({});
   h.document.hidden=true;h.handlers.visibilitychange();
   assert.equal(h.contexts[0].state,'suspended');assert.equal(h.intervals.size,0);
   const count=h.sources.length;h.audio.effect('hit');assert.equal(h.sources.length,count);
@@ -90,7 +100,7 @@ test('unavailable Web Audio, rejected autoplay and denied storage never throw',a
   }
 });
 test('effects and action dispatch produce scheduled, bounded envelopes',async()=>{
-  const h=harness();await h.click({'data-audio-toggle':''});h.audio.scene('');
+  const h=harness();await h.click({});h.audio.scene('');
   for(const name of ['click','cast','hit','critical','miss','heal','buff','victory','defeat']){
     const n=h.sources.length;h.audio.effect(name);assert.ok(h.sources.length>n,name);
   }
@@ -102,7 +112,7 @@ test('effects and action dispatch produce scheduled, bounded envelopes',async()=
   assert.ok(h.ramps.every(([value])=>value>=0&&value<=1));
 });
 test('combat arrangement has detuned brass, driving percussion and varied bars',async()=>{
-  const h=harness();await h.click({'data-audio-toggle':''});h.audio.scene('');
+  const h=harness();await h.click({});h.audio.scene('');
   const base=h.sources.length;h.audio.scene('battle');
   const combat=h.sources.slice(base);
   assert.ok(combat.some(s=>s.type==='sawtooth'&&s.detune.value===8));
@@ -117,13 +127,13 @@ test('combat arrangement has detuned brass, driving percussion and varied bars',
   count=h.sources.length;h.audio.effect('critical');assert.ok(h.sources.length-count>hit);
 });
 test('all themes work and interrupted enable cannot restart after mute',async()=>{
-  const h=harness();await h.click({'data-audio-toggle':''});
+  const h=harness();await h.click({});
   for(const theme of ['menu','battle','raid','lei_heng','doofenshmirtz']){
     h.audio.scene(theme);assert.equal(h.intervals.size,1);
     h.contexts[0].currentTime+=10;for(const fn of h.intervals.values())fn();
   }
   h.audio.scene('');
-  const race=harness();const enable=race.click({'data-audio-toggle':''});
+  const race=harness({saved:JSON.stringify({muted:true})});const enable=race.click({'data-audio-toggle':''});
   await race.click({'data-audio-toggle':''});await enable;
   assert.equal(race.intervals.size,0);
 });

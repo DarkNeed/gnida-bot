@@ -9,7 +9,7 @@
     lei_heng: {bpm: 152, roots: [40, 40, 43, 38], motif: [0, 7, 12, 15, 12, 7, 5, 7], lead: [12, 15, 19, 17]},
     doofenshmirtz: {bpm: 144, roots: [42, 45, 40, 41], motif: [0, 12, 3, 11, 7, 3, 12, 6], lead: [12, 11, 15, 6]}
   };
-  let prefs = {muted: true, music: 22, effects: 50};
+  let prefs = {muted: false, music: 22, effects: 50};
   try {
     const p = JSON.parse(localStorage.getItem(KEY));
     if(p && typeof p === 'object') {
@@ -226,7 +226,7 @@
   }
   document.addEventListener('click',safe(async e=>{
     const button = e.target.closest('button'); if(!button || button.disabled) return;
-    if(button.hasAttribute('data-audio-open')) { openPanel(button); return; }
+    if(button.hasAttribute('data-audio-open')) { openPanel(button); await unlock(); return; }
     if(button.hasAttribute('data-audio-toggle')) {
       prefs.muted = !prefs.muted; save();
       if(prefs.muted) { stopAll(); gain(master,0); } else await unlock();
