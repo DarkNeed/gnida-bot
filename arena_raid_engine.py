@@ -370,6 +370,8 @@ def resolve_round(data, skills, rng=None):
             bleed_damage=event["bleed_damage"],
             skill=selected,
             damage_type=event["damage_type"],
+            hit=event["hit"],
+            critical=event["critical"],
             **({"hits": event["hits"]} if "hits" in event else {}),
         )
         if data.get("boss_id") == "doofenshmirtz":
@@ -482,6 +484,8 @@ def resolve_round(data, skills, rng=None):
                         damage=event["damage"],
                         skill=intent["skill"],
                         damage_type=event["damage_type"],
+                        hit=event["hit"],
+                        critical=event["critical"],
                         **({"hits": event["hits"]} if "hits" in event else {}),
                     )
                 if boss_after is not None:

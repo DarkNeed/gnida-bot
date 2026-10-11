@@ -197,6 +197,8 @@ def resolve_doof_action(data, rng):
             damage=event["damage"],
             skill=intent["skill"],
             damage_type=event["damage_type"],
+            hit=event["hit"],
+            critical=event["critical"],
             dialogue=data["dialogue"]["text"],
         )
     if boss_after is not None:

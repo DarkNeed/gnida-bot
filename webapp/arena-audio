@@ -1,0 +1,204 @@
+"use strict";
+// Original procedural soundtrack/SFX. Browser-only, extensionless for BotHost.
+(() => {
+  const KEY = 'gnida.arena.audio.v1';
+  const THEMES = {
+    menu: {bpm: 78, roots: [45, 41, 48, 43], motif: [0, 7, 10, 14, 10, 7, 3, 7], soft: true},
+    battle: {bpm: 112, roots: [45, 45, 41, 43], motif: [0, 12, 7, 10, 0, 7, 3, 10]},
+    raid: {bpm: 100, roots: [38, 41, 36, 37], motif: [0, 7, 12, 10, 7, 3, 10, 7]},
+    lei_heng: {bpm: 124, roots: [40, 40, 43, 38], motif: [0, 7, 12, 15, 12, 7, 5, 7]},
+    doofenshmirtz: {bpm: 116, roots: [42, 45, 40, 41], motif: [0, 12, 3, 11, 7, 3, 12, 6]}
+  };
+  let prefs = {muted: true, music: 22, effects: 50};
+  try {
+    const p = JSON.parse(localStorage.getItem(KEY));
+    if(p && typeof p === 'object') {
+      if(typeof p.muted === 'boolean') prefs.muted = p.muted;
+      for(const k of ['music','effects']) if(Number.isFinite(p[k])) prefs[k] = Math.max(0,Math.min(100,p[k]));
+    }
+  } catch {}
+  let ctx, master, fx, musicBus, noiseBuffer, timer, scene = 'menu', playing = '', step = 0, next = 0;
+  let generation = 0, opener = null, unavailable = false;
+  const voices = new Set();
+  const hz = note => 440 * 2 ** ((note - 69) / 12);
+  function save() { try { localStorage.setItem(KEY,JSON.stringify(prefs)); } catch {} }
+  function labels() {
+    for(const b of document.querySelectorAll('[data-audio-open]')) {
+      b.textContent = prefs.muted ? '🔇' : '♫';
+      b.setAttribute('aria-label','Настройки звука' + (prefs.muted ? ' — выключен' : ''));
+    }
+    const toggle = document.querySelector('[data-audio-toggle]');
+    if(toggle) { toggle.textContent = prefs.muted ? 'Включить звук' : 'Выключить звук'; toggle.setAttribute('aria-pressed',String(!prefs.muted)); }
+    const status = document.getElementById('audio-status');
+    if(status) status.textContent = unavailable ? 'Звук недоступен в этом браузере.' : !prefs.muted && ctx?.state !== 'running' ? 'Нажми «Включить / проверить», чтобы запустить звук.' : 'Настройки сохраняются на этом устройстве.';
+  }
+  function gain(node,value,duration=.06) {
+    if(!ctx || !node) return;
+    node.gain.cancelScheduledValues(ctx.currentTime);
+    node.gain.setValueAtTime(node.gain.value,ctx.currentTime);
+    node.gain.linearRampToValueAtTime(value,ctx.currentTime+duration);
+  }
+  function createContext() {
+    if(ctx || unavailable) return;
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if(!Context) { unavailable = true; return; }
+    ctx = new Context();
+    master = ctx.createGain(); master.gain.value = prefs.muted ? 0 : .65;
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -16; limiter.knee.value = 16; limiter.ratio.value = 8;
+    master.connect(limiter); limiter.connect(ctx.destination);
+    fx = ctx.createGain(); fx.gain.value = prefs.effects / 100; fx.connect(master);
+    noiseBuffer = ctx.createBuffer(1,ctx.sampleRate,ctx.sampleRate);
+    const samples = noiseBuffer.getChannelData(0);
+    // Fixed seed avoids a different timbre on each page load.
+    let seed = 93851;
+    for(let i=0;i<samples.length;i++) { seed = (seed*16807)%2147483647; samples[i] = seed/1073741823.5-1; }
+  }
+  async function unlock() {
+    if(prefs.muted || document.hidden) return;
+    const ticket = generation;
+    try {
+      createContext();
+      if(!ctx) return;
+      await ctx.resume();
+      if(ticket !== generation || prefs.muted || document.hidden) return;
+      gain(master,.65); startMusic();
+    } catch { unavailable = true; }
+    labels();
+  }
+  function voice(source,filter,bus,at,duration,volume) {
+    const envelope = ctx.createGain();
+    envelope.gain.setValueAtTime(0,at);
+    envelope.gain.linearRampToValueAtTime(volume,at+.012);
+    envelope.gain.exponentialRampToValueAtTime(.0001,at+duration);
+    source.connect(filter); filter.connect(envelope); envelope.connect(bus);
+    voices.add(source);
+    source.onended = () => { voices.delete(source); source.disconnect(); filter.disconnect(); envelope.disconnect(); };
+    source.start(at); source.stop(at+duration+.02);
+  }
+  function tone(note,at,duration,volume,bus,type='triangle',endNote=null) {
+    const osc = ctx.createOscillator(), filter = ctx.createBiquadFilter();
+    osc.type = type; osc.frequency.setValueAtTime(hz(note),at);
+    if(endNote !== null) osc.frequency.exponentialRampToValueAtTime(hz(endNote),at+duration);
+    filter.type = 'lowpass'; filter.frequency.value = type === 'sawtooth' ? 1400 : 3200;
+    voice(osc,filter,bus,at,duration,volume);
+  }
+  function noise(at,duration,volume,bus,frequency=1500) {
+    const source = ctx.createBufferSource(), filter = ctx.createBiquadFilter();
+    source.buffer = noiseBuffer; filter.type = 'bandpass'; filter.frequency.value = frequency; filter.Q.value = .7;
+    voice(source,filter,bus,at,duration,volume);
+  }
+  function stopMusic() {
+    clearInterval(timer); timer = null; playing = '';
+    if(musicBus) {
+      const old = musicBus; gain(old,0,.25); musicBus = null;
+      setTimeout(() => old.disconnect(),1000);
+    }
+  }
+  function stopAll() {
+    generation++; stopMusic();
+    for(const source of voices) { try { source.stop(); } catch {} }
+    voices.clear();
+  }
+  function schedule() {
+    if(!ctx || ctx.state !== 'running' || document.hidden || prefs.muted) return;
+    const theme = THEMES[playing]; if(!theme) return;
+    const beat = 60/theme.bpm, tick = beat/2;
+    if(next < ctx.currentTime) next = ctx.currentTime+.02;
+    while(next < ctx.currentTime+.18) {
+      const root = theme.roots[Math.floor(step/16)%4], within = step%16;
+      if(within === 0) {
+        for(const n of [0,3,7]) tone(root+12+n,next,beat*7,.038,musicBus,'sine');
+      }
+      if(step%2 === 0) tone(root,next,beat*.85,.12,musicBus,'triangle');
+      if(!theme.soft || step%2 === 0) tone(root+24+theme.motif[step%8],next,tick*1.7,.035,musicBus,'triangle');
+      if(!theme.soft) {
+        if(step%4 === 0) tone(38,next,.16,.18,musicBus,'sine',20);
+        if(step%4 === 2) noise(next,.09,.06,musicBus,1400);
+        noise(next,.035,.018,musicBus,6500);
+      }
+      step++; next += tick;
+    }
+  }
+  function startMusic() {
+    if(!ctx || ctx.state !== 'running' || prefs.muted || !prefs.music || document.hidden || !THEMES[scene]) return;
+    if(playing === scene && timer) return;
+    stopMusic(); playing = scene; step = 0; next = ctx.currentTime+.03;
+    musicBus = ctx.createGain(); musicBus.gain.value = 0; musicBus.connect(master);
+    gain(musicBus,prefs.music/100,.5);
+    schedule(); timer = setInterval(() => { try { schedule(); } catch { stopMusic(); } },100);
+  }
+  function setScene(value) {
+    const wanted = Object.hasOwn(THEMES,value) ? value : '';
+    if(wanted !== scene) { scene = wanted; stopMusic(); }
+    startMusic(); labels();
+  }
+  function effect(name) {
+    if(prefs.muted || !prefs.effects || !ctx || ctx.state !== 'running' || document.hidden) return;
+    const at = ctx.currentTime+.005;
+    const notes = (list,d=.09) => list.forEach((n,i)=>tone(n,at+i*d,d*2,.15,fx));
+    if(name === 'click') tone(78,at,.045,.08,fx,'sine');
+    else if(name === 'cast') { tone(55,at,.32,.13,fx,'sine',86); noise(at,.14,.04,fx,2400); }
+    else if(name === 'hit' || name === 'critical') { noise(at,.14,name==='critical'?.3:.2,fx,650); tone(44,at,.13,.2,fx,'sine',24); if(name==='critical') tone(70,at,.18,.06,fx,'triangle',50); }
+    else if(name === 'miss') { noise(at,.16,.1,fx,3100); tone(75,at,.12,.06,fx,'sine',58); }
+    else if(name === 'heal') notes([64,67,71,76]);
+    else if(name === 'buff') notes([57,64,69]);
+    else if(name === 'victory') notes([60,64,67,72,76,79],.12);
+    else if(name === 'defeat') notes([57,53,50,45],.18);
+  }
+  function actionStart(event) { if(event.damage_type === 'magic') effect('cast'); }
+  function impact(event) {
+    const key = event.side || event.actor;
+    if(event.before?.[key] && event.after?.[key]?.hp > event.before[key].hp) { effect('heal'); return; }
+    if(event.hit === false && event.skill_id !== 'surrender' && event.skill !== 'surrender') effect('miss');
+    else if(event.damage > 0) effect(event.critical ? 'critical' : 'hit');
+    else if(event.skill_id && event.skill_id !== 'surrender' || event.skill && !['surrender','defend'].includes(event.skill)) effect('buff');
+  }
+  function safe(fn) { return (...args) => { try { const result=fn(...args); if(result?.catch)return result.catch(()=>{}); return result; } catch { return undefined; } }; }
+  function closePanel() {
+    document.getElementById('audio-settings')?.close();
+    if(opener?.isConnected) opener.focus({preventScroll:true});
+  }
+  function openPanel(button) {
+    opener = button;
+    let dialog = document.getElementById('audio-settings');
+    if(!dialog) {
+      dialog = document.createElement('dialog'); dialog.id = 'audio-settings'; dialog.className = 'audio-dialog';
+      dialog.setAttribute('aria-label','Звук арены');
+      dialog.innerHTML = '<header class="stats-header"><b>Звук арены</b><button class="small" data-audio-close aria-label="Закрыть настройки звука">✕</button></header><p class="muted">Собственная синтезированная музыка и эффекты. Без загрузки аудиофайлов.</p><button data-audio-toggle></button><button class="small" data-audio-test="heal">Включить / проверить</button><label>Музыка <output id="audio-music-value"></output><input aria-label="Громкость музыки" data-audio-volume="music" type="range" min="0" max="100"></label><label>Эффекты <output id="audio-effects-value"></output><input aria-label="Громкость эффектов" data-audio-volume="effects" type="range" min="0" max="100"></label><div class="audio-samples"><button class="small" data-audio-test="hit">Удар</button><button class="small" data-audio-test="cast">Магия</button><button class="small" data-audio-test="miss">Промах</button><button class="small" data-audio-test="heal">Лечение</button><button class="small" data-audio-test="victory">Победа</button><button class="small" data-audio-test="defeat">Поражение</button></div><p id="audio-status" class="muted" aria-live="polite"></p>';
+      dialog.addEventListener('cancel',e=>{e.preventDefault();closePanel();});
+      dialog.addEventListener('click',e=>{if(e.target.closest('[data-audio-close]')) closePanel();});
+      document.body.append(dialog);
+    }
+    for(const k of ['music','effects']) { dialog.querySelector('[data-audio-volume="'+k+'"]').value = prefs[k]; document.getElementById('audio-'+k+'-value').textContent = prefs[k]+'%'; }
+    labels(); if(!dialog.open) dialog.showModal();
+  }
+  document.addEventListener('click',safe(async e=>{
+    const button = e.target.closest('button'); if(!button || button.disabled) return;
+    if(button.hasAttribute('data-audio-open')) { openPanel(button); return; }
+    if(button.hasAttribute('data-audio-toggle')) {
+      prefs.muted = !prefs.muted; save();
+      if(prefs.muted) { stopAll(); gain(master,0); } else await unlock();
+      labels(); return;
+    }
+    if(button.hasAttribute('data-audio-test')) {
+      prefs.muted = false; save(); await unlock(); effect(button.dataset.audioTest); labels(); return;
+    }
+    if(!button.hasAttribute('data-audio-close')) { await unlock(); effect('click'); }
+  }));
+  document.addEventListener('input',safe(e=>{
+    const k = e.target.dataset?.audioVolume; if(!['music','effects'].includes(k)) return;
+    prefs[k] = Math.max(0,Math.min(100,Number(e.target.value)||0)); save();
+    document.getElementById('audio-'+k+'-value').textContent = prefs[k]+'%';
+    if(k === 'effects') gain(fx,prefs.effects/100);
+    else if(!prefs.music) stopMusic(); else { gain(musicBus,prefs.music/100); startMusic(); }
+  }));
+  document.addEventListener('visibilitychange',safe(()=>{
+    if(document.hidden) { stopAll(); ctx?.suspend().catch(()=>{}); }
+    else if(!prefs.muted) unlock();
+  }));
+  window.addEventListener('pagehide',safe(()=>{stopAll();ctx?.suspend().catch(()=>{});}));
+  window.addEventListener('pageshow',safe(()=>{if(!prefs.muted) unlock();}));
+  // Failed browser audio must never prevent a game action or rendering.
+  window.ArenaAudio = {scene:safe(setScene), effect:safe(effect), actionStart:safe(actionStart), impact:safe(impact), refresh:safe(labels)};
+})();

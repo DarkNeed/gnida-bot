@@ -117,6 +117,7 @@ const data = JSON.parse(process.argv[1]);
 const app = {innerHTML: ''};
 const context = {
   app, page: process.argv[3], menu: null, chat: null, token: '', tg: undefined,
+  audio: {scene(){},refresh(){}},
   esc: value => String(value ?? ''), sprite: () => '', top: () => '',
   fighterImage: () => '<img>', clearSpriteDraft: () => {},
   button: (label, id, cls = '', disabled = false) => `<button data-do="${id}"${disabled ? ' disabled' : ''}>${label}</button>`

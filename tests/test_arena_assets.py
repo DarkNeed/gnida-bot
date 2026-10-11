@@ -14,11 +14,13 @@ class ArenaAssetRevisionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "index.html").write_text(
-                '<link href="/static/style.css"><script src="/static/client.js"></script>',
+                '<link href="/static/style.css"><script src="/static/audio.js"></script>'
+                '<script src="/static/client.js"></script>',
                 encoding="utf-8",
             )
             (root / "style.css").write_text("button{}", encoding="utf-8")
             (root / "battle-client").write_text("const a=1;", encoding="utf-8")
+            (root / "arena-audio").write_text("const b=1;", encoding="utf-8")
             old = render_arena_index(root)
             self.assertEqual(old, render_arena_index(root))
             self.assertEqual(len(set(re.findall(r"v=([0-9a-f]{16})", old))), 1)
@@ -27,6 +29,10 @@ class ArenaAssetRevisionTests(unittest.TestCase):
             self.assertNotEqual(old, css_changed)
             (root / "battle-client").write_text("const a=2;", encoding="utf-8")
             self.assertNotEqual(css_changed, render_arena_index(root))
+            before_audio = render_arena_index(root)
+            (root / "arena-audio").write_text("const b=2;", encoding="utf-8")
+            self.assertNotEqual(before_audio, render_arena_index(root))
+            self.assertEqual(len(re.findall(r"v=([0-9a-f]{16})", before_audio)), 3)
 
 
 class ArenaAssetHTTPTests(unittest.IsolatedAsyncioTestCase):
@@ -49,5 +55,11 @@ class ArenaAssetHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(asset.headers["Cache-Control"], "no-cache")
             css = await client.get("/static/style.css")
             self.assertEqual(css.headers["Cache-Control"], "no-cache")
+            audio = await client.get("/static/audio.js")
+            self.assertEqual(audio.status, 200)
+            self.assertTrue(
+                audio.headers["Content-Type"].startswith("application/javascript")
+            )
+            self.assertIn("window.ArenaAudio", await audio.text())
         finally:
             await client.close()

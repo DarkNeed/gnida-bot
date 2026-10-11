@@ -481,6 +481,15 @@ def create_arena_app(
     async def health(request):
         return web.json_response({"ok": True})
 
+    async def audio(request):
+        return web.FileResponse(
+            ROOT / "arena-audio",
+            headers={
+                "Content-Type": "application/javascript; charset=utf-8",
+                "Cache-Control": "no-cache",
+            },
+        )
+
     async def get_battle(request):
         row = await db.arena_get(request.match_info["token"])
         await read_member(row["chat_id"], request[ACTOR])
@@ -764,6 +773,7 @@ def create_arena_app(
     app.router.add_get("/", index)
     app.router.add_get("/health", health)
     app.router.add_get("/static/client.js", client)
+    app.router.add_get("/static/audio.js", audio)
     app.router.add_get("/static/style.css", stylesheet)
     app.router.add_static("/static/", ROOT, show_index=False)
     app.router.add_get("/api/battle/{token}", get_battle)

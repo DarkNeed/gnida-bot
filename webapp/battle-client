@@ -2,6 +2,7 @@
 // Browser code, intentionally extensionless: never a Node.js startup file.
 const tg=window.Telegram?.WebApp;
 const app=document.getElementById("app");
+const audio=window.ArenaAudio||{scene(){},effect(){},actionStart(){},impact(){},refresh(){}};
 let current=null, menu=null, busy=false, lastSeq=0, polling=false, token="", chat=null, page="personal", profileId=null, near="a";
 const demo=new URLSearchParams(location.search).get("demo")==="1" && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -101,6 +102,7 @@ function progressionScreen(p){
   profileId=p.user_id;page=p.personal?'personalProfile':'slaveProfile';
   const options=choice.options||[];
   app.innerHTML='<section class="menu progression">'+top('Выбор '+(choice.level===5?'класса':'подкласса'),'УРОВЕНЬ '+choice.level)+'<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p>Выбери развитие или останься в текущем классе. Уровень, опыт и изученные навыки не сбрасываются.</p><p class="muted">До решения этот боец не может начать новый бой. Карточки прокручиваются вбок.</p><div class="class-row" role="group" aria-label="Варианты класса">'+options.map(c=>'<button class="class-option'+(c.current?' current-class':'')+'" data-do="progression:'+esc(c.id)+'" '+(!choice.can_choose?'disabled':'')+'><img src="'+esc(c.avatar_url)+'" data-fallback="/static/assets/ragamuffin.png" alt="'+esc(c.name)+'"><span class="class-label">'+esc(c.name)+'</span><span class="pill">'+(c.current?'ОСТАТЬСЯ':choice.level===20?'РАЗВИТЬ':'ВЫБРАТЬ')+'</span><span class="muted">'+esc(c.description||'')+'</span></button>').join('')+'</div>'+(!choice.can_choose?'<p class="note">'+(choice.busy?'Сначала заверши текущий бой / зеркальный забег.':'Раб выбирает самостоятельно; владелец сможет принять решение после 48 часов ожидания.')+'</p>'+button('Вернуться в меню','choiceback','small'):'')+'</div></section>';
+  audio.refresh();
 }
 function passiveLimit(f){return f.level>=10?3:2;}
 function learnedLimit(kind){return kind==='skill'?6:4;}
@@ -128,7 +130,7 @@ function showStats(key){
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(inspectEffect)closeEffect();else closeStats();}});
 function toast(text){const box=document.getElementById("toast");box.textContent=text;box.hidden=false;setTimeout(()=>box.hidden=true,3500);}
 function button(label,id,cls="",disabled=false){return '<button class="'+cls+'" data-do="'+id+'"'+(disabled?' disabled':'')+'>'+label+"</button>";}
-function top(title,tag,right){return '<header class="top"><div><div class="eyebrow">'+tag+'</div><h1>'+title+'</h1></div>'+right+"</header>";}
+function top(title,tag,right){return '<header class="top"><div><div class="eyebrow">'+tag+'</div><h1>'+title+'</h1></div><div class="top-tools">'+(right||'')+'<button class="audio-button" data-audio-open aria-label="Настройки звука">♫</button></div></header>';}
 async function api(path,body){
   const response=await fetch(path,{method:body?"POST":"GET",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":tg?.initData||""},body:body?JSON.stringify(body):undefined,cache:"no-store"});
   const data=await response.json();
@@ -140,6 +142,7 @@ function hud(s,key){
   return '<div class="hud '+(key===near?"player":"enemy")+'"><div class="row"><div class="name">'+esc(s.name)+'</div><span class="badge">Lv.'+s.level+'</span><button class="stat-button" data-inspect="'+key+'" aria-label="Статистика '+esc(s.name)+'">ⓘ</button></div><div class="meta">'+esc(s.class_name)+(s.controlled?" · контроль −20%":"")+'</div><div class="barline"><span>HP</span><span id="hp-'+key+'">'+s.hp+" / "+s.stats.max_hp+'</span></div><div class="bar" id="health-'+key+'"><i style="width:'+100*s.hp/s.stats.max_hp+'%"></i></div><div class="barline"><span>'+esc(s.resource_name)+'</span><span id="mp-'+key+'">'+s.resource+" / "+s.stats.resource_max+'</span></div><div class="bar mana" id="mana-'+key+'"><i style="width:'+100*s.resource/s.stats.resource_max+'%"></i></div></div>';
 }
 function battleScreen(data){
+  audio.scene(data.state?.finished?'':data.state?.mirror_token?'raid':'battle');
   if(current?.token!==data.token||!data.state)closeEffect();
   current=data; token=data.token; chat=data.chat_id;
   statusViews=null;
@@ -150,6 +153,7 @@ function battleScreen(data){
     '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'<div class="status-row enemy" id="statuses-'+far+'" aria-label="Эффекты противника"></div><div class="status-row player" id="statuses-'+near+'" aria-label="Эффекты твоего бойца"></div></div><div class="turnbanner" id="turn"></div><div class="turn-timer" id="turn-timer" role="timer" hidden></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+(data.state.mirror_token&&data.actor_id===data.state.sides.a.controller_id?button("К забегу","mirror:"+data.state.mirror_token,"small"):"")+button("В меню","menu","small")+'</footer></section>';
   renderBattleStatuses();
   renderActions();
+  audio.refresh();
   if(inspectSide)showStats(inspectSide);
 }
 function renderActions(){
@@ -184,8 +188,10 @@ function updateTurnTimer(){
   el.classList?.toggle('urgent',remaining<=30);
 }
 function setupScreen(data){
+  audio.scene('menu');
   const status={cancelled:"Вызов отменён",expired:"Время вызова истекло",refused:"Вызов отклонён"};
   app.innerHTML='<section class="menu">'+top("Подготовка боя","АРЕНА",button("Меню","menu","small"))+'<div class="content"><div class="card"><h2>'+esc(data.names.a_owner)+' × '+esc(data.names.b_owner)+'</h2><p class="muted">'+(status[data.status]||(data.mode==="personal"?"Личный бой. Ждём принятия вызова соперником.":"Соперник принимает вызов, каждый владелец выбирает своего бойца."))+'</p><div id="setup" class="stack"></div></div></div></section>';
+  audio.refresh();
   const box=document.getElementById("setup");if(data.status!=="pending")return;
   if(data.own_side==="b"&&!data.b_accepted)box.innerHTML+=button("Принять"+(data.stake?" · "+data.stake+" ₣":""),"accept","primary")+button("Отклонить","refuse");
   if(data.mode==="slaves"&&data.own_side){
@@ -206,6 +212,7 @@ async function animateEvent(event){
   document.getElementById("round").textContent="ХОД "+event.seq;
   panel.innerHTML='<div class="battlelog">'+esc(event.skill_name||event.text)+'</div>';
   if(event.action_kind==='turn_timeout'){if(event.status_after)renderBattleStatuses(event.status_after);await sleep(1000);return;}
+  audio.actionStart(event);
   const attacker=document.getElementById("sprite-"+event.side);
   const other=event.side==="a"?"b":"a",target=document.getElementById("sprite-"+other);
   attacker?.classList.add("attack");
@@ -214,6 +221,7 @@ async function animateEvent(event){
     document.querySelector(".field").append(projectile);setTimeout(()=>projectile.remove(),600);
   }
   await sleep(430);attacker?.classList.remove("attack");
+  audio.impact(event);
   if(event.hit&&event.damage){
     for(const amount of event.hits||[event.damage]){
       target?.classList.add("hurt");const number=document.createElement("div");number.className="damage";number.textContent="−"+amount;if(other===near){number.style.left="23%";number.style.top="65%";}document.querySelector(".field").append(number);setTimeout(()=>number.remove(),1000);
@@ -242,6 +250,7 @@ async function applyBattle(data,animate=true){
     for(const event of events){await animateEvent(event);lastSeq=event.seq;}
   }else lastSeq=data.state.log.at(-1)?.seq||0;
   battleScreen(data);
+  if(animate&&events.length&&data.state.finished){const mine=Object.entries(data.state.sides).find(([,s])=>s.controller_id===data.actor_id)?.[0];audio.effect(!mine||data.state.winner===mine?'victory':'defeat');}
 }
 async function action(action,extra={}){
   if(busy)return;busy=true;
@@ -269,11 +278,13 @@ async function action(action,extra={}){
         current.state.active_side=key;
       }
     }else data=await api("/api/battle/"+token,{action,revision:current.revision,...extra});
+    if(action==='potion')audio.effect('heal');
     await applyBattle(data);
   }catch(error){toast(error.message);if(!demo)try{await applyBattle(await api("/api/battle/"+token),false);}catch{}}
   finally{busy=false;renderActions();}
 }
 function mirrorScreen(data){
+  audio.scene(data.status==='active'?'raid':'menu');
   closeEffect();statusViews=null;
   closeStats();mirrorRun=data;current=null;token="";chat=data.chat_id;
   const choice=(name,id,description,disabled=false)=>button(esc(name)+'<span class="muted">'+esc(description)+'</span>',id,'mirror-choice',disabled);
@@ -293,6 +304,7 @@ function mirrorScreen(data){
   }
   if(data.gifts.length)body+='<div class="card"><h2>Дары · '+data.gifts.length+'</h2>'+data.gifts.map(g=>'<p><b>'+esc(g.name)+'</b><br><span class="muted">'+esc(g.description)+'</span></p>').join('')+'</div>';
   app.innerHTML='<section class="menu mirror">'+top('Зеркальная Пустошь',demo?'ДЕМО · НЕ СОХРАНЯЕТСЯ':'ЗАБЕГ · 5 ЭТАЖЕЙ',button('В меню','menu','small'))+'<div class="content">'+body+'</div></section>';
+  audio.refresh();
 }
 async function openMirror(runToken){
   try{mirrorAbandonConfirm=false;mirrorScreen(await api('/api/mirror/'+runToken));}catch(error){toast(error.message);}
@@ -317,6 +329,7 @@ function profileCard(p,title,owned=false){
 }
 function activeProfile(){return [...(menu?.slaves||[]),menu?.self_slave,menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
 function menuScreen(data){
+  audio.scene('menu');
   menu=data;chat=data.chat_id;token="";
   const selected=(page==='personalProfile'||page==='slaveProfile')?activeProfile():null;
   const required=(page==='personalProfile'||page==='slaveProfile')&&selected?.progression_choice?selected:[data.personal,data.self_slave].find(p=>p?.progression_choice?.can_choose);
@@ -392,6 +405,7 @@ function menuScreen(data){
   if(data.mirror_runs?.length)body+='<div class="card"><h3>Зеркальные забеги</h3><div class="stack">'+data.mirror_runs.map(r=>button((r.status==='active'?'Продолжить':'Итоги')+' · этаж '+r.floor+' / 5 · '+r.xp+' XP','mirror:'+r.token,r.status==='active'?'primary':'')).join('')+'</div></div>';
   if(data.raids?.length)body+='<div class="card"><h3>Командные рейды</h3><div class="stack">'+data.raids.map(r=>raidButton((r.status==='active'?'Продолжить':r.status==='lobby'?'Сбор отряда':'Итоги')+' · раунд '+r.round,'open:'+r.token)).join('')+'</div></div>';
   app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content">'+body+'</div></section>';
+  audio.refresh();
   if(page==="admin"){
     document.querySelector(".form").insertAdjacentHTML("beforeend",'<label class="check"><input id="grant-personal" type="checkbox"> Выдать класс личному персонажу (иначе — персонажу-рабу)</label>');
     for(const [id,value] of Object.entries(adminDraft)){const field=document.getElementById(id);if(field){if(field.type==="checkbox")field.checked=value;else field.value=value;}}
@@ -600,6 +614,7 @@ function raidPortrait(f,key,player=null,index=0){
   return '<article id="raid-fighter-'+esc(key)+'" class="raid-fighter '+(boss?'raid-enemy':'raid-ally slot-'+index)+(own?' raid-own':'')+(disabled?' defeated':'')+(player?.deported_round===raidCurrent.data.round?' raid-deported':'')+'"><div class="raid-art">'+fighterImage(f,'raid-sprite')+'<div class="raid-ground"></div></div><div class="raid-effects">'+effects+'</div><div class="raid-hud"><div class="row"><strong title="'+esc(f.name)+'">'+esc(f.name)+'</strong>'+raidButton('ⓘ','inspect:'+key,'stat-button')+'</div><div class="muted">'+esc(f.class_name)+' · Lv.'+f.level+'</div>'+raidBar(f.hp,f.stats.max_hp,'HP')+(boss&&raidCurrent.boss_id!=='doofenshmirtz'?'':raidBar(f.resource,f.stats.resource_max,f.resource_name,'mana'))+(player?'<div class="raid-ready">'+(player.withdrawn?'Покинул рейд':f.hp<=0?'Боец повержен':player.deported_round===raidCurrent.data.round?'Вернётся в следующем раунде':player.ready?'✓ Готов':own?'Твой боец':'Выбирает навык')+'</div>':'')+'</div></article>';
 }
 function raidScreen(data){
+  audio.scene(data.status==='active'?(data.boss_id==='doofenshmirtz'?'doofenshmirtz':data.boss_id==='lei_heng'?'lei_heng':'raid'):data.status==='lobby'?'menu':'');
   raidCurrent=data;current=null;token='';chat=data.chat_id;
   const me=data.participants.find(p=>p.actor_id===data.actor_id);
   let body='';
@@ -630,6 +645,7 @@ function raidScreen(data){
   }else body='<div class="card"><h2>Сбор рейда закрыт</h2><p>Новый отряд можно собрать командой /рейд в чате.</p></div>';
   app.innerHTML='<section class="menu raid-screen">'+top('Командный рейд','ГНИДА · ЧАТ '+chat,raidButton('Обновить','refresh','small'))+'<div class="content">'+body+'<div class="row">'+raidButton('В меню арены','menu','small')+'</div></div></section>';
   updateRaidTimer();if(raidInspect)showRaidDetails(raidInspect);
+  audio.refresh();
 }
 function raidNewEvents(previous,next){
   if(!previous?.data||previous.token!==next.token)return [];
@@ -653,6 +669,7 @@ function raidPopup(key,value){
   setTimeout(()=>popup.remove(),950);
 }
 async function raidAnimate(event){
+  audio.actionStart(event);
   const actor=document.getElementById('raid-fighter-'+event.actor)?.querySelector('.raid-sprite');
   const target=document.getElementById('raid-fighter-'+event.target)?.querySelector('.raid-sprite');
   const field=document.querySelector('.raid-field');
@@ -670,6 +687,7 @@ async function raidAnimate(event){
   }else if(event.skill&&actor){
     actor.classList.add('raid-cast');await sleep(350);actor.classList.remove('raid-cast');
   }
+  audio.impact(event);
   if(event.damage){
     for(const amount of event.hits||[event.damage]){
       target?.classList.add('raid-hit');raidPopup(event.target,amount);
@@ -717,6 +735,7 @@ async function receiveRaid(data){
   }finally{
     raidPlaying=false;
     if(raidCurrent?.token===data.token)raidScreen(data);
+    if(previous.status==='active'&&data.status==='finished')audio.effect(data.data.boss.hp<=0?'victory':'defeat');
   }
 }
 function updateRaidTimer(){const el=document.getElementById('raid-timer');if(!el||!raidCurrent||raidCurrent.status!=='active')return;if(raidPlaying){el.textContent='Разыгрывается раунд';el.classList.remove('urgent');return;}const left=Math.max(0,Math.ceil((raidCurrent.deadline*1000-Date.now()-serverClockOffset)/1000));el.textContent='Выбор действий: '+Math.floor(left/60)+':'+String(left%60).padStart(2,'0');el.classList.toggle('urgent',left<=20);}
