@@ -15,7 +15,7 @@ function harness({saved=null,storageFails=false,available=true,rejected=false}={
     cancelScheduledValues(){}
   }
   class Node {
-    constructor(){this.gain=new Param();this.frequency=new Param();this.Q=new Param();this.connections=[];}
+    constructor(){this.gain=new Param();this.frequency=new Param();this.detune=new Param();this.Q=new Param();this.connections=[];}
     connect(n){this.connections.push(n);return n;}
     disconnect(){this.connections=[];}
   }
@@ -100,6 +100,21 @@ test('effects and action dispatch produce scheduled, bounded envelopes',async()=
   n=h.sources.length;h.audio.impact({hit:false,skill:'spell'});assert.equal(h.sources.length-n,2);
   assert.ok(h.sources.every(s=>s.stopped>s.started&&s.stopped-s.started<7));
   assert.ok(h.ramps.every(([value])=>value>=0&&value<=1));
+});
+test('combat arrangement has detuned brass, driving percussion and varied bars',async()=>{
+  const h=harness();await h.click({'data-audio-toggle':''});h.audio.scene('');
+  const base=h.sources.length;h.audio.scene('battle');
+  const combat=h.sources.slice(base);
+  assert.ok(combat.some(s=>s.type==='sawtooth'&&s.detune.value===8));
+  assert.ok(combat.some(s=>s.type==='sawtooth'&&s.detune.value===-8));
+  assert.ok(combat.filter(s=>s.buffer).length>=2);
+  assert.ok(combat.length>=15);
+  // Scheduler never catches up an offline gap with a burst of old notes.
+  let count=h.sources.length;h.contexts[0].currentTime=1000;
+  for(const fn of h.intervals.values())fn();
+  assert.ok(h.sources.length-count<40);
+  h.audio.scene('');count=h.sources.length;h.audio.effect('hit');const hit=h.sources.length-count;
+  count=h.sources.length;h.audio.effect('critical');assert.ok(h.sources.length-count>hit);
 });
 test('all themes work and interrupted enable cannot restart after mute',async()=>{
   const h=harness();await h.click({'data-audio-toggle':''});

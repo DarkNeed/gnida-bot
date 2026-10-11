@@ -4,10 +4,10 @@
   const KEY = 'gnida.arena.audio.v1';
   const THEMES = {
     menu: {bpm: 78, roots: [45, 41, 48, 43], motif: [0, 7, 10, 14, 10, 7, 3, 7], soft: true},
-    battle: {bpm: 112, roots: [45, 45, 41, 43], motif: [0, 12, 7, 10, 0, 7, 3, 10]},
-    raid: {bpm: 100, roots: [38, 41, 36, 37], motif: [0, 7, 12, 10, 7, 3, 10, 7]},
-    lei_heng: {bpm: 124, roots: [40, 40, 43, 38], motif: [0, 7, 12, 15, 12, 7, 5, 7]},
-    doofenshmirtz: {bpm: 116, roots: [42, 45, 40, 41], motif: [0, 12, 3, 11, 7, 3, 12, 6]}
+    battle: {bpm: 138, roots: [45, 41, 48, 43], motif: [0, 7, 12, 10, 7, 12, 15, 14], lead: [12, 10, 7, 15]},
+    raid: {bpm: 128, roots: [38, 41, 36, 37], motif: [0, 7, 12, 15, 12, 10, 7, 3], lead: [7, 12, 15, 10]},
+    lei_heng: {bpm: 152, roots: [40, 40, 43, 38], motif: [0, 7, 12, 15, 12, 7, 5, 7], lead: [12, 15, 19, 17]},
+    doofenshmirtz: {bpm: 144, roots: [42, 45, 40, 41], motif: [0, 12, 3, 11, 7, 3, 12, 6], lead: [12, 11, 15, 6]}
   };
   let prefs = {muted: true, music: 22, effects: 50};
   try {
@@ -66,22 +66,33 @@
     } catch { unavailable = true; }
     labels();
   }
-  function voice(source,filter,bus,at,duration,volume) {
+  function voice(source,filter,bus,at,duration,volume,sustain=false) {
     const envelope = ctx.createGain();
     envelope.gain.setValueAtTime(0,at);
     envelope.gain.linearRampToValueAtTime(volume,at+.012);
+    if(sustain) envelope.gain.linearRampToValueAtTime(volume*.7,at+duration*.65);
     envelope.gain.exponentialRampToValueAtTime(.0001,at+duration);
     source.connect(filter); filter.connect(envelope); envelope.connect(bus);
     voices.add(source);
     source.onended = () => { voices.delete(source); source.disconnect(); filter.disconnect(); envelope.disconnect(); };
     source.start(at); source.stop(at+duration+.02);
   }
-  function tone(note,at,duration,volume,bus,type='triangle',endNote=null) {
+  function tone(note,at,duration,volume,bus,type='triangle',endNote=null,cents=0,sustain=false) {
     const osc = ctx.createOscillator(), filter = ctx.createBiquadFilter();
     osc.type = type; osc.frequency.setValueAtTime(hz(note),at);
+    osc.detune.setValueAtTime(cents,at);
     if(endNote !== null) osc.frequency.exponentialRampToValueAtTime(hz(endNote),at+duration);
-    filter.type = 'lowpass'; filter.frequency.value = type === 'sawtooth' ? 1400 : 3200;
-    voice(osc,filter,bus,at,duration,volume);
+    filter.type = 'lowpass'; filter.frequency.setValueAtTime(type === 'sawtooth' ? 2600 : 4200,at);
+    if(type === 'sawtooth') filter.frequency.exponentialRampToValueAtTime(sustain?1200:600,at+duration);
+    voice(osc,filter,bus,at,duration,volume,sustain);
+  }
+  function brass(note,at,duration,volume,bus) {
+    for(const cents of [-8,8]) tone(note,at,duration,volume/2,bus,'sawtooth',null,cents,true);
+    tone(note-12,at,duration,volume*.4,bus,'triangle',null,0,true);
+  }
+  function drum(at,bus,heavy=false) {
+    tone(heavy?43:39,at,heavy?.28:.2,heavy?.24:.18,bus,'sine',19);
+    noise(at,.045,.07,bus,900);
   }
   function noise(at,duration,volume,bus,frequency=1500) {
     const source = ctx.createBufferSource(), filter = ctx.createBiquadFilter();
@@ -103,19 +114,44 @@
   function schedule() {
     if(!ctx || ctx.state !== 'running' || document.hidden || prefs.muted) return;
     const theme = THEMES[playing]; if(!theme) return;
-    const beat = 60/theme.bpm, tick = beat/2;
+    const beat = 60/theme.bpm, tick = beat/(theme.soft?2:4);
     if(next < ctx.currentTime) next = ctx.currentTime+.02;
     while(next < ctx.currentTime+.18) {
-      const root = theme.roots[Math.floor(step/16)%4], within = step%16;
-      if(within === 0) {
-        for(const n of [0,3,7]) tone(root+12+n,next,beat*7,.038,musicBus,'sine');
-      }
-      if(step%2 === 0) tone(root,next,beat*.85,.12,musicBus,'triangle');
-      if(!theme.soft || step%2 === 0) tone(root+24+theme.motif[step%8],next,tick*1.7,.035,musicBus,'triangle');
-      if(!theme.soft) {
-        if(step%4 === 0) tone(38,next,.16,.18,musicBus,'sine',20);
-        if(step%4 === 2) noise(next,.09,.06,musicBus,1400);
-        noise(next,.035,.018,musicBus,6500);
+      const bar=Math.floor(step/16),root=theme.roots[bar%4],within=step%16;
+      if(theme.soft) {
+        if(within===0) for(const n of [0,3,7]) tone(root+12+n,next,beat*7,.038,musicBus,'sine');
+        if(step%2===0) {
+          tone(root,next,beat*.85,.12,musicBus,'triangle');
+          tone(root+24+theme.motif[step%8],next,tick*1.7,.035,musicBus,'triangle');
+        }
+      } else {
+        // Sixteenth-note ostinato, layered brass and cinematic percussion.
+        // Arrangement changes every four bars instead of one unchanging drone.
+        if(within===0) {
+          for(const n of [0,7]) brass(root+12+n,next,beat*2,.07,musicBus);
+          noise(next,.65,.05,musicBus,6500);
+        }
+        if(within%2===0) {
+          tone(root,next,tick*1.5,.1,musicBus,'sawtooth');
+          tone(root-12,next,tick*1.4,.055,musicBus,'sine');
+          const note=root+24+theme.motif[(within/2+bar*2)%8];
+          tone(note,next,tick*1.35,.055,musicBus,'sawtooth',null,-6);
+          tone(note+12,next,tick*1.2,.025,musicBus,'triangle');
+        }
+        if(within%4===0) {
+          const note=root+24+theme.lead[(within/4+bar)%4];
+          brass(note,next,beat*.8,.065,musicBus);
+        }
+        if([0,6,8,14].includes(within)) drum(next,musicBus,within===0);
+        if(within===4||within===12) {
+          noise(next,.18,.13,musicBus,1700);noise(next,.07,.055,musicBus,4800);
+          tone(43,next,.1,.07,musicBus,'triangle',30);
+        }
+        if(within%2===0) noise(next,.045,.028,musicBus,7500);
+        if(bar%4===3&&within>=12) {
+          tone(42-(within-12)*3,next,.15,.12,musicBus,'sine',26-(within-12));
+          noise(next,.07,.04,musicBus,900);
+        }
       }
       step++; next += tick;
     }
@@ -138,13 +174,28 @@
     const at = ctx.currentTime+.005;
     const notes = (list,d=.09) => list.forEach((n,i)=>tone(n,at+i*d,d*2,.15,fx));
     if(name === 'click') tone(78,at,.045,.08,fx,'sine');
-    else if(name === 'cast') { tone(55,at,.32,.13,fx,'sine',86); noise(at,.14,.04,fx,2400); }
-    else if(name === 'hit' || name === 'critical') { noise(at,.14,name==='critical'?.3:.2,fx,650); tone(44,at,.13,.2,fx,'sine',24); if(name==='critical') tone(70,at,.18,.06,fx,'triangle',50); }
-    else if(name === 'miss') { noise(at,.16,.1,fx,3100); tone(75,at,.12,.06,fx,'sine',58); }
+    else if(name === 'cast') {
+      tone(43,at,.4,.1,fx,'sawtooth',83,-12);tone(55,at,.32,.09,fx,'triangle',91,12);
+      noise(at,.22,.12,fx,2800);tone(30,at,.2,.15,fx,'sine',20);
+    }
+    else if(name === 'hit' || name === 'critical') {
+      const critical=name==='critical';drum(at,fx,true);
+      noise(at,.12,critical?.32:.24,fx,1600);noise(at+.012,.22,.09,fx,4200);
+      tone(64,at,.16,.09,fx,'sawtooth',32);
+      if(critical) { noise(at,.4,.16,fx,600);tone(31,at,.42,.18,fx,'sine',16);brass(46,at,.32,.06,fx); }
+    }
+    else if(name === 'miss') { noise(at,.19,.14,fx,4200); tone(80,at,.16,.08,fx,'triangle',46); }
     else if(name === 'heal') notes([64,67,71,76]);
     else if(name === 'buff') notes([57,64,69]);
-    else if(name === 'victory') notes([60,64,67,72,76,79],.12);
-    else if(name === 'defeat') notes([57,53,50,45],.18);
+    else if(name === 'victory') {
+      [60,60,67,72,76,79,84].forEach((n,i)=>brass(n,at+i*.13,i===6?.65:.22,.13,fx));
+      drum(at,fx,true);noise(at+.78,.7,.1,fx,6200);
+      for(const n of [48,55,60,64]) brass(n,at+.78,.85,.07,fx);
+    }
+    else if(name === 'defeat') {
+      [57,53,50,45].forEach((n,i)=>brass(n,at+i*.19,i===3?.7:.28,.1,fx));
+      drum(at,fx,true);noise(at,.55,.09,fx,500);
+    }
   }
   function actionStart(event) { if(event.damage_type === 'magic') effect('cast'); }
   function impact(event) {
