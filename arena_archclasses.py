@@ -393,6 +393,7 @@ def arch_after_action(actor, target, skill, hit, skills, rng):
         # catalog: a cheap base attack can currently be a costly finisher.
         from arena_evolution import skill_variant
         from arena_mirror_effects import gift_cost
+        from arena_pets import pet_cost
 
         choices = [
             k
@@ -406,10 +407,9 @@ def arch_after_action(actor, target, skill, hit, skills, rng):
             dict.fromkeys(
                 k
                 for k in choices
-                if gift_cost(
-                    target,
-                    skill_variant(skills[k], target, actor, target.get("own_turns", 0)),
-                )
+                if pet_cost(target,
+                    variant := skill_variant(skills[k], target, actor, target.get("own_turns", 0)),
+                    gift_cost(target, variant))
                 <= target["resource"]
             )
         )

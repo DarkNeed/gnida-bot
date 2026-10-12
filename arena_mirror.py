@@ -173,6 +173,7 @@ class MirrorMixin:
             gifts=gifts,
             choices=choices,
             item_rewards=data.get("item_rewards", []),
+            pet_rewards=data.get("pet_rewards", {}),
             total_floors=MIRROR_FLOORS
         )
 
@@ -351,6 +352,8 @@ class MirrorMixin:
                     result="Зеркало пройдено! Дары остались по ту сторону.",
                 )
                 data["francs"] = 50 + 5 * data["source"]["level"]
+                data["pet_rewards"] = self._pet_reward_locked(
+                    row["actor_id"], "mirror", "mirror:" + row["token"])
                 self._add_francs_locked(row["chat_id"], row["actor_id"], data["francs"])
                 data["item_rewards"] = mirror_reward_items(data["source"]["level"])
                 for item in data["item_rewards"]:

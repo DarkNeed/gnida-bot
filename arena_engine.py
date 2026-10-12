@@ -14,6 +14,7 @@ from arena_fingers import (
 )
 from arena_class_mechanics import class_modifiers, class_after_action, has_adoration
 from arena_mirror_effects import gift_cost, gift_modifiers, gift_after_action
+from arena_pets import pet_snapshot, pet_cost, pet_modifiers, pet_before_action, pet_after_action
 from arena_evolution import skill_variant, evolution_after_action
 from arena_archclasses import (
     arch_after_action,
@@ -865,6 +866,9 @@ def create_battle_state(
             "potion_used": False,
             "own_turns": 0,
         }
+        if pet_snapshot(source.get("pet")):
+            sides[side]["pet"] = pet_snapshot(source["pet"])
+            sides[side]["pet_state"] = {}
     return {
         "turn": 1,
         "sides": sides,
@@ -940,7 +944,7 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
     restriction = skill_restriction(side, skill, completed_turns(state, side_key))
     if restriction:
         raise ValueError(restriction)
-    if side["resource"] < gift_cost(side, skill):
+    if side["resource"] < pet_cost(side, skill, gift_cost(side, skill)):
         raise ValueError("Недостаточно выносливости.")
     if side["cooldowns"].get(skill_id, 0) > 0:
         raise ValueError("Навык восстанавливается.")
@@ -978,6 +982,8 @@ def battle_status_snapshot(state: dict) -> dict:
     """Small detached UI snapshot: no passive sentinels or instant resource changes."""
     return {
         key: {
+            **({"pet": deepcopy(side["pet"]), "pet_state": deepcopy(side.get("pet_state", {}))}
+               if side.get("pet") else {}),
             "effects": deepcopy(
                 [
                     e
@@ -1104,13 +1110,18 @@ def resolve_skill(
     adored = has_adoration(target)
     bleeding = any(e["kind"] == "bleed" for e in target["effects"])
     mirror_accuracy, mirror_multiplier = gift_modifiers(actor, target)
-    actual_cost = gift_cost(actor, skill)
+    actual_cost = pet_cost(actor, skill, gift_cost(actor, skill))
     class_accuracy, class_boost = class_modifiers(actor, target, skill)
     extra_accuracy, extra_boost, pierce, critical, obeyed = combat_modifiers(
         actor, target, skill, rng
     )
     if skill.pierce is not None:
         pierce = skill.pierce
+    pet_accuracy, pet_boost, pet_pierce = pet_modifiers(actor, skill)
+    extra_accuracy += pet_accuracy
+    extra_boost += pet_boost
+    pierce = min(.9, pierce + pet_pierce)
+    pet_context = pet_before_action(actor, target, skill, actual_cost)
     if "no_critical" in skill.tags:
         critical = False
     accuracy_bonus = sum(
@@ -1301,6 +1312,9 @@ def resolve_skill(
     self_damage = revenge_recoil(actor, min(before[other]["hp"], damage))
     bleed_damage = min(actor["hp"], pending_bleed)
     actor["hp"] -= bleed_damage
+    pet_notes = pet_after_action(
+        actor, target, skill, hit, min(before[other]["hp"], damage), actual_cost,
+        pet_context, effects_text, skills or BUILTIN_SKILLS)
     text = f"{skill.name}: " + (
         f"−{damage} HP"
         if damage
@@ -1324,6 +1338,8 @@ def resolve_skill(
         text += " · " + order_note
     if arch_notes:
         text += " · " + " · ".join(arch_notes)
+    if pet_notes:
+        text += " · " + " · ".join(pet_notes)
     event = {
         "seq": state["turn"],
         "side": side_key,

@@ -10,6 +10,7 @@ from arena_archclasses import archclass_view, class_title
 from arena_progression import choice_avatar
 from arena_raid_engine import BOSSES, BOSS_SKILLS, pair_state
 from arena_mirror_effects import gift_cost
+from arena_pets import pet_cost
 
 
 async def raid_view(db, row, actor):
@@ -66,7 +67,7 @@ async def raid_view(db, row, actor):
             not boss
             and "bum_punch" not in ids
             and not any(
-                gift_cost(side, effective_skill(pair, "a", sid, catalog))
+                pet_cost(side, effective_skill(pair, "a", sid, catalog), gift_cost(side, effective_skill(pair, "a", sid, catalog)))
                 <= side["resource"]
                 and not side["cooldowns"].get(sid, 0)
                 and not skill_restriction(side, catalog[sid])
@@ -91,7 +92,7 @@ async def raid_view(db, row, actor):
             side["skill_details"].append(
                 dict(
                     asdict(variant),
-                    cost=gift_cost(side, variant),
+                    cost=pet_cost(side, variant, gift_cost(side, variant)),
                     evolution=info,
                     unavailable_reason=skill_restriction(side, variant),
                 )

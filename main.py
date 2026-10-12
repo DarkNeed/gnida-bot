@@ -18,6 +18,7 @@ from handlers.routes import create_router
 from handlers.arena import ArenaPublisher, create_arena_router
 from arena_web import create_arena_app
 from arena_links import arena_link
+from handlers.pets import create_pet_router
 
 
 async def main() -> None:
@@ -58,9 +59,11 @@ async def main() -> None:
         raise
     publisher = ArenaPublisher(database, bot, username)
     dispatcher = Dispatcher()
+    pets_payments_enabled = getenv("PETS_PAYMENTS_ENABLED", "0").strip() == "1"
     dispatcher.include_router(
         create_admin_message_block_router(database, kargassia_chat_id=kargassia_chat_id)
     )
+    dispatcher.include_router(create_pet_router(database, username, pets_payments_enabled))
     dispatcher.include_router(create_franc_event_router(database))
     dispatcher.include_router(
         create_arena_router(database, bot, username, bool(webapp_url), publisher)
@@ -125,7 +128,8 @@ async def main() -> None:
             if not 1 <= port <= 65535:
                 raise RuntimeError("PORT must be between 1 and 65535")
             runner = web.AppRunner(
-                create_arena_app(database, bot, token, publisher.changed, publisher.raid_changed)
+                create_arena_app(database, bot, token, publisher.changed, publisher.raid_changed,
+                                 pets_payments_enabled=pets_payments_enabled)
             )
             await runner.setup()
             await web.TCPSite(runner, "0.0.0.0", port).start()

@@ -200,7 +200,9 @@ class RaidMixin:
                     self._arena_add_item_locked(
                         chat, player["actor_id"], kind, content, rarity
                     )
-                data["rewards"][key] = dict(xp=xp, francs=francs, loot=loot)
+                pet_rewards = self._pet_reward_locked(
+                    player["actor_id"], "raid", "raid:" + row["token"])
+                data["rewards"][key] = dict(xp=xp, francs=francs, loot=loot, pet_rewards=pet_rewards)
         self._raid_save_locked(row, data, "finished")
 
     def _raid_player_valid_locked(self, row, player):

@@ -20,7 +20,21 @@ const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,reduced?Math.min(50,ms):ms));
 const sprite=c=>c&&typeof c==="object"&&/^\/sprites\/[0-9a-f]{64}\.png$/.test(c.sprite_url||"")?c.sprite_url:c&&typeof c==='object'&&/^\/static\/assets\/(archclasses\/)?[a-z_]+\.png$/.test(c.class_avatar_url||'')?c.class_avatar_url:"/static/assets/"+(["cutie","jock","nerd","thumb","index","middle","ring","pinky"].includes(typeof c==="object"?c?.sprite:c)?(typeof c==="object"?c.sprite:c):"ragamuffin")+".png";
 function fighterImage(p,cls="",id=""){
-  return '<img class="'+cls+(p.sprite_url&&p.pixel_art?' pixel-art':'')+'"'+(id?' id="'+id+'"':'')+' src="'+sprite(p)+'" data-fallback="'+sprite(p.sprite)+'" alt="'+esc(p.class_name)+'">';
+  const image='<img class="'+cls+(p.sprite_url&&p.pixel_art?' pixel-art':'')+'"'+(id?' id="'+id+'"':'')+' src="'+sprite(p)+'" data-fallback="'+sprite(p.sprite)+'" alt="'+esc(p.class_name)+'">';
+  return image+(cls.includes('sprite')?petImage(p,cls):'');
+}
+function petImage(p,cls=''){
+  const pet=p.pet;if(!pet||!/^\/static\/assets\/pets\/[a-z_]+\.png$/.test(pet.sprite_url||''))return '';
+  return '<img class="combat-pet '+(cls.includes('raid')?'raid-pet':cls.includes('enemy')?'pet-enemy':'pet-player')+'" src="'+esc(pet.sprite_url)+'" alt="'+esc(pet.name)+'" title="'+esc(pet.name)+' · Lv.'+pet.level+'">';
+}
+function petDetails(p){
+  if(!p.pet)return '';
+  const m=p.pet_state||{};
+  return '<div class="detail-skill"><h3>Спутник: '+esc(p.pet.name)+' · Lv.'+p.pet.level+'</h3><p class="muted">'+esc(p.pet.description)+'</p><p class="muted">Сила '+p.pet.power+' · частота '+p.pet.tempo+(m.ready?' · бонус готов':'')+(m.charge?' · заряд '+m.charge:'')+(m.used?' · использован в этом бою':'')+(m.task?' · поручение: '+esc(({attack:'атаковать',restore:'восстановить энергию',support:'применить поддержку'})[m.task]||m.task):'')+'</p></div>';
+}
+function petRewards(reward){
+  const text=Object.entries(reward||{}).filter(([k,v])=>v>0).map(([k,v])=>'+'+v+' '+({tickets:'билетов',food:'корма',essence:'эссенции'}[k]||k)).join(' · ');
+  return text?'<p class="muted">Для питомцев: '+esc(text)+'</p>':'';
 }
 function clearSpriteDraft(){if(spriteDraft)URL.revokeObjectURL(spriteDraft.url);spriteDraft=null;}
 function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames,r)?r:"common")+'">'+esc(rarityNames[r]||r||"Обычный")+'</span>';}
@@ -38,11 +52,11 @@ function fighterStatuses(side){
   for(const e of side.effects||[]){
     const duration=Number(e.duration),kind=String(e.kind||'effect');
     if(!Number.isFinite(duration)||duration<=0||duration>=10000||['resource','resource_leech'].includes(kind))continue;
-    const direction=kind==='damage_taken_pct'?'down':statusStatNames[kind]&&Number(e.value)!==0&&Number.isFinite(Number(e.value))?(Number(e.value)<0?'down':'up'):'';
+    const direction=e.id==='pet_guard'?'':kind==='damage_taken_pct'?'down':statusStatNames[kind]&&Number(e.value)!==0&&Number.isFinite(Number(e.value))?(Number(e.value)<0?'down':'up'):'';
     const name=e.id==='adoration'?'Умиление':e.name||(direction?(direction==='down'?'Понижение ':'Повышение ')+statusStatNames[kind]:effectNames[kind]||'Особый эффект');
     let detail=e.description?esc(e.description):kind==='stun'?'Пропускает ход из-за ошеломления.':kind==='bleed'?'Кровотечение: '+esc(e.value)+' урона при атаке этого бойца.':kind==='prepared_attack'?'Усилена следующая подходящая атака; подготовка расходуется по условиям навыка.':describeEffect({...e,target:'self',turns:0,chance:1});
     detail+='<br>Осталось ходов этого бойца: '+esc(duration)+'.';
-    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:String(duration),detail});
+    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:e.id==='pet_guard'?6:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:String(duration),detail});
   }
   const m=side.mechanics||{};
   for(const [id,name,icon,trait] of [['order','Субординация',11,'subordination'],['grudge','Обиды',12,'revenge'],['focus','Созвездие',13,'constellation']]){
@@ -53,6 +67,8 @@ function fighterStatuses(side){
   const skillName=id=>(side.skill_details||[]).find(s=>s.skill_id===id)?.name||id;
   if(m.prescript)items.push({id:'mechanic:prescript',name:'Предписание',icon:14,count:'1',detail:'Следующее действие: «'+esc(skillName(m.prescript))+'». Предписание действует на одно действие; выполнение активирует соответствующие бонусы бойца.'});
   if(m.enemy_prescript?.skill_id)items.push({id:'mechanic:enemy_prescript',name:'Предписание противника',icon:14,count:'1',detail:'Используй «'+esc(skillName(m.enemy_prescript.skill_id))+'». Другое действие или пропуск: до '+esc(m.enemy_prescript.penalty)+' энергии штрафа. Зелье не расходует предписание.'});
+  const pet=side.pet,p=side.pet_state||{};
+  if(pet&&(p.ready||p.charge||p.incoming||p.used||p.task))items.push({id:'pet:'+pet.id,name:pet.name+(p.ready?' · бонус готов':''),icon:15,count:String(p.ready||p.used?1:p.charge||p.incoming||1),detail:esc(pet.description)+'<br>'+(p.used?'Уже использован в этом бою.':p.ready?'Бонус подготовлен к следующему подходящему навыку.':'Накопление: '+esc(p.charge||p.incoming||0)+'. Это не длительность.')+(p.task?'<br>Поручение: '+esc(({attack:'атаковать',restore:'восстановить энергию',support:'применить поддержку'})[p.task]||p.task):'')});
   return items;
 }
 function statusSide(key){return statusViews?.[key]||current?.state?.sides?.[key];}
@@ -123,7 +139,7 @@ function showStats(key){
     overlay.addEventListener('click',e=>{const r=overlay.getBoundingClientRect();if(e.target.closest('[data-close-stats]')||(e.target===overlay&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)))closeStats();});document.body.append(overlay);
   }
   const scroll=overlay.scrollTop;
-  overlay.innerHTML='<header class="stats-header"><b>О бойце</b><button class="small close-stats" data-close-stats aria-label="Закрыть детали">Закрыть ✕</button></header>'+archInfo(s)+fighterDetails(s,key);
+  overlay.innerHTML='<header class="stats-header"><b>О бойце</b><button class="small close-stats" data-close-stats aria-label="Закрыть детали">Закрыть ✕</button></header>'+archInfo(s)+petDetails(s)+fighterDetails(s,key);
   overlay.scrollTop=scroll;
   if(fresh){overlay.showModal();document.documentElement.classList.add('fighter-details-open');overlay.querySelector('[data-close-stats]').focus({preventScroll:true});}
 }
@@ -166,6 +182,7 @@ function renderActions(){
     const winner=st.winner?st.sides[st.winner].name:"";
     panel.innerHTML='<div class="battlelog">'+(winner?"Победа: "+esc(winner):"Ничья")+'<div class="muted">Опыт: '+Object.values(st.rewards||{}).join(" / ")+' XP'+(st.payout?" · Приз "+st.payout+" ₣":"")+'</div></div>'+
       (st.mirror_token?(current.actor_id===st.sides.a.controller_id?button("Итоги / продолжить забег","mirror:"+st.mirror_token,"primary"):""):current.mode==="wasteland"&&st.winner==="a"?button("Следующий этаж","next","primary"):"");
+    if(current.actor_id===st.sides.a.controller_id)panel.innerHTML+=petRewards(st.pet_rewards);
     for(const k of ["a","b"])document.getElementById("sprite-"+k).classList.toggle("defeated",st.sides[k].hp===0);
   }else if(mine){
     panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>battleSkillButton(skill,side)).join('')+'</div>';
@@ -291,6 +308,7 @@ function mirrorScreen(data){
   const choice=(name,id,description,disabled=false)=>button(esc(name)+'<span class="muted">'+esc(description)+'</span>',id,'mirror-choice',disabled);
   let body='<div class="card"><h2>Этаж '+data.floor+' / '+data.total_floors+'</h2><p>HP '+data.hp+' / '+data.max_hp+' · Энергия '+data.resource+' / '+data.resource_max+'</p><p>Осколки: '+data.shards+' · Получено: '+data.xp+' XP</p><p class="muted">Осколки и дары временные. Энергия +30 после победы; здоровье сохраняется. Таймера нет.</p></div>';
   const itemRewards=(data.item_rewards||[]).map(item=>'<p>'+esc(item.kind==='skill'?'Трактат навыка: ':item.kind==='passive'?'Трактат пассивки: ':'')+esc(item.name)+' ×'+esc(item.quantity)+' '+rarityBadge(item.rarity)+'</p>').join('');
+  if(data.status!=='active')body+=petRewards(data.pet_rewards);
   if(data.status!=='active')body+='<div class="card"><h2>'+esc(data.result)+'</h2><p>Опыт: '+data.xp+' XP · Франки: '+data.francs+' ₣</p>'+(itemRewards?'<h3>Получено в инвентарь</h3>'+itemRewards:data.loot?'<p>Трактат в инвентаре: '+esc(data.loot)+'</p>':'')+button('В меню','menu','primary')+'</div>';
   else if(mirrorAbandonConfirm)body+='<div class="card"><h2>Оставить забег?</h2><p>Дары и осколки исчезнут. Уже заработанный опыт сохранится, награды за босса не будет.</p>'+button('Оставить забег','mirroraction:abandon','danger')+button('Продолжить','mirrorback')+'</div>';
   else{
@@ -405,7 +423,7 @@ function menuScreen(data){
   if(data.active?.length)body+='<div class="card"><h3>Текущие бои</h3><div class="stack">'+data.active.map(b=>button((b.mode==="wasteland"?"Пустошь":"Бой")+" · "+b.status,"battle:"+b.token)).join("")+'</div></div>';
   if(data.mirror_runs?.length)body+='<div class="card"><h3>Зеркальные забеги</h3><div class="stack">'+data.mirror_runs.map(r=>button((r.status==='active'?'Продолжить':'Итоги')+' · этаж '+r.floor+' / 5 · '+r.xp+' XP','mirror:'+r.token,r.status==='active'?'primary':'')).join('')+'</div></div>';
   if(data.raids?.length)body+='<div class="card"><h3>Командные рейды</h3><div class="stack">'+data.raids.map(r=>raidButton((r.status==='active'?'Продолжить':r.status==='lobby'?'Сбор отряда':'Итоги')+' · раунд '+r.round,'open:'+r.token)).join('')+'</div></div>';
-  app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content">'+body+'</div></section>';
+  app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content"><div class="stack">'+button('✦ Питомцы · посылки и коллекция','pets')+'</div>'+body+'</div></section>';
   audio.refresh();
   if(page==="admin"){
     document.querySelector(".form").insertAdjacentHTML("beforeend",'<label class="check"><input id="grant-personal" type="checkbox"> Выдать класс личному персонажу (иначе — персонажу-рабу)</label>');
@@ -465,6 +483,7 @@ app.addEventListener("click",async event=>{
   if(cmd==="select"||cmd==="selected"){await action("select",{fighter:Number(arg),controlled:document.getElementById("control").checked});return;}
   if(cmd==="potion"||cmd==="surrender"){await action("skill",{skill:cmd});return;}
   if(cmd==="menu"||cmd==="refresh"){closeEffect();statusViews=null;closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
+  if(cmd==='pets'){location.assign('/pets?chat='+chat+location.hash);return;}
   if(cmd==="tab"){page=arg;menuScreen(menu);return;}
   if(cmd==="appearance"){clearSpriteDraft();page="appearance";menuScreen(menu);return;}
   if(cmd==="choose_sprite"){document.getElementById("sprite-file").click();return;}
@@ -587,8 +606,9 @@ async function boot(){
     }
     startDemo();return;
   }
-  const start=tg?.initDataUnsafe?.start_param||new URLSearchParams(location.search).get("tgWebAppStartParam")||"";
+  const start=new URLSearchParams(location.search).get("tgWebAppStartParam")||tg?.initDataUnsafe?.start_param||"";
   try{
+    if(start==='pets'||/^pets_-?\d+$/.test(start)){location.replace('/pets'+(start==='pets'?'':'?chat='+start.slice(5))+location.hash);return;}
     if(start.startsWith("r_")){raidScreen(await api('/api/raid/'+start.slice(2)));}
     else if(start.startsWith("b_")){token=start.slice(2);const data=await api("/api/battle/"+token);lastSeq=data.state?.log.at(-1)?.seq||0;battleScreen(data);}
     else if(/^(menu|shop)_-?\d+$/.test(start)){chat=Number(start.slice(5));if(start.startsWith('shop_'))page='merchant';await openMenu();}
@@ -644,6 +664,7 @@ function raidScreen(data){
     }
     body+=(demo&&data.status==='active'?raidButton('Показать атаки · демо','preview','small'):'')+'<div class="card raid-log"><h3>Ход рейда</h3>'+d.log.slice(-12).map(e=>'<p><small>Раунд '+e.round+'</small> <b>'+esc(e.actor==='boss'?data.boss_name:d.players[e.actor]?.fighter.name||'Участник')+'</b>: '+esc(e.text)+(e.target&&e.target!==e.actor?' → '+esc(e.target==='boss'?data.boss_name:d.players[e.target]?.fighter.name||'Боец'):'')+'</p>').join('')+'</div>';
   }else body='<div class="card"><h2>Сбор рейда закрыт</h2><p>Новый отряд можно собрать командой /рейд в чате.</p></div>';
+  if(data.status==='finished')body+=petRewards(data.data?.rewards?.[String(data.actor_id)]?.pet_rewards);
   app.innerHTML='<section class="menu raid-screen">'+top('Командный рейд','ГНИДА · ЧАТ '+chat,raidButton('Обновить','refresh','small'))+'<div class="content">'+body+'<div class="row">'+raidButton('В меню арены','menu','small')+'</div></div></section>';
   updateRaidTimer();if(raidInspect)showRaidDetails(raidInspect);
   audio.refresh();
@@ -746,7 +767,7 @@ function showRaidDetails(key){
   const f=key==='boss'?raidCurrent?.data?.boss:raidCurrent?.data?.players[key]?.fighter;if(!f)return;
   raidInspect=key;let dialog=document.getElementById('raid-details');const fresh=!dialog;
   if(fresh){dialog=document.createElement('dialog');dialog.id='raid-details';dialog.className='stats-dialog';document.body.append(dialog);dialog.addEventListener('cancel',()=>{raidInspect=null;});dialog.addEventListener('click',e=>{if(e.target.closest('[data-close-raid]'))closeRaidDetails();});}
-  dialog.innerHTML='<div class="stats-header"><b>Статистика бойца</b><button data-close-raid class="small">Закрыть ×</button></div>'+fighterDetails(f,key);
+  dialog.innerHTML='<div class="stats-header"><b>Статистика бойца</b><button data-close-raid class="small">Закрыть ×</button></div>'+petDetails(f)+fighterDetails(f,key);
   if(key==='boss'){const d=raidCurrent.data;dialog.innerHTML+='<div class="note">'+(d.control_lock?'Иммунитет к ошеломлению: ещё '+d.control_lock+' р.':'Шанс принять ошеломление: '+Math.round(Math.max(.1,1-.25*d.control_resistance)*100)+'%.')+' После успешного контроля — два раунда иммунитета.</div>';}
   if(!dialog.open)dialog.showModal();
 }

@@ -39,6 +39,7 @@ from arena_engine import (
 from arena_mirror_effects import gift_cost
 from arena_archclasses import ARCHCLASSES, ARCHCLASS_LEVEL, branch_options
 from arena_progression import pending_choice
+from arena_pet_store import PetMixin
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -51,7 +52,7 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin):
+class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
     def _connect_arena(self) -> None:
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (
@@ -179,6 +180,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin):
         self._connect_arena_market()
         self._connect_mirror()
         self._connect_raids()
+        self._connect_pets()
         # Upgrade live battles once. Restarting must never renew a PvP deadline.
         for raw in self.connection.execute(
             "SELECT id,mode,state_json FROM arena_battles WHERE status='active' AND state_json IS NOT NULL"
@@ -938,6 +940,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin):
             slave_id=user,
             owner_id=owner,
             controlled=controlled,
+            pet=self._pet_source_locked(chat, owner if controlled else user),
             class_id=profile["class_id"],
             archclass_id=profile["archclass_id"],
             archclass_stage=profile["archclass_stage"],
@@ -1255,6 +1258,12 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin):
                         1 if low_reward else 6,
                     )
         state["rewards"] = rewards
+        if (row["mode"] == "wasteland" and winner == "a"
+                and state.get("finish_reason") not in {"surrender", "timeout", "turn_limit"}
+                and any(e.get("side") == "a" and e.get("skill_id") for e in state["log"])):
+            state["pet_rewards"] = self._pet_reward_locked(
+                row["a_owner"] if row["a_control"] else row["a_fighter"],
+                "wasteland", "waste:" + row["token"])
         pot = row["escrow_a"] + row["escrow_b"]
         state["payout"] = pot - pot * ARENA_FEE_PERCENT // 100 if winner else 0
         self.connection.execute(

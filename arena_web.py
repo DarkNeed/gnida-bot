@@ -37,6 +37,8 @@ from arena_evolution import evolution_info
 from arena_archclasses import archclass_view, class_title, branch_options
 from arena_progression import pending_choice, choice_avatar
 from arena_raid_web import raid_view
+from arena_pets import pet_cost, PET_PACKS, PET_TERMS_VERSION
+from aiogram.types import LabeledPrice
 
 ROOT = Path(__file__).parent / "webapp"
 ACTOR = web.RequestKey("arena_actor", int)
@@ -154,7 +156,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 side["skill_details"].append(
                     dict(
                         asdict(variant),
-                        cost=gift_cost(side, variant),
+                        cost=pet_cost(side, variant, gift_cost(side, variant)),
                         evolution=info,
                         unavailable_reason=skill_restriction(
                             side, variant, completed_turns(state, key)
@@ -199,7 +201,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             if "bum_punch" not in side["loadout"] and (
                 (order and order["skill_id"] == "bum_punch")
                 or not any(
-                    gift_cost(side, effective_skill(state, key, s, skills))
+                    pet_cost(side, effective_skill(state, key, s, skills), gift_cost(side, effective_skill(state, key, s, skills)))
                     <= side["resource"]
                     and not side["cooldowns"].get(s, 0)
                     and not skill_restriction(
@@ -404,7 +406,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
 
 
 def create_arena_app(
-    db, bot, token: str, changed=None, raid_changed=None
+    db, bot, token: str, changed=None, raid_changed=None, *, pets_payments_enabled=False
 ) -> web.Application:
     member_cache: dict[tuple[int, int], float] = {}
 
@@ -489,6 +491,56 @@ def create_arena_app(
                 "Cache-Control": "no-cache",
             },
         )
+
+    async def pets_page(request):
+        text = (ROOT / "pets.html").read_text(encoding="utf-8")
+        version = hashlib.sha256(b"".join((ROOT / name).read_bytes() for name in ("pets.html", "pet-client", "pet-style.css", "pet-scene.css"))).hexdigest()[:16]
+        return web.Response(text=text.replace("pet-client.js\"", f"pet-client.js?v={version}\"").replace("pet-style.css\"", f"pet-style.css?v={version}\"").replace("pet-scene.css\"", f"pet-scene.css?v={version}\""),
+                            content_type="text/html", headers={"Cache-Control": "no-store"})
+
+    async def pets_client(request):
+        return web.FileResponse(ROOT / "pet-client", headers={"Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-cache"})
+
+    async def get_pets(request):
+        chat = int(request.query.get("chat", 0))
+        if chat:
+            await read_member(chat, request[ACTOR])
+        view = await db.pet_view(request[ACTOR], chat)
+        view["payments_enabled"] = pets_payments_enabled
+        return web.json_response(view)
+
+    async def post_pets(request):
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError("Некорректное действие.")
+        actor, chat = request[ACTOR], int_field(data, "chat")
+        if chat:
+            await require_member(bot, chat, actor)
+        revision = int_field(data, "revision", None)
+        action = data.get("action")
+        if action == "open":
+            result = await db.pet_open(actor, revision, data.get("nonce"), chat)
+            result["view"]["payments_enabled"] = pets_payments_enabled
+            return web.json_response(result)
+        view = await db.pet_action(actor, revision, action, data.get("pet_id", ""), data.get("choice", ""), chat)
+        view["payments_enabled"] = pets_payments_enabled
+        return web.json_response(dict(view=view))
+
+    async def pets_invoice(request):
+        if not pets_payments_enabled:
+            raise ValueError("Продажи пока выключены. Бесплатные билеты доступны.")
+        data = await request.json()
+        if not isinstance(data, dict) or data.get("accept_terms") is not True or data.get("terms_version") != PET_TERMS_VERSION:
+            raise ValueError("Примите условия покупки.")
+        pack = data.get("pack")
+        if not isinstance(pack, str) or pack not in PET_PACKS:
+            raise ValueError("Неизвестный пакет.")
+        order = await db.pet_create_order(request[ACTOR], pack, PET_TERMS_VERSION)
+        link = await bot.create_invoice_link(
+            title="Посылки с питомцами", description=f"{order['tickets']} билетов. Питомец определяется случайно; шансы и гарантии показаны в магазине.",
+            payload=order["payload"], provider_token="", currency="XTR",
+            prices=[LabeledPrice(label="Билеты", amount=order["stars"])])
+        return web.json_response(dict(invoice=link, order_id=order["id"]))
 
     async def get_battle(request):
         row = await db.arena_get(request.match_info["token"])
@@ -771,6 +823,11 @@ def create_arena_app(
         )
 
     app.router.add_get("/", index)
+    app.router.add_get("/pets", pets_page)
+    app.router.add_get("/static/pet-client.js", pets_client)
+    app.router.add_get("/api/pets", get_pets)
+    app.router.add_post("/api/pets", post_pets)
+    app.router.add_post("/api/pets/invoice", pets_invoice)
     app.router.add_get("/health", health)
     app.router.add_get("/static/client.js", client)
     app.router.add_get("/static/audio.js", audio)

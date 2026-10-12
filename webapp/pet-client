@@ -1,0 +1,124 @@
+/* Browser only. Results, odds, prices, balances and identity belong to the server. */
+(() => {
+  'use strict';
+  const tg=window.Telegram?.WebApp,$=id=>document.getElementById(id),params=new URLSearchParams(location.search);
+  const chat=Number(params.get('chat')||0),stage=$('stage'),dialog=$('petDialog');
+  const labels={common:'ОБЫЧНЫЙ',rare:'РЕДКИЙ',epic:'ЭПИЧЕСКИЙ',legendary:'ЛЕГЕНДАРНЫЙ'};
+  const tones={common:'#acbdce',rare:'#72c8ef',epic:'#c49bea',legendary:'#f0c775'};
+  const ticketsText=n=>n+' '+(n%10===1&&n%100!==11?'билет':n%10>=2&&n%10<=4&&(n%100<12||n%100>14)?'билета':'билетов');
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const key='gnida.pet.pending.'+(tg?.initDataUnsafe?.user?.id||'unknown');
+  let view=null,busy=false,animating=false,last=null,selected=null,generation=0,audio=null;
+  const canvas=$('particles'),ctx=canvas.getContext('2d');let particles=[],frame=0,previous=0;
+  new ResizeObserver(()=>{const b=stage.getBoundingClientRect(),ratio=Math.min(2,devicePixelRatio||1);canvas.width=Math.round(b.width*ratio);canvas.height=Math.round(b.height*ratio);ctx?.setTransform(ratio,0,0,ratio,0,0);}).observe(stage);
+  function clearParticles(){cancelAnimationFrame(frame);frame=0;particles=[];const b=stage.getBoundingClientRect();ctx?.clearRect(0,0,b.width,b.height);}
+  function burst(){
+    if(!ctx||$('gentle').checked||document.hidden)return;
+    const b=stage.getBoundingClientRect(),counts={common:35,rare:60,epic:85,legendary:120};
+    for(let i=0;i<counts[last.pet.rarity];i++){const a=Math.random()*Math.PI*2,speed=30+Math.random()*180;particles.push({x:b.width/2,y:b.height*.48,vx:Math.cos(a)*speed,vy:Math.sin(a)*speed-35,life:1.2+Math.random()*1.1,size:1+Math.random()*2.1});}
+    previous=performance.now();frame=requestAnimationFrame(drawParticles);
+  }
+  function drawParticles(now){
+    frame=0;const dt=Math.min(.04,(now-previous)/1000);previous=now;const b=stage.getBoundingClientRect();ctx.clearRect(0,0,b.width,b.height);ctx.fillStyle=tones[last.pet.rarity];particles=particles.filter(p=>p.life>0);
+    for(const p of particles){p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=23*dt;ctx.globalAlpha=Math.max(0,Math.min(1,p.life));ctx.beginPath();ctx.arc(p.x,p.y,p.size,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
+    if(particles.length&&!document.hidden)frame=requestAnimationFrame(drawParticles);
+  }
+  $('gentle').checked=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  try{$('sound').checked=localStorage.getItem('gnida.pet.sound')!=='0';}catch{}
+  $('sound').onchange=()=>{try{localStorage.setItem('gnida.pet.sound',$('sound').checked?'1':'0');}catch{}};
+  function error(e){$('error').hidden=!e;$('error').textContent=e?.message||e||'';}
+  function sound(reveal=false){
+    if(!$('sound').checked||document.hidden)return;
+    try{audio||=new (window.AudioContext||window.webkitAudioContext)();audio.resume().catch(()=>{});
+      for(const [i,hz] of (reveal?[196,293.66,392,587.33]:[65.41,98]).entries()){
+        const o=audio.createOscillator(),g=audio.createGain(),t=audio.currentTime+i*.08;
+        o.type=reveal?'triangle':'sawtooth';o.frequency.value=hz;g.gain.setValueAtTime(.001,t);g.gain.linearRampToValueAtTime(.045,t+.02);g.gain.exponentialRampToValueAtTime(.001,t+.7);
+        o.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+.72);o.onended=()=>{o.disconnect();g.disconnect();};}
+    }catch{}
+  }
+  async function api(path,body){
+    const r=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Telegram-Init-Data':tg?.initData||''},body:body?JSON.stringify(body):undefined,cache:'no-store'});
+    const d=await r.json();if(!r.ok){const e=new Error(d.error||'Ошибка сервера.');e.status=r.status;throw e;}return d;
+  }
+  function controls(){
+    $('open').disabled=busy||!view||(!view.wallet.tickets&&!pending())||view.refund_pending;
+    $('open').textContent=pending()?'Восстановить открытие':'Открыть · 1 билет ↗';
+    $('daily').disabled=busy||!view?.daily_available;
+    document.querySelectorAll('[data-buy]').forEach(b=>b.disabled=busy||!view?.payments_enabled||!$('accept').checked);
+  }
+  function pending(){try{return JSON.parse(localStorage.getItem(key)||'null');}catch{return null;}}
+  function clearPending(){try{localStorage.removeItem(key);}catch{}}
+  function draw(){
+    if(!view)return;
+    const w=view.wallet;$('tickets').textContent=ticketsText(w.tickets);
+    $('resources').textContent=`Корм ${w.food} · эссенция ${w.essence} · осколки ${w.shards}`+(w.ticket_debt?` · долг ${w.ticket_debt} билетов`: '');
+    $('pity').textContent=`Эпический или выше: не позднее ${view.pity.epic}-го открытия. Легендарный: не позднее ${view.pity.legendary}-го.`;
+    $('count').textContent=view.owned.length+' / '+view.catalog.length;
+    $('equipment').textContent=chat?'Выбранный чат: '+view.chat_title+'. Питомец: '+(view.owned.find(p=>p.id===view.equipped)?.name||'не экипирован'):'Открой раздел из меню арены нужного чата, чтобы экипировать спутника. Коллекция доступна и здесь.';
+    $('packs').innerHTML=view.packs.map(p=>`<button class="primary" data-buy="${esc(p.id)}">${ticketsText(p.tickets)}<small>${p.stars} ⭐</small></button>`).join('');
+    $('sales').textContent=view.payments_enabled?'Билеты начисляются только после подтверждения Telegram.':'Продажи пока выключены. Пользуйтесь бесплатными билетами.';
+    $('odds').textContent='Обычный 20% · редкий 50% · эпический 27% · легендарный 3%. Внутри редкости шансы одинаковые. На 10-м подряд открытии без эпического или выше: эпический 90%, легендарный 10%. На 30-м подряд без легендарного: легендарный 100%. Гарантии сбрасываются соответствующим выпадением.';
+    $('gallery').innerHTML=view.catalog.map(p=>{const owned=view.owned.find(o=>o.id===p.id);return `<button class="pet-card ${owned?'':'not-owned'} ${view.equipped===p.id?'equipped':''}" data-pet="${esc(p.id)}" style="--card-tone:${tones[p.rarity]}"><span class="card-rarity">${labels[p.rarity]}${owned?' · Lv.'+owned.level:''}</span><img src="${esc(p.sprite_url)}" alt="${esc(p.name)}" loading="lazy"><h3>${esc(p.name)}</h3><p>${esc(p.description)}</p></button>`;}).join('');
+    $('history').innerHTML=view.openings.map(o=>'<div>'+esc(o.pet.name)+(o.duplicate?' · дубликат → '+o.shards+' осколков':' · новый')+'</div>').join('')||'Пока нет открытий.';
+    $('orders').innerHTML=view.orders.map(o=>`<div>№${o.id} · ${o.tickets} билетов · ${o.stars} ⭐ · ${esc(({pending:'ожидает оплаты',paid:'оплачен',refunding:'возврат проверяется',refunded:'возвращён'})[o.status]||o.status)}</div>`).join('')||'Пока нет заказов.';
+    controls();
+  }
+  async function refresh(){const next=await api('/api/pets'+(chat?'?chat='+chat:''));const changed=JSON.stringify(view)!==JSON.stringify(next);view=next;if(changed)draw();}
+  async function act(action,pet_id='',choice=''){
+    if(busy||!view)return;busy=true;controls();error(null);
+    try{const d=await api('/api/pets',{action,pet_id,choice,chat,revision:view.wallet.revision});view=d.view;draw();if(selected&&dialog.open)inspect(selected);}
+    catch(e){error(e);try{await refresh();}catch{}}
+    finally{busy=false;controls();}
+  }
+  function inspect(id){
+    selected=id;const p=view.catalog.find(p=>p.id===id);if(!p)return;
+    const own=view.owned.find(o=>o.id===id);$('detailImage').src=p.sprite_url;$('detailImage').alt=p.name;$('detailName').textContent=p.name;$('detailRarity').textContent=labels[p.rarity];$('detailEffect').textContent=p.description;
+    $('detailLevel').textContent=own?`Уровень ${own.level} / 10 · сила ${own.power} · частота ${own.tempo}\nКаждый уровень немного усиливает бонус. На 3 / 6 / 10 — выбор силы или частоты. У сэндвича частота повышает порог лечения, он всё равно лечит один раз за бой.`:'Ещё нет в коллекции. Можно получить из посылки или выбрать за осколки.';
+    let actions='';const button=(label,action,choice='')=>`<button class="secondary" data-action="${action}" data-id="${id}" data-choice="${choice}">${esc(label)}</button>`;
+    if(own){if(chat)actions+=button(view.equipped===id?'Снять с боя':'Экипировать в этом чате',view.equipped===id?'unequip':'equip');
+      if(own.upgrade){const cost=`${own.upgrade.food} корма${own.upgrade.essence?' + '+own.upgrade.essence+' эссенции':''}`;
+        actions+='<p class="muted">Следующий уровень: '+cost+'. Недостающий корм заменяется осколками 2:1, эссенция 10:1.</p>';
+        actions+=own.upgrade.choice?button('Улучшить: сила','upgrade','power')+button('Улучшить: частота','upgrade','tempo'):button('Улучшить','upgrade');}}
+    else actions+=button('Выбрать за '+p.exchange_cost+' осколков','exchange');
+    $('detailActions').innerHTML=actions;if(!dialog.open)dialog.showModal();
+  }
+  function phase(name){stage.dataset.phase=name;stage.querySelector('.reveal').setAttribute('aria-hidden',String(!['reveal','result'].includes(name)));}
+  function finish(){if(!last)return;animating=false;phase('result');$('skip').hidden=true;busy=false;$('stageLabel').textContent='ПОСЫЛКА ОТКРЫТА';$('phaseCaption').textContent='Результат уже сохранён.';$('resultText').textContent=last.duplicate?'Дубликат: +'+last.shards+' осколков.':'Новый питомец в коллекции!';$('inspectResult').hidden=false;controls();}
+  async function animate(result){
+    animating=true;clearParticles();last=result;const p=result.pet,id=++generation;stage.style.setProperty('--tone',tones[p.rarity]);$('rarity').textContent=labels[p.rarity];$('heroName').textContent=p.name;$('heroQuote').textContent=p.description;$('heroPet').src=p.sprite_url;$('heroPet').alt=p.name;
+    const wait=async ms=>{await new Promise(r=>setTimeout(r,ms));return id===generation;};
+    $('stageLabel').textContent='ДОСТАВКА С НЕИЗВЕСТНЫМИ ПОСЛЕДСТВИЯМИ';$('skip').hidden=false;phase('idle');
+    if($('gentle').checked||document.hidden){sound(true);finish();return;}
+    phase('shake');if(!await wait(950))return;phase('charge');sound();if(!await wait(1150))return;phase('burst');burst();sound(true);if(!await wait(500))return;phase('reveal');if(await wait(1000))finish();
+  }
+  async function open(){
+    if(busy||!view)return;busy=true;controls();error(null);sound();
+    let p=pending();if(!p){p={nonce:crypto.randomUUID(),revision:view.wallet.revision};try{localStorage.setItem(key,JSON.stringify(p));}catch{}}
+    try{const d=await api('/api/pets',{action:'open',chat,...p});clearPending();view=d.view;draw();await animate(d.result);}
+    catch(e){if(e.status===400)clearPending();error(e);busy=false;try{await refresh();}catch{}controls();}
+  }
+  async function buy(pack){
+    if(busy||!view?.payments_enabled||!$('accept').checked)return;busy=true;controls();error(null);
+    try{if(!tg?.openInvoice)throw new Error('Покупка доступна только в Telegram.');
+      const d=await api('/api/pets/invoice',{pack,accept_terms:true,terms_version:view.terms_version});
+      await new Promise(resolve=>tg.openInvoice(d.invoice,status=>{if(status==='paid')$('resultText').textContent='Оплата принята Telegram. Ожидаем подтверждение бота…';resolve();}));
+      await refresh();}
+    catch(e){error(e);}finally{busy=false;controls();}
+  }
+  $('open').onclick=open;$('daily').onclick=()=>act('daily');$('skip').onclick=()=>{generation++;clearParticles();finish();};$('inspectResult').onclick=()=>last&&inspect(last.pet.id);
+  $('gentle').onchange=()=>{document.body.classList.toggle('gentle',$('gentle').checked);if(animating){generation++;clearParticles();finish();}};
+  $('accept').onchange=controls;
+  document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.classList.contains('dialog-close'))b.closest('dialog').close();if(b.dataset.pet)inspect(b.dataset.pet);if(b.dataset.action)act(b.dataset.action,b.dataset.id,b.dataset.choice);if(b.dataset.buy)buy(b.dataset.buy);});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){clearParticles();audio?.suspend().catch(()=>{});if(animating){generation++;finish();}}if(!document.hidden&&!busy)refresh().catch(error);});
+  $('terms').onclick=()=>{$('termsDialog').showModal();};
+  async function boot(){
+    tg?.ready();tg?.expand();$('back').href='/?tgWebAppStartParam='+encodeURIComponent(chat?'menu_'+chat:'')+location.hash;
+    if(!chat&&tg?.initData)$('back').onclick=e=>{e.preventDefault();tg.close();};
+    document.body.classList.toggle('gentle',$('gentle').checked);
+    try{await refresh();const p=pending(),old=view.openings.find(o=>o.nonce===p?.nonce);if(old){clearPending();last=old;busy=true;await animate(old);}
+      $('termsBody').innerHTML='<p>Покупаются билеты, а не конкретный питомец. 1 / 5 / 10 билетов: 25 / 110 / 200 Stars. Результат случайный, дубликаты дают осколки. Шансы и гарантии показаны в магазине; бесплатные и купленные билеты равнозначны.</p><p>Предметы не обмениваются на деньги и не передаются между аккаунтами. Бонусы могут меняться при балансировке. Питомцы и ресурсы общие для аккаунта, экипировка отдельная для каждого чата. Результат сохраняется до анимации.</p><p>При возврате билеты пакета вычитаются. Если они потрачены, возникает долг билетов: использование питомцев в новых боях приостанавливается до погашения долга бесплатными или купленными билетами. Выпавшие питомцы сохраняются.</p><p>Подробные условия: /terms в боте. Поддержка и возвраты: /paysupport, укажите номер заказа.</p><p>Версия '+esc(view.terms_version)+'</p>';}
+    catch(e){error(e);$('tickets').textContent='Открой раздел через Telegram';}
+  }
+  setInterval(()=>{if(!busy&&!dialog.open&&!document.hidden)refresh().catch(()=>{});},15000);
+  boot();
+})();

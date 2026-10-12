@@ -1,0 +1,183 @@
+{
+  "mode": "built-in image_gen",
+  "transparent_background": true,
+  "shared_prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: ",
+  "pets": [
+    {
+      "id": "boykisser",
+      "name": "Бойкиссер",
+      "affinity": "cutie",
+      "rarity": "rare",
+      "color": "pink",
+      "effect": "После нескольких атак возвращает немного энергии.",
+      "quote": "Кот нашёл твой запас любви.",
+      "subject": "Boykisser meme cat, ivory-white fur, large pointed ears, fluffy cheek tufts, smug half-lidded burgundy eyes, pink cheeks, dark little paws, curled tail, one paw near mouth. Nonsexual cartoon animal.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual transparent full-body 2D pet battle sprite for a dark humorous anime RPG, cohesive with Limbus Company-inspired thin ink linework, angular cel shading, lightly distressed hand-painted texture; not pixel art, not 3D, not a flat emoji. Subject: Boykisser meme cat, an adorable white bipedal cat with large pointed ears, fluffy cheek tufts, mischievous half-lidded eyes, a small smug smile and light pink cheek accents; black little paws, expressive curled tail. Standing in a cheeky three-quarter idle pose facing right with one paw raised near his mouth. Pet-sized cute proportions, unmistakable readable silhouette, slightly gothic game-art finish rather than a simple meme doodle. Palette predominantly ivory-white, black fine linework, muted pink accents. Entire cat including tail and paws visible, centered occupying 80% canvas, generous padding. Genuine transparent alpha background, no cast shadow, no floor, no glow or halo, no text, labels, UI, borders, checkerboard, scenery or other characters. Clean silhouette readable when rendered at 100px high. No clothing needed; nonsexual cartoon animal."
+    },
+    {
+      "id": "dakimakura",
+      "name": "Мимик-дакимакура",
+      "affinity": "cutie",
+      "rarity": "epic",
+      "color": "pink",
+      "effect": "Готовит защиту от части следующего удара.",
+      "quote": "Подушка впервые пригодилась вне кровати.",
+      "subject": "A living upright ivory body pillow mimic, cute illustrated face of a fully clothed clearly adult pink-haired anime woman printed on pillow, a sinister toothed mouth along side seam, two little clawed fabric feet and grasping corner-hands, plum ribbons. Clearly a pillow monster, not a human, no nudity.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: A living upright ivory body pillow mimic, cute illustrated face of a fully clothed clearly adult pink-haired anime woman printed on pillow, a sinister toothed mouth along side seam, two little clawed fabric feet and grasping corner-hands, plum ribbons. Clearly a pillow monster, not a human, no nudity."
+    },
+    {
+      "id": "gachi_duck",
+      "name": "Гачи-уточка",
+      "affinity": "jock",
+      "rarity": "rare",
+      "color": "amber",
+      "effect": "Подготавливает пробитие обеих защит.",
+      "quote": "Дверь клуба закрывается изнутри.",
+      "subject": "ONE plump black rubber duck mascot with confident angular eyes, orange beak, black leather crossed shoulder straps with silver rivets over its rubber body, metal collar ring, tiny dramatic duck wings, clean readable rubber silhouette. Nonsexual cartoon animal, no people.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: ONE plump black rubber duck mascot with confident angular eyes, orange beak, black leather crossed shoulder straps with silver rivets over its rubber body, metal collar ring, tiny dramatic duck wings, clean readable rubber silhouette. Nonsexual cartoon animal, no people."
+    },
+    {
+      "id": "sandwich",
+      "name": "Живой сэндвич",
+      "affinity": "jock",
+      "rarity": "common",
+      "color": "amber",
+      "effect": "Лечит при падении HP ниже порога.",
+      "quote": "Жуй с уважением.",
+      "subject": "A sentient TF2-inspired triangular sandwich pet with two toasted bread slices, lettuce, cheese and tomato, toothpick with red olive on top, stout little booted legs, stern tiny expressive eyes in front bread, a small red bandana, ready to defend its owner. Not photorealistic food.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: A sentient TF2-inspired triangular sandwich pet with two toasted bread slices, lettuce, cheese and tomato, toothpick with red olive on top, stout little booted legs, stern tiny expressive eyes in front bread, a small red bandana, ready to defend its owner. Not photorealistic food."
+    },
+    {
+      "id": "bonzi",
+      "name": "BonziBuddy",
+      "affinity": "nerd",
+      "rarity": "epic",
+      "color": "cyan",
+      "effect": "Успешная атака периодически крадёт энергию.",
+      "quote": "Установлено три панели инструментов.",
+      "subject": "BonziBuddy recognizable purple cartoon gorilla meme reimagined as dark anime RPG companion, large round ears, purple fur, lavender face and belly, bright mischievous eyes, crooked friendly smile, holding a tiny turquoise laptop and a cable behind his back, complete short gorilla body. No lettering or logos on laptop.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: BonziBuddy recognizable purple cartoon gorilla meme reimagined as dark anime RPG companion, large round ears, purple fur, lavender face and belly, bright mischievous eyes, crooked friendly smile, holding a tiny turquoise laptop and a cable behind his back, complete short gorilla body. No lettering or logos on laptop."
+    },
+    {
+      "id": "bug",
+      "name": "Жук-баг",
+      "affinity": "nerd",
+      "rarity": "rare",
+      "color": "cyan",
+      "effect": "Сокращает перезарядку или возвращает энергию.",
+      "quote": "Это преимущество платной версии.",
+      "subject": "ONE little mechanical cockroach bug pet, gunmetal carapace, luminous cyan rectangular blue-screen panel on its back with abstract geometric fragments but no letters, six clear articulated metal legs, two antenna cables, expressive pixel-like cyan eyes, wires bundled neatly, low diagonal three-quarter pose. Not photorealistic insect.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: ONE little mechanical cockroach bug pet, gunmetal carapace, luminous cyan rectangular blue-screen panel on its back with abstract geometric fragments but no letters, six clear articulated metal legs, two antenna cables, expressive pixel-like cyan eyes, wires bundled neatly, low diagonal three-quarter pose. Not photorealistic insect."
+    },
+    {
+      "id": "rat",
+      "name": "Крыса-консильери",
+      "affinity": "thumb",
+      "rarity": "epic",
+      "color": "red",
+      "effect": "Чередование навыков усиливает следующую атаку.",
+      "quote": "Бухгалтерия сходится. Свидетелей нет.",
+      "subject": "A fat upright mafia rat pet in a charcoal pinstripe three-piece suit, burgundy tie, black fedora, warm grey-brown fur, cunning narrow eyes, tiny unlit cigar at mouth corner, carrying a small battered leather briefcase, curled long rat tail, brass watch chain, complete full-body small animal. No lettering, smoke or background.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: A fat upright mafia rat pet in a charcoal pinstripe three-piece suit, burgundy tie, black fedora, warm grey-brown fur, cunning narrow eyes, tiny unlit cigar at mouth corner, carrying a small battered leather briefcase, curled long rat tail, brass watch chain, complete full-body small animal. No lettering, smoke or background."
+    },
+    {
+      "id": "pigeon",
+      "name": "Голубь-инкассатор",
+      "affinity": "thumb",
+      "rarity": "rare",
+      "color": "red",
+      "effect": "Повышает точность следующей атаки.",
+      "quote": "На памятник тоже хватило.",
+      "subject": "A tough pigeon courier pet with slate grey feathers, burgundy bulletproof vest, tiny leather ammunition satchel and brass cartridge belt, one folded wing clutching an envelope with blank wax seal, stern alert eyes, iridescent teal-purple throat, pink feet fully visible, compact perched-on-nothing stance. Nonsexual animal.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: A tough pigeon courier pet with slate grey feathers, burgundy bulletproof vest, tiny leather ammunition satchel and brass cartridge belt, one folded wing clutching an envelope with blank wax seal, stern alert eyes, iridescent teal-purple throat, pink feet fully visible, compact perched-on-nothing stance. Nonsexual animal."
+    },
+    {
+      "id": "printer",
+      "name": "Говорящий принтер",
+      "affinity": "index",
+      "rarity": "rare",
+      "color": "ivory",
+      "effect": "Даёт бонус за выполнение простого поручения.",
+      "quote": "Подпись, печать, картридж закончился.",
+      "subject": "An anthropomorphic battered office printer pet, aged ivory plastic body, narrow dark paper-output mouth, two glowing golden eyes in control panel, short paper strip curling from its mouth with abstract illegible lines only, walking on four black cable legs, stapler-like little hands, brass wax-seal motif. No legible text or branding.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: An anthropomorphic battered office printer pet, aged ivory plastic body, narrow dark paper-output mouth, two glowing golden eyes in control panel, short paper strip curling from its mouth with abstract illegible lines only, walking on four black cable legs, stapler-like little hands, brass wax-seal motif. No legible text or branding."
+    },
+    {
+      "id": "clippy",
+      "name": "Клиппи",
+      "affinity": "index",
+      "rarity": "epic",
+      "color": "ivory",
+      "effect": "Помогает следующей попытке после неудачи.",
+      "quote": "Похоже, вы пытаетесь избежать наказания.",
+      "subject": "The recognizable Clippy talking paperclip, one large silver steel loop with oversized expressive eyeballs and dark eyebrows, crooked officious smile, one white folded note clasped at the bottom with blank red wax seal, bent lower wire ends form tiny feet, full-body upright confident pose. Dark anime cel-shaded metal highlights, no flat office UI or text.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: The recognizable Clippy talking paperclip, one large silver steel loop with oversized expressive eyeballs and dark eyebrows, crooked officious smile, one white folded note clasped at the bottom with blank red wax seal, bent lower wire ends form tiny feet, full-body upright confident pose. Dark anime cel-shaded metal highlights, no flat office UI or text."
+    },
+    {
+      "id": "hamster",
+      "name": "Хомяк-коллектор",
+      "affinity": "middle",
+      "rarity": "rare",
+      "color": "violet",
+      "effect": "После промаха готовит пробитие следующей атаки.",
+      "quote": "Процент капает. Колени тоже.",
+      "subject": "A stout beige hamster debt collector pet with hugely puffed cheeks, black sleeveless vest, massive gold necklace on his tiny body, holding a miniature worn wooden baseball bat over one shoulder and a red closed ledger under other arm, scowling but cute, tiny paws and short tail, purple inner-ear accents. No readable text.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: A stout beige hamster debt collector pet with hugely puffed cheeks, black sleeveless vest, massive gold necklace on his tiny body, holding a miniature worn wooden baseball bat over one shoulder and a red closed ledger under other arm, scowling but cute, tiny paws and short tail, purple inner-ear accents. No readable text."
+    },
+    {
+      "id": "chao",
+      "name": "Мстительный Чао",
+      "affinity": "middle",
+      "rarity": "epic",
+      "color": "violet",
+      "effect": "Полученные удары готовят защиту при низком HP.",
+      "quote": "Имя стоматолога тоже записано.",
+      "subject": "A dark Sonic Chao-inspired small creature with black-indigo teardrop head, short crimson tipped horn tufts, glowing amber solemn eyes, tiny batlike wings, purple faux-fur collar, small silver chains and a battered closed revenge notebook, floating red droplet-shaped emotive orb very close above its head. Whole compact character, no background aura, no text.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: A dark Sonic Chao-inspired small creature with black-indigo teardrop head, short crimson tipped horn tufts, glowing amber solemn eyes, tiny batlike wings, purple faux-fur collar, small silver chains and a battered closed revenge notebook, floating red droplet-shaped emotive orb very close above its head. Whole compact character, no background aura, no text."
+    },
+    {
+      "id": "smesharik",
+      "name": "Кровавый Смешарик",
+      "affinity": "ring",
+      "rarity": "rare",
+      "color": "crimson",
+      "effect": "Попадания собирают краску для кровотечения.",
+      "quote": "Красного теперь достаточно.",
+      "subject": "ONE round cartoon forest-creature artist pet, plum-purple spherical body, tiny hornlike ear tufts, black French beret, red paint stains on cream artist apron, nervous crazed expressive eyes, a large paintbrush with dark red paint and a wooden palette; funny ominous dark anime interpretation of round Russian cartoon animal mascots. Non-graphic, no victims, organs, injuries or text.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: ONE round cartoon forest-creature artist pet, plum-purple spherical body, tiny hornlike ear tufts, black French beret, red paint stains on cream artist apron, nervous crazed expressive eyes, a large paintbrush with dark red paint and a wooden palette; funny ominous dark anime interpretation of round Russian cartoon animal mascots. Non-graphic, no victims, organs, injuries or text."
+    },
+    {
+      "id": "taxidermy",
+      "name": "Таксидермический пёс",
+      "affinity": "ring",
+      "rarity": "epic",
+      "color": "crimson",
+      "effect": "Периодически сопровождает атаку ослаблением.",
+      "quote": "Хороший мальчик. Это не ветка.",
+      "subject": "A stitched taxidermy patchwork dog pet, grey tan and burgundy fabric patches, obvious seams, mismatched dark button eyes with a tiny amber glint, floppy ragged ears, purple artist collar and black ribbon, cheerfully carrying a detachable WOODEN MANNEQUIN LEG with an old boot in its mouth like a stick. Non-graphic theatrical prop, no real human body parts or gore. Complete dog and prop visible.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: A stitched taxidermy patchwork dog pet, grey tan and burgundy fabric patches, obvious seams, mismatched dark button eyes with a tiny amber glint, floppy ragged ears, purple artist collar and black ribbon, cheerfully carrying a detachable WOODEN MANNEQUIN LEG with an old boot in its mouth like a stick. Non-graphic theatrical prop, no real human body parts or gore. Complete dog and prop visible."
+    },
+    {
+      "id": "poro",
+      "name": "Звёздный Пору",
+      "affinity": "pinky",
+      "rarity": "epic",
+      "color": "jade",
+      "effect": "Накопленный заряд удешевляет платную атаку.",
+      "quote": "Астрономы списали это на бюджет.",
+      "subject": "A Poro-inspired fluffy round ivory creature with short curled dark horns, huge moustache-like cheek tufts, tiny paws, charming pink tongue sticking out, midnight blue scarf with small gold embroidered stars, a small crescent brass charm, delicate jade constellation pattern in fur. No external glow, no floating scenery, complete creature visible.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: A Poro-inspired fluffy round ivory creature with short curled dark horns, huge moustache-like cheek tufts, tiny paws, charming pink tongue sticking out, midnight blue scarf with small gold embroidered stars, a small crescent brass charm, delicate jade constellation pattern in fur. No external glow, no floating scenery, complete creature visible."
+    },
+    {
+      "id": "moon_mimic",
+      "name": "Лунный мимик",
+      "affinity": "pinky",
+      "rarity": "legendary",
+      "color": "jade",
+      "effect": "Траты энергии накапливают небольшой щит.",
+      "quote": "Твоё будущее было вкусным.",
+      "subject": "ONE little magical chest mimic pet, dark charcoal wooden treasure chest with jade-green brass trims and crescent-shaped latch, lid ajar showing a contained night-sky lining dotted with tiny stars inside and expressive amber eyes, pointed ivory teeth along rim, four little claw feet, short indigo tongue. An elegant ominous astral mimic, no background stars, no external aura.",
+      "prompt": "Use case: stylized-concept. Asset type: ONE individual full-body pet battle sprite for a dark humorous anime RPG. Cohesive Limbus Company-inspired thin expressive ink linework, angular cel shading, light hand-painted distressed texture, detailed but readable at 100px tall; cute sinister game mascot, NOT pixel art, NOT 3D, NOT emoji or stock vector. Three-quarter idle pose facing right, whole character and all accessories fully visible, centered with generous transparent padding, about 78% canvas height. Genuine transparent alpha background. No floor, cast shadow, scenery, outside glow, halo, text, captions, watermark, borders, fake checkerboard or extra characters. Subject: ONE little magical chest mimic pet, dark charcoal wooden treasure chest with jade-green brass trims and crescent-shaped latch, lid ajar showing a contained night-sky lining dotted with tiny stars inside and expressive amber eyes, pointed ivory teeth along rim, four little claw feet, short indigo tongue. An elegant ominous astral mimic, no background stars, no external aura."
+    }
+  ]
+}
