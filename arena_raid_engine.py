@@ -68,7 +68,7 @@ BOSS_SKILLS = {
             95,
             0,
             0,
-            tags=("triple_strike",),
+            tags=("six_strike",),
         ),
     )
 }
@@ -373,6 +373,7 @@ def resolve_round(data, skills, rng=None):
             hit=event["hit"],
             critical=event["critical"],
             **({"hits": event["hits"]} if "hits" in event else {}),
+            **({"hit_results": event["hit_results"]} if "hit_results" in event else {}),
         )
         if data.get("boss_id") == "doofenshmirtz":
             if (
@@ -487,6 +488,7 @@ def resolve_round(data, skills, rng=None):
                         hit=event["hit"],
                         critical=event["critical"],
                         **({"hits": event["hits"]} if "hits" in event else {}),
+                        **({"hit_results": event["hit_results"]} if "hit_results" in event else {}),
                     )
                 if boss_after is not None:
                     boss.clear()

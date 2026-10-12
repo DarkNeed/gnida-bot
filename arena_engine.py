@@ -425,9 +425,10 @@ BUILTIN_SKILLS["tigerslayer_flurry"] = Skill(
     45,
     4,
     rarity="epic",
-    description="Три последовательных разреза. Общий урон одной мощной атаки; "
+    description="Шесть последовательных разрезов с отдельной проверкой попадания "
+    "и уклонения каждого. Сила 28 делится на всю серию, а не на каждый удар; "
     "доступно с третьего собственного действия. Трактат добывается у Лей Хенга.",
-    tags=("raid_loot", "triple_strike", "third_action"),
+    tags=("raid_loot", "six_strike", "third_action"),
 )
 BUILTIN_SKILLS["deportator_inator"] = Skill(
     "deportator_inator",
@@ -1133,6 +1134,21 @@ def resolve_skill(
     dodged = bool(
         skill.damage_type and not hit and roll < max(5, min(95, raw_accuracy))
     )
+    strike_results = None
+    if "six_strike" in skill.tags and skill.damage_type:
+        # One paid action, six independent accuracy/evasion checks. The total
+        # power, buffs and critical multiplier still belong to the whole action.
+        rolls = [roll] + [rng.random() * 100 for _ in range(5)]
+        hit_threshold = max(5, min(95, raw_accuracy - effective_stat(target, "evasion")))
+        aim_threshold = max(5, min(95, raw_accuracy))
+        strike_results = [
+            dict(hit=r < hit_threshold,
+                 dodged=r >= hit_threshold and r < aim_threshold,
+                 damage=0)
+            for r in rolls
+        ]
+        hit = any(part["hit"] for part in strike_results)
+        dodged = not hit and any(part["dodged"] for part in strike_results)
     actor["resource"] -= actual_cost
     if "once_per_battle" in skill.tags:
         actor.setdefault("used_skills", []).append(skill_id)
@@ -1174,7 +1190,19 @@ def resolve_skill(
                 * rng.uniform(0.95, 1.05)
             ),
         )
-        target["hp"] = max(0, target["hp"] - damage)
+        if strike_results is not None:
+            # Divide the same full-hit damage budget without rounding six
+            # tiny hits up to an artificial minimum. Misses lose their share.
+            full_damage = damage
+            for i, part in enumerate(strike_results):
+                if part["hit"]:
+                    part["damage"] = min(
+                        target["hp"], full_damage // 6 + int(i < full_damage % 6)
+                    )
+                    target["hp"] -= part["damage"]
+            damage = sum(part["damage"] for part in strike_results)
+        else:
+            target["hp"] = max(0, target["hp"] - damage)
     # Existing buffs expire after this action, before newly applied buffs are added.
     if skill.damage_type == "magic":
         actor["effects"] = [
@@ -1280,6 +1308,10 @@ def resolve_skill(
     )
     if effects_text:
         text += " · " + ", ".join(effects_text)
+    if strike_results is not None:
+        landed = sum(part["hit"] for part in strike_results)
+        evaded = sum(part["dodged"] for part in strike_results)
+        text += f" · попаданий {landed}/6, уклонений {evaded}, промахов {6 - landed - evaded}"
     if hit and critical:
         text += " · критический удар"
     if obeyed:
@@ -1315,6 +1347,9 @@ def resolve_skill(
     }
     if "triple_strike" in skill.tags:
         event["hits"] = [damage // 3 + int(i < damage % 3) for i in range(3)]
+    if strike_results is not None:
+        event["hits"] = [part["damage"] for part in strike_results]
+        event["hit_results"] = strike_results
     state["log"].append(event)
     state["log"] = state["log"][-60:]
     if advance_turn:

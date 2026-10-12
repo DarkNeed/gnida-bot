@@ -43,6 +43,26 @@ BUILDS = {
     "pinky": [("silent_cut", "calm_breath", "moon_arc", "falling_star")],
 }
 
+# Keep each branch's defining move when the level-15 move takes the fourth slot.
+BRANCH_BUILDS = {
+    "femboy": ("uwu", "air_kiss", "meow"),
+    "princess": ("uwu", "posing", "meow"),
+    "gachi_actor": ("smack", "clench", "flex_chest"),
+    "mge_bro": ("smack", "butt_peak", "clench"),
+    "programmer": ("humiliate", "charging", "go_to_store"),
+    "hacker": ("humiliate", "doxxing", "go_to_store"),
+    "thumb_discipline": ("bayonet", "reload", "warning_shot"),
+    "thumb_execution": ("bayonet", "reload", "senior_verdict"),
+    "index_proxy": ("first_line", "receive_prescript", "last_line"),
+    "index_messenger": ("first_line", "receive_prescript", "last_line"),
+    "middle_guardian": ("recorded", "grit_teeth", "whole_family"),
+    "middle_revenge": ("recorded", "grit_teeth", "whole_family"),
+    "ring_pointillist": ("first_stroke", "red_etude", "unfinished_portrait"),
+    "ring_fauvist": ("first_stroke", "unfinished_portrait", "last_stroke"),
+    "pinky_dihui": ("silent_cut", "calm_breath", "moon_arc"),
+    "pinky_tiansha": ("silent_cut", "calm_breath", "falling_star"),
+}
+
 
 def damage_estimate(actor, target, skill):
     if not skill.damage_type:
@@ -245,6 +265,8 @@ def match(
     controlled=False,
     foreign=False,
     jock_passives=True,
+    branch_builds=False,
+    archclass_stage=10,
 ):
     def source(cls, user):
         archclass_id = cls if cls in ARCHCLASSES else ""
@@ -255,11 +277,14 @@ def match(
         if foreign:
             build = ["uwu", "humiliate", "go_to_store", "mother_joke"]
         build = [k for k in build if BUILTIN_SKILLS[k].unlock_level <= level]
+        if branch_builds and archclass_id and level >= 15 and not foreign:
+            build = list(BRANCH_BUILDS[archclass_id]) + ["arch_" + archclass_id]
         result = dict(
             slave_id=user,
             owner_id=user,
             class_id=cls,
             archclass_id=archclass_id,
+            archclass_stage=archclass_stage,
             level=level,
             controlled=controlled,
             loadout=build,
@@ -298,6 +323,10 @@ def main():
     p.add_argument("--style", choices=("damage", "tactical"), default="tactical")
     p.add_argument("--controlled", action="store_true")
     p.add_argument("--foreign", action="store_true")
+    p.add_argument("--branch-builds", action="store_true",
+                   help="Include the level-15 branch skill in a four-slot native build.")
+    p.add_argument("--archclass-stage", type=int, choices=(10, 20), default=10)
+    p.add_argument("--output", type=Path, help="Save the generated JSON report.")
     p.add_argument(
         "--no-jock-passives",
         action="store_true",
@@ -324,6 +353,8 @@ def main():
                         args.controlled,
                         args.foreign,
                         not args.no_jock_passives,
+                        args.branch_builds,
+                        args.archclass_stage,
                     )
                     wins += winner == "a"
                     draws += winner is None
@@ -338,19 +369,25 @@ def main():
                         mean_actions=round(turns / args.samples, 1),
                     )
                 )
-    print(
-        json.dumps(
-            dict(
-                policy=args.style,
-                samples=args.samples,
-                controlled=args.controlled,
-                foreign=args.foreign,
-                jock_passives=not args.no_jock_passives,
-                results=results,
-            ),
-            indent=2,
-        )
+    report = json.dumps(
+        dict(
+            policy=args.style,
+            samples=args.samples,
+            controlled=args.controlled,
+            foreign=args.foreign,
+            jock_passives=not args.no_jock_passives,
+            branch_builds=args.branch_builds,
+            archclass_stage=args.archclass_stage,
+            results=results,
+        ),
+        indent=2,
     )
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(report + "\n", encoding="utf-8")
+        print("Saved " + str(args.output))
+    else:
+        print(report)
 
 
 if __name__ == "__main__":

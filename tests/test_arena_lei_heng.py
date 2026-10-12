@@ -137,13 +137,14 @@ class LeiEngineTests(unittest.TestCase):
         event = next(e for e in data["log"] if e.get("skill") == "lei_perfected_flurry")
         return data, event
 
-    def test_guard_signature_triple_visuals_and_overheat(self):
+    def test_guard_signature_six_hits_and_overheat(self):
         attacking, attack_event = self.signature()
         guarded, guard_event = self.signature(True)
         self.assertLessEqual(guard_event["damage"], round(attack_event["damage"] * 0.4))
         self.assertGreater(guard_event["damage"], 0)
         self.assertEqual(sum(guard_event["hits"]), guard_event["damage"])
-        self.assertEqual(len(guard_event["hits"]), 3)
+        self.assertEqual(len(guard_event["hits"]), 6)
+        self.assertEqual(len(guard_event["hit_results"]), 6)
         self.assertEqual(guarded["boss"]["own_turns"], 1)
         self.assertTrue(
             any(e.get("id") == "lei_overheat" for e in guarded["boss"]["effects"])
@@ -258,6 +259,7 @@ class LeiEngineTests(unittest.TestCase):
         self.assertEqual(actor["cooldowns"]["tigerslayer_flurry"], 4)
         self.assertEqual(actor["own_turns"], 3)
         self.assertEqual(sum(event["hits"]), before - target["hp"])
+        self.assertEqual(len(event["hits"]), 6)
         self.assertEqual(len(battle["log"]), 1)
         actor["level"] = 9
         self.assertIn(
@@ -265,7 +267,7 @@ class LeiEngineTests(unittest.TestCase):
         )
         self.assertNotIn("tigerslayer_flurry", unlocked_skill_ids("ragamuffin", 20))
 
-    def test_raid_client_sprite_marker_and_triple_replay(self):
+    def test_raid_client_sprite_marker_and_six_hit_replay(self):
         run = client_tests.ArenaMarketClientTests().run_client
         preview = raid_preview("lei_heng")
         rendered = run("updateRaidTimer=()=>{};raidScreen(input)", preview)
@@ -274,6 +276,10 @@ class LeiEngineTests(unittest.TestCase):
         self.assertEqual(rendered.count('class="raid-fighter'), 4)
         animation = raid_preview("lei_heng_animation")
         event = next(e for e in animation["data"]["log"] if e.get("hits"))
+        self.assertEqual(self.client_animation(event),
+                         {"impacts": 6, "numbers": event["hits"]})
+
+    def client_animation(self, event):
         source = (
             (Path(__file__).resolve().parents[1] / "webapp" / "battle-client")
             .read_text(encoding="utf-8")
@@ -294,9 +300,20 @@ raidAnimate(input).then(()=>({impacts,numbers}));`,c).then(result=>process.stdou
             encoding="utf-8",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            json.loads(result.stdout), {"impacts": 3, "numbers": event["hits"]}
-        )
+        return json.loads(result.stdout)
+
+    def test_client_partial_series_and_all_misses_show_individual_outcomes(self):
+        event = dict(actor="boss", target="1", skill="lei_perfected_flurry",
+                     damage_type="physical", hit=True, damage=10,
+                     hits=[5, 0, 0, 5, 0, 0],
+                     hit_results=[dict(hit=hit, dodged=dodged) for hit, dodged in
+                                  ((True, False), (False, True), (False, False)) * 2])
+        self.assertEqual(self.client_animation(event),
+                         dict(impacts=2, numbers=[5, "Уклонение", "Промах"] * 2))
+        event.update(hit=False, damage=0, hits=[0] * 6,
+                     hit_results=[dict(hit=False, dodged=False)] * 6)
+        self.assertEqual(self.client_animation(event),
+                         dict(impacts=0, numbers=["Промах"] * 6))
 
 
 class LeiStoreTests(unittest.IsolatedAsyncioTestCase):

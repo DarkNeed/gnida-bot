@@ -222,10 +222,11 @@ async function animateEvent(event){
   }
   await sleep(430);attacker?.classList.remove("attack");
   audio.impact(event);
-  if(event.hit&&event.damage){
-    for(const amount of event.hits||[event.damage]){
-      target?.classList.add("hurt");const number=document.createElement("div");number.className="damage";number.textContent="−"+amount;if(other===near){number.style.left="23%";number.style.top="65%";}document.querySelector(".field").append(number);setTimeout(()=>number.remove(),1000);
-      if(event.hits){await slashImpact(target);target?.classList.remove("hurt");}
+  if(event.hit_results||(event.hit&&event.damage)){
+    for(const [i,amount] of (event.hits||[event.damage]).entries()){
+      const part=event.hit_results?.[i],landed=part?part.hit:amount>0;
+      if(landed&&amount)target?.classList.add("hurt");const number=document.createElement("div");number.className="damage";number.textContent=part&&!landed?(part.dodged?"Уклонение":"Промах"):amount?"−"+amount:"";if(other===near){number.style.left="23%";number.style.top="65%";}document.querySelector(".field").append(number);setTimeout(()=>number.remove(),1000);
+      if(event.hits){if(landed&&amount)await slashImpact(target);else await sleep(190);target?.classList.remove("hurt");}
     }
   }
   if(event.after)for(const key of ["a","b"]){
@@ -665,7 +666,7 @@ function raidVisual(data,snapshot){
 }
 function raidPopup(key,value){
   const el=document.getElementById('raid-fighter-'+key);if(!el||!value)return;
-  const popup=document.createElement('span');popup.className='raid-damage';popup.textContent='−'+value;el.append(popup);
+  const popup=document.createElement('span');popup.className='raid-damage';popup.textContent=typeof value==='number'?'−'+value:value;el.append(popup);
   setTimeout(()=>popup.remove(),950);
 }
 async function raidAnimate(event){
@@ -688,10 +689,11 @@ async function raidAnimate(event){
     actor.classList.add('raid-cast');await sleep(350);actor.classList.remove('raid-cast');
   }
   audio.impact(event);
-  if(event.damage){
-    for(const amount of event.hits||[event.damage]){
-      target?.classList.add('raid-hit');raidPopup(event.target,amount);
-      if(event.hits){await slashImpact(target);target?.classList.remove('raid-hit');}
+  if(event.hit_results||event.damage){
+    for(const [i,amount] of (event.hits||[event.damage]).entries()){
+      const part=event.hit_results?.[i],landed=part?part.hit:amount>0;
+      if(landed&&amount)target?.classList.add('raid-hit');raidPopup(event.target,part&&!landed?(part.dodged?'Уклонение':'Промах'):amount);
+      if(event.hits){if(landed&&amount)await slashImpact(target);else await sleep(190);target?.classList.remove('raid-hit');}
     }
   }
   if(event.self_damage||event.bleed_damage){actor?.classList.add('raid-hit');raidPopup(event.actor,(event.self_damage||0)+(event.bleed_damage||0));}
