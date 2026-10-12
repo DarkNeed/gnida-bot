@@ -21,6 +21,11 @@ from arena_links import arena_link
 from handlers.pets import create_pet_router
 
 
+def pet_sales_enabled() -> bool:
+    """Owner-approved live rollout; an explicit zero remains the kill switch."""
+    return getenv("PETS_PAYMENTS_ENABLED", "1").strip() == "1"
+
+
 async def main() -> None:
     load_dotenv()
     token = getenv("BOT_TOKEN")
@@ -59,7 +64,8 @@ async def main() -> None:
         raise
     publisher = ArenaPublisher(database, bot, username)
     dispatcher = Dispatcher()
-    pets_payments_enabled = getenv("PETS_PAYMENTS_ENABLED", "0").strip() == "1"
+    pets_payments_enabled = pet_sales_enabled()
+    logging.info("Pet Stars sales: %s", "ENABLED (live payments)" if pets_payments_enabled else "DISABLED")
     dispatcher.include_router(
         create_admin_message_block_router(database, kargassia_chat_id=kargassia_chat_id)
     )

@@ -259,6 +259,34 @@ class PetStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(router.pre_checkout_query.handlers),1)
         self.assertGreaterEqual(len(router.message.handlers),6)
 
+    async def test_enabled_sales_invoice_checkout_payment_and_replay(self):
+        client = TestClient(TestServer(create_arena_app(self.db, self.bot, TOKEN, pets_payments_enabled=True)))
+        await client.start_server()
+        headers = {'X-Telegram-Init-Data': signed(10, int(time.time()))}
+        try:
+            response = await client.get('/api/pets', headers=headers)
+            self.assertTrue((await response.json())['payments_enabled'])
+            response = await client.post('/api/pets/invoice', headers=headers,
+                json=dict(pack='one', accept_terms=True, terms_version=PET_TERMS_VERSION))
+            self.assertEqual(response.status, 200, await response.text())
+            payload = self.bot.create_invoice_link.await_args.kwargs['payload']
+            router = create_pet_router(self.db, 'Example', True)
+            query = SimpleNamespace(from_user=SimpleNamespace(id=10), answer=AsyncMock(),
+                invoice_payload=payload, currency='XTR', total_amount=25)
+            await router.pre_checkout_query.handlers[0].callback(query)
+            query.answer.assert_awaited_once_with(ok=True)
+            self.assertEqual((await self.db.pet_view(10))['wallet']['tickets'], 0)
+            message = SimpleNamespace(from_user=SimpleNamespace(id=10), answer=AsyncMock(),
+                successful_payment=SimpleNamespace(invoice_payload=payload, currency='XTR',
+                    total_amount=25, telegram_payment_charge_id='live-rollout-mocked-charge'))
+            handler = next(h.callback for h in router.message.handlers if h.callback.__name__ == 'payment')
+            await handler(message)
+            await handler(message)
+            self.assertEqual((await self.db.pet_view(10))['wallet']['tickets'], 1)
+            self.assertEqual(message.answer.await_count, 1)
+        finally:
+            await client.close()
+
     async def test_controller_pet_snapshot(self):
         await self.wallet();await self.open();v=await self.db.pet_view(10)
         await self.db.pet_action(10,v['wallet']['revision'],'equip','sandwich',chat=1)
