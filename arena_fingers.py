@@ -68,7 +68,7 @@ def build_catalog(FighterClass, Skill, effect):
                 passive(
                     "revenge",
                     "Книга мести",
-                    "Полученный прямой урон добавляет обиду (до 3). Ответные атаки расходуют её для усиления.",
+                    "Полученный прямой урон добавляет обиду (до 3). Ответные атаки получают +3 точности за обиду; попадание расходует все обиды, промах сохраняет одну из накопленных.",
                 ),
                 passive(
                     "tattoos",
@@ -263,7 +263,7 @@ def build_catalog(FighterClass, Skill, effect):
             90,
             20,
             1,
-            description="Расходует обиды: +15% урона за каждую.",
+            description="За каждую обиду: +10% урона и +3 точности (до 3 обид). Попадание расходует обиды; промах сохраняет одну из накопленных.",
         ),
         s(
             "middle",
@@ -275,7 +275,7 @@ def build_catalog(FighterClass, Skill, effect):
             86,
             40,
             3,
-            description="Серия ударов: +20% суммарного урона за обиду, затем обиды расходуются.",
+            description="За каждую обиду: +12% суммарного урона и +3 точности (до 3 обид). Попадание расходует обиды; промах сохраняет одну из накопленных.",
         ),
         s(
             "ring",
@@ -407,9 +407,9 @@ def combat_modifiers(actor, target, skill, rng):
     if skill.skill_id in {"answer_for_it", "whole_family"} and has_trait(
         actor, "revenge"
     ):
-        boost += (0.20 if skill.skill_id == "whole_family" else 0.15) * memory.get(
-            "grudge", 0
-        )
+        grudge = max(0, min(3, memory.get("grudge", 0)))
+        accuracy += 3 * grudge
+        boost += (0.12 if skill.skill_id == "whole_family" else 0.10) * grudge
     if skill.skill_id == "last_stroke":
         boost += 0.10 * min(3, len(negative_kinds(target)))
     if has_trait(actor, "exhibit") and len(negative_kinds(target)) >= 2:
@@ -432,7 +432,10 @@ def after_action(
         t = target.setdefault("mechanics", {})
         t["grudge"] = min(3, t.get("grudge", 0) + 1)
     if skill.skill_id in {"answer_for_it", "whole_family"}:
-        m["grudge"] = 0
+        m["grudge"] = (
+            0 if hit or not has_trait(actor, "revenge")
+            else min(1, max(0, m.get("grudge", 0)))
+        )
     if skill.skill_id in {"warning_shot", "senior_verdict"}:
         m["order"] = 0
     elif has_trait(actor, "subordination"):

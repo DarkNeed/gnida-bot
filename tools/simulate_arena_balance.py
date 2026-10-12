@@ -325,6 +325,8 @@ def main():
     p.add_argument("--foreign", action="store_true")
     p.add_argument("--branch-builds", action="store_true",
                    help="Include the level-15 branch skill in a four-slot native build.")
+    p.add_argument("--focus", default="",
+                   help="Only match pairs containing one of these comma-separated IDs.")
     p.add_argument("--archclass-stage", type=int, choices=(10, 20), default=10)
     p.add_argument("--output", type=Path, help="Save the generated JSON report.")
     p.add_argument(
@@ -334,14 +336,19 @@ def main():
     )
     args = p.parse_args()
     classes = args.classes.split(",")
+    focus = set(filter(None, args.focus.split(",")))
     if args.samples < 1 or any(
         k not in BUILDS and k not in ARCHCLASSES for k in classes
     ):
         p.error("Use positive samples and known class/archclass IDs.")
+    if not focus.issubset(classes):
+        p.error("Every focus ID must be included in --classes.")
     results = []
     for level in map(int, args.levels.split(",")):
         for i, first in enumerate(classes):
             for second in classes[i + 1 :]:
+                if focus and not focus.intersection((first, second)):
+                    continue
                 wins = draws = turns = 0
                 for seed in range(args.samples):
                     winner, duration = match(
@@ -378,6 +385,7 @@ def main():
             jock_passives=not args.no_jock_passives,
             branch_builds=args.branch_builds,
             archclass_stage=args.archclass_stage,
+            focus=sorted(focus),
             results=results,
         ),
         indent=2,
