@@ -354,7 +354,7 @@ function menuScreen(data){
   const required=(page==='personalProfile'||page==='slaveProfile')&&selected?.progression_choice?selected:[data.personal,data.self_slave].find(p=>p?.progression_choice?.can_choose);
   if(required){progressionScreen(required);return;}
   if(page!=="appearance")clearSpriteDraft();
-  let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+button("Рабы","tab:slaves",page==="slaves"?"selected":"")+button("Владелец","tab:owner",page==="owner"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+'</div>';
+  let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+button("Рабы","tab:slaves",page==="slaves"?"selected":"")+button("Владелец","tab:owner",page==="owner"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+button("Рейды","tab:raids",page==="raids"?"selected":"")+'</div>';
   if(page==="personal")body+=profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Личный персонаж есть у всех, раб не нужен. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
   else if(page==="slaves"){
     body+='<div class="card"><h2>Боевой отряд · '+data.combat_count+' / '+data.combat_capacity+'</h2><p class="muted">При экипировке раб снимается с работы. Чтобы вернуть его на предприятие, сначала сними с боевого слота.</p></div>';
@@ -371,6 +371,9 @@ function menuScreen(data){
     const o=data.owner;
     body+='<div class="card"><h2>Владелец · Lv.'+o.level+'</h2><p class="muted">Опыт: '+o.xp+' XP · Рабов: '+data.slaves.length+'</p><div class="stack">'+button("Инвентарь","tab:inventory")+button("Странствующий торговец","tab:merchant")+'</div></div><div class="note">Крафт убран. Зелья, конфеты и трактаты покупаются за франки у торговца. Владелец получает опыт за победы рабов и новые рекорды их количества.</div>';
     if(data.admin)body+=button("Авторские классы и навыки","admin");
+  }else if(page==="raids"){
+    body+='<div class="note">Выбери босса и создай тихий рейд — сообщение в группу не отправляется. В сборе можно выбрать личного персонажа или боевого раба и сразу начать соло. На сбор — 10 минут.</div>';
+    body+=(data.raid_bosses||[]).map(b=>'<div class="card"><div class="profile">'+(b.sprite?'<img class="portrait" src="'+esc(b.sprite)+'" alt="">':'')+'<div><h2>'+esc(b.name)+'</h2><p class="muted">Рекомендуемый уровень: '+b.recommended_level+'+</p></div></div>'+button('Создать тихий рейд','raidcreate:'+b.id,'primary')+'</div>').join('');
   }else if(page==="merchant"){
     const m=data.merchant||{offers:[]};
     body+='<div class="card"><h2>Странствующий торговец</h2><p>Баланс: '+(data.balance||0)+' ₣</p><p class="muted">'+(m.visit_id?'Уходит: '+esc(new Date(m.ends*1000).toLocaleString('ru-RU')):'Сейчас торговца нет. Следующее появление: '+esc(m.next_starts?new Date(m.next_starts*1000).toLocaleString('ru-RU'):'скоро'))+'</p>'+button('Обновить товары','refresh','small')+'</div>';
@@ -442,6 +445,7 @@ async function menuAction(action,extra={}){
   try{
     const response=await api("/api/menu/"+chat,{action,...extra});
     if(response.mirror){mirrorAbandonConfirm=false;mirrorScreen(response.mirror);}
+    else if(response.raid){raidScreen(response.raid);}
     else if(response.token){token=response.token;current=null;lastSeq=0;battleScreen(await api("/api/battle/"+token));}
     else{toast(({crafted:"Создано.",low_level:"Недостаточный уровень.",not_enough_material:"Не хватает сырья.",no_candy:"Нет конфет.",given:"Конфета выдана.",created:"Создано.",granted:"Выдано.",invalid_definition:"Некорректное описание.",exists:"Такой ID уже есть."})[response.notice]||response.notice);menuScreen(response.menu);}
     return true;
@@ -484,6 +488,7 @@ app.addEventListener("click",async event=>{
   if(cmd==="potion"||cmd==="surrender"){await action("skill",{skill:cmd});return;}
   if(cmd==="menu"||cmd==="refresh"){closeEffect();statusViews=null;closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
   if(cmd==='pets'){location.assign('/pets?chat='+chat+location.hash);return;}
+  if(cmd==='raidcreate'){await menuAction('raid_create',{boss:arg});return;}
   if(cmd==="tab"){page=arg;menuScreen(menu);return;}
   if(cmd==="appearance"){clearSpriteDraft();page="appearance";menuScreen(menu);return;}
   if(cmd==="choose_sprite"){document.getElementById("sprite-file").click();return;}
@@ -665,7 +670,7 @@ function raidScreen(data){
     body+=(demo&&data.status==='active'?raidButton('Показать атаки · демо','preview','small'):'')+'<div class="card raid-log"><h3>Ход рейда</h3>'+d.log.slice(-12).map(e=>'<p><small>Раунд '+e.round+'</small> <b>'+esc(e.actor==='boss'?data.boss_name:d.players[e.actor]?.fighter.name||'Участник')+'</b>: '+esc(e.text)+(e.target&&e.target!==e.actor?' → '+esc(e.target==='boss'?data.boss_name:d.players[e.target]?.fighter.name||'Боец'):'')+'</p>').join('')+'</div>';
   }else body='<div class="card"><h2>Сбор рейда закрыт</h2><p>Новый отряд можно собрать командой /рейд в чате.</p></div>';
   if(data.status==='finished')body+=petRewards(data.data?.rewards?.[String(data.actor_id)]?.pet_rewards);
-  app.innerHTML='<section class="menu raid-screen">'+top('Командный рейд','ГНИДА · ЧАТ '+chat,raidButton('Обновить','refresh','small'))+'<div class="content">'+body+'<div class="row">'+raidButton('В меню арены','menu','small')+'</div></div></section>';
+  app.innerHTML='<section class="menu raid-screen">'+top(data.silent?'Тихий рейд':'Командный рейд','ГНИДА · ЧАТ '+chat,raidButton('Обновить','refresh','small'))+'<div class="content">'+body+'<div class="row">'+raidButton('В меню арены','menu','small')+'</div></div></section>';
   updateRaidTimer();if(raidInspect)showRaidDetails(raidInspect);
   audio.refresh();
 }

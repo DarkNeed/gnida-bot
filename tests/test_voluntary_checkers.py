@@ -118,7 +118,7 @@ class VoluntaryCheckersTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.01)
             if self.bot.edit_message_text.await_count:
                 break
-        self.assertEqual((await self.db.get_challenge(challenge_id))["status"], "pending_deadline")
+        self.assertEqual((await self.db.get_challenge(challenge_id))["status"], "expired")
         self.assertIsNone(await self.db.get_owner(-100, 2))
         self.assertIn("Последствий нет", self.bot.edit_message_text.await_args.args[0])
 

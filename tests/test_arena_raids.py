@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 from arena_engine import FIGHTER_CLASSES, BUILTIN_SKILLS, Skill
-from arena_raid_engine import create_raid_state, resolve_round, set_intent
+from arena_raid_engine import BOSSES, create_raid_state, resolve_round, set_intent
 from arena_raid_web import raid_view
 from arena_progression import pending_choice
 from arena_web import create_arena_app
@@ -384,6 +384,22 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
                         )
                     self.assertFalse(self.db._arena_busy_locked(1, 10))
 
+    async def test_silent_lobby_survives_unpublished_cleanup_restart_and_expires_normally(self):
+        row = await self.db.arena_raid_create(1, 10, "lei_heng", silent=True)
+        self.assertIsNone(row["message_id"])
+        await self.db.close()
+        await self.db.connect()
+        with patch("arena_raid.time.time", return_value=row["created_at"] + 61):
+            await self.db.arena_raid_expire()
+        self.assertEqual((await self.db.arena_raid_get(row["token"]))["status"], "lobby")
+        with patch("arena_raid.time.time", return_value=row["deadline"]):
+            await self.db.arena_raid_expire()
+        self.assertEqual((await self.db.arena_raid_get(row["token"]))["status"], "cancelled")
+        orphan = await self.db.arena_raid_create(1, 10)
+        with patch("arena_raid.time.time", return_value=orphan["created_at"] + 61):
+            await self.db.arena_raid_expire()
+        self.assertEqual((await self.db.arena_raid_get(orphan["token"]))["status"], "cancelled")
+
     async def test_solo_surrender_and_timeout(self):
         row = await self.lobby()
         row = await self.db.arena_raid_setup(row["token"], 10, "start")
@@ -746,6 +762,39 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.close()
 
+    async def test_http_silent_creation_auth_membership_solo_and_no_group_messages(self):
+        self.bot.send_message = AsyncMock()
+        self.bot.edit_message_text = AsyncMock()
+        pub = RaidPublisher(self.db, self.bot, "TestBot")
+        client = TestClient(TestServer(create_arena_app(
+            self.db, self.bot, test_arena.TOKEN, raid_changed=pub.changed,
+        )))
+        await client.start_server()
+        path = "/api/menu/1"
+        headers = {"X-Telegram-Init-Data": test_arena.signed(10, int(time.time()))}
+        try:
+            self.assertEqual((await client.post(path, json={"action": "raid_create", "boss": "iron"})).status, 400)
+            response = await client.get(path, headers=headers)
+            self.assertEqual({b["id"] for b in (await response.json())["raid_bosses"]}, {"iron", "lei_heng", "doofenshmirtz"})
+            self.assertEqual((await client.post(path, headers=headers, json={"action": "raid_create", "boss": "unknown"})).status, 400)
+            self.bot.get_chat_member.return_value.status = "left"
+            self.assertEqual((await client.post(path, headers=headers, json={"action": "raid_create", "boss": "iron"})).status, 400)
+            self.bot.get_chat_member.return_value.status = "member"
+            response = await client.post(path, headers=headers, json={"action": "raid_create", "boss": "doofenshmirtz", "actor": 20})
+            self.assertEqual(response.status, 200, await response.text())
+            raid = (await response.json())["raid"]
+            self.assertTrue(raid["silent"])
+            self.assertEqual(raid["creator_id"], 10)
+            self.assertEqual((await self.db.arena_raid_get(raid["token"]))["message_id"], None)
+            self.assertEqual((await client.post(path, headers=headers, json={"action": "raid_create", "boss": "iron"})).status, 400)
+            response = await client.post("/api/raid/"+raid["token"], headers=headers, json={"action": "start"})
+            self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual((await response.json())["status"], "active")
+            self.bot.send_message.assert_not_awaited()
+            self.bot.edit_message_text.assert_not_awaited()
+        finally:
+            await client.close()
+
 
 @unittest.skipUnless(shutil.which("node"), "Node required")
 class RaidClientTests(unittest.TestCase):
@@ -753,6 +802,15 @@ class RaidClientTests(unittest.TestCase):
         return client_tests.ArenaMarketClientTests().run_client(
             "document.getElementById=()=>null;raidScreen(input);", data
         )
+
+    def test_menu_has_silent_raid_creation_with_all_bosses(self):
+        data = client_tests.ArenaMarketClientTests().menu_data()
+        data["raid_bosses"] = [dict(id=k, name=v["name"], sprite=v.get("sprite", ""), recommended_level=v.get("recommended_level", 1)) for k,v in BOSSES.items()]
+        body = client_tests.ArenaMarketClientTests().run_client("page='raids';menuScreen(input);", data)
+        for boss in BOSSES:
+            self.assertIn('data-do="raidcreate:'+boss+'"', body)
+        self.assertIn("сообщение в группу не отправляется", body)
+        self.assertIn("начать соло", body)
 
     def test_active_one_click_skills_3_players_and_boss(self):
         body = self.render(raid_preview())

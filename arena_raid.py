@@ -53,6 +53,10 @@ class RaidMixin:
             self.connection.execute(
                 "ALTER TABLE arena_raids ADD COLUMN boss_id TEXT NOT NULL DEFAULT 'iron'"
             )
+        if "silent" not in columns:
+            self.connection.execute(
+                "ALTER TABLE arena_raids ADD COLUMN silent INTEGER NOT NULL DEFAULT 0"
+            )
         self.connection.commit()
 
     def _raid_row_locked(self, token):
@@ -270,7 +274,7 @@ class RaidMixin:
             row = self._raid_cleanup_locked(original)
             if row["status"] == "lobby" and (
                 row["deadline"] <= now
-                or row["message_id"] is None
+                or not row["silent"] and row["message_id"] is None
                 and row["created_at"] + 60 <= now
             ):
                 self.connection.execute(
@@ -317,7 +321,7 @@ class RaidMixin:
             )
             self.connection.commit()
 
-    async def arena_raid_create(self, chat, actor, boss_id="iron"):
+    async def arena_raid_create(self, chat, actor, boss_id="iron", *, silent=False):
         if boss_id not in BOSSES:
             raise ValueError("Неизвестный босс.")
         async with self._lock:
@@ -328,8 +332,8 @@ class RaidMixin:
                 self._arena_profile_locked(chat, actor, True)
                 now, token = int(time.time()), secrets.token_urlsafe(12)
                 self.connection.execute(
-                    "INSERT INTO arena_raids(token,chat_id,creator_id,created_at,deadline,boss_id) VALUES(?,?,?,?,?,?)",
-                    (token, chat, actor, now, now + RAID_LOBBY_SECONDS, boss_id),
+                    "INSERT INTO arena_raids(token,chat_id,creator_id,created_at,deadline,boss_id,silent) VALUES(?,?,?,?,?,?,?)",
+                    (token, chat, actor, now, now + RAID_LOBBY_SECONDS, boss_id, int(silent)),
                 )
                 self.connection.execute(
                     "INSERT INTO arena_raid_players VALUES(?,?,?,?,?)",

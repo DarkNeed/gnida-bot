@@ -153,6 +153,7 @@ async def raid_view(db, row, actor):
         server_time=int(time.time()),
         boss_name=boss_info["name"],
         boss_id=row.get("boss_id", "iron"),
+        silent=bool(row.get("silent", False)),
         recommended_level=boss_info.get("recommended_level", 1),
         ally_sprite=boss_info.get("ally_sprite", ""),
         loot_name=(

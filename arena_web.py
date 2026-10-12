@@ -37,6 +37,7 @@ from arena_evolution import evolution_info
 from arena_archclasses import archclass_view, class_title, branch_options
 from arena_progression import pending_choice, choice_avatar
 from arena_raid_web import raid_view
+from arena_raid_engine import BOSSES
 from arena_pets import pet_cost, PET_PACKS, PET_TERMS_VERSION
 from aiogram.types import LabeledPrice
 
@@ -402,6 +403,11 @@ async def menu_view(db, chat: int, actor: int) -> dict:
     result.update(await db.arena_market_view(chat, actor))
     result["mirror_runs"] = mirror_runs
     result["raids"] = await db.arena_raid_list(chat, actor)
+    result["raid_bosses"] = [
+        dict(id=boss_id, name=boss["name"], sprite=boss.get("sprite", ""),
+             recommended_level=boss.get("recommended_level", 1))
+        for boss_id, boss in BOSSES.items()
+    ]
     return result
 
 
@@ -713,11 +719,16 @@ def create_arena_app(
     async def post_menu(request):
         chat = int(request.match_info["chat"])
         actor = request[ACTOR]
-        await require_member(bot, chat, actor)
+        member = await require_member(bot, chat, actor)
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Некорректный запрос.")
         action = body.get("action")
+        if action == "raid_create":
+            if member.user.is_bot:
+                raise ValueError("Боты не участвуют в рейдах.")
+            row = await db.arena_raid_create(chat, actor, str(body.get("boss", "")), silent=True)
+            return web.json_response({"raid": await raid_view(db, row, actor)})
         if action in {"wasteland", "mirror_start"}:
             fighter = int_field(body, "fighter")
             if fighter:

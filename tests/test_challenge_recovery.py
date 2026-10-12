@@ -151,6 +151,119 @@ class ChallengeRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.get_challenge(challenge_id))["status"], "cancelled")
         self.assertIsNone(await self.db.get_owner(-100, 2))
 
+    async def assign_to_new_owner(self):
+        self.assertEqual(await self.db.transfer_slave(-100, 1, 2, 3), "transferred")
+        self.assertEqual(await self.db.create_business(-100, 3, "field"), "created")
+        self.assertEqual(await self.db.set_business_worker_role(-100, 3, 2, "collector"), "updated")
+
+    async def assert_worker_survived(self):
+        self.assertEqual((await self.db.get_owner(-100, 2))["owner_id"], 3)
+        self.assertIsNotNone(self.db.connection.execute(
+            "SELECT 1 FROM business_workers WHERE chat_id=-100 AND owner_id=3 AND worker_id=2"
+        ).fetchone())
+
+    async def test_newcomer_timeout_transfer_and_restart_do_not_reenslave_or_unassign(self):
+        challenge_id = await self.offer(newcomer=True, stake=0)
+        await self.db.set_challenge_message(challenge_id, 321)
+        self.age_challenge(challenge_id, expired=True)
+        await self.db.claim_expired_challenge(challenge_id)
+        self.assertEqual((await self.db.get_owner(-100, 2))["owner_id"], 1)
+        await self.assign_to_new_owner()
+        # Simulate a crash after atomic settlement, before Telegram delivery.
+        await self.db.close()
+        await self.db.connect()
+        router = create_router(self.db)
+        for startup in router.startup.handlers:
+            await startup.callback(self.bot)
+        for _ in range(5):
+            await asyncio.sleep(0)
+        await self.assert_worker_survived()
+        self.assertEqual((await self.db.get_challenge(challenge_id))["status"], "expired")
+        self.assertEqual(await self.db.pending_challenges(), [])
+        for shutdown in router.shutdown.handlers:
+            await shutdown.callback()
+
+    async def test_legacy_pending_deadline_is_closed_without_reapplying(self):
+        challenge_id = await self.offer(newcomer=True, stake=0)
+        await self.db.force_enslave(-100, 2, 1)
+        await self.assign_to_new_owner()
+        self.db.connection.execute("UPDATE challenges SET status='pending_deadline' WHERE id=?", (challenge_id,))
+        self.db.connection.execute("ALTER TABLE challenges DROP COLUMN slavery_outcome")
+        self.db.connection.execute("ALTER TABLE challenges DROP COLUMN slavery_affected_id")
+        self.db.connection.commit()
+        await self.db.close()
+        await self.db.connect()
+        await self.assert_worker_survived()
+        self.assertEqual((await self.db.get_challenge(challenge_id))["status"], "expired")
+        self.assertEqual(await self.db.pending_challenges(), [])
+
+    async def test_played_result_cannot_take_another_slave_when_replayed(self):
+        challenge_id = await self.db.create_challenge(-100, 1, 4, awaiting_acceptance=False)
+        await self.db.force_enslave(-100, 2, 1)
+        await self.db.finish_challenge(challenge_id, winner_id=4)
+        # RPS without choices has no winner yet; use persisted result as publisher does.
+        await self.db.record_challenge_result(challenge_id, 4)
+        self.assertEqual(await self.db.transfer_after_loss(-100, 1, 4, challenge_id=challenge_id), ("transferred", 2))
+        await self.db.transfer_slave(-100, 4, 2, 3)
+        await self.db.create_business(-100, 3, "field")
+        await self.db.set_business_worker_role(-100, 3, 2, "collector")
+        await self.db.close()
+        await self.db.connect()
+        self.assertEqual(await self.db.transfer_after_loss(-100, 1, 4, challenge_id=challenge_id), ("transferred", 2))
+        await self.assert_worker_survived()
+        self.assertIsNone(await self.db.get_owner(-100, 1))
+
+    async def test_timeout_does_not_overwrite_owner_established_before_expiry(self):
+        challenge_id = await self.offer(newcomer=True, stake=0)
+        await self.db.force_enslave(-100, 2, 1)
+        await self.assign_to_new_owner()
+        self.age_challenge(challenge_id, expired=True)
+        await self.db.claim_expired_challenge(challenge_id)
+        await self.assert_worker_survived()
+        self.assertEqual((await self.db.get_challenge(challenge_id))["slavery_outcome"], "protected_slave")
+
+    async def test_inactivity_and_username_change_do_not_unassign_workers(self):
+        await self.db.force_enslave(-100, 2, 1)
+        await self.assign_to_new_owner()
+        self.db.connection.execute("UPDATE users SET last_seen=0 WHERE chat_id=-100 AND user_id=2")
+        self.db.connection.execute("UPDATE businesses SET last_accrued=last_accrued-86400 WHERE chat_id=-100 AND owner_id=3")
+        self.db.connection.commit()
+        await self.db.settle_business(-100, 3)
+        await self.db.upsert_user(-100, 2, "changed_tag", "Новое имя", touch=False)
+        await self.db.close()
+        await self.db.connect()
+        await self.assert_worker_survived()
+
+    async def test_failed_timeout_settlement_rolls_back_status_and_ownership(self):
+        challenge_id = await self.offer(newcomer=True, stake=0)
+        self.age_challenge(challenge_id, expired=True)
+        with patch.object(self.db, "_refresh_owner_record_locked", side_effect=RuntimeError("injected failure")):
+            with self.assertRaises(RuntimeError):
+                await self.db.claim_expired_challenge(challenge_id)
+        self.assertIsNone(await self.db.get_owner(-100, 2))
+        self.assertEqual((await self.db.get_challenge(challenge_id))["status"], "pending")
+        await self.db.claim_expired_challenge(challenge_id)
+        self.assertEqual((await self.db.get_owner(-100, 2))["owner_id"], 1)
+
+    async def test_failed_played_result_preserves_worker_then_concurrent_replays_apply_once(self):
+        challenge_id = await self.db.create_challenge(-100, 1, 4, awaiting_acceptance=False)
+        await self.db.force_enslave(-100, 2, 1)
+        await self.db.create_business(-100, 1, "field")
+        await self.db.set_business_worker_role(-100, 1, 2, "collector")
+        await self.db.finish_challenge(challenge_id)
+        await self.db.record_challenge_result(challenge_id, 4)
+        with patch.object(self.db, "_refresh_owner_record_locked", side_effect=RuntimeError("injected failure")):
+            with self.assertRaises(RuntimeError):
+                await self.db.transfer_after_loss(-100, 1, 4, challenge_id=challenge_id)
+        self.assertEqual((await self.db.get_owner(-100, 2))["owner_id"], 1)
+        self.assertIsNone((await self.db.get_challenge(challenge_id))["slavery_outcome"])
+        self.assertIsNotNone(self.db.connection.execute("SELECT 1 FROM business_workers WHERE chat_id=-100 AND worker_id=2").fetchone())
+        results = await asyncio.gather(*[
+            self.db.transfer_after_loss(-100, 1, 4, challenge_id=challenge_id) for _ in range(2)
+        ])
+        self.assertEqual(results, [("transferred", 2), ("transferred", 2)])
+        self.assertIsNone(await self.db.get_owner(-100, 1))
+
     async def test_command_spellings(self):
         for text in ("Отменить вызов", "!отменить вызов", "/отменить вызов", "/cancel_challenge@GnidoBot"):
             self.assertIsNotNone(CANCEL_CHALLENGE_RE.fullmatch(text))

@@ -189,7 +189,8 @@ def create_raid_router(db, bot, enabled, publisher):
             return
         if message.chat.type not in {"group", "supergroup"}:
             await message.answer(
-                "Создай рейд командой /рейд в чате. Личка для участия не нужна."
+                "Для рейда без сообщений в группу: /menu → Арена → Рейды → Создать тихий рейд. "
+                "Для публичного сбора отряда используй /рейд в чате."
             )
             return
         try:

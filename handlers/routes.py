@@ -24,6 +24,7 @@ from aiogram.exceptions import (
     TelegramAPIError,
     TelegramBadRequest,
     TelegramForbiddenError,
+    TelegramEntityTooLarge,
     TelegramRetryAfter,
 )
 from aiogram.types import (
@@ -46,6 +47,9 @@ from aiogram.types import (
 )
 
 from blackjack import full_hand, hand_total, visible_hand
+from backup_archive import (
+    archive_snapshot, split_archive, BACKUP_PART_BYTES, MIN_BACKUP_PART_BYTES,
+)
 from checkers import BLACK, WHITE, EMPTY, legal_moves as legal_checkers_moves
 from custom_commands import (
     CUSTOM_COMMAND_OWNER_ID,
@@ -1194,6 +1198,7 @@ def create_router(
     donation_tasks: set[asyncio.Task[None]] = set()
     competition_tasks: set[asyncio.Task[None]] = set()
     donation_sync_lock = asyncio.Lock()
+    backup_lock = asyncio.Lock()
     competition_render_lock = asyncio.Lock()
     recent_safebooru_ids: dict[int, list[int]] = {}
     challenge_edit_lock = asyncio.Lock()
@@ -2601,9 +2606,11 @@ def create_router(
             )
             return
         outcome, affected_id = await database.transfer_after_loss(
-            chat_id, loser_id, winner_id
+            chat_id, loser_id, winner_id, challenge_id=int(challenge["id"])
         )
-        if outcome == "freed":
+        if outcome == "legacy":
+            consequence = "Последствия этого старого вызова уже обработаны."
+        elif outcome == "freed":
             consequence = f"{plain_name(winner)} побеждает владельца и становится свободным."
         elif outcome == "no_reward":
             consequence = f"{plain_name(winner)} пока раб и не может получить собственного раба."
@@ -2671,13 +2678,15 @@ def create_router(
             if challenge:
                 break
         if challenge["status"] in {"pending", "pending_deadline"}:
-            if challenge["opponent_newcomer"] and challenge["game_type"] != "checkers":
+            settled = await database.get_challenge(challenge_id)
+            result = settled["slavery_outcome"]
+            await database.finish_challenge_deadline(challenge_id)
+            if challenge["opponent_newcomer"] and challenge["game_type"] != "checkers" and not challenge["friendly"]:
                 chat_id = int(challenge["chat_id"])
                 challenger_id = int(challenge["challenger_id"])
                 opponent_id = int(challenge["opponent_id"])
                 challenger = await database.get_user(chat_id, challenger_id)
                 opponent = await database.get_user(chat_id, opponent_id)
-                result = await database.force_enslave(chat_id, opponent_id, challenger_id)
                 if result == "enslaved":
                     text = (
                         f"⌛ {plain_name(opponent)} не принял вызов за 5 минут и "
@@ -2685,6 +2694,10 @@ def create_router(
                     )
                 elif result == "pirojok_cannot_own":
                     text = "Этот кувшин слишком тесен для вас двоих."
+                elif result == "protected_slave":
+                    text = "⌛ Вызов истёк. Участник уже в рабстве — владелец и работа не изменились."
+                elif result in {"legacy", None, "no_consequences"}:
+                    text = "⌛ Вызов истёк. Повторных последствий нет."
                 else:
                     text = (
                         "⌛ Новичок не принял вызов, но вызывающий сам является рабом "
@@ -2710,6 +2723,7 @@ def create_router(
         if challenge["game_type"] == "rps" and first_moved and second_moved:
             await publish_played_result(challenge, bot)
         else:
+            await database.finish_challenge_deadline(challenge_id)
             competition = await database.get_checkers_competition(challenge_id)
             suffix = (
                 " Ставки возвращены зрителям."
@@ -3598,15 +3612,73 @@ def create_router(
             or message.from_user.id != CUSTOM_COMMAND_OWNER_ID
         ):
             return
+        if backup_lock.locked():
+            await message.answer("Предыдущий бэкап ещё отправляется. Дождись его завершения.")
+            return
+        async with backup_lock:
+            await send_owner_backup(message)
+
+    async def send_owner_backup(message):
+        async def build(function, *args):
+            task = asyncio.create_task(asyncio.to_thread(function, *args))
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task
+                raise
+
+        async def send(path, *, caption):
+            for attempt in range(4):
+                try:
+                    return await message.answer_document(FSInputFile(path), caption=caption, request_timeout=300)
+                except TelegramRetryAfter as error:
+                    if attempt == 3:
+                        raise
+                    remaining = error.retry_after
+                    while remaining > 0:
+                        await asyncio.sleep(min(remaining, 60))
+                        remaining -= min(remaining, 60)
+
         try:
             with tempfile.TemporaryDirectory(prefix="gnidabot-backup-") as temp_dir:
                 timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-                backup_path = Path(temp_dir) / f"gnida_bot_{timestamp}.sqlite3"
+                backup_path = Path(temp_dir) / f"gnida_bot_{timestamp}_{uuid4().hex[:8]}.sqlite3"
                 await database.backup_to(backup_path)
-                await message.answer_document(
-                    FSInputFile(backup_path),
-                    caption="Резервная копия базы SQLite. Храни файл приватно: в нём данные участников и франки.",
+                archive = await build(archive_snapshot, backup_path)
+                logging.getLogger(__name__).info(
+                    "Backup snapshot: %s bytes; compressed: %s bytes",
+                    backup_path.stat().st_size, archive.stat().st_size,
                 )
+                part_bytes = BACKUP_PART_BYTES
+                if archive.stat().st_size <= part_bytes:
+                    try:
+                        await send(
+                            archive,
+                            caption="Резервная копия SQLite в ZIP. Храни приватно. Для проверки: tools/restore_backup.py; внутри архива — база и контрольная сумма.",
+                        )
+                        return
+                    except TelegramEntityTooLarge:
+                        part_bytes = max(MIN_BACKUP_PART_BYTES, min(part_bytes // 2, archive.stat().st_size // 2))
+                while True:
+                    parts, manifest = await build(split_archive, archive, part_bytes)
+                    try:
+                        for index, part in enumerate(parts, 1):
+                            await send(
+                                part,
+                                caption=f"Бэкап: часть {index}/{len(parts)}. Сохрани все части одной серии и файл .backup.json в одну папку. Храни приватно.",
+                            )
+                        await send(
+                            manifest,
+                            caption="Все части этой серии отправлены. Сборка и проверка: python tools/restore_backup.py имя.backup.json --output recovered.sqlite3. Не смешивай разные серии.",
+                        )
+                        break
+                    except TelegramEntityTooLarge:
+                        if part_bytes <= MIN_BACKUP_PART_BYTES:
+                            raise
+                        for part in [*parts, manifest]:
+                            part.unlink()
+                        part_bytes = max(MIN_BACKUP_PART_BYTES, part_bytes // 2)
+                        await message.answer("Сервер отклонил размер файла. Отправляю новую серию меньшими частями; используй только серию с итоговым .backup.json.")
         except (OSError, sqlite3.Error, TelegramAPIError):
             logging.getLogger(__name__).exception("Could not create or send database backup")
             await message.answer("Не удалось отправить резервную копию. Попробуй позже и проверь логи бота.")

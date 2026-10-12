@@ -23,9 +23,11 @@ async def create_app():
     await db.connect()
     await db.upsert_chat(1, "Локальное демо")
     await db.upsert_chat(2, "Рейд — локальное демо")
+    await db.upsert_chat(3, "Соло — локальное демо")
     for user in (10, 20, 30):
         await db.upsert_user(1, user, str(user), f"Игрок {user}")
         await db.upsert_user(2, user, str(user), f"Игрок {user}")
+        await db.upsert_user(3, user, str(user), f"Игрок {user}")
     await db.pet_view(10)
     db.connection.execute("UPDATE pet_wallets SET tickets=40,food=500,essence=10,shards=400 WHERE user_id=10")
     for user,pet in ((10,"bug"),(20,"gachi_duck"),(30,"moon_mimic")):
@@ -39,7 +41,9 @@ async def create_app():
     for user in (20,30):
         await db.arena_raid_setup(raid["token"],user,"join")
     await db.arena_raid_setup(raid["token"],10,"start")
-    bot = SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status="member")))
+    bot = SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(
+        status="member", user=SimpleNamespace(is_bot=False),
+    )))
     token = "123456:local-qa-only"
     app = create_arena_app(db, bot, token)
 
@@ -66,8 +70,12 @@ async def create_app():
     async def raid_page(request):
         raise web.HTTPFound("/?tgWebAppStartParam=r_" + raid["token"])
 
+    async def solo_menu(request):
+        raise web.HTTPFound("/?tgWebAppStartParam=menu_3")
+
     app.router.add_get("/qa/battle", battle_page)
     app.router.add_get("/qa/raid", raid_page)
+    app.router.add_get("/qa/menu", solo_menu)
 
     async def cleanup(app):
         await db.close()
