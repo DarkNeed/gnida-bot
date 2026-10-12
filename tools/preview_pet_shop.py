@@ -53,7 +53,10 @@ async def create_app():
             headers = dict(request.headers)
             headers["X-Telegram-Init-Data"] = urlencode(data)
             request = request.clone(headers=headers)
-        return await handler(request)
+        response = await handler(request)
+        if request.path == "/pets" and isinstance(response, web.Response):
+            response.text = response.text.replace("Общий аккаунт</span>", "ДЕМО · ТЕСТОВЫЕ ДАННЫЕ</span>")
+        return response
 
     app.middlewares.insert(0, local_demo)
 

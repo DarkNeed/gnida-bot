@@ -93,7 +93,7 @@
   }
   async function open(){
     if(busy||!view)return;busy=true;controls();error(null);sound();
-    let p=pending();if(!p){p={nonce:crypto.randomUUID(),revision:view.wallet.revision};try{localStorage.setItem(key,JSON.stringify(p));}catch{}}
+    let p=pending();if(!p){const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);p={nonce:Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(''),revision:view.wallet.revision};try{localStorage.setItem(key,JSON.stringify(p));}catch{}}
     try{const d=await api('/api/pets',{action:'open',chat,...p});clearPending();view=d.view;draw();await animate(d.result);}
     catch(e){if(e.status===400)clearPending();error(e);busy=false;try{await refresh();}catch{}controls();}
   }
