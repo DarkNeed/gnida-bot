@@ -27,7 +27,9 @@ def mirror_reward_items(start_level, rng=None):
             in ({"rare"} if start_level >= 10 else {"uncommon", "rare"})
         ]
     )
-    passive = rng.choice(list(BUILTIN_PASSIVES.values()))
+    # Keep this existing reward pool unchanged: adding forge epics must not
+    # silently turn 40% of mirror rewards into epic passive scrolls.
+    passive = rng.choice([p for p in BUILTIN_PASSIVES.values() if p.rarity in {"common", "uncommon", "rare"}])
     return [
         dict(
             kind="skill",

@@ -38,7 +38,9 @@ async def create_app():
     db.connection.commit()
     db._add_francs_locked(3, 10, 2000)
     for kind, content, quantity in (('skill','dust_in_eyes',4), ('skill','humiliate',3),
-                                    ('skill','tigerslayer_flurry',1), ('passive','steady_hand',3)):
+                                    ('skill','last_argument',3), ('skill','stress_test',1),
+                                    ('skill','tigerslayer_flurry',1), ('passive','steady_hand',3),
+                                    ('passive','nothing_to_lose',1)):
         catalog = BUILTIN_SKILLS if kind == 'skill' else BUILTIN_PASSIVES
         db._arena_add_item_locked(3, 10, kind, content, catalog[content].rarity, quantity)
     wallet = db._forge_wallet_locked(3, 10)

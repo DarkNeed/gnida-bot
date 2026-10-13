@@ -157,13 +157,6 @@ class ArenaMarketMixin(ForgeMixin):
             self.connection.execute(
                 "INSERT INTO arena_market_migrations VALUES('merchant_hours_10_22_v1')"
             )
-        # Historic class learning is not proof of having received a scroll.
-        # Existing physical scrolls are safe to backfill; future receipts are recorded.
-        self.connection.execute(
-            """INSERT OR IGNORE INTO arena_forge_recipes(chat_id,owner_id,kind,content_id)
-               SELECT chat_id,owner_id,kind,content_id FROM arena_inventory
-               WHERE kind IN ('skill','passive')"""
-        )
         self.connection.commit()
 
     def _arena_add_item_locked(self, chat, owner, kind, content, rarity, quantity=1):
@@ -173,7 +166,6 @@ class ArenaMarketMixin(ForgeMixin):
             DO UPDATE SET quantity=quantity+excluded.quantity""",
             (chat, owner, kind, content, rarity, quantity),
         )
-        self._forge_receipt_locked(chat, owner, kind, content)
 
     def _arena_consume_item_locked(self, row):
         if row["quantity"] > 1:

@@ -206,8 +206,7 @@ class RaidMixin:
                     )
                 pet_rewards = self._pet_reward_locked(
                     player["actor_id"], "raid", "raid:" + row["token"])
-                forge_seal = self._forge_boss_seal_locked(chat, player["actor_id"], boss_id)
-                data["rewards"][key] = dict(xp=xp, francs=francs, loot=loot, pet_rewards=pet_rewards, forge_seal=forge_seal)
+                data["rewards"][key] = dict(xp=xp, francs=francs, loot=loot, pet_rewards=pet_rewards)
         self._raid_save_locked(row, data, "finished")
 
     def _raid_player_valid_locked(self, row, player):

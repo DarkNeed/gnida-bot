@@ -39,7 +39,7 @@ function petRewards(reward){
 }
 function clearSpriteDraft(){if(spriteDraft)URL.revokeObjectURL(spriteDraft.url);spriteDraft=null;}
 function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames,r)?r:"common")+'">'+esc(rarityNames[r]||r||"Обычный")+'</span>';}
-function describeEffect(e){if(e.description)return esc(e.description);const kind=String(e.kind||'effect'),value=kind.endsWith("_pct")||kind==='next_magic_damage'||kind==='next_physical_damage'?Math.round(e.value*100)+"%":e.value+(kind==='accuracy_flat'||kind==='evasion_flat'?'%':'');return esc(effectNames[kind]||kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');}
+function describeEffect(e){if(e.description)return esc(e.description);const kind=String(e.kind||'effect');if(kind==='incoming_damage_multiplier')return 'Получаемый прямой урон: −'+Math.round((1-e.value)*100)+'%'+(e.turns?' · '+e.turns+' х.':'');if(kind==='dispel_buffs')return 'Снимает все временные усиления врага';if(kind==='cleanse_one')return 'Снимает один случайный временный дебафф';if(kind==='heal_pct')return 'Лечение: '+Math.round(e.value*100)+'% максимального HP';const value=kind.endsWith("_pct")||kind==='next_magic_damage'||kind==='next_physical_damage'?Math.round(e.value*100)+"%":e.value+(kind==='accuracy_flat'||kind==='evasion_flat'?'%':'');return esc(effectNames[kind]||kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');}
 const statusIcons={bleed:1,stun:2,accuracy_flat:3,damage_pct:4,physical_attack_pct:4,magic_attack_pct:5,physical_defense_pct:6,magic_defense_pct:6,evasion_flat:7,speed_pct:8,resource:9,resource_leech:9,prepared_attack:10,next_physical_damage:10,next_magic_damage:5};
 const statusStatNames={accuracy_flat:'точности',damage_pct:'урона',physical_attack_pct:'физ. атаки',magic_attack_pct:'маг. атаки',physical_defense_pct:'физ. защиты',magic_defense_pct:'маг. защиты',evasion_flat:'уклонения',speed_pct:'скорости',next_physical_damage:'следующей физ. атаки',next_magic_damage:'следующей маг. атаки'};
 const statusColors=['#ef5366','#ef5366','#f4cb75','#93d9ef','#93d9ef','#c59bf1','#93d9ef','#93d9ef','#93d9ef','#c59bf1','#f4cb75','#f4cb75','#ef5366','#c59bf1','#f4cb75','#93d9ef'];
@@ -54,12 +54,15 @@ function fighterStatuses(side){
     const duration=Number(e.duration),kind=String(e.kind||'effect');
     if(!Number.isFinite(duration)||duration<=0||duration>=10000||['resource','resource_leech'].includes(kind))continue;
     const direction=e.id==='pet_guard'?'':kind==='damage_taken_pct'?'down':statusStatNames[kind]&&Number(e.value)!==0&&Number.isFinite(Number(e.value))?(Number(e.value)<0?'down':'up'):'';
-    const name=e.id==='adoration'?'Умиление':e.name||(direction?(direction==='down'?'Понижение ':'Повышение ')+statusStatNames[kind]:effectNames[kind]||'Особый эффект');
+    const name=e.id==='adoration'?'Умиление':kind==='incoming_damage_multiplier'?'Я в домике':e.name||(direction?(direction==='down'?'Понижение ':'Повышение ')+statusStatNames[kind]:effectNames[kind]||'Особый эффект');
     let detail=e.description?esc(e.description):kind==='stun'?'Пропускает ход из-за ошеломления.':kind==='bleed'?'Кровотечение: '+esc(e.value)+' урона при атаке этого бойца.':kind==='prepared_attack'?'Усилена следующая подходящая атака; подготовка расходуется по условиям навыка.':describeEffect({...e,target:'self',turns:0,chance:1});
     detail+='<br>Осталось ходов этого бойца: '+esc(duration)+'.';
-    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:e.id==='pet_guard'?6:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:String(duration),detail});
+    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:kind==='incoming_damage_multiplier'?6:e.id==='pet_guard'?6:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:String(duration),detail});
   }
   const m=side.mechanics||{};
+  const epic=side.epic_state||{},traits=(side.passive_details||[]).flatMap(p=>p.effects||[]);
+  if(epic.plan_b_ready&&traits.some(e=>e.kind==='epic_plan_b'))items.push({id:'epic:plan_b',name:'План Б',icon:10,count:'1',detail:'Следующая атака: +25 точности и +30% урона. Расходуется при попытке атаки.'});
+  if(side.hp>0&&side.hp<=side.stats?.max_hp*.35&&traits.some(e=>e.kind==='epic_desperation'))items.push({id:'epic:desperation',name:'Мне уже нечего терять',icon:4,count:'+50%',detail:'Урон ×1,5, пока HP не выше 35%. Штрафа к защите нет.'});
   for(const [id,name,icon,trait] of [['order','Субординация',11,'subordination'],['grudge','Обиды',12,'revenge'],['focus','Созвездие',13,'constellation']]){
     const count=Number(m[id]);if(!Number.isFinite(count)||count<=0)continue;
     const passive=(side.passive_details||[]).flatMap(p=>p.effects||[]).find(e=>e.kind===trait);
@@ -350,8 +353,12 @@ function profileCard(p,title,owned=false){
 function activeProfile(){return [...(menu?.slaves||[]),menu?.self_slave,menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
 function forgeInfo(item){const d=item.details||{},shown={...d,effects:(d.effects||[]).map(e=>e.kind==='resource_leech'?{...e,value:-Math.abs(e.value)}:e)};return item.kind==='skill'?'<p class="muted">Активный навык · нужен уровень '+esc(d.unlock_level||1)+'</p>'+skillInfo(shown):itemInfo(item);}
 function forgeNonce(){const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');}
-function forgeCost(recipe){return recipe.pages+' стр. · '+recipe.price+' ₣'+(recipe.seals?' · '+recipe.seals+' печати: '+esc(recipe.boss_name):'');}
-function forgeChoices(pool){return '<details><summary>Все возможные результаты · '+pool.choices.length+'</summary><p class="muted">Шансы равные. Может выпасть уже имеющийся или один из отданных навыков. Боссовых, веточных и эксклюзивных навыков здесь нет.</p><div class="stack">'+pool.choices.map(c=>'<div><b>'+esc(c.name)+'</b>'+forgeInfo(c)+'</div>').join('')+'</div></details>';}
+function forgeCost(craft){return craft.pages+' стр. · '+craft.price+' ₣';}
+function forgeOdds(odds){return '<div class="forge-wallet">'+Object.entries(odds).filter(([,n])=>n>0).map(([r,n])=>'<span>'+rarityBadge(r)+' '+Number(n.toFixed(2))+'%</span>').join('')+'</div>';}
+function forgeChoices(f,kind,odds){return '<details><summary>Все возможные результаты</summary><p class="muted">Сначала определяется редкость. Внутри неё шансы навыков равные. Может выпасть уже имеющийся или отданный навык. Боссовых, веточных и эксклюзивных навыков здесь нет.</p><div class="stack">'+f.pools.filter(p=>p.kind===kind&&(!odds||odds[p.rarity]>0)).map(p=>'<div>'+rarityBadge(p.rarity)+(odds?' · '+Number(odds[p.rarity].toFixed(2))+'%':'')+p.choices.map(c=>'<div><b>'+esc(c.name)+'</b>'+forgeInfo(c)+'</div>').join('')+'</div>').join('')+'</div></details>';}
+function forgeFusion(f,rows,items){const count=items.reduce((n,i)=>n+i.quantity,0),odds=Object.fromEntries(f.rarities.map(r=>[r.id,0]));let cost=0;for(const i of items){const row=rows.find(r=>r.id===i.id),rule=f.rarities.find(r=>r.id===row.rarity);cost+=rule.rewrite_price*i.quantity;for(const r of f.rarities)odds[r.id]+=(f.fusion_odds[row.kind][row.rarity][r.id]||0)*i.quantity/(count||1);}return {odds,price:Math.ceil(cost/(count||1)),count};}
+function forgeSelection(f){const rows=f.inventory.filter(i=>i.can_rewrite&&i.kind===forgePool),items=[];let bad=false;for(const row of rows){const count=Number(document.getElementById('forge-rewrite-'+row.id)?.value);if(!Number.isInteger(count)||count<0||count>Math.min(3,row.quantity))bad=true;if(count>0)items.push({id:row.id,quantity:count});}return {rows,items,bad,...forgeFusion(f,rows,items)};}
+function forgeUpdateSelection(){const f=menu?.forge,el=document.getElementById('forge-selection');if(!f||!el)return;const s=forgeSelection(f);el.innerHTML=s.bad?'<p>Проверь количество трактатов.</p>':'<p>Выбрано '+s.count+' / 3 · стоимость '+s.price+' ₣</p>'+(s.count?forgeOdds(s.odds):'');}
 function forgeBody(data){
   const f=data.forge;if(!f)return '<div class="note">Обнови меню для загрузки кузницы.</div>';
   if(page==='forgeConfirm'){
@@ -359,24 +366,21 @@ function forgeBody(data){
     return '<div class="card"><h2>Подтвердить операцию?</h2>'+forgePending.summary+'<p class="muted">Предметы и ресурсы будут списаны окончательно. Навык не изучается автоматически.</p><div class="row">'+button('Подтвердить','forgeconfirm','primary')+button('Назад','forgecancel')+'</div></div>';
   }
   let body='<div class="card"><h2>Кузница трактатов</h2><p>Баланс: '+(data.balance||0)+' ₣</p><div class="forge-wallet">'+f.rarities.map(r=>'<span>'+rarityBadge(r.id)+' '+(f.pages[r.id]||0)+' стр.</span>').join('')+'</div>';
-  body+=f.bosses.map(b=>'<p class="muted">Печати · '+esc(b.name)+': '+(f.seals[b.id]||0)+'</p>').join('')+'<p class="muted">Страницы и рецепты — только для выбранного чата. Один трактат даёт 2 страницы своей редкости. На создание — 6 страниц и франки; для боссового ещё 3 печати из побед над этим боссом.</p></div>';
-  body+='<div class="tabs">'+button('Разобрать','forgemode:dismantle',forgeMode==='dismantle'?'selected':'')+button('Рецепты','forgemode:recipes',forgeMode==='recipes'?'selected':'')+button('Переписать','forgemode:rewrite',forgeMode==='rewrite'?'selected':'')+'</div>';
+  body+='<p class="muted">Материалы — только для выбранного чата. Один трактат даёт 2 страницы своей редкости. Для случайной ковки нужны 6 страниц одной редкости и франки. Рецептов нет; боссовые навыки остаются наградой рейдов.</p></div>';
+  body+='<div class="tabs">'+button('Разобрать','forgemode:dismantle',forgeMode==='dismantle'?'selected':'')+button('Ковать','forgemode:craft',forgeMode==='craft'?'selected':'')+button('Слияние','forgemode:rewrite',forgeMode==='rewrite'?'selected':'')+'</div>';
   if(forgeMode==='dismantle'){
-    body+='<div class="note">Разбираются только активные и пассивные трактаты. Изученные навыки не меняются. Рецепт полученного трактата сохраняется после разбора или передачи.</div>';
+    body+='<div class="note">Разбираются только предметы-трактаты, а не изученные навыки. За каждый — 2 страницы его редкости.</div>';
     body+=f.inventory.map(i=>'<div class="card"><h2>№'+i.id+' · '+esc(i.name)+' × '+i.quantity+'</h2>'+rarityBadge(i.rarity)+forgeInfo(i)+'<label>Количество для разбора<input id="forge-dismantle-'+i.id+'" type="number" min="1" max="'+Math.min(99,i.quantity)+'" step="1" value="1"></label><p class="muted">За каждый: '+i.salvage_pages+' страницы той же редкости. Франки не нужны.</p>'+button('Посмотреть разбор','forgedismantle:'+i.id)+'</div>').join('');
     if(!f.inventory.length)body+='<div class="note">Нет трактатов для разбора. Их можно купить у торговца, получить в пустошах или от другого игрока.</div>';
-  }else if(forgeMode==='recipes'){
-    body+='<div class="note">Рецепт открывается после получения самого трактата, а не изучения классового навыка. Восстанови активный или сшей пассивный трактат из страниц. Изучение сохраняет требования уровня, ветки и лимиты навыков.</div>';
-    body+=f.recipes.map(r=>'<div class="card"><h2>'+esc(r.name)+'</h2>'+rarityBadge(r.rarity)+forgeInfo(r)+'<p>'+forgeCost(r)+'</p>'+button('Создать трактат','forgecraft:'+r.kind+':'+r.content_id,'primary',!r.can_craft||(data.balance||0)<r.price)+'</div>').join('');
-    if(!f.recipes.length)body+='<div class="note">Рецептов пока нет. Получи общедоступный активный или пассивный трактат; боссовые тоже открывают свой рецепт. Скрытые и веточные навыки кузница не копирует.</div>';
+  }else if(forgeMode==='craft'){
+    body+='<div class="note">Выбери качество страниц и активный или пассивный трактат. Пустого результата нет, но редкость результата может отличаться. Требования изучения и лимиты навыков сохраняются.</div>';
+    body+=f.crafts.map(c=>'<div class="card"><h2>'+(c.kind==='skill'?'Активный':'Пассивный')+' трактат</h2><p>Из страниц: '+rarityBadge(c.rarity)+'</p><p>'+forgeCost(c)+'</p>'+forgeOdds(c.odds)+forgeChoices(f,c.kind,c.odds)+button('Проверить ковку','forgecraft:'+c.kind+':'+c.rarity,'primary',(f.pages[c.rarity]||0)<c.pages||(data.balance||0)<c.price)+'</div>').join('');
   }else{
-    const pool=f.pools.find(p=>p.kind+':'+p.rarity===forgePool)||f.pools[0];if(!pool)return body+'<div class="note">Обмен пока недоступен.</div>';
-    forgePool=pool.kind+':'+pool.rarity;
-    const ingredients=f.inventory.filter(i=>i.can_rewrite&&i.kind===pool.kind&&i.rarity===pool.rarity);
-    body+='<div class="card"><h2>Три трактата → один случайный</h2><select id="forge-pool" aria-label="Тип и редкость обмена">'+f.pools.map(p=>'<option value="'+p.kind+':'+p.rarity+'"'+(p===pool?' selected':'')+'>'+esc((p.kind==='skill'?'Активные':'Пассивные')+' · '+rarityNames[p.rarity])+'</option>').join('')+'</select><p>Стоимость: '+pool.price+' ₣. Выбери ровно 3 экземпляра одного типа и редкости.</p>'+forgeChoices(pool)+'</div>';
-    body+=ingredients.map(i=>'<div class="card"><h2>№'+i.id+' · '+esc(i.name)+' × '+i.quantity+'</h2><label>Отдать в обмен<input id="forge-rewrite-'+i.id+'" type="number" min="0" max="'+Math.min(3,i.quantity)+'" step="1" value="0"></label></div>').join('');
-    body+=button('Проверить обмен','forgerewrite','primary',pool.choices.length<2||(data.balance||0)<pool.price||ingredients.reduce((n,i)=>n+i.quantity,0)<3);
-    if(pool.choices.length<2)body+='<div class="note">В этой группе только один результат. Для неё используй разбор и восстановление по рецепту.</div>';
+    if(!['skill','passive'].includes(forgePool))forgePool='skill';
+    const ingredients=f.inventory.filter(i=>i.can_rewrite&&i.kind===forgePool);
+    body+='<div class="card"><h2>Три трактата → один случайный</h2><select id="forge-pool" aria-label="Тип слияния"><option value="skill"'+(forgePool==='skill'?' selected':'')+'>Активные</option><option value="passive"'+(forgePool==='passive'?' selected':'')+'>Пассивные</option></select><p>Выбери ровно 3 экземпляра одного типа. Редкости можно смешивать: шансы — среднее от вложенных трактатов, цена — среднее с округлением вверх.</p><div id="forge-selection"><p>Выбрано 0 / 3</p></div>'+forgeChoices(f,forgePool,null)+'</div>';
+    body+=ingredients.map(i=>'<div class="card"><h2>№'+i.id+' · '+esc(i.name)+' × '+i.quantity+'</h2>'+rarityBadge(i.rarity)+forgeInfo(i)+'<label>Отдать в слияние<input id="forge-rewrite-'+i.id+'" type="number" min="0" max="'+Math.min(3,i.quantity)+'" step="1" value="0"></label></div>').join('');
+    body+=button('Проверить слияние','forgerewrite','primary',ingredients.reduce((n,i)=>n+i.quantity,0)<3);
     if(!ingredients.length)body+='<div class="note">Нет подходящих трактатов. Выбери другой тип или редкость.</div>';
   }
   return body;
@@ -539,16 +543,13 @@ app.addEventListener("click",async event=>{
     forgePreview('dismantle',{items:[{id:item.id,quantity:count}]},'<p>Отдать: <b>'+esc(item.name)+' × '+count+'</b>.</p><p>Получить: '+count*item.salvage_pages+' стр. · '+rarityBadge(item.rarity)+'. Франки не списываются.</p>');return;
   }
   if(cmd==='forgecraft'){
-    const split=arg.indexOf(':'),kind=arg.slice(0,split),content=arg.slice(split+1),recipe=menu?.forge?.recipes.find(r=>r.kind===kind&&r.content_id===content);
-    if(!recipe)return;
-    forgePreview('craft',{kind,content},'<h3>'+esc(recipe.name)+'</h3>'+forgeInfo(recipe)+'<p>Списать: '+forgeCost(recipe)+'. Получить: 1 трактат.</p>');return;
+    const [kind,rarity]=arg.split(':'),f=menu?.forge,c=f?.crafts.find(r=>r.kind===kind&&r.rarity===rarity);if(!c)return;
+    forgePreview('craft',{kind,rarity},'<p>Списать: '+forgeCost(c)+' · страницы '+rarityBadge(rarity)+'. Получить: один случайный '+(kind==='skill'?'активный':'пассивный')+' трактат.</p>'+forgeOdds(c.odds)+forgeChoices(f,kind,c.odds));return;
   }
   if(cmd==='forgerewrite'){
-    const f=menu?.forge,pool=f?.pools.find(p=>p.kind+':'+p.rarity===forgePool);if(!pool)return;
-    const rows=f.inventory.filter(i=>i.can_rewrite&&i.kind===pool.kind&&i.rarity===pool.rarity),items=[];let bad=false;
-    for(const row of rows){const count=Number(document.getElementById('forge-rewrite-'+row.id)?.value);if(!Number.isInteger(count)||count<0||count>Math.min(3,row.quantity))bad=true;if(count>0)items.push({id:row.id,quantity:count});}
-    if(bad||items.reduce((n,i)=>n+i.quantity,0)!==3){toast('Выбери ровно три имеющихся трактата.');return;}
-    forgePreview('rewrite',{items},'<p>Отдать:</p><ul>'+items.map(i=>'<li>'+esc(rows.find(r=>r.id===i.id).name)+' × '+i.quantity+'</li>').join('')+'</ul><p>Списать: '+pool.price+' ₣. Получить: один случайный трактат той же редкости и типа.</p>'+forgeChoices(pool));return;
+    const f=menu?.forge;if(!f)return;const s=forgeSelection(f);
+    if(s.bad||s.count!==3){toast('Выбери ровно три имеющихся трактата.');return;}
+    forgePreview('rewrite',{items:s.items},'<p>Отдать:</p><ul>'+s.items.map(i=>'<li>'+esc(s.rows.find(r=>r.id===i.id).name)+' × '+i.quantity+'</li>').join('')+'</ul><p>Списать: '+s.price+' ₣. Получить: один случайный трактат того же типа.</p>'+forgeOdds(s.odds)+forgeChoices(f,forgePool,s.odds));return;
   }
   if(cmd==="tab"){page=arg;menuScreen(menu);return;}
   if(cmd==="appearance"){clearSpriteDraft();page="appearance";menuScreen(menu);return;}
@@ -613,7 +614,8 @@ app.addEventListener("click",async event=>{
   }
 });
 app.addEventListener("input",event=>{if(page==="admin"&&event.target.id)adminDraft[event.target.id]=event.target.type==="checkbox"?event.target.checked:event.target.value;});
-app.addEventListener('change',event=>{if(event.target.id==='forge-pool'){forgePool=event.target.value;menuScreen(menu);}});
+app.addEventListener('change',event=>{if(event.target.id==='forge-pool'){forgePool=event.target.value;menuScreen(menu);}else if(event.target.id?.startsWith('forge-rewrite-'))forgeUpdateSelection();});
+app.addEventListener('input',event=>{if(event.target.id?.startsWith('forge-rewrite-'))forgeUpdateSelection();});
 async function poll(){
   if(raidCurrent){await pollRaid();return;}
   if(polling||busy||!token||demo||document.hidden||current?.status!=="active"&&current?.status!=="pending")return;

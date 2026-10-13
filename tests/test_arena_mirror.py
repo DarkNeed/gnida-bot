@@ -61,6 +61,7 @@ class MirrorLootTests(unittest.TestCase):
                 self.assertNotIn("raid_loot", skill.tags)
                 self.assertNotEqual(skill.class_id, "ragamuffin")
             self.assertEqual(len(pools[1]), 6)
+            self.assertTrue(all(p.rarity != 'epic' for p in pools[1]))
 
 
 class MirrorEngineTests(unittest.TestCase):

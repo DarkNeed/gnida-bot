@@ -23,6 +23,15 @@ from arena_archclasses import (
     revenge_recoil,
 )
 from arena_archprogress import build_arch_skills, branch_skill_allowed, skill_branch
+from arena_epic import (
+    build_epic_catalog,
+    adaptive_skill,
+    epic_modifiers,
+    epic_after_action,
+    temporary_buff,
+    temporary_debuff,
+    cleanse_one,
+)
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -554,6 +563,10 @@ BUILTIN_PASSIVES = {
     )
 }
 
+_epic_skills, _epic_passives = build_epic_catalog(Skill, PassiveSkill, effect)
+BUILTIN_SKILLS.update(_epic_skills)
+BUILTIN_PASSIVES.update(_epic_passives)
+
 
 def content_rarity(payload: dict) -> str:
     rarity = str(payload.get("rarity", "rare"))
@@ -914,12 +927,12 @@ def _initialize_turn_counts(state: dict) -> None:
 
 def effective_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Skill:
     skill = (skills or BUILTIN_SKILLS)[skill_id]
-    return skill_variant(
+    return adaptive_skill(skill_variant(
         skill,
         state["sides"][side_key],
         state["sides"]["b" if side_key == "a" else "a"],
         completed_turns(state, side_key),
-    )
+    ), state["sides"][side_key], effective_stat)
 
 
 def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Skill:
@@ -952,11 +965,15 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
 
 
 def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
+    if "twice_per_battle" in skill.tags and side.get("epic_state", {}).get("skill_uses", {}).get(skill.skill_id, 0) >= 2:
+        return "Два применения в этом бою уже потрачены."
+    if "fourth_action" in skill.tags and (side.get("own_turns", 0) if own_turns is None else own_turns) < 3:
+        return "Доступно с четвёртого собственного действия."
     if "once_per_battle" in skill.tags and skill.skill_id in side.get(
         "used_skills", []
     ):
         return "Уже использован в этом бою."
-    if "raid_loot" in skill.tags and side["level"] < skill.unlock_level:
+    if ("raid_loot" in skill.tags or skill.class_id == "universal") and side["level"] < skill.unlock_level:
         return f"Нужен {skill.unlock_level} уровень."
     if (
         "third_action" in skill.tags
@@ -982,6 +999,8 @@ def battle_status_snapshot(state: dict) -> dict:
     """Small detached UI snapshot: no passive sentinels or instant resource changes."""
     return {
         key: {
+            "hp": side["hp"],
+            "epic_state": deepcopy(side.get("epic_state", {})),
             **({"pet": deepcopy(side["pet"]), "pet_state": deepcopy(side.get("pet_state", {}))}
                if side.get("pet") else {}),
             "effects": deepcopy(
@@ -1093,7 +1112,7 @@ def resolve_skill(
     rng = rng or random.SystemRandom()
     skill = validate_skill(state, side_key, skill_id, skills)
     _initialize_turn_counts(state)
-    evolved = skill is not (skills or BUILTIN_SKILLS)[skill_id]
+    evolved = skill is not (skills or BUILTIN_SKILLS)[skill_id] and "universal_attack" not in skill.tags
     state["had_player_action"] = True
     actor = state["sides"][side_key]
     other = "b" if side_key == "a" else "a"
@@ -1112,6 +1131,8 @@ def resolve_skill(
     mirror_accuracy, mirror_multiplier = gift_modifiers(actor, target)
     actual_cost = pet_cost(actor, skill, gift_cost(actor, skill))
     class_accuracy, class_boost = class_modifiers(actor, target, skill)
+    epic_accuracy, epic_multiplier = epic_modifiers(actor, target, skill)
+    class_accuracy += epic_accuracy
     extra_accuracy, extra_boost, pierce, critical, obeyed = combat_modifiers(
         actor, target, skill, rng
     )
@@ -1183,6 +1204,8 @@ def resolve_skill(
                 * max(0.1, 1 + boost + extra_boost + class_boost)
                 * reduction
                 * mirror_multiplier
+                * epic_multiplier
+                * math.prod(max(.1, e.get("value", 1)) for e in target["effects"] if e.get("kind") == "incoming_damage_multiplier")
                 * math.prod(
                     max(0.1, e.get("value", 1))
                     for e in actor["effects"]
@@ -1251,6 +1274,12 @@ def resolve_skill(
                         recipient["resource"] + int(effect["value"]),
                     ),
                 )
+            elif effect["kind"] == "heal_pct":
+                recipient["hp"] = min(recipient["stats"]["max_hp"], recipient["hp"] + round(recipient["stats"]["max_hp"] * effect["value"]))
+            elif effect["kind"] == "cleanse_one":
+                cleanse_one(recipient, rng)
+            elif effect["kind"] == "dispel_buffs":
+                recipient["effects"] = [e for e in recipient["effects"] if not temporary_buff(e)]
             else:
                 new = dict(effect)
                 new.setdefault("duration", max(1, new.get("turns", 1)))
@@ -1282,12 +1311,18 @@ def resolve_skill(
                     "physical_attack_pct": "физ. атака",
                     "resource_leech": "похищение энергии",
                     "next_magic_damage": "подготовка магии",
+                    "heal_pct": "лечение",
+                    "cleanse_one": "снятие дебаффа",
+                    "dispel_buffs": "временные усиления сняты",
+                    "incoming_damage_multiplier": "защита от прямого урона −35%",
                 }.get(effect["kind"], effect["kind"])
             )
             effects_text.append(label)
     if hit and damage:
         target["effects"] = [
-            e for e in target["effects"] if not e.get("consume_on_hit")
+            e for e in target["effects"]
+            if not e.get("consume_on_hit")
+            or ("negative_combo" in skill.tags and temporary_debuff(e))
         ]
     if skill.cooldown:
         actor["cooldowns"][skill_id] = skill.cooldown
@@ -1315,6 +1350,7 @@ def resolve_skill(
     pet_notes = pet_after_action(
         actor, target, skill, hit, min(before[other]["hp"], damage), actual_cost,
         pet_context, effects_text, skills or BUILTIN_SKILLS)
+    pet_notes += epic_after_action(actor, target, skill, hit, rng)
     text = f"{skill.name}: " + (
         f"−{damage} HP"
         if damage

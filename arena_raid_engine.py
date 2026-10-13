@@ -253,7 +253,7 @@ def raid_snapshot(data):
         k: deepcopy(
             {
                 field: f.get(field, {})
-                for field in ("hp", "resource", "effects", "mechanics", "cooldowns")
+                for field in ("hp", "resource", "effects", "mechanics", "cooldowns", "epic_state")
             }
         )
         for k, f in fighters.items()

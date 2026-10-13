@@ -400,7 +400,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             await self.db.arena_raid_expire()
         self.assertEqual((await self.db.arena_raid_get(orphan["token"]))["status"], "cancelled")
 
-    async def test_forge_boss_seals_only_for_eligible_victory_once(self):
+    async def test_boss_rewards_do_not_award_obsolete_recipe_seals(self):
         for boss in ('lei_heng', 'doofenshmirtz'):
             row = await self.db.arena_raid_create(1, 10, boss, silent=True)
             row = await self.db.arena_raid_setup(row['token'], 10, 'start')
@@ -411,19 +411,19 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             with patch('arena_raid_engine.random.SystemRandom', return_value=Roll()):
                 row = await self.db.arena_raid_action(row['token'], 10, 1, 'bum_punch')
             self.assertEqual(row['status'], 'finished')
-            self.assertTrue(json.loads(row['data_json'])['rewards']['10']['forge_seal'])
-            self.assertEqual((await self.db.arena_forge_view(1, 10))['seals'][boss], 1)
+            self.assertNotIn('forge_seal', json.loads(row['data_json'])['rewards']['10'])
+            self.assertFalse((await self.db.arena_forge_view(1, 10))['seals'])
             await self.db.arena_raid_expire()
             await self.db.close()
             await self.db.connect()
-            self.assertEqual((await self.db.arena_forge_view(1, 10))['seals'][boss], 1)
+            self.assertFalse((await self.db.arena_forge_view(1, 10))['seals'])
             profile = dict(self.db._arena_profile_locked(1, 10, True))
             if pending_choice(profile):
                 await self.db.arena_edit_profile(1, 10, 10, True, 'progression', 'stay')
             surrendered = await self.db.arena_raid_create(1, 10, boss, silent=True)
             await self.db.arena_raid_setup(surrendered['token'], 10, 'start')
             await self.db.arena_raid_action(surrendered['token'], 10, 1, 'surrender')
-            self.assertEqual((await self.db.arena_forge_view(1, 10))['seals'][boss], 1)
+            self.assertFalse((await self.db.arena_forge_view(1, 10))['seals'])
 
     async def test_solo_surrender_and_timeout(self):
         row = await self.lobby()
