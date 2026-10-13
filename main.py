@@ -19,6 +19,7 @@ from handlers.arena import ArenaPublisher, create_arena_router
 from arena_web import create_arena_app
 from arena_links import arena_link
 from handlers.pets import create_pet_router
+from handlers.admin_menu import create_admin_menu_router
 
 
 def pet_sales_enabled() -> bool:
@@ -64,6 +65,7 @@ async def main() -> None:
         raise
     publisher = ArenaPublisher(database, bot, username)
     dispatcher = Dispatcher()
+    dispatcher.include_router(create_admin_menu_router(database))
     pets_payments_enabled = pet_sales_enabled()
     logging.info("Pet Stars sales: %s", "ENABLED (live payments)" if pets_payments_enabled else "DISABLED")
     dispatcher.include_router(

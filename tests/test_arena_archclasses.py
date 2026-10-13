@@ -82,7 +82,7 @@ class ArchEngineTests(unittest.TestCase):
         ]
 
     def test_all_sixteen_branches_native_only_and_two_stages(self):
-        self.assertEqual(len(ARCHCLASSES), 16)
+        self.assertEqual(len(ARCHCLASSES), 25)
         for key, sid in self.SKILLS.items():
             for level in (10, 20):
                 with self.subTest(branch=key, level=level):

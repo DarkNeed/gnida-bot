@@ -73,7 +73,7 @@ from database import (
     InsufficientFrancStake,
     utc_timestamp,
 )
-from menu_context import choose_chat_view, selected_chat, verified_selected_chat
+from menu_context import choose_chat_view, selected_chat, verified_selected_chat, verified_constructor_chat, manages_chat
 from parsing import (
     command_payload,
     format_duration,
@@ -1227,13 +1227,6 @@ def create_router(
             [InlineKeyboardButton(text="💜 Поддержать", callback_data="sm:support")],
             [InlineKeyboardButton(text="⚔️ Арена", callback_data="sm:arena")],
         ]
-        if user_id == CUSTOM_COMMAND_OWNER_ID:
-            buttons.append(
-                [InlineKeyboardButton(text="⚙️ Кастомные команды", callback_data="sm:custom")]
-            )
-            buttons.append(
-                [InlineKeyboardButton(text="🎲 Конструктор событий", callback_data="evm:list")]
-            )
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     def captcha_keyboard(captcha_id: int, correct_emoji: str) -> InlineKeyboardMarkup:
@@ -1482,9 +1475,6 @@ def create_router(
             [InlineKeyboardButton(text="📖 Гайд", callback_data="sm:guide"),
              InlineKeyboardButton(text="💜 Поддержать", callback_data="sm:support")],
         ])
-        if user_id == CUSTOM_COMMAND_OWNER_ID:
-            buttons.append([InlineKeyboardButton(text="⚙️ Кастомные команды", callback_data="sm:custom")])
-            buttons.append([InlineKeyboardButton(text="🎲 Конструктор событий", callback_data="evm:list")])
         return text, InlineKeyboardMarkup(inline_keyboard=buttons)
 
     async def current_menu_chat(user_id: int, bot: Bot):
@@ -2827,8 +2817,8 @@ def create_router(
             message.from_user and message.from_user.id == CUSTOM_COMMAND_OWNER_ID
         )
 
-    async def custom_commands_menu(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
-        chat = await selected_chat(database, CUSTOM_COMMAND_OWNER_ID)
+    async def custom_commands_menu(page: int = 0, actor_id: int = CUSTOM_COMMAND_OWNER_ID) -> tuple[str, InlineKeyboardMarkup]:
+        chat = await selected_chat(database, actor_id)
         if chat is None:
             return choose_chat_view()
         rows = await database.list_all_custom_commands()
@@ -2851,7 +2841,7 @@ def create_router(
         if navigation:
             buttons.append(navigation)
         buttons.append([InlineKeyboardButton(text="➕ Создать команду", callback_data="cc:chats")])
-        buttons.append([InlineKeyboardButton(text="← Главное меню", callback_data="sm:home")])
+        buttons.append([InlineKeyboardButton(text="← Главное меню", callback_data="adm:home")])
         view = (
             f"<b>⚙️ Кастомные команды</b> · {len(rows)} шт. · стр. {page + 1}/{page_count}\n"
             "Выбери команду для настройки." if rows else
@@ -2860,8 +2850,8 @@ def create_router(
         )
         return scoped_menu_view(view, chat)
 
-    async def custom_command_chats_menu(bot: Bot) -> tuple[str, InlineKeyboardMarkup]:
-        chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
+    async def custom_command_chats_menu(bot: Bot, actor_id: int = CUSTOM_COMMAND_OWNER_ID) -> tuple[str, InlineKeyboardMarkup]:
+        chat = await verified_constructor_chat(database, bot, actor_id)
         if chat is None:
             return choose_chat_view()
         return scoped_menu_view((
@@ -3036,13 +3026,28 @@ def create_router(
             ]),
         )
 
-    async def reject_non_owner(message: Message) -> bool:
+    async def reject_non_owner(message: Message, bot: Bot = None) -> bool:
         if custom_command_owner(message):
             return False
-        await message.answer("Конструктор команд доступен только владельцу бота.")
+        bot = bot or getattr(message, "bot", None)
+        actor = message.from_user.id if message.from_user else 0
+        allowed = bool(bot and (await verified_constructor_chat(database, bot, actor) if message.chat.type == "private" else await manages_chat(bot, message.chat.id, actor)))
+        if allowed:
+            return False
+        await message.answer("Конструктор доступен владельцу выбранного Telegram-чата и владельцу бота. Открой /админ в личке.")
         return True
 
-    async def wizard_text(message: Message, state: FSMContext) -> str | None:
+    async def wizard_text(message: Message, state: FSMContext, bot: Bot = None) -> str | None:
+        if await reject_non_owner(message, bot):
+            await state.clear()
+            return None
+        if message.chat.type == "private" and not custom_command_owner(message):
+            chat = await verified_constructor_chat(database, bot or message.bot, message.from_user.id)
+            data = await state.get_data()
+            if chat is None or ("chat_id" in data and int(data["chat_id"]) != int(chat["chat_id"])):
+                await state.clear()
+                await message.answer("Чат изменился. Открой /админ и начни создание заново.")
+                return None
         value = message_content(message).strip()
         if value.casefold() in {"/отмена", "отмена"}:
             await state.clear()
@@ -3055,10 +3060,11 @@ def create_router(
 
     @router.message(text_or_caption_regexp(CUSTOM_COMMAND_CREATE_RE))
     async def custom_command_create(message: Message, state: FSMContext, bot: Bot) -> None:
-        if await reject_non_owner(message):
+        actor_id = message.from_user.id if message.from_user else 0
+        if await reject_non_owner(message, bot):
             return
         if message.chat.type == "private":
-            body, keyboard = await custom_command_chats_menu(bot)
+            body, keyboard = await custom_command_chats_menu(bot, actor_id)
             await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
             return
         if message.chat.type not in GROUP_TYPES:
@@ -3073,8 +3079,9 @@ def create_router(
         )
 
     @router.message(CustomCommandForm.trigger)
-    async def custom_command_trigger(message: Message, state: FSMContext) -> None:
-        value = await wizard_text(message, state)
+    async def custom_command_trigger(message: Message, state: FSMContext, bot: Bot = None) -> None:
+        actor_id = message.from_user.id if message.from_user else 0
+        value = await wizard_text(message, state, bot)
         if value is None:
             return
         trigger_key = normalize_custom_trigger(value)
@@ -3093,8 +3100,9 @@ def create_router(
         await message.answer("Шаг 2/6. Сколько франков стоит попытка? Напиши целое число от 0 до 1 000 000.")
 
     @router.message(CustomCommandForm.cost)
-    async def custom_command_cost(message: Message, state: FSMContext) -> None:
-        value = await wizard_text(message, state)
+    async def custom_command_cost(message: Message, state: FSMContext, bot: Bot = None) -> None:
+        actor_id = message.from_user.id if message.from_user else 0
+        value = await wizard_text(message, state, bot)
         if value is None:
             return
         try:
@@ -3109,8 +3117,9 @@ def create_router(
         await message.answer("Шаг 3/6. Укажи шанс успеха целым числом от 0 до 100 (без знака %).")
 
     @router.message(CustomCommandForm.chance)
-    async def custom_command_chance(message: Message, state: FSMContext) -> None:
-        value = await wizard_text(message, state)
+    async def custom_command_chance(message: Message, state: FSMContext, bot: Bot = None) -> None:
+        actor_id = message.from_user.id if message.from_user else 0
+        value = await wizard_text(message, state, bot)
         if value is None:
             return
         try:
@@ -3129,8 +3138,9 @@ def create_router(
         )
 
     @router.message(CustomCommandForm.exclusive)
-    async def custom_command_exclusive(message: Message, state: FSMContext) -> None:
-        value = await wizard_text(message, state)
+    async def custom_command_exclusive(message: Message, state: FSMContext, bot: Bot = None) -> None:
+        actor_id = message.from_user.id if message.from_user else 0
+        value = await wizard_text(message, state, bot)
         if value is None:
             return
         data = await state.get_data()
@@ -3157,8 +3167,9 @@ def create_router(
         )
 
     @router.message(CustomCommandForm.successes)
-    async def custom_command_successes(message: Message, state: FSMContext) -> None:
-        value = await wizard_text(message, state)
+    async def custom_command_successes(message: Message, state: FSMContext, bot: Bot = None) -> None:
+        actor_id = message.from_user.id if message.from_user else 0
+        value = await wizard_text(message, state, bot)
         if value is None:
             return
         responses = parse_response_lines(value)
@@ -3177,12 +3188,13 @@ def create_router(
 
     @router.message(CustomCommandForm.failures)
     async def custom_command_failures(message: Message, state: FSMContext, bot: Bot) -> None:
-        value = await wizard_text(message, state)
+        actor_id = message.from_user.id if message.from_user else 0
+        value = await wizard_text(message, state, bot)
         if value is None:
             return
         data = await state.get_data()
         if message.chat.type == "private":
-            chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
+            chat = await verified_constructor_chat(database, bot, actor_id)
             if chat is None or int(chat["chat_id"]) != int(data["chat_id"]):
                 await state.clear()
                 body, keyboard = choose_chat_view()
@@ -3205,7 +3217,7 @@ def create_router(
                 list(data["success_responses"]),
                 responses,
                 data.get("exclusive_user_id"),
-                CUSTOM_COMMAND_OWNER_ID,
+                actor_id,
             )
         except ValueError:
             await message.answer("Фраза запуска уже занята другой командой. Отмени создание и выбери другую.")
@@ -3224,22 +3236,24 @@ def create_router(
 
     @router.message(text_or_caption_regexp(CUSTOM_COMMAND_LIST_RE))
     async def custom_command_list(message: Message, bot: Bot) -> None:
-        if await reject_non_owner(message):
+        actor_id = message.from_user.id if message.from_user else 0
+        if await reject_non_owner(message, bot):
             return
-        chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
-        body, keyboard = await custom_commands_menu() if chat is not None else choose_chat_view()
+        chat = await verified_constructor_chat(database, bot, actor_id)
+        body, keyboard = await custom_commands_menu(actor_id=actor_id) if chat is not None else choose_chat_view()
         if message.chat.type == "private":
             await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
         elif message.chat.type in GROUP_TYPES:
             try:
-                await bot.send_message(CUSTOM_COMMAND_OWNER_ID, body, reply_markup=keyboard, parse_mode="HTML")
+                await bot.send_message(actor_id, body, reply_markup=keyboard, parse_mode="HTML")
                 await message.answer("⚙️ Меню команд отправлено тебе в личку.")
             except TelegramForbiddenError:
                 await message.answer("Открой личку с ботом, нажми Start и напиши /команды.")
 
     @router.message(text_or_caption_regexp(CUSTOM_COMMAND_DELETE_RE))
-    async def custom_command_delete(message: Message) -> None:
-        if await reject_non_owner(message):
+    async def custom_command_delete(message: Message, bot: Bot = None) -> None:
+        actor_id = message.from_user.id if message.from_user else 0
+        if await reject_non_owner(message, bot):
             return
         if message.chat.type not in GROUP_TYPES:
             await message.answer("Для удаления из лички открой /команды и выбери нужную команду.")
@@ -3250,8 +3264,9 @@ def create_router(
         await message.answer("Команда удалена." if deleted else "Такой команды в этом чате нет.")
 
     @router.message(text_or_caption_regexp(CUSTOM_COMMAND_HELP_RE))
-    async def custom_command_help(message: Message) -> None:
-        if await reject_non_owner(message):
+    async def custom_command_help(message: Message, bot: Bot = None) -> None:
+        actor_id = message.from_user.id if message.from_user else 0
+        if await reject_non_owner(message, bot):
             return
         await message.answer(
             "<b>Конструктор команд</b>\n"
@@ -3268,9 +3283,11 @@ def create_router(
 
     @router.message(CustomCommandEdit.value)
     async def custom_command_edit_value(message: Message, state: FSMContext, bot: Bot) -> None:
-        if not custom_command_owner(message) or message.chat.type != "private":
+        actor_id = message.from_user.id if message.from_user else 0
+        if message.chat.type != "private" or await reject_non_owner(message, bot):
+            await state.clear()
             return
-        value = await wizard_text(message, state)
+        value = await wizard_text(message, state, bot)
         if value is None:
             return
         data = await state.get_data()
@@ -3280,7 +3297,7 @@ def create_router(
             await state.clear()
             await message.answer("Команда уже удалена.")
             return
-        chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
+        chat = await verified_constructor_chat(database, bot, actor_id)
         if chat is None or int(row["chat_id"]) != int(chat["chat_id"]):
             await state.clear()
             body, keyboard = choose_chat_view()
@@ -3388,9 +3405,9 @@ def create_router(
     async def custom_command_menu_callback(
         callback: CallbackQuery, state: FSMContext, bot: Bot
     ) -> None:
+        actor_id = callback.from_user.id if callback.from_user else 0
         if (
             not callback.from_user
-            or callback.from_user.id != CUSTOM_COMMAND_OWNER_ID
             or not callback.message
             or callback.message.chat.type != "private"
             or not callback.data
@@ -3399,9 +3416,12 @@ def create_router(
             return
         parts = callback.data.split(":")
         action = parts[1] if len(parts) > 1 else ""
-        chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
+        chat = await verified_constructor_chat(database, bot, actor_id)
         if chat is None:
             await state.clear()
+            if actor_id != CUSTOM_COMMAND_OWNER_ID:
+                await callback.answer('Нет прав владельца выбранного чата. Открой /админ в личке.',show_alert=True)
+                return
             await edit_menu_callback(callback, choose_chat_view())
             return
         try:
@@ -3417,7 +3437,7 @@ def create_router(
             return
         if not matches_chat:
             await state.clear()
-            await edit_menu_callback(callback, await custom_commands_menu(), "Команда относится к другому чату. Выбери его в /menu.")
+            await edit_menu_callback(callback, await custom_commands_menu(actor_id=actor_id), "Команда относится к другому чату. Выбери его в /menu.")
             return
         if action not in {"new", "add", "edit", "editresp", "addalias", "editalias"}:
             await state.clear()
@@ -3425,9 +3445,9 @@ def create_router(
         notice: str | None = None
         try:
             if action == "list":
-                view = await custom_commands_menu(int(parts[2]))
+                view = await custom_commands_menu(int(parts[2]), actor_id=actor_id)
             elif action == "chats":
-                view = await custom_command_chats_menu(bot)
+                view = await custom_command_chats_menu(bot, actor_id)
             elif action == "new":
                 chat_id = int(parts[2])
                 await state.clear()
@@ -3565,14 +3585,14 @@ def create_router(
             elif action == "confirm":
                 deleted = await database.delete_custom_command_by_id(int(parts[2]))
                 notice = "Команда удалена." if deleted else "Команда уже удалена."
-                view = await custom_commands_menu()
+                view = await custom_commands_menu(actor_id=actor_id)
             else:
                 raise ValueError
         except (ValueError, IndexError):
             await callback.answer("Кнопка устарела или повреждена.", show_alert=True)
             return
         if view is None:
-            view = await custom_commands_menu()
+            view = await custom_commands_menu(actor_id=actor_id)
             notice = notice or "Команда уже удалена."
         try:
             await callback.message.edit_text(view[0], reply_markup=view[1], parse_mode="HTML")
@@ -4119,9 +4139,9 @@ def create_router(
             else:
                 body += "\nАрена отключена: владелец бота ещё не настроил WEBAPP_URL."
             keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-        elif action == "custom" and user_id == CUSTOM_COMMAND_OWNER_ID:
-            chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
-            body, keyboard = await custom_commands_menu() if chat is not None else choose_chat_view()
+        elif action == "custom":
+            chat = await verified_constructor_chat(database, bot, user_id)
+            body, keyboard = await custom_commands_menu(actor_id=user_id) if chat is not None else choose_chat_view()
         elif action == "slaves":
             body, keyboard = await slave_menu_slaves(user_id, menu_chat_id)
         elif action == "priority":

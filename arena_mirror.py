@@ -5,7 +5,7 @@ import random
 import secrets
 import time
 
-from arena_engine import create_battle_state, BUILTIN_SKILLS, BUILTIN_PASSIVES
+from arena_engine import create_battle_state, BUILTIN_SKILLS, BUILTIN_PASSIVES, FIGHTER_CLASSES
 from arena_archprogress import skill_branch
 from arena_wasteland import enemy_source, victory_xp
 from arena_mirror_effects import GIFTS, NORMAL_GIFTS, apply_gifts
@@ -13,20 +13,20 @@ from arena_mirror_effects import GIFTS, NORMAL_GIFTS, apply_gifts
 MIRROR_FLOORS = 5
 
 
-def mirror_reward_items(start_level, rng=None):
+def mirror_reward_items(start_level, rng=None, *, enabled_classes=None):
     """Permanent boss loot; branch unlocks and exclusive raid drops stay separate."""
     rng = rng or random.SystemRandom()
-    active = rng.choice(
-        [
+    active_pool = [
             skill
             for skill in BUILTIN_SKILLS.values()
             if skill.class_id != "ragamuffin"
+            and (enabled_classes is None or skill.class_id in enabled_classes)
             and not skill_branch(skill)
             and "raid_loot" not in skill.tags
             and skill.rarity
             in ({"rare"} if start_level >= 10 else {"uncommon", "rare"})
         ]
-    )
+    active = rng.choice(active_pool or [BUILTIN_SKILLS['dust_in_eyes']])
     # Keep this existing reward pool unchanged: adding forge epics must not
     # silently turn 40% of mirror rewards into epic passive scrolls.
     passive = rng.choice([p for p in BUILTIN_PASSIVES.values() if p.rarity in {"common", "uncommon", "rare"}])
@@ -182,7 +182,8 @@ class MirrorMixin:
     def _mirror_battle_locked(self, row, data, first=False):
         source = data["source"]
         enemy = enemy_source(
-            source["level"] + data["floor"] - 1, data.get("previous_class")
+            source["level"] + data["floor"] - 1, data.get("previous_class"),
+            enabled_classes={k for k in FIGHTER_CLASSES if self._arena_class_enabled_locked(row['chat_id'],k)}
         )
         classes, skills = self._fighter_catalog_locked()
         state = create_battle_state(source, enemy, classes=classes, skills=skills)
@@ -357,7 +358,8 @@ class MirrorMixin:
                 data["pet_rewards"] = self._pet_reward_locked(
                     row["actor_id"], "mirror", "mirror:" + row["token"])
                 self._add_francs_locked(row["chat_id"], row["actor_id"], data["francs"])
-                data["item_rewards"] = mirror_reward_items(data["source"]["level"])
+                data["item_rewards"] = mirror_reward_items(data["source"]["level"],
+                    enabled_classes={k for k in FIGHTER_CLASSES if self._arena_class_enabled_locked(row['chat_id'],k)})
                 for item in data["item_rewards"]:
                     self._arena_add_item_locked(
                         row["chat_id"],

@@ -7,6 +7,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from database import Database
+from custom_commands import CUSTOM_COMMAND_OWNER_ID
 
 
 async def selected_chat(database: Database, user_id: int):
@@ -30,10 +31,27 @@ async def verified_selected_chat(database: Database, bot: Bot, user_id: int):
     return chat if present else None
 
 
+async def manages_chat(bot: Bot, chat_id: int, user_id: int) -> bool:
+    """Fresh Telegram authorization, never an enterprise owner or cached admin."""
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+    except (TelegramAPIError, asyncio.TimeoutError):
+        return False
+    status = getattr(member.status, "value", member.status)
+    if user_id == CUSTOM_COMMAND_OWNER_ID:
+        return bool(getattr(member, "is_member", False)) if status == "restricted" else status not in {"left", "kicked"}
+    return status in {"creator", "owner"}
+
+
+async def verified_constructor_chat(database: Database, bot: Bot, user_id: int):
+    chat = await selected_chat(database, user_id)
+    return chat if chat is not None and await manages_chat(bot, int(chat["chat_id"]), user_id) else None
+
+
 def choose_chat_view() -> tuple[str, InlineKeyboardMarkup]:
     return (
-        "<b>💬 Выбери чат</b>\nСначала выбери доступный чат в /menu. Конструкторы показывают только команды и события выбранного чата.",
+        "<b>💬 Выбери чат</b>\nОткрой /админ и выбери свой Telegram-чат. Конструкторы показывают только команды и события выбранного чата.",
         InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Выбрать чат", callback_data="sm:chats")],
+            [InlineKeyboardButton(text="🔄 Выбрать чат", callback_data="adm:chats")],
         ]),
     )

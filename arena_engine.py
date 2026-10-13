@@ -32,6 +32,10 @@ from arena_epic import (
     temporary_debuff,
     cleanse_one,
 )
+from arena_rpg import (
+    build_rpg_catalog, rpg_variant, rpg_restriction, rpg_modifiers, rpg_parry,
+    rpg_received_damage, rpg_effect, rpg_after_action, branch as rpg_branch,
+)
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -566,6 +570,10 @@ BUILTIN_PASSIVES = {
 _epic_skills, _epic_passives = build_epic_catalog(Skill, PassiveSkill, effect)
 BUILTIN_SKILLS.update(_epic_skills)
 BUILTIN_PASSIVES.update(_epic_passives)
+_rpg_classes, _rpg_skills = build_rpg_catalog(FighterClass, Skill, effect)
+FIGHTER_CLASSES.update(_rpg_classes)
+BUILTIN_SKILLS.update(_rpg_skills)
+VISIBLE_CLASS_ALIASES.update({c.name.casefold():k for k,c in _rpg_classes.items()})
 
 
 def content_rarity(payload: dict) -> str:
@@ -927,12 +935,12 @@ def _initialize_turn_counts(state: dict) -> None:
 
 def effective_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Skill:
     skill = (skills or BUILTIN_SKILLS)[skill_id]
-    return adaptive_skill(skill_variant(
+    return adaptive_skill(rpg_variant(skill_variant(
         skill,
         state["sides"][side_key],
         state["sides"]["b" if side_key == "a" else "a"],
         completed_turns(state, side_key),
-    ), state["sides"][side_key], effective_stat)
+    ), state["sides"][side_key], state["sides"]["b" if side_key == "a" else "a"]), state["sides"][side_key], effective_stat)
 
 
 def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Skill:
@@ -965,6 +973,9 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
 
 
 def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
+    reason = rpg_restriction(side, skill)
+    if reason:
+        return reason
     if "twice_per_battle" in skill.tags and side.get("epic_state", {}).get("skill_uses", {}).get(skill.skill_id, 0) >= 2:
         return "Два применения в этом бою уже потрачены."
     if "fourth_action" in skill.tags and (side.get("own_turns", 0) if own_turns is None else own_turns) < 3:
@@ -983,8 +994,16 @@ def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
     return ""
 
 
-def _tick(side: dict) -> None:
+def _tick(side: dict, *, tick_dot=True, preserve_rally=False) -> None:
+    if tick_dot:
+        side['hp'] = max(0, side['hp'] - sum(max(0,int(e['value'])) for e in side['effects'] if e['kind']=='burn'))
     side["own_turns"] = side.get("own_turns", 0) + 1
+    memory = side.get('rpg_state', {})
+    if not preserve_rally:
+        memory.pop('rally', None)
+        memory.pop('rally_ceiling', None)
+    if side['own_turns'] >= memory.get('visceral_until', 0):
+        memory['visceral_ready'] = False
     side["effects"] = [
         dict(e, duration=e["duration"] - 1)
         for e in side["effects"]
@@ -1000,7 +1019,9 @@ def battle_status_snapshot(state: dict) -> dict:
     return {
         key: {
             "hp": side["hp"],
+            "own_turns": side.get('own_turns',0),
             "epic_state": deepcopy(side.get("epic_state", {})),
+            "rpg_state": deepcopy(side.get("rpg_state", {})),
             **({"pet": deepcopy(side["pet"]), "pet_state": deepcopy(side.get("pet_state", {}))}
                if side.get("pet") else {}),
             "effects": deepcopy(
@@ -1046,6 +1067,8 @@ def _advance_turn(state: dict, side_key: str) -> None:
     elif any(e["kind"] == "stun" for e in target["effects"]):
         order_note = obey_enemy_prescript(target, None)
         _tick(target)
+        if target['hp'] <= 0:
+            state.update(finished=True,winner=side_key,finish_reason='burn')
         state["log"].append(
             {
                 "seq": state["turn"],
@@ -1107,6 +1130,7 @@ def resolve_skill(
     *,
     advance_turn=True,
     tick_actor_bleed=True,
+    allies=None,
 ) -> dict:
     """Resolve one tap entirely on the server. No directional/confirmation phase."""
     rng = rng or random.SystemRandom()
@@ -1122,6 +1146,7 @@ def resolve_skill(
     pending_bleed = (
         bleeding_damage(actor) if tick_actor_bleed and skill.damage_type else 0
     )
+    pending_burn = sum(max(0,int(e['value'])) for e in actor['effects'] if e['kind']=='burn') if tick_actor_bleed else 0
     before = {
         k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
     }
@@ -1133,6 +1158,9 @@ def resolve_skill(
     class_accuracy, class_boost = class_modifiers(actor, target, skill)
     epic_accuracy, epic_multiplier = epic_modifiers(actor, target, skill)
     class_accuracy += epic_accuracy
+    rpg_accuracy, rpg_multiplier = rpg_modifiers(actor,target,skill)
+    class_accuracy += rpg_accuracy
+    parried, parry_multiplier = rpg_parry(actor,target,skill)
     extra_accuracy, extra_boost, pierce, critical, obeyed = combat_modifiers(
         actor, target, skill, rng
     )
@@ -1167,10 +1195,11 @@ def resolve_skill(
         skill.damage_type and not hit and roll < max(5, min(95, raw_accuracy))
     )
     strike_results = None
-    if "six_strike" in skill.tags and skill.damage_type:
+    strike_count = 6 if 'six_strike' in skill.tags else 2
+    if ("six_strike" in skill.tags or 'two_strike' in skill.tags) and skill.damage_type:
         # One paid action, six independent accuracy/evasion checks. The total
         # power, buffs and critical multiplier still belong to the whole action.
-        rolls = [roll] + [rng.random() * 100 for _ in range(5)]
+        rolls = [roll] + [rng.random() * 100 for _ in range(strike_count-1)]
         hit_threshold = max(5, min(95, raw_accuracy - effective_stat(target, "evasion")))
         aim_threshold = max(5, min(95, raw_accuracy))
         strike_results = [
@@ -1181,6 +1210,11 @@ def resolve_skill(
         ]
         hit = any(part["hit"] for part in strike_results)
         dodged = not hit and any(part["dodged"] for part in strike_results)
+    if parried:
+        hit = dodged = False
+        if strike_results:
+            for part in strike_results:
+                part.update(hit=False,dodged=False)
     actor["resource"] -= actual_cost
     if "once_per_battle" in skill.tags:
         actor.setdefault("used_skills", []).append(skill_id)
@@ -1188,6 +1222,8 @@ def resolve_skill(
     damage = 0
     if hit and skill.damage_type:
         attack = effective_stat(actor, skill.damage_type + "_attack")
+        if 'hybrid_attack' in skill.tags:
+            attack = max(effective_stat(actor,'physical_attack'),effective_stat(actor,'magic_attack'))
         defense = effective_stat(target, skill.damage_type + "_defense") * (1 - pierce)
         boosts = [
             e.get("value", 0) for e in actor["effects"] if e.get("kind") == "damage_pct"
@@ -1205,6 +1241,9 @@ def resolve_skill(
                 * reduction
                 * mirror_multiplier
                 * epic_multiplier
+                * rpg_multiplier
+                * parry_multiplier
+                * (1+.10*target.get('rpg_state',{}).get('beast',0) if rpg_branch(target)=='hunter_beast' else 1)
                 * math.prod(max(.1, e.get("value", 1)) for e in target["effects"] if e.get("kind") == "incoming_damage_multiplier")
                 * math.prod(
                     max(0.1, e.get("value", 1))
@@ -1231,7 +1270,7 @@ def resolve_skill(
             for i, part in enumerate(strike_results):
                 if part["hit"]:
                     part["damage"] = min(
-                        target["hp"], full_damage // 6 + int(i < full_damage % 6)
+                        target["hp"], full_damage // strike_count + int(i < full_damage % strike_count)
                     )
                     target["hp"] -= part["damage"]
             damage = sum(part["damage"] for part in strike_results)
@@ -1246,7 +1285,8 @@ def resolve_skill(
         actor["effects"] = [
             e for e in actor["effects"] if e["kind"] != "next_physical_damage"
         ]
-    _tick(actor)
+    rpg_received_damage(target,min(before[other]['hp'],damage),before[other]['hp'])
+    _tick(actor,tick_dot=False,preserve_rally=True)
     effects_text = []
     charmed = False
     if hit:
@@ -1260,6 +1300,10 @@ def resolve_skill(
             if rng.random() >= effect.get("chance", 1):
                 continue
             recipient = target if effect.get("target") == "enemy" else actor
+            rpg_note = rpg_effect(actor,target,effect,rng,allies)
+            if rpg_note is not None:
+                effects_text.append(rpg_note)
+                continue
             if effect["kind"] == "resource_leech":
                 stolen = min(recipient["resource"], max(0, int(effect["value"])))
                 recipient["resource"] -= stolen
@@ -1314,7 +1358,7 @@ def resolve_skill(
                     "heal_pct": "лечение",
                     "cleanse_one": "снятие дебаффа",
                     "dispel_buffs": "временные усиления сняты",
-                    "incoming_damage_multiplier": "защита от прямого урона −35%",
+                    "incoming_damage_multiplier": f"защита от прямого урона −{round((1-effect['value'])*100)}%",
                 }.get(effect["kind"], effect["kind"])
             )
             effects_text.append(label)
@@ -1347,27 +1391,33 @@ def resolve_skill(
     self_damage = revenge_recoil(actor, min(before[other]["hp"], damage))
     bleed_damage = min(actor["hp"], pending_bleed)
     actor["hp"] -= bleed_damage
+    burn_damage = min(actor['hp'],pending_burn)
+    actor['hp'] -= burn_damage
     pet_notes = pet_after_action(
         actor, target, skill, hit, min(before[other]["hp"], damage), actual_cost,
         pet_context, effects_text, skills or BUILTIN_SKILLS)
+    rpg_notes,reaction_damage = rpg_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),before[side_key]['hp'],rng,effective_stat)
+    pet_notes += rpg_notes
     pet_notes += epic_after_action(actor, target, skill, hit, rng)
     text = f"{skill.name}: " + (
         f"−{damage} HP"
         if damage
-        else ("эффект применён" if hit else "уклонение" if dodged else "промах")
+        else ("эффект применён" if hit else "парировано" if parried else "уклонение" if dodged else "промах")
     )
     if effects_text:
         text += " · " + ", ".join(effects_text)
     if strike_results is not None:
         landed = sum(part["hit"] for part in strike_results)
         evaded = sum(part["dodged"] for part in strike_results)
-        text += f" · попаданий {landed}/6, уклонений {evaded}, промахов {6 - landed - evaded}"
+        text += f" · попаданий {landed}/{strike_count}, уклонений {evaded}, промахов {strike_count - landed - evaded}"
     if hit and critical:
         text += " · критический удар"
     if obeyed:
         text += " · предписание исполнено"
     if bleed_damage:
         text += f" · кровотечение у атакующего: −{bleed_damage} HP"
+    if burn_damage:
+        text += f" · горение: −{burn_damage} HP"
     if self_damage:
         text += f" · самоурон: −{self_damage} HP"
     if order_note:
@@ -1389,6 +1439,7 @@ def resolve_skill(
         "critical": bool(hit and critical),
         "bleed_damage": bleed_damage,
         "self_damage": self_damage,
+        "reaction_damage": reaction_damage,
         "text": text,
         "before": before,
         "after": {

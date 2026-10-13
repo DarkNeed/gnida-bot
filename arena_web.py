@@ -127,7 +127,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side["class_rarity_name"] = RARITY_LABELS[cls.rarity]
             side["sprite"] = (
                 side["class_id"]
-                if side["class_id"] in {"cutie", "jock", "nerd"} | FINGER_IDS
+                if side["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter"} | FINGER_IDS
                 else "ragamuffin"
             )
             side.update(
@@ -270,6 +270,8 @@ async def menu_view(db, chat: int, actor: int) -> dict:
     mirror_runs = await db.arena_mirror_list(chat, actor)
     result = await db.arena_menu(chat, actor)
     classes, skills = await db.get_fighter_catalog()
+    module_state=await db.arena_modules(chat)
+    enabled_classes={k for k in classes if not any(k in m['classes'] and not m['enabled'] for m in module_state['modules'])}
     profiles = [(result["personal"], True), *((p, False) for p in result["slaves"])]
     if result["self_slave"]:
         profiles.append((result["self_slave"], False))
@@ -301,7 +303,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         profile["class_rarity_name"] = RARITY_LABELS[profile["class_rarity"]]
         profile["sprite"] = (
             profile["class_id"]
-            if profile["class_id"] in {"cutie", "jock", "nerd"} | FINGER_IDS
+            if profile["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter"} | FINGER_IDS
             else "ragamuffin"
         )
         profile.update(await db.arena_sprite_info(chat, profile["user_id"]))
@@ -310,12 +312,15 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         passive_view = await db.arena_passive_view(chat, profile["user_id"], personal)
         grants = passive_view.pop("granted")
         profile.update(passive_view)
+        profile.update(await db.arena_module_profile(chat,profile['user_id'],personal,profile['class_id']))
+        profile['loadout']=[k for k in profile['loadout'] if k in skills and (skills[k].class_id in enabled_classes or skills[k].class_id not in classes)]
         async with db._lock:
             class_grants = db._granted_content_locked(chat, profile["user_id"], "class")
         profile["skills"] = [
             dict(
                 asdict(skills[k]),
                 evolution=evolution_info(skills[k], profile["class_id"], profile),
+                module_disabled=skills[k].class_id in classes and skills[k].class_id not in enabled_classes,
             )
             for k in unlocked_skill_ids(
                 profile["class_id"],
@@ -332,11 +337,11 @@ async def menu_view(db, chat: int, actor: int) -> dict:
                 name=c.name,
                 rarity=c.rarity,
                 avatar_url=choice_avatar(k),
-                description="Ресурс: " + c.resource_name,
+                description="Ресурс: " + c.resource_name + (' · временный спрайт до утверждения рисунков' if k in {'warrior','mage','priest','hunter'} else ''),
             )
             for k, c in classes.items()
-            if (k in set(VISIBLE_CLASS_ALIASES.values()) and k != "ragamuffin")
-            or k in class_grants
+            if k in enabled_classes and ((k in set(VISIBLE_CLASS_ALIASES.values()) and k != "ragamuffin")
+            or k in class_grants)
         ]
         stage = pending_choice(profile)
         pending_at = profile.get("progression_pending_at")
@@ -350,6 +355,12 @@ async def menu_view(db, chat: int, actor: int) -> dict:
                 and time.time() >= pending_at + SKILL_DELEGATION_SECONDS
             )
         )
+        profile['module_can_choose']=not blocked and (profile['user_id']==actor or (not personal and profile.get('module_pending_at') and time.time()>=profile['module_pending_at']+SKILL_DELEGATION_SECONDS))
+        profile['module_options']=[dict(id='ragamuffin',name='Оборванец',avatar_url=choice_avatar('ragamuffin'),description='Базовый класс всегда доступен. Уровень и опыт сохранятся.'),
+                                   *[c for c in profile['classes'] if classes[c['id']].base_level<=profile['level']]]
+        for a in profile['module_archives']:
+            a['name']=classes.get(a['class_id'],classes['ragamuffin']).name
+            a['avatar_url']=choice_avatar(a['class_id'],a['archclass_id'])
         options = []
         if stage:
             current_name = (
@@ -764,6 +775,8 @@ def create_arena_app(
             "archclass",
             "progression",
             "reset_class",
+            "module_class",
+            "restore_class",
             "loadout",
             "passives",
             "forget_skill",

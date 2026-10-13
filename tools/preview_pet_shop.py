@@ -25,6 +25,14 @@ async def create_app():
     await db.upsert_chat(1, "Локальное демо")
     await db.upsert_chat(2, "Рейд — локальное демо")
     await db.upsert_chat(3, "Соло — локальное демо")
+    await db.upsert_chat(4, "Классика — локальное демо")
+    await db.upsert_chat(5, "Модуль отключён — локальное демо")
+    for chat in (4,5):
+        await db.upsert_user(chat,10,'10','Игрок 10')
+        db._arena_profile_locked(chat,10,True)
+        db.connection.execute("UPDATE personal_profiles SET class_id='hunter',archclass_id='hunter_moon',level=18,xp=1500,progression_level=10,loadout='[\"hunter_cut\",\"hunter_transform\",\"hunter_shot\",\"hunter_visceral\"]' WHERE chat_id=?",(chat,))
+    db.connection.commit()
+    await db.arena_set_module(4,10,'classic',True,0)
     for user in (10, 20, 30):
         await db.upsert_user(1, user, str(user), f"Игрок {user}")
         await db.upsert_user(2, user, str(user), f"Игрок {user}")

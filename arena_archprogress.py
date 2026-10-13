@@ -1,6 +1,7 @@
 """Branch-bound milestones at 12/15/18; no additional combat or memory slots."""
 
 from arena_archclasses import ARCHCLASSES, e, final_stage
+from arena_rpg import RPG_BRANCHES
 
 UPGRADES_12 = {
     "femboy": "«Попался, натурал»: сила +1 и точность +5.",
@@ -20,6 +21,8 @@ UPGRADES_12 = {
     "pinky_dihui": "«Затмение»: пробитие 50% вместо 45%.",
     "pinky_tiansha": "«Рассечь небеса»: сила 22 вместо 21.",
 }
+UPGRADES_12.update({key:'Родные превращённые атаки получают +1 к силе; классовые комбинации сохраняются.'
+                   for key in RPG_BRANCHES})
 
 
 def skill_branch(skill):

@@ -1,4 +1,5 @@
 """Native specializations. They modify existing skills, never add combat slots."""
+from arena_rpg import RPG_BRANCHES
 
 ARCHCLASS_LEVEL = 10
 ARCHCLASS_FINAL_LEVEL = 20
@@ -128,6 +129,9 @@ ARCHCLASSES = {
         "Сила 22, цена остаётся 45.",
     ),
 }
+ARCHCLASSES.update({key:branch(cid,name,name,description,
+    'Финальный архикласс 20 уровня пока не добавлен; сохраняется выбранная ветка.')
+    for key,(cid,name,description) in RPG_BRANCHES.items()})
 
 
 def selected_branch(source):

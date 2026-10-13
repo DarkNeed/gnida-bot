@@ -7,6 +7,7 @@ import random
 import re
 import time
 from arena_engine import RARITY_LABELS
+from arena_modules import ClassModulesMixin
 
 FORGE_RULES = {
     r: dict(salvage_pages=2, craft_pages=6, craft_price=p, rewrite_price=p // 2)
@@ -29,8 +30,9 @@ def forge_distribution(catalog, kind, ingredients, *, pages=False):
     return {r: w * 100 / total for r, w in weights.items()}
 
 
-class ForgeMixin:
+class ForgeMixin(ClassModulesMixin):
     def _connect_forge(self):
+        self._connect_class_modules()
         # Historical recipe tables and seals are preserved, not spent or erased.
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS arena_forge_wallets (
@@ -53,13 +55,14 @@ class ForgeMixin:
         self.connection.execute("UPDATE arena_forge_wallets SET revision=revision+1,pages_json=?,seals_json=? WHERE chat_id=? AND owner_id=?",
             (json.dumps(wallet["pages"]), json.dumps(wallet["seals"]), chat, actor))
 
-    def _forge_catalog_locked(self):
+    def _forge_catalog_locked(self, chat=None):
         # Merchant catalog excludes boss, branch, free and hidden skills.
         return {k: dict(v) for k, v in self._arena_shop_catalog_locked().items()
-                if k[0] in {"skill", "passive"} and v["rarity"] in FORGE_RULES}
+                if k[0] in {"skill", "passive"} and v["rarity"] in FORGE_RULES
+                and (chat is None or self._arena_content_enabled_locked(chat, k[0], k[1]))}
 
     def _forge_view_locked(self, chat, actor):
-        wallet, catalog = self._forge_wallet_locked(chat, actor), self._forge_catalog_locked()
+        wallet, catalog = self._forge_wallet_locked(chat, actor), self._forge_catalog_locked(chat)
         inventory = [dict(i, salvage_pages=FORGE_RULES[i["rarity"]]["salvage_pages"],
                           can_rewrite=(i["kind"], i["content_id"]) in catalog
                           and catalog[(i["kind"], i["content_id"])]["rarity"] == i["rarity"])
@@ -168,7 +171,7 @@ class ForgeMixin:
                 wallet = self._forge_wallet_locked(chat, actor)
                 if wallet["revision"] != revision:
                     raise ValueError("Кузница изменилась. Обнови меню и проверь стоимость заново.")
-                catalog = self._forge_catalog_locked()
+                catalog = self._forge_catalog_locked(chat)
                 if quote != self._forge_catalog_revision(catalog):
                     raise ValueError("Шансы, трактаты или стоимость изменились. Обнови кузницу.")
                 if action == "craft":

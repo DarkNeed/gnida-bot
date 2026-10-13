@@ -35,8 +35,8 @@ from arena_engine import (
     fighter_xp_limit,
     effective_stat,
     effective_skill,
+    validate_skill,
 )
-from arena_mirror_effects import gift_cost
 from arena_archclasses import ARCHCLASSES, ARCHCLASS_LEVEL, branch_options
 from arena_progression import pending_choice
 from arena_pet_store import PetMixin
@@ -641,7 +641,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                     if " ".join(str(custom["name"]).casefold().split()) == normalized:
                         class_id = str(custom["class_id"])
                         break
-            if class_id is None or class_id == "ragamuffin":
+            if class_id is None or class_id == "ragamuffin" or not self._arena_class_enabled_locked(chat_id,class_id):
                 return "unknown"
             _classes, skills = self._fighter_catalog_locked()
             granted_skills = self._arena_grants_locked(chat_id, user_id, False)
@@ -830,6 +830,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
 
     def _arena_require_choice_locked(self, chat, user, personal):
         profile = self._arena_profile_locked(chat, user, personal)
+        if not self._arena_class_enabled_locked(chat, profile['class_id']):
+            raise ValueError("Модуль класса выключен. Выбери бесплатную смену класса в арене; прежний билд будет сохранён в архиве.")
         stage = pending_choice(dict(profile))
         if stage:
             raise ValueError(
@@ -945,9 +947,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
             archclass_id=profile["archclass_id"],
             archclass_stage=profile["archclass_stage"],
             level=profile["level"],
-            loadout=json.loads(profile["loadout"]),
-            granted_skills=self._arena_grants_locked(chat, user, personal),
-            known_skills=self._arena_known_skills_locked(chat, user, personal),
+            loadout=[k for k in json.loads(profile["loadout"]) if self._arena_content_enabled_locked(chat,'skill',k)],
+            granted_skills=[k for k in self._arena_grants_locked(chat, user, personal) if self._arena_content_enabled_locked(chat,'skill',k)],
+            known_skills=[k for k in self._arena_known_skills_locked(chat, user, personal) if self._arena_content_enabled_locked(chat,'skill',k)],
             passive_details=self._arena_selected_passives_locked(
                 chat, user, personal, profile
             ),
@@ -1344,13 +1346,13 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                     and state["active_side"] == "b"
                 ):
                     ai = state["sides"]["b"]
-                    choices = [
-                        s
-                        for s in ai["loadout"]
-                        if gift_cost(ai, effective_skill(state, "b", s, skills))
-                        <= ai["resource"]
-                        and not ai["cooldowns"].get(s, 0)
-                    ]
+                    choices = []
+                    for candidate in ai["loadout"]:
+                        try:
+                            validate_skill(state, "b", candidate, skills)
+                        except ValueError:
+                            continue
+                        choices.append(candidate)
                     resolve_skill(
                         state, "b", random.choice(choices or ["bum_punch"]), skills
                     )
@@ -1476,7 +1478,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
             self._arena_require_choice_locked(chat, fighter, personal)
             source = self._arena_source_locked(chat, fighter, actor, False, personal)
             source["controlled"] = False
-            enemy = enemy_source(source["level"] + floor - 1, previous_class)
+            enemy = enemy_source(source["level"] + floor - 1, previous_class, enabled_classes={k for k in FIGHTER_CLASSES if self._arena_class_enabled_locked(chat,k)})
             classes, skills = self._fighter_catalog_locked()
             state = create_battle_state(source, enemy, classes=classes, skills=skills)
             # The owner can pilot a slave in PvE; the same 20% control penalty applies.
@@ -1614,7 +1616,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
     ) -> str:
         async with self._lock:
             profile = self._arena_profile_locked(chat, user, personal)
-            choice_action = action in {"progression", "class", "archclass"}
+            choice_action = action in {"progression", "class", "archclass", "module_class", "restore_class"}
             if actor != user:
                 pending = (
                     profile["progression_pending_at"]
@@ -1629,6 +1631,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                         )
                     )
                 )
+                if action=='module_class':
+                    settings=self.connection.execute('SELECT updated_at FROM arena_module_settings WHERE chat_id=?',(chat,)).fetchone()
+                    pending=settings['updated_at'] if settings else None
                 if (
                     personal
                     or not self._arena_owns_locked(chat, actor, user)
@@ -1647,6 +1652,14 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
             classes, skills = self._fighter_catalog_locked()
             table = "personal_profiles" if personal else "slave_profiles"
             progression_stage = None
+            if action in {'module_class','restore_class'}:
+                try:
+                    notice = self._arena_module_switch_locked(chat,user,personal,value,restore=action=='restore_class')
+                    self.connection.commit()
+                    return notice
+                except Exception:
+                    self.connection.rollback()
+                    raise
             if action == "reset_class":
                 if value is not True:
                     raise ValueError(
@@ -1725,7 +1738,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                     ),
                     None,
                 )
-                if not chosen or chosen == "ragamuffin":
+                if not chosen or chosen == "ragamuffin" or not self._arena_class_enabled_locked(chat, chosen):
                     raise ValueError("Класс недоступен.")
                 loadout = normalize_loadout(
                     chosen,
@@ -1757,7 +1770,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                     self._arena_known_skills_locked(chat, user, personal),
                     profile["archclass_id"],
                 )
-                if any(k not in unlocked for k in value):
+                if any(k not in unlocked or not self._arena_content_enabled_locked(chat,'skill',k,skills) for k in value):
                     raise ValueError("Навык ещё не открыт.")
                 loadout = normalize_loadout(
                     profile["class_id"],
@@ -1827,6 +1840,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                         (json.dumps(known), chat, user),
                     )
                 else:
+                    if kind=='skill' and not self._arena_content_enabled_locked(chat,kind,value,skills):
+                        raise ValueError("Модуль навыка выключен. Изученный навык сохранён.")
                     self._arena_remember_locked(chat, user, personal, kind, value)
                     if value not in known:
                         known.append(value)

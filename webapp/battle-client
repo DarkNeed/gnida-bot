@@ -39,7 +39,17 @@ function petRewards(reward){
 }
 function clearSpriteDraft(){if(spriteDraft)URL.revokeObjectURL(spriteDraft.url);spriteDraft=null;}
 function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames,r)?r:"common")+'">'+esc(rarityNames[r]||r||"Обычный")+'</span>';}
-function describeEffect(e){if(e.description)return esc(e.description);const kind=String(e.kind||'effect');if(kind==='incoming_damage_multiplier')return 'Получаемый прямой урон: −'+Math.round((1-e.value)*100)+'%'+(e.turns?' · '+e.turns+' х.':'');if(kind==='dispel_buffs')return 'Снимает все временные усиления врага';if(kind==='cleanse_one')return 'Снимает один случайный временный дебафф';if(kind==='heal_pct')return 'Лечение: '+Math.round(e.value*100)+'% максимального HP';const value=kind.endsWith("_pct")||kind==='next_magic_damage'||kind==='next_physical_damage'?Math.round(e.value*100)+"%":e.value+(kind==='accuracy_flat'||kind==='evasion_flat'?'%':'');return esc(effectNames[kind]||kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');}
+function describeEffect(e){
+  if(e.description)return esc(e.description);
+  const kind=String(e.kind||'effect'),rpg={rpg_armor_break:'Раскол: −15% физ. защиты за применение, до −45%',rpg_counter:'Один ответный контрудар при попадании врага',rpg_parry:'Прерывание следующей атаки: открывает висцеральный удар. Босс не пропускает ход, его урон −35%',rpg_summon:'Скелет атакует после трёх следующих действий хозяина и даёт души',rpg_blood_bullets:'−10% максимального HP, +35 энергии; не может убить',burn:'Горение: '+esc(e.value)+' урона при любом собственном действии',damage_taken_pct:'Получаемый урон: +'+Math.round(e.value*100)+'%'};
+  if(Object.hasOwn(rpg,kind))return rpg[kind];
+  if(kind==='incoming_damage_multiplier')return 'Получаемый прямой урон: −'+Math.round((1-e.value)*100)+'%'+(e.turns?' · '+e.turns+' х.':'');
+  if(kind==='dispel_buffs')return 'Снимает все временные усиления врага';
+  if(kind==='cleanse_one')return 'Снимает один случайный временный дебафф';
+  if(kind==='heal_pct'||kind==='rpg_heal')return 'Лечение: '+Math.round(e.value*100)+'% максимального HP';
+  const value=kind.endsWith('_pct')||kind==='next_magic_damage'||kind==='next_physical_damage'?Math.round(e.value*100)+'%':e.value+(kind==='accuracy_flat'||kind==='evasion_flat'?'%':'');
+  return esc(effectNames[kind]||kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');
+}
 const statusIcons={bleed:1,stun:2,accuracy_flat:3,damage_pct:4,physical_attack_pct:4,magic_attack_pct:5,physical_defense_pct:6,magic_defense_pct:6,evasion_flat:7,speed_pct:8,resource:9,resource_leech:9,prepared_attack:10,next_physical_damage:10,next_magic_damage:5};
 const statusStatNames={accuracy_flat:'точности',damage_pct:'урона',physical_attack_pct:'физ. атаки',magic_attack_pct:'маг. атаки',physical_defense_pct:'физ. защиты',magic_defense_pct:'маг. защиты',evasion_flat:'уклонения',speed_pct:'скорости',next_physical_damage:'следующей физ. атаки',next_magic_damage:'следующей маг. атаки'};
 const statusColors=['#ef5366','#ef5366','#f4cb75','#93d9ef','#93d9ef','#c59bf1','#93d9ef','#93d9ef','#93d9ef','#c59bf1','#f4cb75','#f4cb75','#ef5366','#c59bf1','#f4cb75','#93d9ef'];
@@ -54,12 +64,22 @@ function fighterStatuses(side){
     const duration=Number(e.duration),kind=String(e.kind||'effect');
     if(!Number.isFinite(duration)||duration<=0||duration>=10000||['resource','resource_leech'].includes(kind))continue;
     const direction=e.id==='pet_guard'?'':kind==='damage_taken_pct'?'down':statusStatNames[kind]&&Number(e.value)!==0&&Number.isFinite(Number(e.value))?(Number(e.value)<0?'down':'up'):'';
-    const name=e.id==='adoration'?'Умиление':kind==='incoming_damage_multiplier'?'Я в домике':e.name||(direction?(direction==='down'?'Понижение ':'Повышение ')+statusStatNames[kind]:effectNames[kind]||'Особый эффект');
+    const specialNames={mana_barrier:'Мановый барьер',priest_ward:'Оберег',bishop_guard:'Благословение',knight_guard:'Страж клинка',hunter_parry:'Прерывающий выстрел',counter_lunge:'Ответный выпад',knight_counter:'Контрудар рыцаря',rpg_burn:'Горение',rpg_frost:'Обморожение',berserk_risk:'Уязвимость берсерка'};
+    const name=specialNames[e.id]|| (e.id==='adoration'?'Умиление':kind==='incoming_damage_multiplier'?'Защита от урона':e.name||(direction?(direction==='down'?'Понижение ':'Повышение ')+statusStatNames[kind]:effectNames[kind]||'Особый эффект'));
     let detail=e.description?esc(e.description):kind==='stun'?'Пропускает ход из-за ошеломления.':kind==='bleed'?'Кровотечение: '+esc(e.value)+' урона при атаке этого бойца.':kind==='prepared_attack'?'Усилена следующая подходящая атака; подготовка расходуется по условиям навыка.':describeEffect({...e,target:'self',turns:0,chance:1});
     detail+='<br>Осталось ходов этого бойца: '+esc(duration)+'.';
     items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:kind==='incoming_damage_multiplier'?6:e.id==='pet_guard'?6:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:String(duration),detail});
   }
   const m=side.mechanics||{};
+  const rpg=side.rpg_state||{};
+  for(const [id,name,icon,detail] of [['mana','Перенасыщение',5,'Перегрузка: +35% урона за заряд.'],['faith','Вера',11,'Кара: +20% урона за заряд; Страшный суд: +40%.'],['souls','Души',12,'Жатва душ: +30% урона за душу.'],['beast','Зверство',4,'+10% своего и входящего урона за заряд.'],['retribution','Воздаяние',6,'Кара Паладина: +15% урона за заряд.']]){
+    if(rpg[id]>0)items.push({id:'rpg:'+id,name,icon,count:rpg[id]+'/3',detail:detail+' Это заряды, не длительность.'});
+  }
+  if(rpg.weapon_open)items.push({id:'rpg:weapon',name:'Оружие раскрыто',icon:10,count:'1',detail:'Тяжёлый разрез сильнее, дороже и пробивает защиту. Возврат крови слабее, чем в сложенной форме.'});
+  if(rpg.visceral_ready&&(side.own_turns||0)<rpg.visceral_until)items.push({id:'rpg:visceral',name:'Висцеральная атака готова',icon:14,count:String(rpg.visceral_until-(side.own_turns||0)),detail:'Открытие после прерывания. Расходуется при попытке висцеральной атаки; число — оставшиеся собственные действия.'});
+  if(rpg.rally>0)items.push({id:'rpg:rally',name:'Кровавый ответ',icon:1,count:String(rpg.rally),detail:'Можно вернуть до '+esc(rpg.rally)+' недавно потерянного HP следующей успешной атакой. Пропуск или поддержка теряет запас.'});
+  if(rpg.summon>0)items.push({id:'rpg:skeleton',name:'Скелет',icon:12,count:String(rpg.summon),detail:'Атакует после следующего действия хозяина. Осталось атак: '+esc(rpg.summon)+'.'});
+  if(rpg.echo_ready)items.push({id:'rpg:echo',name:'Мановое эхо',icon:5,count:'1',detail:'Следующая магическая атака: +35% урона. Расходуется при попытке.'});
   const epic=side.epic_state||{},traits=(side.passive_details||[]).flatMap(p=>p.effects||[]);
   if(epic.plan_b_ready&&traits.some(e=>e.kind==='epic_plan_b'))items.push({id:'epic:plan_b',name:'План Б',icon:10,count:'1',detail:'Следующая атака: +25 точности и +30% урона. Расходуется при попытке атаки.'});
   if(side.hp>0&&side.hp<=side.stats?.max_hp*.35&&traits.some(e=>e.kind==='epic_desperation'))items.push({id:'epic:desperation',name:'Мне уже нечего терять',icon:4,count:'+50%',detail:'Урон ×1,5, пока HP не выше 35%. Штрафа к защите нет.'});
@@ -122,6 +142,11 @@ function progressionScreen(p){
   profileId=p.user_id;page=p.personal?'personalProfile':'slaveProfile';
   const options=choice.options||[];
   app.innerHTML='<section class="menu progression">'+top('Выбор '+(choice.level===5?'класса':'подкласса'),'УРОВЕНЬ '+choice.level)+'<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p>Выбери развитие или останься в текущем классе. Уровень, опыт и изученные навыки не сбрасываются.</p><p class="muted">До решения этот боец не может начать новый бой. Карточки прокручиваются вбок.</p><div class="class-row" role="group" aria-label="Варианты класса">'+options.map(c=>'<button class="class-option'+(c.current?' current-class':'')+'" data-do="progression:'+esc(c.id)+'" '+(!choice.can_choose?'disabled':'')+'><img src="'+esc(c.avatar_url)+'" data-fallback="/static/assets/ragamuffin.png" alt="'+esc(c.name)+'"><span class="class-label">'+esc(c.name)+'</span><span class="pill">'+(c.current?'ОСТАТЬСЯ':choice.level===20?'РАЗВИТЬ':'ВЫБРАТЬ')+'</span><span class="muted">'+esc(c.description||'')+'</span></button>').join('')+'</div>'+(!choice.can_choose?'<p class="note">'+(choice.busy?'Сначала заверши текущий бой / зеркальный забег.':'Раб выбирает самостоятельно; владелец сможет принять решение после 48 часов ожидания.')+'</p>'+button('Вернуться в меню','choiceback','small'):'')+'</div></section>';
+  audio.refresh();
+}
+function moduleClassScreen(p){
+  profileId=p.user_id;page=p.personal?'personalProfile':'slaveProfile';
+  app.innerHTML='<section class="menu progression">'+top('Модуль класса выключен','БИЛД СОХРАНЁН')+'<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p>Класс «'+esc(p.class_name)+'» отключён владельцем чата. Для нового боя выбери разрешённый класс бесплатно. Уровень и опыт сохранятся, прежний билд попадёт в архив. Предметы и свой спрайт не меняются.</p><div class="class-row" role="group" aria-label="Разрешённые классы">'+(p.module_options||[]).map(c=>'<button class="class-option" data-do="moduleclass:'+esc(c.id)+'" '+(!p.module_can_choose?'disabled':'')+'><img src="'+esc(c.avatar_url)+'" alt="'+esc(c.name)+'"><span class="class-label">'+esc(c.name)+'</span><span class="muted">Бесплатно · без потери уровня</span></button>').join('')+'</div>'+(!p.module_can_choose?'<p class="note">Сначала заверши текущий бой. Раб выбирает сам; владелец сможет выбрать после 48 часов ожидания.</p>':'')+button('Вернуться в меню','moduleback','small')+'</div></section>';
   audio.refresh();
 }
 function passiveLimit(f){return f.level>=10?3:2;}
@@ -394,6 +419,8 @@ function menuScreen(data){
   audio.scene('menu');
   menu=data;chat=data.chat_id;token="";
   const selected=(page==='personalProfile'||page==='slaveProfile')?activeProfile():null;
+  const moduleBlocked=selected?.module_blocked?selected:page==='personal'&&data.personal?.module_blocked?data.personal:null;
+  if(moduleBlocked){moduleClassScreen(moduleBlocked);return;}
   const required=(page==='personalProfile'||page==='slaveProfile')&&selected?.progression_choice?selected:[data.personal,data.self_slave].find(p=>p?.progression_choice?.can_choose);
   if(required){progressionScreen(required);return;}
   if(page!=="appearance")clearSpriteDraft();
@@ -439,11 +466,11 @@ function menuScreen(data){
     body+=button('Отмена — ничего не менять','tab:inventory')+'</div></div>';
   }else if(page==="resetConfirm"){
     if(!resetPending){page='personal';menuScreen(data);return;}
-    body+='<div class="card"><h2>Сбросить класс и уровень?</h2><p>Боец: '+esc(resetPending.name)+'</p><p class="danger-text">Боец станет Оборванцем 1 уровня с 0 XP. Все изученные активные и пассивные навыки будут забыты. Это нельзя отменить.</p><p class="muted">Франки, инвентарь, свой спрайт, принадлежность и уровень рабовладельца сохранятся. Сброс бесплатный.</p><div class="stack">'+button('Сбросить класс и уровень','confirmreset','danger')+button('Не менять','cancelreset')+'</div></div>';
+    body+='<div class="card"><h2>Сбросить класс и уровень?</h2><p>Боец: '+esc(resetPending.name)+'</p><p class="danger-text">Боец станет Оборванцем 1 уровня с 0 XP. Все изученные активные и пассивные навыки будут забыты. Архивы модулей тоже будут удалены. Это нельзя отменить.</p><p class="muted">Франки, инвентарь, свой спрайт, принадлежность и уровень рабовладельца сохранятся. Сброс бесплатный.</p><div class="stack">'+button('Сбросить класс и уровень','confirmreset','danger')+button('Не менять','cancelreset')+'</div></div>';
   }else if(page==="classConfirm"){
     const row=(data.inventory||[]).find(i=>i.id===classUsePending?.item);
     if(!row){page='inventory';menuScreen(data);return;}
-    body+='<div class="card"><h2>Сменить класс на '+esc(row.name)+'?</h2><p>Боец: '+esc(classUsePending.name)+'</p><p class="danger-text">Уровень станет 1, опыт обнулится, прежние изученные активные и пассивные навыки исчезнут. Инвентарь и спрайт сохранятся. Трактат будет потрачен.</p><div class="stack">'+button('Сменить класс и сбросить развитие','confirmitem','danger')+button('Не менять','tab:inventory')+'</div></div>';
+    body+='<div class="card"><h2>Сменить класс на '+esc(row.name)+'?</h2><p>Боец: '+esc(classUsePending.name)+'</p><p class="danger-text">Уровень станет 1, опыт обнулится, прежние изученные активные и пассивные навыки исчезнут. Архивы модулей тоже будут удалены. Инвентарь и спрайт сохранятся. Трактат будет потрачен.</p><div class="stack">'+button('Сменить класс и сбросить развитие','confirmitem','danger')+button('Не менять','tab:inventory')+'</div></div>';
   }else if(page==="appearance"){
     const p=data.personal;
     body+='<div class="card"><h2>Свой спрайт</h2><div class="sprite-preview">'+fighterImage(p,"", "upload-preview")+'</div><p class="muted">PNG с прозрачным фоном, до 2 МБ. Каждая сторона — от 16 до 1024 пикселей. Одна поза; пропорции сохраняются. Картинка видна всем в боях личного персонажа и твоего персонажа-раба в этом чате. На характеристики она не влияет.</p><input type="file" id="sprite-file" accept="image/png,.png" hidden><label class="check"><input type="checkbox" id="sprite-pixels" checked> Пиксельный рисунок — без сглаживания</label><p class="muted" id="sprite-filename">Файл не выбран.</p><div class="stack">'+button("Выбрать PNG","choose_sprite")+button("Сохранить спрайт","upload_sprite","primary",true)+(p.sprite_url?button("Вернуть стандартный","reset_sprite"):"")+button("Назад","tab:personal")+'</div></div>';
@@ -456,7 +483,7 @@ function menuScreen(data){
     body+=rarityBadge(p.class_rarity);
     body+=archInfo(p);
     body+='<p class="muted">Изучено: активных '+p.skills.length+' / 6 · пассивных '+(p.passives||[]).length+' / 4. В бою: до 4 активных и '+passiveLimit(p)+' пассивных.</p>';
-    body+='<h3 style="margin-top:20px">Активные навыки</h3><div class="stack">'+p.skills.map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),"toggle:"+s.skill_id,p.loadout.includes(s.skill_id)?"selected-skill":"")).join("")+button("Сохранить навыки","save","primary")+'</div>';
+    body+='<h3 style="margin-top:20px">Активные навыки</h3><div class="stack">'+p.skills.map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s)+(s.module_disabled?'<p>Модуль выключен · навык сохранён</p>':''),"toggle:"+s.skill_id,p.loadout.includes(s.skill_id)?"selected-skill":"",!!s.module_disabled)).join("")+button("Сохранить навыки","save","primary")+'</div>';
     body+='<h3 style="margin-top:20px">Пассивные навыки · '+(p.passive_loadout||[]).length+' / '+passiveLimit(p)+'</h3><div class="stack">'+(p.passives||[]).map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),'togglepassive:'+s.skill_id,(p.passive_loadout||[]).includes(s.skill_id)?'selected-skill':'')).join('')+button('Сохранить пассивки','savepassives','primary')+'</div><p class="muted">Новые навыки изучаются через трактаты из инвентаря. Пассивки действуют автоматически весь бой.</p>';
     body+='<details><summary>Освободить место / вернуть навык</summary><p class="muted">Забытый навык перестаёт действовать. Ранее открытые навыки можно вернуть при свободном месте; трактат повторно не нужен. Бесплатный удар занимает одно место и не забывается.</p><div class="stack">';
     for(const s of p.skills.filter(s=>s.skill_id!=='bum_punch'))body+=button('Забыть: '+esc(s.name),'forget_skill:'+s.skill_id,'small');
@@ -465,6 +492,7 @@ function menuScreen(data){
     if(p.skills.length>=6&&(p.available_skills||[]).length)body+='<p class="note">Все 6 мест заняты. Можно забыть ненужный навык кнопкой выше, затем изучить открывшийся. Бесплатный удар остаётся.</p>';
     for(const s of p.available_passives||[])body+=button('Изучить пассивку: '+esc(s.name),'learn_passive:'+s.skill_id,'small',(p.passives||[]).length>=4);
     body+='</div></details>'+button('Сбросить класс и уровень','resetprofile','small danger');
+    if(p.module_archives?.length)body+='<h3>Архив классов</h3><p class="muted">Восстановление заменит текущий билд, сохранив его в архиве. Уровень и накопленный опыт не уменьшаются.</p>'+p.module_archives.map(a=>button('Вернуть: '+esc(a.name)+' · '+a.level+' ур.','restoreclass:'+a.class_id,'small',!a.enabled)).join('');
     if(!p.personal&&p.user_id!==tg?.initDataUnsafe?.user?.id)body+='<p class="muted">Владелец может выбирать класс и навыки за раба после 48 часов ожидания.</p>'+button("Дать конфету · 30 XP","candy");
     body+='</div>';
   }
@@ -587,6 +615,16 @@ app.addEventListener("click",async event=>{
   if(cmd==="equip"||cmd==="unequip"){await menuAction("equipment",{user:Number(arg),equipped:cmd==="equip"});return;}
   const p=activeProfile();
   if(cmd==='choiceback'){page='slaves';menuScreen(menu);return;}
+  if(cmd==='moduleback'){page='inventory';menuScreen(menu);return;}
+  if(cmd==='moduleclass'){
+    if(!p?.module_can_choose||!p.module_options?.some(c=>c.id===arg))return;
+    await menuAction('module_class',{user:p.user_id,personal:p.personal,value:arg});return;
+  }
+  if(cmd==='restoreclass'){
+    if(!p?.module_archives?.some(a=>a.class_id===arg&&a.enabled))return;
+    if(!window.confirm('Восстановить архивный билд? Текущий билд будет сохранён в архиве, уровень и опыт не уменьшатся.'))return;
+    await menuAction('restore_class',{user:p.user_id,personal:p.personal,value:arg});return;
+  }
   if(cmd==='progression'){
     if(!p?.progression_choice?.can_choose)return;
     if(!p.progression_choice.options.some(c=>c.id===arg))return;

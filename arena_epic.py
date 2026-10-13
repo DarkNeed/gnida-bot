@@ -66,7 +66,7 @@ def temporary_buff(e):
     if not 0 < e.get("duration", 0) < 10000:
         return False
     kind, value = e.get("kind"), e.get("value", 0)
-    if kind == "prepared_attack":
+    if kind in {"prepared_attack", "rpg_counter", "rpg_parry"}:
         return True
     if kind == "incoming_damage_multiplier":
         return 0 < value < 1
@@ -85,6 +85,8 @@ def temporary_buff(e):
 def temporary_debuff(e):
     if not 0 < e.get("duration", 0) < 10000:
         return False
+    if e['kind']=='burn':
+        return e.get('value',0)>0
     if e["kind"] == "damage_taken_pct":
         return e.get("value", 0) > 0
     if e["kind"] == "incoming_damage_multiplier":

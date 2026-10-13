@@ -153,10 +153,13 @@ def resolve_doof_action(data, rng):
     living = alive_players(data)
     targets = [k for k in intent["targets"] if k in living] or list(living)[:1]
     original = deepcopy(boss)
-    pending_bleed = bleeding_damage(original)
+    pending_bleed = bleeding_damage(original) + sum(max(0,int(e['value'])) for e in original['effects'] if e['kind']=='burn')
     boss_after = None
     for key in targets:
+        if boss['hp']<=0:
+            break
         attacker = deepcopy(original)
+        attacker['hp']=boss['hp']
         if intent["phase"] == 2:
             add_effect(attacker, "doof_fury", "damage_pct", 0.15, 1)
         charge = memory.get("two_coins", 0)
@@ -172,6 +175,8 @@ def resolve_doof_action(data, rng):
         )
         if boss_after is None:
             boss_after = attacker
+        boss['hp']=max(0,boss['hp']-event.get('reaction_damage',0))
+        boss_after['hp']=boss['hp']
         fighter = living[key]["fighter"]
         if event["damage"] and intent["skill"] == "doof_hangover":
             add_effect(fighter, "doof_hangover", "accuracy_flat", -15, 1)
@@ -208,6 +213,6 @@ def resolve_doof_action(data, rng):
         if pending_bleed:
             dot = min(boss["hp"], pending_bleed)
             boss["hp"] -= dot
-            log_event(data, "boss", "boss", f"Кровотечение: −{dot} HP.", damage=dot)
+            log_event(data, "boss", "boss", f"Кровотечение / горение: −{dot} HP.", damage=dot)
     else:
         _tick(boss)

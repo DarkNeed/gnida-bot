@@ -451,7 +451,7 @@ class ArenaMarketMixin(ForgeMixin):
         midnight = int(
             datetime.combine(day, datetime.min.time(), tzinfo=MSK).timestamp()
         )
-        catalog = self._arena_shop_catalog_locked()
+        catalog = {k:v for k,v in self._arena_shop_catalog_locked().items() if self._arena_content_enabled_locked(chat,*k)}
         for visit, lo, hi in MERCHANT_WINDOWS:
             if self.connection.execute(
                 "SELECT 1 FROM arena_merchant_visits WHERE chat_id=? AND day=? AND visit=?",
@@ -473,6 +473,8 @@ class ArenaMarketMixin(ForgeMixin):
                     and (c["kind"], c["content_id"]) not in selected
                     and c["details"].get("unlock_level", 1) <= MAX_FIGHTER_LEVEL
                 ]
+                if not choices:
+                    continue
                 chosen = rng.choices(
                     choices, weights=[WEIGHTS[c["rarity"]] for c in choices]
                 )[0]
@@ -484,10 +486,9 @@ class ArenaMarketMixin(ForgeMixin):
                     for c in catalog.values()
                     if c["kind"] == "class" and c["content_id"] != "ragamuffin"
                 ]
-                chosen = rng.choices(
-                    choices, weights=[WEIGHTS[c["rarity"]] for c in choices]
-                )[0]
-                selected.append(("class", chosen["content_id"]))
+                if choices:
+                    chosen = rng.choices(choices, weights=[WEIGHTS[c["rarity"]] for c in choices])[0]
+                    selected.append(("class", chosen["content_id"]))
             for kind, content in selected:
                 rarity = catalog[(kind, content)]["rarity"]
                 price = (
@@ -535,6 +536,8 @@ class ArenaMarketMixin(ForgeMixin):
                 (actor, visit["id"]),
             ):
                 item = self._arena_describe_item_locked(row, catalog)
+                if not self._arena_content_enabled_locked(chat,row['kind'],row['content_id']):
+                    continue
                 item["remaining"] = row["per_user"] - row["bought"]
                 offers.append(item)
         return dict(
@@ -587,6 +590,8 @@ class ArenaMarketMixin(ForgeMixin):
                     raise ValueError(
                         "Торговец уже ушёл или предложение не из этого чата."
                     )
+                if not self._arena_content_enabled_locked(chat,row['kind'],row['content_id']):
+                    raise ValueError("Модуль этого предмета выключен в чате.")
                 if (
                     row["kind"],
                     row["content_id"],
@@ -633,8 +638,12 @@ class ArenaMarketMixin(ForgeMixin):
                 self.connection.rollback()
                 raise
 
-    def _arena_reset_profile_locked(self, chat, user, personal, class_id="ragamuffin"):
+    def _arena_reset_profile_locked(self, chat, user, personal, class_id="ragamuffin", *, preserve_archives=False):
         table = "personal_profiles" if personal else "slave_profiles"
+        if not preserve_archives:
+            # A deliberate full reset/class tractate cannot be undone by an
+            # old module archive to regain the sacrificed level and skills.
+            self.connection.execute('DELETE FROM arena_class_archives WHERE chat_id=? AND user_id=? AND personal=?',(chat,user,int(personal)))
         self.connection.execute(
             "DELETE FROM arena_learned WHERE chat_id=? AND user_id=? AND personal=?",
             (chat, user, int(personal)),
@@ -667,6 +676,8 @@ class ArenaMarketMixin(ForgeMixin):
         async with self._lock:
             try:
                 row = self._arena_item_locked(chat, actor, item)
+                if not self._arena_content_enabled_locked(chat,row['kind'],row['content_id']):
+                    raise ValueError("Модуль этого трактата выключен. Предмет сохранён.")
                 if (personal and user != actor) or (
                     not personal
                     and user != actor

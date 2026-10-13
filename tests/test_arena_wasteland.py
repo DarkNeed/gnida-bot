@@ -180,7 +180,9 @@ class WastelandStoreTests(unittest.IsolatedAsyncioTestCase):
         self.db.connection.commit()
         with patch("arena_store.enemy_source", wraps=enemy_source) as choose:
             next_row = await self.db.arena_wasteland(1, 10, previous=row["token"])
-        choose.assert_called_once_with(21, previous_class)
+            choose.assert_called_once()
+            self.assertEqual(choose.call_args.args,(21,previous_class))
+            self.assertNotIn('mage',choose.call_args.kwargs['enabled_classes'])
         next_state = json.loads(next_row["state_json"])
         self.assertNotEqual(next_state["sides"]["b"]["class_id"], previous_class)
         self.assertEqual(next_state["sides"]["b"]["level"], 20)

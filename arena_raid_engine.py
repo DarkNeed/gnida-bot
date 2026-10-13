@@ -94,7 +94,7 @@ def pair_state(actor, target):
     )
 
 
-def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True):
+def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True, allies=None):
     return resolve_skill(
         pair_state(actor, target),
         "a",
@@ -103,6 +103,7 @@ def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True
         rng,
         advance_turn=False,
         tick_actor_bleed=tick_actor_bleed,
+        allies=allies,
     )
 
 
@@ -253,7 +254,7 @@ def raid_snapshot(data):
         k: deepcopy(
             {
                 field: f.get(field, {})
-                for field in ("hp", "resource", "effects", "mechanics", "cooldowns", "epic_state")
+                for field in ("hp", "resource", "effects", "mechanics", "cooldowns", "epic_state", "rpg_state", "own_turns")
             }
         )
         for k, f in fighters.items()
@@ -355,7 +356,8 @@ def resolve_round(data, skills, rng=None):
         # change the applicable variant before this fighter acts: do not charge
         # or execute an unaffordable ability, and never abort the whole round.
         try:
-            event = native_attack(actor, boss, selected, skills, rng)
+            event = native_attack(actor, boss, selected, skills, rng,
+                                  allies=[p['fighter'] for p in alive_players(data).values()])
         except ValueError:
             defend(actor)
             log_event(data, key, key, "Навык недоступен после изменений в бою: защита.")
@@ -442,10 +444,13 @@ def resolve_round(data, skills, rng=None):
                     targets = list(alive_players(data))[:1]
                 # An area attack is one boss action, not three ticks of its buffs.
                 original = deepcopy(boss)
-                pending_bleed = bleeding_damage(original)
+                pending_bleed = bleeding_damage(original) + sum(max(0,int(e['value'])) for e in original['effects'] if e['kind']=='burn')
                 boss_after = None
                 for key in targets:
+                    if boss['hp']<=0:
+                        break
                     attacker = deepcopy(original)
+                    attacker['hp']=boss['hp']
                     if intent["skill"] == "lei_perfected_flurry" and any(
                         e.get("id") == "raid_guard_physical"
                         for e in data["players"][key]["fighter"]["effects"]
@@ -477,6 +482,8 @@ def resolve_round(data, skills, rng=None):
                     )
                     if boss_after is None:
                         boss_after = attacker
+                    boss['hp']=max(0,boss['hp']-event.get('reaction_damage',0))
+                    boss_after['hp']=boss['hp']
                     log_event(
                         data,
                         "boss",
@@ -499,7 +506,7 @@ def resolve_round(data, skills, rng=None):
                     dot = min(boss["hp"], pending_bleed)
                     boss["hp"] -= dot
                     log_event(
-                        data, "boss", "boss", f"Кровотечение: −{dot} HP.", damage=dot
+                        data, "boss", "boss", f"Кровотечение / горение: −{dot} HP.", damage=dot
                     )
                 if intent["skill"] == "lei_perfected_flurry" and targets:
                     boss["effects"].append(

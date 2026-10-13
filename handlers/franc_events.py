@@ -19,7 +19,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from database import Database, utc_timestamp
 from franc_events import EVENT_LIFETIME_SECONDS, FrancEventStore, event_config
-from menu_context import choose_chat_view, selected_chat, verified_selected_chat
+from menu_context import choose_chat_view, selected_chat, verified_selected_chat, verified_constructor_chat
 
 
 MSK = timezone(timedelta(hours=3), "MSK")
@@ -121,8 +121,8 @@ def create_franc_event_router(database: Database) -> Router:
     store = FrancEventStore(database)
     scheduler_task: asyncio.Task[None] | None = None
 
-    async def template_list_view(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
-        chat = await selected_chat(database, CUSTOM_COMMAND_OWNER_ID)
+    async def template_list_view(page: int = 0, actor_id: int = CUSTOM_COMMAND_OWNER_ID) -> tuple[str, InlineKeyboardMarkup]:
+        chat = await selected_chat(database, actor_id)
         if chat is None:
             return choose_chat_view()
         templates = await store.list_templates()
@@ -144,8 +144,8 @@ def create_franc_event_router(database: Database) -> Router:
         if navigation:
             rows.append(navigation)
         rows.append([InlineKeyboardButton(text="➕ Создать событие", callback_data="evm:chats")])
-        rows.append([InlineKeyboardButton(text="🔄 Сменить чат", callback_data="sm:chats")])
-        rows.append([InlineKeyboardButton(text="← Главное меню", callback_data=f"sm:c:{chat['chat_id']}:home")])
+        rows.append([InlineKeyboardButton(text="🔄 Сменить чат", callback_data="adm:chats")])
+        rows.append([InlineKeyboardButton(text="← Главное меню", callback_data="adm:home")])
         return (
             f"📍 <b>Чат: {html.escape(str(chat['title']))}</b>\n\n"
             f"<b>🎲 Конструктор событий</b> · {len(templates)} шт. · стр. {page + 1}/{page_count}\n"
@@ -154,8 +154,8 @@ def create_franc_event_router(database: Database) -> Router:
             keyboard(rows),
         )
 
-    async def chats_view(bot: Bot) -> tuple[str, InlineKeyboardMarkup]:
-        chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
+    async def chats_view(bot: Bot, actor_id: int = CUSTOM_COMMAND_OWNER_ID) -> tuple[str, InlineKeyboardMarkup]:
+        chat = await verified_constructor_chat(database, bot, actor_id)
         if chat is None:
             return choose_chat_view()
         body, markup = kinds_view(int(chat["chat_id"]))
@@ -167,7 +167,7 @@ def create_franc_event_router(database: Database) -> Router:
             for kind, name in KIND_NAMES.items()
         ]
         rows.append([InlineKeyboardButton(text="← События", callback_data="evm:list")])
-        rows.append([InlineKeyboardButton(text="🔄 Сменить чат", callback_data="sm:chats")])
+        rows.append([InlineKeyboardButton(text="🔄 Сменить чат", callback_data="adm:chats")])
         return "<b>Тип события</b>\nВыбери способ участия.", keyboard(rows)
 
     async def detail_view(template_id: int) -> tuple[str, InlineKeyboardMarkup] | None:
@@ -401,8 +401,8 @@ def create_franc_event_router(database: Database) -> Router:
         await store.activate_event(int(event["id"]), sent.message_id)
         return True
 
-    async def launch_manual_event(bot: Bot, template_id: int) -> str:
-        chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
+    async def launch_manual_event(bot: Bot, template_id: int, actor_id: int = CUSTOM_COMMAND_OWNER_ID) -> str:
+        chat = await verified_constructor_chat(database, bot, actor_id)
         template = await store.get_template(template_id)
         if chat is None:
             return "Сначала выбери доступный чат в /menu."
@@ -417,38 +417,44 @@ def create_franc_event_router(database: Database) -> Router:
 
     @router.message(F.text.regexp(r"^/(?:event|событие)(?:@\w+)?(?:\s+\d+)?\s*$"))
     async def event_manual_command(message: Message, bot: Bot, state: FSMContext) -> None:
-        if message.chat.type != "private" or not message.from_user or message.from_user.id != CUSTOM_COMMAND_OWNER_ID:
+        actor_id = message.from_user.id if message.from_user else 0
+        if message.chat.type != "private" or not message.from_user:
             return
         await state.clear()
         parts = (message.text or "").split()
         if len(parts) == 1:
-            chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
-            body, markup = await template_list_view() if chat is not None else choose_chat_view()
+            chat = await verified_constructor_chat(database, bot, actor_id)
+            body, markup = await template_list_view(actor_id=actor_id) if chat is not None else choose_chat_view()
             await message.answer(body + "\nДля ручного запуска: /event ID", reply_markup=markup, parse_mode="HTML")
             return
-        await message.answer(await launch_manual_event(bot, int(parts[1])))
+        await message.answer(await launch_manual_event(bot, int(parts[1]), actor_id))
 
     @router.message(F.text.regexp(r"^/(?:события|events)(?:@\w+)?\s*$"))
     async def events_menu(message: Message, bot: Bot) -> None:
-        if message.chat.type != "private" or not message.from_user or message.from_user.id != CUSTOM_COMMAND_OWNER_ID:
+        actor_id = message.from_user.id if message.from_user else 0
+        if message.chat.type != "private" or not message.from_user:
             return
-        chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
-        body, markup = await template_list_view() if chat is not None else choose_chat_view()
+        chat = await verified_constructor_chat(database, bot, actor_id)
+        body, markup = await template_list_view(actor_id=actor_id) if chat is not None else choose_chat_view()
         await message.answer(body, reply_markup=markup, parse_mode="HTML")
 
     @router.callback_query(F.data.startswith("evm:"))
     async def event_admin_callback(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+        actor_id = callback.from_user.id if callback.from_user else 0
         if (
-            not callback.from_user or callback.from_user.id != CUSTOM_COMMAND_OWNER_ID
+            not callback.from_user
             or not callback.message or callback.message.chat.type != "private"
         ):
             await callback.answer("Меню доступно только владельцу бота.", show_alert=True)
             return
         parts = (callback.data or "").split(":")
         action = parts[1] if len(parts) > 1 else ""
-        chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
+        chat = await verified_constructor_chat(database, bot, actor_id)
         if chat is None:
             await state.clear()
+            if actor_id != CUSTOM_COMMAND_OWNER_ID:
+                await callback.answer('Нет прав владельца выбранного чата. Открой /админ в личке.',show_alert=True)
+                return
             await edit_or_send(callback, choose_chat_view())
             await callback.answer()
             return
@@ -465,7 +471,7 @@ def create_franc_event_router(database: Database) -> Router:
             return
         if not matches_chat:
             await state.clear()
-            await edit_or_send(callback, await template_list_view())
+            await edit_or_send(callback, await template_list_view(actor_id=actor_id))
             await callback.answer("Событие относится к другому чату. Выбери его в /menu.")
             return
         view = None
@@ -474,11 +480,11 @@ def create_franc_event_router(database: Database) -> Router:
             if action not in {"field", "add", "edit", "ofield", "oadd", "oedit"}:
                 await state.clear()
             if action == "list":
-                view = await template_list_view(int(parts[2]) if len(parts) > 2 else 0)
+                view = await template_list_view(int(parts[2]) if len(parts) > 2 else 0, actor_id=actor_id)
             elif action == "chats":
-                view = await chats_view(bot)
+                view = await chats_view(bot, actor_id)
             elif action == "kinds":
-                view = await chats_view(bot)
+                view = await chats_view(bot, actor_id)
             elif action == "new":
                 chat_id, kind = int(parts[2]), parts[3]
                 template_id = await store.create_template(chat_id, kind)
@@ -617,7 +623,7 @@ def create_franc_event_router(database: Database) -> Router:
                 )
             elif action == "launch":
                 template_id = int(parts[2])
-                notice = await launch_manual_event(bot, template_id)
+                notice = await launch_manual_event(bot, template_id, actor_id)
                 view = await detail_view(template_id)
             elif action == "delete":
                 template_id = int(parts[2])
@@ -631,21 +637,22 @@ def create_franc_event_router(database: Database) -> Router:
             elif action == "confirm":
                 deleted = await store.delete_template(int(parts[2]))
                 notice = "Событие удалено." if deleted else "Оно уже удалено."
-                view = await template_list_view()
+                view = await template_list_view(actor_id=actor_id)
             else:
                 raise ValueError
         except (ValueError, IndexError):
             await callback.answer("Кнопка устарела или некорректна.", show_alert=True)
             return
         if view is None:
-            view = await template_list_view()
+            view = await template_list_view(actor_id=actor_id)
             notice = notice or "Событие уже удалено."
         await edit_or_send(callback, view)
         await callback.answer(notice)
 
     @router.message(EventInput.value)
     async def event_input(message: Message, state: FSMContext, bot: Bot) -> None:
-        if message.chat.type != "private" or not message.from_user or message.from_user.id != CUSTOM_COMMAND_OWNER_ID:
+        actor_id = message.from_user.id if message.from_user else 0
+        if message.chat.type != "private" or not message.from_user:
             return
         value = (message.text or "").strip()
         if value.casefold() in {"/отмена", "отмена"}:
@@ -657,7 +664,7 @@ def create_franc_event_router(database: Database) -> Router:
             return
         data = await state.get_data()
         template_id = int(data["template_id"])
-        chat = await verified_selected_chat(database, bot, CUSTOM_COMMAND_OWNER_ID)
+        chat = await verified_constructor_chat(database, bot, actor_id)
         template = await store.get_template(template_id)
         if chat is None or template is None or int(template["chat_id"]) != int(chat["chat_id"]):
             await state.clear()

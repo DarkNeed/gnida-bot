@@ -380,7 +380,7 @@ def has_trait(side, kind):
 
 def negative_effect(effect):
     return (
-        effect["kind"] in {"bleed", "stun"} or effect.get("value", 0) < 0
+        effect["kind"] in {"bleed", "stun", "burn"} or effect.get("value", 0) < 0
     ) and effect.get("duration", 0) < 10000
 
 

@@ -51,7 +51,7 @@ def state_for(branch, level, skill_id=None):
             level=level,
             archclass_id=branch,
             archclass_stage=10,
-            loadout=[skill_id or PRIMARY[branch]],
+            loadout=[skill_id or PRIMARY.get(branch,'bum_punch')],
         ),
         dict(slave_id=20, owner_id=20, class_id="jock", level=level),
     )
@@ -89,6 +89,8 @@ class ArchProgressEngineTests(unittest.TestCase):
                 with self.subTest(branch=branch, level=level):
                     state = state_for(branch, level, sid)
                     a = state["sides"]["a"]
+                    if branch=='hunter_moon':
+                        a['rpg_state']={'visceral_ready':True,'visceral_until':2}
                     skill = effective_skill(state, "a", sid)
                     self.assertEqual(skill.cost, BUILTIN_SKILLS[sid].cost)
                     self.assertEqual(skill.cooldown, BUILTIN_SKILLS[sid].cooldown)
