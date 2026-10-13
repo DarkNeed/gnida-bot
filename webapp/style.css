@@ -92,3 +92,4 @@ dialog.effect-dialog:not([open]){display:none}dialog.effect-dialog::backdrop{bac
 @keyframes combatSlash{from{opacity:0;transform:rotate(-35deg) scaleX(.1)}40%{opacity:1}to{opacity:0;transform:rotate(-35deg) scaleX(1.2)}}
 @media(prefers-reduced-motion:reduce){.combat-slash{animation:none}}
 .combat-pet{position:absolute;object-fit:contain;pointer-events:none;z-index:3;filter:drop-shadow(0 3px 3px #0004)}.field .combat-pet{width:10%;height:23%}.pet-player{left:36%;bottom:12%}.pet-enemy{right:12%;top:17%;transform:scaleX(-1)}.raid-art .raid-pet{width:43%;height:46%;right:-12%;bottom:0}.raid-enemy .raid-pet{transform:scaleX(-1)}
+.forge-wallet{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.forge-wallet>span{display:flex;align-items:center;gap:5px;font-size:12px}.content details summary{cursor:pointer}.content label input[type=number]{margin-top:6px}

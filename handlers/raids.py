@@ -126,6 +126,8 @@ class RaidPublisher:
                 text += f" · +{reward['francs']} ₣ · +{reward['xp']} XP"
                 if reward["loot"]:
                     text += " · 📜 " + html.escape(reward["loot"])
+                if reward.get("forge_seal"):
+                    text += " · ⚒️ печать босса +1"
         if row["status"] == "active":
             text += "\n\nВсе выбирают одновременно. На выбор — 2 минуты. Зрители тоже могут открыть рейд."
         return text

@@ -21,6 +21,7 @@ from arena_engine import (
     unlocked_skill_ids,
 )
 from arena_archprogress import branch_skill_allowed, skill_branch
+from arena_forge import ForgeMixin
 
 MSK = timezone(timedelta(hours=3))
 MERCHANT_DURATION = 2 * 3600
@@ -45,8 +46,9 @@ def merchant_is_open(now: int) -> bool:
     )
 
 
-class ArenaMarketMixin:
+class ArenaMarketMixin(ForgeMixin):
     def _connect_arena_market(self):
+        self._connect_forge()
         for table in ("slave_profiles", "personal_profiles"):
             self._ensure_column(table, "passive_loadout", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(table, "skills_reset", "INTEGER NOT NULL DEFAULT 0")
@@ -155,6 +157,13 @@ class ArenaMarketMixin:
             self.connection.execute(
                 "INSERT INTO arena_market_migrations VALUES('merchant_hours_10_22_v1')"
             )
+        # Historic class learning is not proof of having received a scroll.
+        # Existing physical scrolls are safe to backfill; future receipts are recorded.
+        self.connection.execute(
+            """INSERT OR IGNORE INTO arena_forge_recipes(chat_id,owner_id,kind,content_id)
+               SELECT chat_id,owner_id,kind,content_id FROM arena_inventory
+               WHERE kind IN ('skill','passive')"""
+        )
         self.connection.commit()
 
     def _arena_add_item_locked(self, chat, owner, kind, content, rarity, quantity=1):
@@ -164,6 +173,7 @@ class ArenaMarketMixin:
             DO UPDATE SET quantity=quantity+excluded.quantity""",
             (chat, owner, kind, content, rarity, quantity),
         )
+        self._forge_receipt_locked(chat, owner, kind, content)
 
     def _arena_consume_item_locked(self, row):
         if row["quantity"] > 1:
@@ -836,6 +846,7 @@ class ArenaMarketMixin:
                 inventory=self._arena_inventory_locked(chat, actor),
                 merchant=self._arena_merchant_view_locked(chat, actor),
                 balance=balance["balance"] if balance else 0,
+                forge=self._forge_view_locked(chat, actor),
             )
             self.connection.commit()
             return result

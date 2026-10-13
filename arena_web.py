@@ -724,6 +724,9 @@ def create_arena_app(
         if not isinstance(body, dict):
             raise ValueError("Некорректный запрос.")
         action = body.get("action")
+        if action == "forge":
+            notice = await db.arena_forge_action(chat, actor, body)
+            return web.json_response({"notice": notice, "menu": await menu_view(db, chat, actor)})
         if action == "raid_create":
             if member.user.is_bot:
                 raise ValueError("Боты не участвуют в рейдах.")

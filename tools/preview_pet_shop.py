@@ -15,6 +15,7 @@ from aiohttp import web
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from arena_web import create_arena_app
 from database import Database
+from arena_engine import BUILTIN_SKILLS, BUILTIN_PASSIVES
 
 
 async def create_app():
@@ -34,6 +35,16 @@ async def create_app():
         db.connection.execute("INSERT INTO pet_owned(user_id,pet_id,acquired_at) VALUES(?,?,?)", (user, pet, int(time.time())))
         for chat in (1,2):
             db.connection.execute("INSERT INTO pet_equipment VALUES(?,?,?)", (chat,user,pet))
+    db.connection.commit()
+    db._add_francs_locked(3, 10, 2000)
+    for kind, content, quantity in (('skill','dust_in_eyes',4), ('skill','humiliate',3),
+                                    ('skill','tigerslayer_flurry',1), ('passive','steady_hand',3)):
+        catalog = BUILTIN_SKILLS if kind == 'skill' else BUILTIN_PASSIVES
+        db._arena_add_item_locked(3, 10, kind, content, catalog[content].rarity, quantity)
+    wallet = db._forge_wallet_locked(3, 10)
+    wallet['pages'] = dict(common=6, uncommon=6, rare=6, epic=6)
+    wallet['seals'] = dict(lei_heng=3)
+    db._forge_save_wallet_locked(3, 10, wallet)
     db.connection.commit()
     battle = await db.arena_offer(1,10,20,"personal")
     await db.arena_setup(battle["token"],20,"accept")
