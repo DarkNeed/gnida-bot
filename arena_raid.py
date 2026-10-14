@@ -21,11 +21,16 @@ from arena_raid_engine import (
 from arena_archprogress import skill_branch
 
 RAID_LOBBY_SECONDS = 600
+RAID_REWARD_COOLDOWN = 3600
 MSK = timezone(timedelta(hours=3))
 
 
 def raid_day(timestamp=None):
     return datetime.fromtimestamp(time.time() if timestamp is None else timestamp, MSK).date().isoformat()
+
+
+def raid_reward_now():
+    return int(time.time())
 
 
 class RaidMixin:
@@ -61,6 +66,11 @@ class RaidMixin:
                 PRIMARY KEY(actor_id,boss_id)
             );
             CREATE TABLE IF NOT EXISTS arena_raid_migrations(name TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS arena_raid_reward_cooldowns (
+                actor_id INTEGER NOT NULL, boss_id TEXT NOT NULL,
+                claimed_at INTEGER NOT NULL, raid_token TEXT NOT NULL,
+                PRIMARY KEY(actor_id,boss_id)
+            );
         """)
         columns = {
             r["name"] for r in self.connection.execute("PRAGMA table_info(arena_raids)")
@@ -101,18 +111,38 @@ class RaidMixin:
                     )
             self.connection.execute("INSERT INTO arena_raid_migrations VALUES('daily_rewards_v1')")
         self.connection.commit()
+        if not self.connection.execute("SELECT 1 FROM arena_raid_migrations WHERE name='hourly_rewards_v1'").fetchone():
+            # Only paid full rewards start the new cooldown. Recent repeat wins
+            # must not prolong it; preserve the old claims as historical data.
+            with self.connection:
+                for row in self.connection.execute('''SELECT token,boss_id,finished_at,data_json FROM arena_raids
+                    WHERE status='finished' AND finished_at>? AND data_json IS NOT NULL ORDER BY finished_at''',
+                    (raid_reward_now() - RAID_REWARD_COOLDOWN,)).fetchall():
+                    saved = json.loads(row['data_json'])
+                    if not saved.get('won'):
+                        continue
+                    for key, reward in saved.get('rewards', {}).items():
+                        if reward.get('full_reward') is False:
+                            continue
+                        actor = int(saved.get('players', {}).get(key, {}).get('actor_id', key))
+                        self.connection.execute('''INSERT INTO arena_raid_reward_cooldowns VALUES(?,?,?,?)
+                            ON CONFLICT(actor_id,boss_id) DO UPDATE SET claimed_at=excluded.claimed_at,raid_token=excluded.raid_token
+                            WHERE excluded.claimed_at>arena_raid_reward_cooldowns.claimed_at''',
+                            (actor, row['boss_id'], row['finished_at'], row['token']))
+                self.connection.execute("INSERT INTO arena_raid_migrations VALUES('hourly_rewards_v1')")
 
     async def arena_raid_reward_status(self, actor):
         async with self._lock:
-            day = raid_day()
-            midnight = datetime.combine(datetime.fromisoformat(day).date() + timedelta(days=1), datetime.min.time(), tzinfo=MSK)
-            return {
-                boss: dict(full_reward=not bool(self.connection.execute(
-                    "SELECT 1 FROM arena_raid_daily_claims WHERE actor_id=? AND boss_id=? AND day=?",
-                    (actor, boss, day),
-                ).fetchone()), day=day, resets_at=int(midnight.timestamp()))
-                for boss in BOSSES
-            }
+            now = raid_reward_now()
+            result = {}
+            for boss in BOSSES:
+                row = self.connection.execute('SELECT claimed_at FROM arena_raid_reward_cooldowns WHERE actor_id=? AND boss_id=?',
+                                              (actor, boss)).fetchone()
+                available_at = row['claimed_at'] + RAID_REWARD_COOLDOWN if row else 0
+                remaining = max(0, available_at - now)
+                result[boss] = dict(full_reward=remaining == 0, resets_at=available_at,
+                                    cooldown_remaining=remaining, cooldown_seconds=RAID_REWARD_COOLDOWN)
+            return result
 
     def _raid_row_locked(self, token):
         raw = self.connection.execute(
@@ -195,7 +225,8 @@ class RaidMixin:
             raise ValueError("Рейд уже закрыт.")
         if data["won"]:
             rng = random.SystemRandom()
-            day = raid_day()
+            now = raid_reward_now()
+            day = raid_day(now)
             pool = [
                 ("skill", s.skill_id, s.rarity, s.name)
                 for s in BUILTIN_SKILLS.values()
@@ -219,11 +250,15 @@ class RaidMixin:
                 table = "personal_profiles" if player["personal"] else "slave_profiles"
                 chat, fighter = row["chat_id"], player["fighter_id"]
                 boss_id = row.get("boss_id", "iron")
-                # The unique claim and every payout belong to one transaction.
+                # Conditional claim and every payout belong to one transaction.
                 full_reward = bool(self.connection.execute(
-                    "INSERT OR IGNORE INTO arena_raid_daily_claims VALUES(?,?,?,?)",
-                    (player["actor_id"], boss_id, day, row["token"]),
+                    '''INSERT INTO arena_raid_reward_cooldowns VALUES(?,?,?,?)
+                    ON CONFLICT(actor_id,boss_id) DO UPDATE SET claimed_at=excluded.claimed_at,raid_token=excluded.raid_token
+                    WHERE arena_raid_reward_cooldowns.claimed_at<=?''',
+                    (player["actor_id"], boss_id, now, row["token"], now - RAID_REWARD_COOLDOWN),
                 ).rowcount)
+                claimed_at = self.connection.execute('SELECT claimed_at FROM arena_raid_reward_cooldowns WHERE actor_id=? AND boss_id=?',
+                    (player['actor_id'], boss_id)).fetchone()['claimed_at']
                 level = int(data["boss"]["level"])
                 base_xp, francs = 10 + 4 * level, 40 + 3 * level
                 if not full_reward:
@@ -275,7 +310,7 @@ class RaidMixin:
                 pet_rewards = self._pet_reward_locked(
                     player["actor_id"], "raid", "raid:" + row["token"]) if full_reward else {}
                 data["rewards"][key] = dict(xp=xp, francs=francs, loot=loot, pet_rewards=pet_rewards,
-                    full_reward=full_reward, reward_day=day)
+                    full_reward=full_reward, reward_day=day, reward_available_at=claimed_at + RAID_REWARD_COOLDOWN)
         self._raid_save_locked(row, data, "finished")
 
     def _raid_player_valid_locked(self, row, player):

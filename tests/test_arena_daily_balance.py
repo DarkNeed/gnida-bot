@@ -1,6 +1,7 @@
-"""Catch-up progression, adaptive raids and account-wide daily settlement."""
+"""Catch-up progression, adaptive raids and account-wide hourly settlement."""
 import json
 import random
+import time
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -133,8 +134,9 @@ class DailyBalanceStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((p['level'],p['xp'],p['class_id']),(5,level_xp(5),'nerd'))
         self.assertEqual(p['catchup_target_xp'],level_xp(12))
 
-    async def test_daily_global_across_chat_and_fighter_distinct_boss_restart(self):
-        with patch('arena_raid.raid_day',return_value='2026-10-14'):
+    async def test_hourly_global_across_chat_and_fighter_distinct_boss_restart(self):
+        now = int(time.time())
+        with patch('arena_raid.raid_reward_now',return_value=now):
             first=self.finish(await self.raid())
             self.assertTrue(first['full_reward'])
             self.assertEqual((first['francs'],first['xp']),(49,22))
@@ -148,12 +150,13 @@ class DailyBalanceStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.finish(await self.raid('doofenshmirtz',chat=2))['full_reward'])
             status=await self.db.arena_raid_reward_status(10)
             self.assertFalse(status['lei_heng']['full_reward'])
-        with patch('arena_raid.raid_day',return_value='2026-10-15'):
+        with patch('arena_raid.raid_reward_now',return_value=now + 3600):
             self.assertTrue(self.finish(await self.raid(chat=2))['full_reward'])
 
-    async def test_repeats_pity_and_guarantee_only_full_days(self):
+    async def test_repeats_pity_and_guarantee_only_full_cooldowns(self):
+        now = int(time.time())
         for attempt in range(1,6):
-            with patch('arena_raid.raid_day',return_value=f'2026-10-{14+attempt:02d}'):
+            with patch('arena_raid.raid_reward_now',return_value=now + attempt * 3600):
                 reward=self.finish(await self.raid())
                 self.assertEqual(bool(reward['loot']),attempt==5)
                 expected=attempt if attempt<5 else 0
@@ -173,7 +176,7 @@ class DailyBalanceStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((reward['francs'],reward['xp']),(106,98))
         await self.db.arena_edit_profile(1,10,10,True,'reset_class',True)
         await self.db.arena_edit_profile(1,10,10,True,'progression','stay')
-        with patch('arena_raid.raid_day',return_value='2099-01-01'):
+        with patch('arena_raid.raid_reward_now',return_value=int(time.time()) + 3600):
             reward=self.finish(await self.raid())
         self.assertEqual(reward['xp'],2*(10+4*7))
 
@@ -216,8 +219,10 @@ class DailyBalanceStoreTests(unittest.IsolatedAsyncioTestCase):
         row=await self.raid()
         self.finish(row)
         self.db.connection.execute('DELETE FROM arena_raid_daily_claims')
+        self.db.connection.execute('DELETE FROM arena_raid_reward_cooldowns')
         self.db.connection.execute('DELETE FROM arena_raid_global_pity')
         self.db.connection.execute("DELETE FROM arena_raid_migrations WHERE name='daily_rewards_v1'")
+        self.db.connection.execute("DELETE FROM arena_raid_migrations WHERE name='hourly_rewards_v1'")
         self.db.connection.execute("INSERT INTO arena_raid_loot_pity VALUES(1,10,'lei_heng',2)")
         self.db.connection.execute("INSERT INTO arena_raid_loot_pity VALUES(2,10,'lei_heng',4)")
         self.db.connection.commit()

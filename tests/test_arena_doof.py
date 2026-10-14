@@ -1,5 +1,6 @@
 import json
 import random
+import time
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -293,7 +294,7 @@ class DoofStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_drop_pity_restart_atomic_and_public_view(self):
         with patch("arena_raid.random.SystemRandom", return_value=NoLoot()):
             for attempt in range(1, 6):
-                self.reward_day=f'2026-10-{attempt:02d}'
+                self.reward_time=int(time.time()) + attempt * 3600
                 row = await self.start()
                 view = await raid_view(self.db, row, 10)
                 self.assertEqual(view["loot_name"], "Депортатор-инатор")

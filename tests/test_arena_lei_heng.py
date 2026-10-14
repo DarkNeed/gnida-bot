@@ -2,6 +2,7 @@
 
 import json
 import random
+import time
 import unittest
 import subprocess
 import shutil
@@ -340,7 +341,7 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
         data["boss"]["hp"] = 0
         for key, p in data["players"].items():
             p["manual_turns"] = 2 if key in eligible else 0
-        with patch('arena_raid.raid_day',return_value=self.reward_day) if hasattr(self,'reward_day') else nullcontext():
+        with patch('arena_raid.raid_reward_now',return_value=self.reward_time) if hasattr(self,'reward_time') else nullcontext():
             self.db._raid_finish_locked(row, data)
         self.db.connection.commit()
         return data
@@ -355,7 +356,7 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_pity_fifth_win_reset_eligibility_restart_and_chat_scope(self):
         with patch("arena_raid.random.SystemRandom", return_value=NoLoot()):
             for attempt in range(1, 6):
-                self.reward_day=f'2026-10-{attempt:02d}'
+                self.reward_time=int(time.time()) + attempt * 3600
                 row = await self.start()
                 data = self.win(row)
                 self.assertEqual(self.misses(), attempt if attempt < 5 else 0)
@@ -382,7 +383,7 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("поступь", data["rewards"]["10"]["loot"])
         self.assertEqual(self.misses(), 0)
         self.db.connection.execute("UPDATE arena_raid_global_pity SET misses=4")
-        self.reward_day='2099-01-01'
+        self.reward_time=int(time.time()) + 3600
         self.db.connection.commit()
         row = await self.start()
         before = self.balance(10)
@@ -425,7 +426,7 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
         ):
             data = self.win(await self.start())
         self.assertFalse(data["rewards"]["10"]["loot"])
-        self.reward_day='2099-01-01'
+        self.reward_time=int(time.time()) + 3600
         with patch(
             "arena_raid.random.SystemRandom",
             return_value=SimpleNamespace(random=lambda: 0.1999),

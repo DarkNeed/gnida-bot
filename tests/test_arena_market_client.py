@@ -196,14 +196,15 @@ process.stdout.write(c.out||app.innerHTML);
         self.assertIn('data-do="confirmreset"', body)
         self.assertIn('data-do="cancelreset"', body)
 
-    def test_daily_raid_status_and_global_limits_visible(self):
+    def test_hourly_raid_status_and_global_limits_visible(self):
         data=self.menu_data()
-        data['raid_bosses']=[dict(id='lei_heng',name='Лей Хенг',full_reward=False),
+        data['raid_bosses']=[dict(id='lei_heng',name='Лей Хенг',full_reward=False,cooldown_remaining=1801),
                             dict(id='doofenshmirtz',name='Фуфелшмерц',full_reward=True)]
         body=self.run_client("page='raids';menuScreen(input);",data)
-        self.assertIn('Сегодня: повторная награда 20%',body)
-        self.assertIn('Сегодня: полная награда доступна',body)
-        self.assertIn('00:00 МСК',body)
+        self.assertIn('Повторная награда 20% · полная через 31 мин.',body)
+        self.assertIn('Полная награда доступна',body)
+        self.assertIn('раз в час',body)
+        self.assertNotIn('00:00 МСК',body)
         self.assertIn('общая для всех чатов и бойцов',body)
         self.assertNotIn('Железный сборщик',body)
 
