@@ -215,7 +215,7 @@ class ProgressionTests(unittest.IsolatedAsyncioTestCase):
         sprite_url = (await self.profile())["sprite_url"]
         await self.db.arena_use_item(1, 10, item, 10, True, True)
         p = await self.profile()
-        self.assertEqual((p["level"], p["progression_level"], p["archclass_id"]), (1, 0, ""))
+        self.assertEqual((p["level"], p["progression_level"], p["archclass_id"]), (5, 0, ""))
         self.assertEqual(p["sprite_url"], sprite_url)
 
     async def test_old_delegation_clock_survives_progression_schema_migration(self):

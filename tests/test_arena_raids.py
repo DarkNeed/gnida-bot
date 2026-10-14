@@ -53,10 +53,10 @@ class RaidEngineTests(unittest.TestCase):
                     self.assertEqual(len(data["players"]), size)
                     self.assertEqual(
                         data["boss"]["hp"],
-                        round(
+                        round(round(
                             sum(p["fighter"]["hp"] for p in data["players"].values())
                             * 1.4
-                        ),
+                        ) * (1.25 if boss_id=='lei_heng' else 1)),
                     )
                     self.assertEqual(
                         data["boss"]["level"], 20 if boss_id == "lei_heng" else 18
@@ -329,7 +329,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.db._arena_busy_locked(1, 10))
 
     async def test_small_party_start_rounds_and_rewards(self):
-        for boss_id in ("iron", "lei_heng"):
+        for boss_id in ("doofenshmirtz", "lei_heng"):
             for actors in ((10,), (10, 20)):
                 with self.subTest(boss_id=boss_id, actors=actors):
                     for actor in actors:
@@ -349,6 +349,12 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(
                         len(json.loads(row["data_json"])["players"]), len(actors)
                     )
+                    # This test verifies lobby flow/settlement, not whether a
+                    # low-level party survives deterministic boss criticals.
+                    data=json.loads(row['data_json'])
+                    for player in data['players'].values():
+                        player['fighter']['hp']=player['fighter']['stats']['max_hp']=1000
+                    self.save(row,data)
                     for i, actor in enumerate(actors):
                         row = await self.db.arena_raid_action(
                             row["token"], actor, 1, "defend"
@@ -361,6 +367,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
                         player["manual_turns"] = 2
                     self.save(row, data)
                     before = {actor: self.balance(actor) for actor in actors}
+                    full={actor:(await self.db.arena_raid_reward_status(actor))[boss_id]['full_reward'] for actor in actors}
                     with patch(
                         "arena_raid_engine.random.SystemRandom", return_value=Roll()
                     ):
@@ -376,7 +383,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
                     for actor in actors:
                         self.assertEqual(
                             self.balance(actor) - before[actor],
-                            expected_francs,
+                            expected_francs if full[actor] else expected_francs//5,
                         )
                     with self.assertRaises(ValueError):
                         await self.db.arena_raid_action(
@@ -621,7 +628,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         data = json.loads(row["data_json"])
         self.assertEqual(row["status"], "finished")
         self.assertEqual(set(data["rewards"]), {"10"})
-        self.assertEqual(self.balance(10), 43)
+        self.assertEqual(self.balance(10), 49)
         self.assertEqual(self.balance(20), 0)
         self.assertEqual(self.balance(50), 0)
         self.assertTrue(data["rewards"]["10"]["loot"])
@@ -629,7 +636,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.db.arena_raid_expire(), [])
             with self.assertRaises(ValueError):
                 await self.db.arena_raid_action(row["token"], 10, 1, "bum_punch")
-        self.assertEqual(self.balance(10), 43)
+        self.assertEqual(self.balance(10), 49)
 
     async def test_surrender_finishes_without_money(self):
         row = await self.start()
@@ -800,7 +807,8 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         try:
             self.assertEqual((await client.post(path, json={"action": "raid_create", "boss": "iron"})).status, 400)
             response = await client.get(path, headers=headers)
-            self.assertEqual({b["id"] for b in (await response.json())["raid_bosses"]}, {"iron", "lei_heng", "doofenshmirtz"})
+            self.assertEqual({b["id"] for b in (await response.json())["raid_bosses"]}, {"lei_heng", "doofenshmirtz"})
+            self.assertEqual((await client.post(path, headers=headers, json={"action":"raid_create","boss":"iron"})).status,400)
             self.assertEqual((await client.post(path, headers=headers, json={"action": "raid_create", "boss": "unknown"})).status, 400)
             self.bot.get_chat_member.return_value.status = "left"
             self.assertEqual((await client.post(path, headers=headers, json={"action": "raid_create", "boss": "iron"})).status, 400)

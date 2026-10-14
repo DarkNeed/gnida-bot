@@ -5,6 +5,7 @@ import random
 import unittest
 import subprocess
 import shutil
+from contextlib import nullcontext
 from pathlib import Path
 from copy import deepcopy
 from unittest.mock import patch, AsyncMock
@@ -79,7 +80,7 @@ class LeiEngineTests(unittest.TestCase):
             iron = create_raid_state(
                 participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS
             )
-            self.assertEqual(lei["boss"]["level"], 20)
+            self.assertEqual(lei["boss"]["level"], level+2)
             self.assertEqual(iron["boss"]["level"], level)
             self.assertEqual(
                 [p["fighter"]["level"] for p in lei["players"].values()], [level] * 3
@@ -339,20 +340,22 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
         data["boss"]["hp"] = 0
         for key, p in data["players"].items():
             p["manual_turns"] = 2 if key in eligible else 0
-        self.db._raid_finish_locked(row, data)
+        with patch('arena_raid.raid_day',return_value=self.reward_day) if hasattr(self,'reward_day') else nullcontext():
+            self.db._raid_finish_locked(row, data)
         self.db.connection.commit()
         return data
 
     def misses(self, actor=10, chat=1):
         row = self.db.connection.execute(
-            "SELECT misses FROM arena_raid_loot_pity WHERE chat_id=? AND actor_id=? AND boss_id='lei_heng'",
-            (chat, actor),
+            "SELECT misses FROM arena_raid_global_pity WHERE actor_id=? AND boss_id='lei_heng'",
+            (actor,),
         ).fetchone()
         return row["misses"] if row else None
 
     async def test_pity_fifth_win_reset_eligibility_restart_and_chat_scope(self):
         with patch("arena_raid.random.SystemRandom", return_value=NoLoot()):
             for attempt in range(1, 6):
+                self.reward_day=f'2026-10-{attempt:02d}'
                 row = await self.start()
                 data = self.win(row)
                 self.assertEqual(self.misses(), attempt if attempt < 5 else 0)
@@ -368,8 +371,9 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(items), 1)
             self.assertEqual(items[0]["quantity"], 1)
             await self.db.upsert_chat(2, "Другой чат")
-            self.win(await self.start(chat=2))
-            self.assertEqual(self.misses(chat=2), 1)
+            data=self.win(await self.start(chat=2))
+            self.assertFalse(data['rewards']['10']['full_reward'])
+            self.assertEqual(self.misses(chat=2), 0)
             self.assertEqual(self.misses(), 0)
 
     async def test_twenty_percent_drop_and_transaction_rollback(self):
@@ -377,7 +381,8 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
             data = self.win(await self.start())
         self.assertIn("поступь", data["rewards"]["10"]["loot"])
         self.assertEqual(self.misses(), 0)
-        self.db.connection.execute("UPDATE arena_raid_loot_pity SET misses=4")
+        self.db.connection.execute("UPDATE arena_raid_global_pity SET misses=4")
+        self.reward_day='2099-01-01'
         self.db.connection.commit()
         row = await self.start()
         before = self.balance(10)
@@ -401,12 +406,12 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(public["boss_id"], "lei_heng")
         self.assertEqual(public["recommended_level"], 18)
-        self.assertEqual(public["data"]["boss"]["level"], 20)
+        self.assertEqual(public["data"]["boss"]["level"], 3)
         self.db.connection.execute("ALTER TABLE arena_raids DROP COLUMN boss_id")
         self.db._connect_raids()
         row = await self.db.arena_raid_get(row["token"])
         self.assertEqual(row["boss_id"], "iron")
-        with self.assertRaisesRegex(ValueError, "Неизвестный"):
+        with self.assertRaisesRegex(ValueError, "недоступен"):
             await self.db.arena_raid_create(1, 50, "unknown")
 
     async def test_merchant_excludes_raid_tractate(self):
@@ -420,6 +425,7 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
         ):
             data = self.win(await self.start())
         self.assertFalse(data["rewards"]["10"]["loot"])
+        self.reward_day='2099-01-01'
         with patch(
             "arena_raid.random.SystemRandom",
             return_value=SimpleNamespace(random=lambda: 0.1999),

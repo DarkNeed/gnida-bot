@@ -328,6 +328,7 @@ class MirrorMixin:
                 row["chat_id"],
                 row["fighter_id"],
                 victory_xp(state["sides"]["b"]["level"]),
+                battle=True,
             )
             reward = (
                 self._arena_profile_locked(

@@ -262,8 +262,8 @@ class FingerStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_edit_profile(1, 10, 10, True, "reset_class", True)
         menu = await menu_view(self.db, 1, 10)
         p = menu["personal"]
-        self.assertEqual((p["class_id"], p["level"], p["xp"]), ("ragamuffin", 1, 0))
-        self.assertEqual(p["known_skills"], ["bum_punch"])
+        self.assertEqual((p["class_id"], p["level"], p["xp"]), ("ragamuffin", 5, 72))
+        self.assertEqual(p["known_skills"], ["bum_punch", "dust_in_eyes"])
         self.assertEqual(p["passives"], [])
         self.assertTrue(p["sprite_url"])
         self.assertEqual(menu["balance"], 345)
@@ -288,7 +288,7 @@ class FingerStoreTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.db.arena_edit_profile(1, 20, 30, False, "reset_class", True)
         await self.db.arena_edit_profile(1, 10, 30, False, "reset_class", True)
-        self.assertEqual((await self.db.get_slave_profile(1, 30))["level"], 1)
+        self.assertEqual((await self.db.get_slave_profile(1, 30))["level"], 5)
 
     async def test_reset_busy_and_http_endpoint(self):
         await self.level()
@@ -303,6 +303,7 @@ class FingerStoreTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(response.status, 200)
             self.assertIn("Класс сброшен", (await response.json())["notice"])
+            await self.db.arena_edit_profile(1,10,10,True,"progression","stay")
             await self.db.arena_wasteland(1, 10, 10, personal=True)
             with self.assertRaises(ValueError):
                 await self.db.arena_edit_profile(1, 10, 10, True, "reset_class", True)

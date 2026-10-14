@@ -19,6 +19,7 @@ from arena_engine import (
     fighter_xp_limit,
     normalize_loadout,
     unlocked_skill_ids,
+    xp_for_next_level,
 )
 from arena_archprogress import branch_skill_allowed, skill_branch
 from arena_forge import ForgeMixin
@@ -52,6 +53,7 @@ class ArenaMarketMixin(ForgeMixin):
         for table in ("slave_profiles", "personal_profiles"):
             self._ensure_column(table, "passive_loadout", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(table, "skills_reset", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(table, "catchup_target_xp", "INTEGER NOT NULL DEFAULT 0")
             for kind in ("skill", "passive"):
                 self._ensure_column(table, kind + "_memory", "TEXT DEFAULT NULL")
                 self._ensure_column(table, kind + "_seen", "TEXT NOT NULL DEFAULT '[]'")
@@ -640,6 +642,16 @@ class ArenaMarketMixin(ForgeMixin):
 
     def _arena_reset_profile_locked(self, chat, user, personal, class_id="ragamuffin", *, preserve_archives=False):
         table = "personal_profiles" if personal else "slave_profiles"
+        profile = dict(self._arena_profile_locked(chat, user, personal))
+        if not preserve_archives and profile["level"] < 5:
+            raise ValueError("Сброс класса доступен с 5 уровня.")
+        reset_level = 1 if preserve_archives else 5
+        reset_xp = sum(xp_for_next_level(level) for level in range(1, reset_level))
+        target = profile.get("catchup_target_xp", 0)
+        if not preserve_archives:
+            target = max(target, sum(xp_for_next_level(level) for level in range(1, profile["level"])))
+            if target <= reset_xp:
+                target = 0
         if not preserve_archives:
             # A deliberate full reset/class tractate cannot be undone by an
             # old module archive to regain the sacrificed level and skills.
@@ -649,11 +661,11 @@ class ArenaMarketMixin(ForgeMixin):
             (chat, user, int(personal)),
         )
         self.connection.execute(
-            f"""UPDATE {table} SET class_id=?,archclass_id='',archclass_stage=10,progression_level=0,progression_pending_level=0,progression_pending_at=NULL,archclass_pending_at=NULL,level=1,xp=0,loadout='["bum_punch"]',
+            f"""UPDATE {table} SET class_id=?,archclass_id='',archclass_stage=10,progression_level=0,progression_pending_level=0,progression_pending_at=NULL,archclass_pending_at=NULL,level=?,xp=?,catchup_target_xp=?,loadout='["bum_punch"]',
                 passive_loadout='[]',skills_reset=1,class_choice_pending_at=NULL,
                 skills_pending_at=?,updated_at=?,skill_memory=NULL,passive_memory=NULL,
                 skill_seen='[]',passive_seen='[]' WHERE chat_id=? AND user_id=?""",
-            (class_id, market_now(), market_now(), chat, user),
+            (class_id, reset_level, reset_xp, target, market_now(), market_now(), chat, user),
         )
 
     def _arena_equip_class_passives_locked(self, chat, user, personal, class_id):
@@ -729,7 +741,7 @@ class ArenaMarketMixin(ForgeMixin):
                     self._arena_equip_class_passives_locked(
                         chat, user, personal, content
                     )
-                    notice = f"Новый класс: {classes[content].name}. Уровень 1; прежние навыки и пассивки забыты."
+                    notice = f"Новый класс: {classes[content].name}. Уровень 5; прежние навыки и пассивки забыты. Боевой опыт ×2 до возвращения прежнего уровня."
                 elif kind in {"skill", "passive"}:
                     catalog = skills if kind == "skill" else BUILTIN_PASSIVES
                     if content not in catalog:

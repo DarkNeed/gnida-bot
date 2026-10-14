@@ -4,22 +4,28 @@ import json
 import random
 import secrets
 import time
+from datetime import datetime, timedelta, timezone
 
 from arena_engine import BUILTIN_PASSIVES, BUILTIN_SKILLS, validate_skill
 from arena_raid_engine import (
     RAID_SIZE,
     RAID_ROUND_SECONDS,
     BOSSES,
+    AVAILABLE_BOSSES,
     create_raid_state,
     alive_players,
     pair_state,
     resolve_round,
     finish_if_needed,
 )
-from arena_wasteland import victory_xp
 from arena_archprogress import skill_branch
 
 RAID_LOBBY_SECONDS = 600
+MSK = timezone(timedelta(hours=3))
+
+
+def raid_day(timestamp=None):
+    return datetime.fromtimestamp(time.time() if timestamp is None else timestamp, MSK).date().isoformat()
 
 
 class RaidMixin:
@@ -45,6 +51,16 @@ class RaidMixin:
                 misses INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(chat_id,actor_id,boss_id)
             );
+            CREATE TABLE IF NOT EXISTS arena_raid_daily_claims (
+                actor_id INTEGER NOT NULL, boss_id TEXT NOT NULL, day TEXT NOT NULL,
+                raid_token TEXT NOT NULL,
+                PRIMARY KEY(actor_id,boss_id,day)
+            );
+            CREATE TABLE IF NOT EXISTS arena_raid_global_pity (
+                actor_id INTEGER NOT NULL, boss_id TEXT NOT NULL, misses INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(actor_id,boss_id)
+            );
+            CREATE TABLE IF NOT EXISTS arena_raid_migrations(name TEXT PRIMARY KEY);
         """)
         columns = {
             r["name"] for r in self.connection.execute("PRAGMA table_info(arena_raids)")
@@ -57,7 +73,46 @@ class RaidMixin:
             self.connection.execute(
                 "ALTER TABLE arena_raids ADD COLUMN silent INTEGER NOT NULL DEFAULT 0"
             )
+        if not self.connection.execute(
+            "SELECT 1 FROM arena_raid_migrations WHERE name='daily_rewards_v1'"
+        ).fetchone():
+            # Preserve existing guarantees without summing unrelated chat counters.
+            self.connection.execute("""INSERT OR IGNORE INTO arena_raid_global_pity
+                SELECT actor_id,boss_id,MIN(4,MAX(misses)) FROM arena_raid_loot_pity
+                GROUP BY actor_id,boss_id""")
+            # Old victories already paid full rewards. Updating/restarting must
+            # not give the same account another full reward on that day.
+            today = datetime.fromtimestamp(time.time(), MSK).date()
+            starts = int(datetime.combine(today, datetime.min.time(), tzinfo=MSK).timestamp())
+            for row in self.connection.execute(
+                """SELECT token,boss_id,finished_at,data_json FROM arena_raids
+                WHERE status='finished' AND finished_at>=? AND finished_at<? AND data_json IS NOT NULL""",
+                (starts, starts + 86400),
+            ):
+                saved = json.loads(row["data_json"])
+                if not saved.get("won"):
+                    continue
+                players = saved.get("players", {})
+                for key in saved.get("rewards", {}):
+                    actor = int(players.get(key, {}).get("actor_id", key))
+                    self.connection.execute(
+                        "INSERT OR IGNORE INTO arena_raid_daily_claims VALUES(?,?,?,?)",
+                        (actor, row["boss_id"], raid_day(row["finished_at"]), row["token"]),
+                    )
+            self.connection.execute("INSERT INTO arena_raid_migrations VALUES('daily_rewards_v1')")
         self.connection.commit()
+
+    async def arena_raid_reward_status(self, actor):
+        async with self._lock:
+            day = raid_day()
+            midnight = datetime.combine(datetime.fromisoformat(day).date() + timedelta(days=1), datetime.min.time(), tzinfo=MSK)
+            return {
+                boss: dict(full_reward=not bool(self.connection.execute(
+                    "SELECT 1 FROM arena_raid_daily_claims WHERE actor_id=? AND boss_id=? AND day=?",
+                    (actor, boss, day),
+                ).fetchone()), day=day, resets_at=int(midnight.timestamp()))
+                for boss in BOSSES
+            }
 
     def _raid_row_locked(self, token):
         raw = self.connection.execute(
@@ -135,6 +190,7 @@ class RaidMixin:
             raise ValueError("Рейд уже закрыт.")
         if data["won"]:
             rng = random.SystemRandom()
+            day = raid_day()
             pool = [
                 ("skill", s.skill_id, s.rarity, s.name)
                 for s in BUILTIN_SKILLS.values()
@@ -157,33 +213,40 @@ class RaidMixin:
                     continue
                 table = "personal_profiles" if player["personal"] else "slave_profiles"
                 chat, fighter = row["chat_id"], player["fighter_id"]
+                boss_id = row.get("boss_id", "iron")
+                # The unique claim and every payout belong to one transaction.
+                full_reward = bool(self.connection.execute(
+                    "INSERT OR IGNORE INTO arena_raid_daily_claims VALUES(?,?,?,?)",
+                    (player["actor_id"], boss_id, day, row["token"]),
+                ).rowcount)
+                level = int(data["boss"]["level"])
+                base_xp, francs = 10 + 4 * level, 40 + 3 * level
+                if not full_reward:
+                    base_xp, francs = base_xp // 5, francs // 5
                 before = self._arena_profile_locked(chat, fighter, player["personal"])[
                     "xp"
                 ]
                 self._grant_profile_xp_locked(
-                    table, chat, fighter, 2 * victory_xp(data["boss"]["level"])
+                    table, chat, fighter, base_xp, battle=True
                 )
                 xp = (
                     self._arena_profile_locked(chat, fighter, player["personal"])["xp"]
                     - before
                 )
-                francs = 40 + 3 * data["boss"]["level"]
                 self._add_francs_locked(chat, player["actor_id"], francs)
                 loot = ""
-                boss_id = row.get("boss_id", "iron")
                 loot_skill = BOSSES.get(boss_id, {}).get("loot_skill")
-                if loot_skill:
+                if full_reward and loot_skill:
                     pity = self.connection.execute(
-                        "SELECT misses FROM arena_raid_loot_pity WHERE chat_id=? AND actor_id=? AND boss_id=?",
-                        (chat, player["actor_id"], boss_id),
+                        "SELECT misses FROM arena_raid_global_pity WHERE actor_id=? AND boss_id=?",
+                        (player["actor_id"], boss_id),
                     ).fetchone()
                     misses = pity["misses"] if pity else 0
                     dropped = misses >= 4 or rng.random() < 0.2
                     self.connection.execute(
-                        """INSERT INTO arena_raid_loot_pity VALUES(?,?,?,?)
-                        ON CONFLICT(chat_id,actor_id,boss_id) DO UPDATE SET misses=excluded.misses""",
+                        """INSERT INTO arena_raid_global_pity VALUES(?,?,?)
+                        ON CONFLICT(actor_id,boss_id) DO UPDATE SET misses=excluded.misses""",
                         (
-                            chat,
                             player["actor_id"],
                             boss_id,
                             0 if dropped else misses + 1,
@@ -199,14 +262,15 @@ class RaidMixin:
                             tractate.skill_id,
                             tractate.rarity,
                         )
-                elif pool and rng.random() < 0.3:
+                elif full_reward and pool and rng.random() < 0.3:
                     kind, content, rarity, loot = rng.choice(pool)
                     self._arena_add_item_locked(
                         chat, player["actor_id"], kind, content, rarity
                     )
                 pet_rewards = self._pet_reward_locked(
-                    player["actor_id"], "raid", "raid:" + row["token"])
-                data["rewards"][key] = dict(xp=xp, francs=francs, loot=loot, pet_rewards=pet_rewards)
+                    player["actor_id"], "raid", "raid:" + row["token"]) if full_reward else {}
+                data["rewards"][key] = dict(xp=xp, francs=francs, loot=loot, pet_rewards=pet_rewards,
+                    full_reward=full_reward, reward_day=day)
         self._raid_save_locked(row, data, "finished")
 
     def _raid_player_valid_locked(self, row, player):
@@ -321,9 +385,9 @@ class RaidMixin:
             )
             self.connection.commit()
 
-    async def arena_raid_create(self, chat, actor, boss_id="iron", *, silent=False):
-        if boss_id not in BOSSES:
-            raise ValueError("Неизвестный босс.")
+    async def arena_raid_create(self, chat, actor, boss_id="lei_heng", *, silent=False):
+        if boss_id not in AVAILABLE_BOSSES:
+            raise ValueError("Этот босс недоступен для новых рейдов.")
         async with self._lock:
             try:
                 self._raid_expire_locked()

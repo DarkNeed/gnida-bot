@@ -123,4 +123,4 @@ class ModuleTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.db.arena_edit_profile(1,10,10,True,'restore_class','jock')
         profile=dict(self.db._arena_profile_locked(1,10,True))
-        self.assertEqual((profile['level'],profile['xp']),(1,0))
+        self.assertEqual((profile['level'],profile['xp']),(5,72))

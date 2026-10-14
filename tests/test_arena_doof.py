@@ -70,7 +70,7 @@ class DoofEngineTests(unittest.TestCase):
             party_hp = sum(
                 p["fighter"]["stats"]["max_hp"] for p in doof["players"].values()
             )
-            self.assertEqual(doof["boss"]["hp"], round(round(party_hp * 1.4) * 1.05))
+            self.assertEqual(doof["boss"]["hp"], round(round(round(party_hp * 1.4) * 1.05) * 1.25))
             raw = create_battle_state(
                 sources[0], dict(slave_id=0, owner_id=0, class_id="nerd", level=20)
             )["sides"]["b"]
@@ -82,7 +82,7 @@ class DoofEngineTests(unittest.TestCase):
                 other = create_raid_state(
                     members, sources, FIGHTER_CLASSES, BUILTIN_SKILLS, boss_id
                 )
-                self.assertEqual(other["boss"]["hp"], round(party_hp * 1.4))
+                self.assertEqual(other["boss"]["hp"], round(round(party_hp * 1.4) * (1.25 if boss_id=='lei_heng' else 1)))
                 self.assertEqual(
                     [p["fighter"]["stats"] for p in other["players"].values()],
                     [p["fighter"]["stats"] for p in doof["players"].values()],
@@ -99,7 +99,7 @@ class DoofEngineTests(unittest.TestCase):
     def test_aliases_level_and_telegraphs(self):
         for text in ("/рейд Фуфелшмерц", "/raid doof", "/рейд@GnidoBot фуфел"):
             self.assertEqual(raid_boss_id(RAID_RE.fullmatch(text)), "doofenshmirtz")
-        self.assertEqual(raid_boss_id(RAID_RE.fullmatch("/рейд")), "iron")
+        self.assertEqual(raid_boss_id(RAID_RE.fullmatch("/рейд")), "lei_heng")
         for size in (1, 2, 3):
             data = state(size)
             self.assertEqual(data["boss"]["level"], 20)
@@ -293,6 +293,7 @@ class DoofStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_drop_pity_restart_atomic_and_public_view(self):
         with patch("arena_raid.random.SystemRandom", return_value=NoLoot()):
             for attempt in range(1, 6):
+                self.reward_day=f'2026-10-{attempt:02d}'
                 row = await self.start()
                 view = await raid_view(self.db, row, 10)
                 self.assertEqual(view["loot_name"], "Депортатор-инатор")

@@ -16,6 +16,7 @@ from aiogram.exceptions import TelegramAPIError
 from arena_assets import render_arena_index
 from arena_engine import (
     level_progress,
+    level_from_total_xp,
     normalize_loadout,
     unlocked_skill_ids,
     stats_for,
@@ -37,7 +38,7 @@ from arena_evolution import evolution_info
 from arena_archclasses import archclass_view, class_title, branch_options
 from arena_progression import pending_choice, choice_avatar
 from arena_raid_web import raid_view
-from arena_raid_engine import BOSSES
+from arena_raid_engine import BOSSES, AVAILABLE_BOSSES
 from arena_pets import pet_cost, PET_PACKS, PET_TERMS_VERSION
 from aiogram.types import LabeledPrice
 
@@ -301,6 +302,8 @@ async def menu_view(db, chat: int, actor: int) -> dict:
             profile["class_id"], classes["ragamuffin"]
         ).rarity
         profile["class_rarity_name"] = RARITY_LABELS[profile["class_rarity"]]
+        target = profile.get("catchup_target_xp", 0)
+        profile["catchup_level"] = level_from_total_xp(target) if target > profile["xp"] else 0
         profile["sprite"] = (
             profile["class_id"]
             if profile["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter"} | FINGER_IDS
@@ -414,10 +417,11 @@ async def menu_view(db, chat: int, actor: int) -> dict:
     result.update(await db.arena_market_view(chat, actor))
     result["mirror_runs"] = mirror_runs
     result["raids"] = await db.arena_raid_list(chat, actor)
+    reward_status = await db.arena_raid_reward_status(actor)
     result["raid_bosses"] = [
         dict(id=boss_id, name=boss["name"], sprite=boss.get("sprite", ""),
-             recommended_level=boss.get("recommended_level", 1))
-        for boss_id, boss in BOSSES.items()
+             recommended_level=boss.get("recommended_level", 1), **reward_status[boss_id])
+        for boss_id, boss in BOSSES.items() if boss_id in AVAILABLE_BOSSES
     ]
     return result
 

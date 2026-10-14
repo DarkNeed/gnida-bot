@@ -414,7 +414,7 @@ class ArchStoreTests(unittest.IsolatedAsyncioTestCase):
         profile = (await menu_view(self.db, 1, 10))["personal"]
         self.assertEqual(
             (profile["class_id"], profile["archclass_id"], profile["level"]),
-            ("ragamuffin", "", 1),
+            ("ragamuffin", "", 5),
         )
         self.profile()
         await self.choose()

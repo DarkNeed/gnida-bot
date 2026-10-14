@@ -26,7 +26,7 @@ def raid_boss_id(match):
     return (
         "doofenshmirtz"
         if name.startswith(("фуфел", "doof"))
-        else "lei_heng" if name else "iron"
+        else "lei_heng"
     )
 
 
@@ -98,17 +98,17 @@ class RaidPublisher:
             return (
                 text
                 + (
-                    f"\nРекомендуемый уровень: {boss['recommended_level']}+. 📜 {('Депортатор-инатор · 80 энергии, один раз за бой' if row.get('boss_id') == 'doofenshmirtz' else 'Трактат поступи тигробоя')}: шанс 20%, гарантирован на пятой победе без выпадения."
+                    f"\n📜 {('Депортатор-инатор · 80 энергии, один раз за бой' if row.get('boss_id') == 'doofenshmirtz' else 'Трактат поступи тигробоя')}: шанс 20%, гарантия на пятой полной дневной победе без выпадения."
                     if boss.get("loot_skill")
                     else ""
                 )
-                + "\n\nВыберите личного персонажа или экипированного раба в «Открыть рейд».\nСоздатель может начать бой с 1–3 участниками, в том числе в одиночку. На сбор — 10 минут."
+                + "\nУровень босса подстраивается под отряд, выше самого сильного бойца. Первая победа над этим боссом за день: полная награда; повторы: 20% франков и XP, без предметов. Лимит общий для всех чатов и бойцов, сброс в 00:00 МСК.\n\nВыберите личного персонажа или экипированного раба в «Открыть рейд».\nСоздатель может начать бой с 1–3 участниками, в том числе в одиночку. На сбор — 10 минут."
             )
         if row["status"] == "cancelled":
             return text + "Сбор рейда отменён или время сбора истекло."
         data = json.loads(row["data_json"])
         if row["status"] == "active":
-            text += f"Раунд {data['round']} · фаза {data['phase']}/2\nHP босса: {data['boss']['hp']}/{data['boss']['stats']['max_hp']}\n"
+            text += f"Раунд {data['round']} · фаза {data['phase']}/2 · босс Lv.{data['boss']['level']}\nHP босса: {data['boss']['hp']}/{data['boss']['stats']['max_hp']}\n"
             text += html.escape(data["intent"]["text"]) + "\n"
             if len(data["intent"]["targets"]) == 1:
                 text += "Цель: " + names[data["intent"]["targets"][0]] + "\n"
@@ -124,6 +124,8 @@ class RaidPublisher:
             reward = data["rewards"].get(key)
             if reward:
                 text += f" · +{reward['francs']} ₣ · +{reward['xp']} XP"
+                if reward.get("full_reward") is False:
+                    text += " · повторная награда 20%"
                 if reward["loot"]:
                     text += " · 📜 " + html.escape(reward["loot"])
                 if reward.get("forge_seal"):

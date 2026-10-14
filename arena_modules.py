@@ -106,6 +106,8 @@ class ClassModulesMixin:
             if snapshot["xp"] < profile["xp"]:
                 snapshot.update(xp=profile["xp"],level=profile["level"])
             fields = {k:v for k,v in snapshot.items() if k not in {"chat_id","user_id"}}
+            # Catch-up XP belongs to current progression, not an archived build.
+            fields['catchup_target_xp'] = profile['catchup_target_xp']
             fields['updated_at'] = int(time.time())
             self.connection.execute(f"UPDATE {table} SET " + ','.join(k+'=?' for k in fields) + " WHERE chat_id=? AND user_id=?", (*fields.values(),chat,user))
             self.connection.execute("DELETE FROM arena_learned WHERE chat_id=? AND user_id=? AND personal=?",(chat,user,int(personal)))

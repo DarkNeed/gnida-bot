@@ -475,8 +475,8 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_use_item(1, 10, item, 10, confirm=True)
         view = await menu_view(self.db, 1, 10)
         p = view["personal"]
-        self.assertEqual((p["class_id"], p["level"], p["xp"]), ("nerd", 1, 0))
-        self.assertEqual([s["skill_id"] for s in p["skills"]], ["bum_punch"])
+        self.assertEqual((p["class_id"], p["level"], p["xp"]), ("nerd", 5, 72))
+        self.assertNotIn("smack", [s["skill_id"] for s in p["skills"]])
         self.assertEqual(p["passive_loadout"], ["inherent:nerd:0", "inherent:nerd:1"])
         self.assertEqual(len(p["passives"]), 2)
         self.assertNotIn("light_step", [s["skill_id"] for s in p["passives"]])
@@ -486,6 +486,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.qty(item), 0)
 
     async def test_reset_does_not_reenable_old_author_grants_after_leveling(self):
+        self.db._grant_profile_xp_locked("personal_profiles",1,10,72)
         admin = 1980056841
         await self.db.create_custom_fighter_content(
             "skill",

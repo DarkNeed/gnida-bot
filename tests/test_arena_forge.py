@@ -234,6 +234,7 @@ class ForgeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'уровень 10'):
             await self.db.arena_use_item(1, 10, item, 10)
         self.assertEqual(self.qty('last_argument'), 1)
+        self.db._grant_profile_xp_locked('personal_profiles',1,10,72)
         self.db._arena_reset_profile_locked(1, 10, True, 'nerd')
         self.db._grant_profile_xp_locked('personal_profiles', 1, 10, 10**6)
         self.db.connection.commit()

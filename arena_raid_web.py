@@ -46,6 +46,7 @@ async def raid_view(db, row, actor):
         side["damage_bonus"] = (
             max(0.1, 1 + sum(v for v in boosts if v >= 0))
             * max(0.1, 1 + sum(v for v in boosts if v < 0))
+            * side.get("raid_damage_multiplier", 1)
             - 1
         )
         if not boss:
@@ -161,5 +162,6 @@ async def raid_view(db, row, actor):
         ),
         participants=participants,
         choices=choices,
+        reward_status=(await db.arena_raid_reward_status(actor))[row.get("boss_id", "iron")],
         data=data,
     )

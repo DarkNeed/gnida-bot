@@ -238,7 +238,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
         ).fetchone()
 
     def _grant_profile_xp_locked(
-        self, table: str, chat_id: int, user_id: int, amount: int
+        self, table: str, chat_id: int, user_id: int, amount: int, *, battle: bool = False
     ) -> tuple[int, int]:
         if table not in {"slave_profiles", "personal_profiles", "owner_profiles"}:
             raise ValueError("Unknown profile table")
@@ -249,7 +249,14 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
         else:
             before = self._ensure_owner_profile_locked(chat_id, user_id)
         old_level = int(before["level"])
-        total_xp = int(before["xp"]) + max(0, amount)
+        amount = max(0, int(amount))
+        target = int(before["catchup_target_xp"]) if table != "owner_profiles" else 0
+        gap = max(0, target - int(before["xp"]))
+        if battle and gap:
+            # Double only the catch-up portion. Overflow past the old level is
+            # normal XP, and repeated resets never multiply the multiplier.
+            amount = min(2 * amount, gap) + max(0, amount - (gap + 1) // 2)
+        total_xp = int(before["xp"]) + amount
         if table != "owner_profiles":
             total_xp = min(total_xp, fighter_xp_limit())
         new_level = level_from_total_xp(
@@ -265,6 +272,11 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
             f"UPDATE {table} SET xp=?, level=?{extra} WHERE chat_id=? AND user_id=?",
             params,
         )
+        if table != "owner_profiles" and target and total_xp >= target:
+            self.connection.execute(
+                f"UPDATE {table} SET catchup_target_xp=0 WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id),
+            )
         if table != "owner_profiles" and new_level > old_level:
             self.connection.execute(
                 f"UPDATE {table} SET skills_pending_at=COALESCE(skills_pending_at, ?) WHERE chat_id=? AND user_id=?",
@@ -1232,7 +1244,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                 row["chat_id"], row[k + "_fighter"], table == "personal_profiles"
             )["xp"]
             self._grant_profile_xp_locked(
-                table, row["chat_id"], row[k + "_fighter"], xp
+                table, row["chat_id"], row[k + "_fighter"], xp, battle=True
             )
             after_xp = self._arena_profile_locked(
                 row["chat_id"], row[k + "_fighter"], table == "personal_profiles"
@@ -1669,7 +1681,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                 # using a class tractate; never another user's personal fighter.
                 self._arena_reset_profile_locked(chat, user, personal)
                 self.connection.commit()
-                return "Класс сброшен: Оборванец, уровень 1, опыт 0. Прежние навыки забыты."
+                return "Класс сброшен: Оборванец, уровень 5. Прежние навыки забыты. Боевой опыт ×2 до возвращения прежнего уровня."
             if action == "progression":
                 stage = pending_choice(dict(profile))
                 progression_stage = stage

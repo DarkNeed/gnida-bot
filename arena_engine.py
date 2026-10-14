@@ -742,10 +742,12 @@ def stats_for(
     level: int,
     controlled: bool = False,
     classes: dict[str, FighterClass] | None = None,
+    *, boss: bool = False,
 ) -> dict[str, float]:
     catalog = classes or FIGHTER_CLASSES
     fighter_class = catalog.get(class_id, FIGHTER_CLASSES["ragamuffin"])
-    effective_level = max(1, min(MAX_FIGHTER_LEVEL, level))
+    # Only server-created raid bosses may exceed the player level cap.
+    effective_level = max(1, min(MAX_FIGHTER_LEVEL + (2 if boss else 0), level))
     delta = effective_level - fighter_class.base_level
     stats = {
         key: max(0, round(value + fighter_class.growth.get(key, 0) * delta, 2))
@@ -1243,6 +1245,7 @@ def resolve_skill(
                 * epic_multiplier
                 * rpg_multiplier
                 * parry_multiplier
+                * actor.get("raid_damage_multiplier", 1)
                 * (1+.10*target.get('rpg_state',{}).get('beast',0) if rpg_branch(target)=='hunter_beast' else 1)
                 * math.prod(max(.1, e.get("value", 1)) for e in target["effects"] if e.get("kind") == "incoming_damage_multiplier")
                 * math.prod(

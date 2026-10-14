@@ -118,9 +118,9 @@ process.stdout.write(c.out||app.innerHTML);
 
     def test_class_reset_requires_warning_and_confirmation(self):
         body = self.render("classConfirm")
-        self.assertIn("Уровень станет 1", body)
+        self.assertIn("Уровень станет 5", body)
         self.assertIn("пассивные навыки исчезнут", body)
-        self.assertIn("Инвентарь и спрайт сохранятся", body)
+        self.assertIn("Инвентарь, питомцы и спрайт сохранятся", body)
         self.assertIn('data-do="confirmitem"', body)
         self.assertIn("Не менять", body)
 
@@ -168,11 +168,32 @@ process.stdout.write(c.out||app.innerHTML);
             "page='resetConfirm';resetPending={user:10,personal:true,name:'Игрок'};menuScreen(input);",
             self.menu_data(),
         )
-        self.assertIn("Оборванцем 1 уровня с 0 XP", body)
+        self.assertIn("Оборванцем 5 уровня", body)
+        self.assertIn("Боевой опыт ×2", body)
         self.assertIn("Это нельзя отменить", body)
         self.assertIn("Сброс бесплатный", body)
         self.assertIn('data-do="confirmreset"', body)
         self.assertIn('data-do="cancelreset"', body)
+
+    def test_daily_raid_status_and_global_limits_visible(self):
+        data=self.menu_data()
+        data['raid_bosses']=[dict(id='lei_heng',name='Лей Хенг',full_reward=False),
+                            dict(id='doofenshmirtz',name='Фуфелшмерц',full_reward=True)]
+        body=self.run_client("page='raids';menuScreen(input);",data)
+        self.assertIn('Сегодня: повторная награда 20%',body)
+        self.assertIn('Сегодня: полная награда доступна',body)
+        self.assertIn('00:00 МСК',body)
+        self.assertIn('общая для всех чатов и бойцов',body)
+        self.assertNotIn('Железный сборщик',body)
+
+    def test_catchup_level_display_and_low_level_reset_disabled(self):
+        data=self.menu_data()
+        data['personal'].update(level=5,progress=[5,0,40],catchup_level=18)
+        body=self.run_client("menu=input;out=profileCard(input.personal,'Личный персонаж');",data)
+        self.assertIn('Боевой опыт ×2 до 18 уровня',body)
+        data['personal'].update(level=1,catchup_level=0)
+        body=self.run_client("page='personalProfile';profileId=10;menuScreen(input);",data)
+        self.assertIn('data-do="resetprofile" disabled',body)
 
     def test_finger_sprites_and_custom_override(self):
         for cls in ("thumb", "index", "middle", "ring", "pinky"):

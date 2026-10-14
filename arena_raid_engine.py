@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import random
+import math
 
 from arena_engine import (
     Skill,
@@ -11,6 +12,8 @@ from arena_engine import (
     resolve_skill,
     _tick,
     bleeding_damage,
+    stats_for,
+    MAX_FIGHTER_LEVEL,
 )
 from arena_doof import DOOF_SKILLS, set_doof_intent, resolve_doof_action
 
@@ -25,7 +28,6 @@ BOSSES = {
         ally_sprite="/static/assets/perry.png",
         skills=tuple(DOOF_SKILLS),
         recommended_level=18,
-        minimum_level=20,
         loot_skill="deportator_inator",
     ),
     "iron": dict(name=BOSS_NAME, skills=("raid_sweep", "raid_crush", "raid_rampage")),
@@ -34,7 +36,6 @@ BOSSES = {
         sprite="/static/assets/lei_heng.png",
         skills=("lei_double_slash", "lei_explosive_slash", "lei_perfected_flurry"),
         recommended_level=18,
-        minimum_level=20,
         loot_skill="tigerslayer_flurry",
     ),
 }
@@ -180,15 +181,24 @@ def set_intent(data):
     data["intent"] = intent
 
 
+AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz")
+
+
+def raid_boss_level(levels):
+    levels = [max(1, min(MAX_FIGHTER_LEVEL, int(level))) for level in levels]
+    if not levels:
+        raise ValueError("Для рейда нужен хотя бы один боец.")
+    return max(math.ceil(sum(levels) / len(levels)) + 2, max(levels) + 1)
+
+
 def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
     if boss_id not in BOSSES:
         raise ValueError("Неизвестный босс.")
     if not 1 <= len(participants) <= RAID_SIZE or len(sources) != len(participants):
         raise ValueError("Для старта нужны от одного до трёх участников и их бойцы.")
-    level = max(
-        BOSSES[boss_id].get("minimum_level", 1),
-        min(20, round(sum(s["level"] for s in sources) / len(sources))),
-    )
+    level = (raid_boss_level([s["level"] for s in sources])
+             if boss_id in AVAILABLE_BOSSES
+             else min(20, round(sum(s["level"] for s in sources) / len(sources))))
     enemy = dict(
         slave_id=0,
         owner_id=0,
@@ -212,12 +222,17 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
             withdrawn=False,
         )
     boss = state["sides"]["b"]
+    boss["level"] = level
+    boss["stats"] = stats_for(enemy["class_id"], level, classes=classes, boss=True)
     boss["stats"]["max_hp"] = max(
         1, round(sum(p["fighter"]["stats"]["max_hp"] for p in players.values()) * 1.4)
     )
     if boss_id == "doofenshmirtz":
         boss["stats"]["max_hp"] = round(boss["stats"]["max_hp"] * 1.05)
         boss["stats"]["magic_attack"] = round(boss["stats"]["magic_attack"] * 1.05, 2)
+    if boss_id in AVAILABLE_BOSSES:
+        boss["stats"]["max_hp"] = round(boss["stats"]["max_hp"] * 1.25)
+        boss["raid_damage_multiplier"] = 1.15
     boss["hp"] = boss["stats"]["max_hp"]
     boss["stats"]["evasion"] = 0
     for stat in ("physical_defense", "magic_defense"):
