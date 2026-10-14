@@ -55,6 +55,7 @@ class DailyBalanceStoreTests(unittest.IsolatedAsyncioTestCase):
 
     def level(self,level,personal=True,chat=1,user=10):
         self.profile(personal,chat,user)
+        chat = 0 if personal else chat
         table='personal_profiles' if personal else 'slave_profiles'
         self.db.connection.execute(f'UPDATE {table} SET level=?,xp=?,progression_level=? WHERE chat_id=? AND user_id=?',
             (level,level_xp(level),level,chat,user))
@@ -112,7 +113,7 @@ class DailyBalanceStoreTests(unittest.IsolatedAsyncioTestCase):
         self.db.connection.commit()
         await self.db.arena_use_item(1,10,item,10)
         self.assertEqual(self.profile()['xp'],before+30)
-        self.db.connection.execute('UPDATE personal_profiles SET xp=?,level=9 WHERE chat_id=1 AND user_id=10',(level_xp(10)-9,))
+        self.db.connection.execute('UPDATE personal_profiles SET xp=?,level=9 WHERE chat_id=0 AND user_id=10',(level_xp(10)-9,))
         self.db._grant_profile_xp_locked('personal_profiles',1,10,20,battle=True)
         self.assertEqual(self.profile()['xp'],level_xp(10)+15)
         self.assertEqual(self.profile()['catchup_target_xp'],0)
@@ -138,7 +139,7 @@ class DailyBalanceStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(first['full_reward'])
             self.assertEqual((first['francs'],first['xp']),(49,22))
             await self.db.close(); await self.db.connect()
-            second=self.finish(await self.raid(slave=True))
+            second=self.finish(await self.raid())
             self.assertFalse(second['full_reward'])
             self.assertFalse(second['pet_rewards'])
             await self.db.upsert_chat(2,'Другой чат')
@@ -176,15 +177,6 @@ class DailyBalanceStoreTests(unittest.IsolatedAsyncioTestCase):
             reward=self.finish(await self.raid())
         self.assertEqual(reward['xp'],2*(10+4*7))
 
-    async def test_slave_boost_independent_and_administrative_grants_normal(self):
-        self.level(18,personal=False,user=30)
-        await self.db.arena_edit_profile(1,30,30,False,'reset_class',True)
-        before=self.profile(False,user=30)['xp']
-        await self.db.grant_slave_xp(1,30,10)
-        self.assertEqual(self.profile(False,user=30)['xp'],before+10)
-        self.db._grant_profile_xp_locked('slave_profiles',1,30,10,battle=True)
-        self.assertEqual(self.profile(False,user=30)['xp'],before+30)
-        self.assertEqual(self.profile()['catchup_target_xp'],0)
 
     async def test_defeat_inactive_withdrawal_do_not_spend_daily_reward(self):
         for options in (dict(won=False),dict(manual=1),dict(withdrawn=True)):

@@ -180,17 +180,17 @@ class JockStoreTests(unittest.IsolatedAsyncioTestCase):
         self.temp.cleanup()
 
     async def test_existing_personal_and_slave_profiles_discover_once(self):
-        for personal, table in ((True, "personal_profiles"), (False, "slave_profiles")):
+        for personal, table in ((True, "personal_profiles"),):
             await self.db.arena_passive_view(1, 10, personal)
             self.db.connection.execute(
-                f"UPDATE {table} SET class_id='jock' WHERE chat_id=1 AND user_id=10"
+                f"UPDATE {table} SET class_id='jock' WHERE chat_id=0 AND user_id=10"
             )
             view = await self.db.arena_passive_view(1, 10, personal)
             ids = ["inherent:jock:0", "inherent:jock:1"]
             self.assertEqual(view["passive_loadout"], ids)
             self.assertEqual(len(view["passives"]), 2)
             self.db.connection.execute(
-                f"UPDATE {table} SET passive_loadout='[]' WHERE chat_id=1 AND user_id=10"
+                f"UPDATE {table} SET passive_loadout='[]' WHERE chat_id=0 AND user_id=10"
             )
             self.assertEqual(
                 (await self.db.arena_passive_view(1, 10, personal))["passive_loadout"],
@@ -212,7 +212,7 @@ class JockStoreTests(unittest.IsolatedAsyncioTestCase):
             1, 10, 10, True, "passives", ["steady_hand", "stone_skin"]
         )
         self.db.connection.execute(
-            "UPDATE personal_profiles SET class_id='jock' WHERE chat_id=1 AND user_id=10"
+            "UPDATE personal_profiles SET class_id='jock' WHERE chat_id=0 AND user_id=10"
         )
         view = await self.db.arena_passive_view(1, 10, True)
         self.assertEqual(view["passive_loadout"], ["steady_hand", "stone_skin"])

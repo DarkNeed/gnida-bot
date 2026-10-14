@@ -40,6 +40,7 @@ from arena_engine import (
 from arena_archclasses import ARCHCLASSES, ARCHCLASS_LEVEL, branch_options
 from arena_progression import pending_choice
 from arena_pet_store import PetMixin
+from arena_global import GlobalArenaMixin, RPG_SCOPE
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -52,7 +53,7 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
+class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin):
     def _connect_arena(self) -> None:
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (
@@ -144,6 +145,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                 day TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(chat_id,first_id,second_id,day)
             );
+            CREATE TABLE IF NOT EXISTS arena_account_chats (
+                user_id INTEGER NOT NULL,chat_id INTEGER NOT NULL,
+                PRIMARY KEY(user_id,chat_id));
             CREATE TABLE IF NOT EXISTS arena_sprites (
                 chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 sprite_key TEXT NOT NULL, png BLOB NOT NULL,
@@ -181,6 +185,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
         self._connect_mirror()
         self._connect_raids()
         self._connect_pets()
+        self._connect_global_arena()
         # Upgrade live battles once. Restarting must never renew a PvP deadline.
         for raw in self.connection.execute(
             "SELECT id,mode,state_json FROM arena_battles WHERE status='active' AND state_json IS NOT NULL"
@@ -242,6 +247,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
     ) -> tuple[int, int]:
         if table not in {"slave_profiles", "personal_profiles", "owner_profiles"}:
             raise ValueError("Unknown profile table")
+        if table == 'personal_profiles':
+            chat_id = RPG_SCOPE
         if table in {"slave_profiles", "personal_profiles"}:
             before = self._arena_profile_locked(
                 chat_id, user_id, table == "personal_profiles"
@@ -361,7 +368,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
         classes: dict[str, Any] = dict(FIGHTER_CLASSES)
         skills: dict[str, Any] = dict(BUILTIN_SKILLS)
         for row in self.connection.execute(
-            "SELECT class_id, definition_json FROM custom_fighter_classes"
+            "SELECT class_id, definition_json FROM custom_fighter_classes WHERE hidden=0"
         ):
             try:
                 classes[str(row["class_id"])] = fighter_class_from_dict(
@@ -376,6 +383,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                 skill = skill_from_dict(
                     str(row["skill_id"]), json.loads(row["definition_json"])
                 )
+                if not json.loads(row['definition_json']).get('merchant_available', False):
+                    continue
                 if skill.class_id in classes:
                     skills[skill.skill_id] = skill
             except (TypeError, ValueError, json.JSONDecodeError, KeyError):
@@ -385,14 +394,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
     def _granted_content_locked(
         self, chat_id: int, user_id: int, content_type: str
     ) -> set[str]:
-        return {
-            str(row["content_id"])
-            for row in self.connection.execute(
-                """SELECT content_id FROM granted_fighter_content
-                   WHERE chat_id=? AND user_id=? AND content_type=?""",
-                (chat_id, user_id, content_type),
-            )
-        }
+        return set()  # Historical exclusive grants are no longer combat content.
 
     async def create_custom_fighter_content(
         self,
@@ -458,116 +460,15 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
             self.connection.commit()
             return "created"
 
-    async def grant_custom_fighter_content(
-        self,
-        chat_id: int,
-        user_id: int,
-        content_type: str,
-        content_id: str,
-        granted_by: int,
-        personal: bool = False,
-    ) -> str:
-        table = {
-            "class": ("custom_fighter_classes", "class_id"),
-            "skill": ("custom_fighter_skills", "skill_id"),
-        }.get(content_type)
-        if not table:
-            return "invalid_type"
-        async with self._lock:
-            present = self.connection.execute(
-                f"SELECT 1 FROM {table[0]} WHERE {table[1]}=?", (content_id,)
-            ).fetchone()
-            if not present:
-                return "not_found"
-            if content_type == "skill":
-                from arena_engine import MAX_LEARNED_ACTIVE_SKILLS
-
-                known = self._arena_known_skills_locked(chat_id, user_id, personal)
-                if content_id not in known and len(known) >= MAX_LEARNED_ACTIVE_SKILLS:
-                    self.connection.commit()
-                    return "Максимум 6 изученных активных навыков. Сначала забудь один."
-            self.connection.execute(
-                """INSERT INTO granted_fighter_content(
-                       chat_id, user_id, content_type, content_id, granted_by, granted_at
-                   ) VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(chat_id, user_id, content_type, content_id) DO NOTHING""",
-                (
-                    chat_id,
-                    user_id,
-                    content_type,
-                    content_id,
-                    granted_by,
-                    utc_timestamp(),
-                ),
-            )
-            self.connection.commit()
-            return "granted"
+    async def grant_custom_fighter_content(self, *args, **kwargs):
+        raise ValueError('Эксклюзивные навыки и классы больше не выдаются.')
 
     async def get_fighter_catalog(self) -> tuple[dict[str, Any], dict[str, Any]]:
         async with self._lock:
             return self._fighter_catalog_locked()
 
-    async def arena_admin_grant(
-        self,
-        chat: int,
-        user: int,
-        kind: str,
-        content_id: str,
-        author: int,
-        personal=False,
-    ) -> str:
-        if author != 1980056841:
-            raise ValueError("Недостаточно прав.")
-        result = await self.grant_custom_fighter_content(
-            chat, user, kind, content_id, author, personal
-        )
-        if result == "granted" and kind == "skill":
-            async with self._lock:
-                self.connection.execute(
-                    "INSERT OR IGNORE INTO arena_learned VALUES(?,?,?,?,?)",
-                    (chat, user, int(personal), "skill", content_id),
-                )
-                self._arena_known_skills_locked(chat, user, personal)
-                _, catalog = self._fighter_catalog_locked()
-                profile = self._arena_profile_locked(chat, user, personal)
-                if catalog[content_id].unlock_level <= profile["level"]:
-                    self._arena_remember_locked(
-                        chat, user, personal, "skill", content_id
-                    )
-                self.connection.commit()
-        if result != "granted" or kind != "class":
-            return result
-        async with self._lock:
-            if self._arena_busy_locked(chat, user):
-                return "Класс выдан, но назначить его можно после текущего боя."
-            profile = self._arena_profile_locked(chat, user, personal)
-            _, skills = self._fighter_catalog_locked()
-            loadout = normalize_loadout(
-                content_id,
-                int(profile["level"]),
-                None,
-                skills,
-                self._arena_grants_locked(chat, user, personal),
-                self._arena_known_skills_locked(
-                    chat, user, personal, dict(profile, class_id=content_id)
-                ),
-            )
-            table = "personal_profiles" if personal else "slave_profiles"
-            self.connection.execute(
-                f"UPDATE {table} SET class_id=?,loadout=?,archclass_id='',archclass_stage=10,progression_level=5,progression_pending_level=0,progression_pending_at=NULL,archclass_pending_at=NULL,class_choice_pending_at=NULL,skills_pending_at=? WHERE chat_id=? AND user_id=?",
-                (content_id, json.dumps(loadout), utc_timestamp(), chat, user),
-            )
-            classes, _ = self._fighter_catalog_locked()
-            defaults = [
-                f"inherent:{content_id}:{i}"
-                for i in range(min(2, len(classes[content_id].passives)))
-            ]
-            self.connection.execute(
-                f"UPDATE {table} SET passive_loadout=? WHERE chat_id=? AND user_id=?",
-                (json.dumps(defaults), chat, user),
-            )
-            self.connection.commit()
-            return "granted"
+    async def arena_admin_grant(self, *args, **kwargs):
+        raise ValueError('Эксклюзивные навыки и классы удалены.')
 
     async def get_slave_profile(self, chat_id: int, user_id: int) -> sqlite3.Row:
         async with self._lock:
@@ -748,6 +649,10 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
         return "given"
 
     def _arena_profile_locked(self, chat_id: int, user_id: int, personal=False):
+        if personal:
+            if chat_id != RPG_SCOPE:
+                self.connection.execute('INSERT OR IGNORE INTO arena_account_chats VALUES(?,?)',(user_id,chat_id))
+            chat_id = RPG_SCOPE
         if not personal:
             self._ensure_slave_profile_locked(chat_id, user_id)
         else:
@@ -816,48 +721,42 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
     ) -> bool:
         return bool(
             self.connection.execute(
-                """SELECT 1 FROM arena_battles WHERE chat_id=? AND status IN ('pending','active')
+                """SELECT 1 FROM arena_battles WHERE status IN ('pending','active')
                AND id<>? AND (a_owner=? OR b_owner=? OR a_fighter=? OR b_fighter=?)""",
-                (chat, exclude, user, user, user, user),
+                (exclude, user, user, user, user),
             ).fetchone()
             or self._raid_busy_locked(chat, user, raid_exclude)
             or self.connection.execute(
-                "SELECT 1 FROM arena_mirror_runs WHERE chat_id=? AND status='active' AND (actor_id=? OR fighter_id=?)",
-                (chat, user, user),
+                "SELECT 1 FROM arena_mirror_runs WHERE status='active' AND (actor_id=? OR fighter_id=?)",
+                (user, user),
             ).fetchone()
         )
 
     def _arena_choice_busy_locked(self, chat, user):
         return bool(
             self.connection.execute(
-                "SELECT 1 FROM arena_battles WHERE chat_id=? AND status='active' AND (a_owner=? OR b_owner=? OR a_fighter=? OR b_fighter=?)",
-                (chat, user, user, user, user),
+                "SELECT 1 FROM arena_battles WHERE status='active' AND (a_owner=? OR b_owner=? OR a_fighter=? OR b_fighter=?)",
+                (user, user, user, user),
             ).fetchone()
             or self._raid_busy_locked(chat, user, active_only=True)
             or self.connection.execute(
-                "SELECT 1 FROM arena_mirror_runs WHERE chat_id=? AND status='active' AND (actor_id=? OR fighter_id=?)",
-                (chat, user, user),
+                "SELECT 1 FROM arena_mirror_runs WHERE status='active' AND (actor_id=? OR fighter_id=?)",
+                (user, user),
             ).fetchone()
         )
 
     def _arena_require_choice_locked(self, chat, user, personal):
         profile = self._arena_profile_locked(chat, user, personal)
         if not self._arena_class_enabled_locked(chat, profile['class_id']):
-            raise ValueError("Модуль класса выключен. Выбери бесплатную смену класса в арене; прежний билд будет сохранён в архиве.")
+            raise ValueError("Этот класс больше недоступен. Используй сброс класса в арене.")
         stage = pending_choice(dict(profile))
         if stage:
             raise ValueError(
                 f"Боец {user}: сначала сделайте выбор класса / подкласса {stage} уровня в арене → «Класс и навыки». Можно оставить текущий класс."
             )
 
-    def _arena_combat_slot_locked(self, chat: int, owner: int, slave: int):
-        row = self.connection.execute(
-            """SELECT s.slot FROM arena_combat_slots s JOIN ownership o
-               ON o.chat_id=s.chat_id AND o.slave_id=s.slave_id AND o.owner_id=s.owner_id
-               WHERE s.chat_id=? AND s.owner_id=? AND s.slave_id=?""",
-            (chat, owner, slave),
-        ).fetchone()
-        return int(row["slot"]) if row else None
+    def _arena_combat_slot_locked(self, chat, owner, slave):
+        return None
 
     def _arena_require_combat_locked(self, chat: int, owner: int, slave: int) -> None:
         if not self._arena_owns_locked(chat, owner, slave):
@@ -872,58 +771,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
         ).fetchone():
             raise ValueError("Боевой раб должен быть снят с работы.")
 
-    async def arena_equip_slave(
-        self, chat: int, actor: int, slave: int, equipped: bool
-    ) -> str:
-        async with self._lock:
-            self._arena_expire_locked()
-            self.connection.commit()
-            if not self._arena_owns_locked(chat, actor, slave):
-                raise ValueError("Экипировать можно только своего раба.")
-            current = self._arena_combat_slot_locked(chat, actor, slave)
-            if bool(current) == equipped:
-                return "Без изменений."
-            if self._arena_busy_locked(chat, slave):
-                raise ValueError(
-                    "Нельзя менять боевой слот раба, выбранного для текущего боя."
-                )
-            if not equipped:
-                self.connection.execute(
-                    "DELETE FROM arena_combat_slots WHERE chat_id=? AND slave_id=?",
-                    (chat, slave),
-                )
-                self.connection.commit()
-                return "Раб снят с боевого слота. Его снова можно назначить на работу."
-            used = {
-                r["slot"]
-                for r in self.connection.execute(
-                    "SELECT slot FROM arena_combat_slots WHERE chat_id=? AND owner_id=?",
-                    (chat, actor),
-                )
-            }
-            slot = next(
-                (n for n in range(1, COMBAT_SLAVE_CAPACITY + 1) if n not in used), None
-            )
-            if slot is None:
-                raise ValueError(
-                    "Все 5 боевых слотов заняты. Сначала снимите одного из бойцов."
-                )
-            try:
-                # Settle already earned income before taking the worker off the job.
-                self._settle_business_locked(chat, actor, utc_timestamp())
-                self.connection.execute(
-                    "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
-                    (chat, slave),
-                )
-                self.connection.execute(
-                    "INSERT INTO arena_combat_slots(chat_id,owner_id,slave_id,slot) VALUES(?,?,?,?)",
-                    (chat, actor, slave, slot),
-                )
-                self.connection.commit()
-            except Exception:
-                self.connection.rollback()
-                raise
-            return f"Раб экипирован в слот {slot}/5 и снят с работы."
+    async def arena_equip_slave(self, chat, actor, slave, equipped):
+        raise ValueError('Боевые рабы удалены. Используй личного персонажа.')
 
     async def arena_combat_slaves(self, chat: int, owner: int) -> list[dict]:
         data = await self.arena_menu(chat, owner)
@@ -1012,16 +861,17 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
         )
 
     async def arena_offer(
-        self, chat: int, actor: int, target: int, mode="slaves", stake=0
+        self, chat: int, actor: int, target: int, mode="personal", stake=0
     ) -> dict:
         if (
-            mode not in {"slaves", "personal"}
+            mode != "personal"
             or actor == target
             or stake < 0
             or stake > 1000000
         ):
             raise ValueError("Некорректный вызов.")
         async with self._lock:
+            self._require_feature_locked(chat, 'arena')
             self._arena_expire_locked()
             self.connection.commit()
             if self._arena_busy_locked(chat, actor) or self._arena_busy_locked(
@@ -1109,6 +959,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
     ) -> dict:
         async with self._lock:
             row = self._arena_row_locked(token)
+            self._require_feature_locked(row['chat_id'], 'arena')
+            if row['mode'] != 'personal':
+                raise ValueError('Боевые рабы удалены.')
             if row["status"] != "pending" or row["deadline"] <= utc_timestamp():
                 raise ValueError("Вызов уже закрыт.")
             key = (
@@ -1208,12 +1061,12 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
             day = datetime.now(timezone.utc).date().isoformat()
             previous = self.connection.execute(
                 "SELECT count FROM arena_pair_rewards WHERE chat_id=? AND first_id=? AND second_id=? AND day=?",
-                (row["chat_id"], first, second, day),
+                (RPG_SCOPE, first, second, day),
             ).fetchone()
             low_reward = bool(previous and previous["count"] >= 3)
             self.connection.execute(
                 "INSERT INTO arena_pair_rewards VALUES(?,?,?,?,1) ON CONFLICT(chat_id,first_id,second_id,day) DO UPDATE SET count=count+1",
-                (row["chat_id"], first, second, day),
+                (RPG_SCOPE, first, second, day),
             )
         rewards = {}
         for k in ("a", "b"):
@@ -1344,7 +1197,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
                 elif skill_id == "potion":
                     item = self.connection.execute(
                         "SELECT * FROM arena_inventory WHERE chat_id=? AND owner_id=? AND kind='potion' AND content_id='healing'",
-                        (row["chat_id"], actor),
+                        (RPG_SCOPE, actor),
                     ).fetchone()
                     if not item:
                         raise ValueError("Нет зелья.")
@@ -1439,6 +1292,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
         self, chat: int, actor: int, fighter=0, previous="", personal: bool = True
     ) -> dict:
         async with self._lock:
+            self._require_feature_locked(chat, 'arena')
+            if not personal or (fighter and fighter != actor):
+                raise ValueError('Боевые рабы удалены. Используй своего личного персонажа.')
             floor = 1
             previous_class = None
             if previous:
@@ -1530,19 +1386,21 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
         # HTTP boundary has already decoded/validated PNG. No user/target supplied by caller.
         key = hashlib.sha256(png).hexdigest()
         async with self._lock:
+            self._require_feature_locked(chat, 'arena')
             self.connection.execute(
                 """INSERT INTO arena_sprites(chat_id,user_id,sprite_key,png,pixel_art)
                    VALUES(?,?,?,?,?) ON CONFLICT(chat_id,user_id) DO UPDATE SET
                    sprite_key=excluded.sprite_key,png=excluded.png,pixel_art=excluded.pixel_art""",
-                (chat, actor, key, png, int(pixel_art)),
+                (RPG_SCOPE, actor, key, png, int(pixel_art)),
             )
             self.connection.commit()
         return key
 
     async def arena_reset_sprite(self, chat: int, actor: int) -> None:
         async with self._lock:
+            self._require_feature_locked(chat, 'arena')
             self.connection.execute(
-                "DELETE FROM arena_sprites WHERE chat_id=? AND user_id=?", (chat, actor)
+                "DELETE FROM arena_sprites WHERE chat_id=? AND user_id=?", (RPG_SCOPE, actor)
             )
             self.connection.commit()
 
@@ -1550,7 +1408,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
         async with self._lock:
             row = self.connection.execute(
                 "SELECT sprite_key,pixel_art FROM arena_sprites WHERE chat_id=? AND user_id=?",
-                (chat, user),
+                (RPG_SCOPE, user),
             ).fetchone()
             if not row:
                 return dict(sprite_url=None, pixel_art=False)
@@ -1562,99 +1420,34 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
     async def arena_sprite_png(self, key: str) -> bytes | None:
         async with self._lock:
             row = self.connection.execute(
-                "SELECT png FROM arena_sprites WHERE sprite_key=? LIMIT 1", (key,)
+                "SELECT png FROM arena_sprites WHERE chat_id=0 AND sprite_key=? LIMIT 1", (key,)
             ).fetchone()
             return bytes(row["png"]) if row else None
 
-    async def arena_menu(self, chat: int, actor: int) -> dict:
+    async def arena_menu(self, chat, actor):
         async with self._lock:
+            self._require_feature_locked(chat, 'arena')
             personal = dict(self._arena_profile_locked(chat, actor, True))
-            personal["loadout"] = json.loads(personal["loadout"])
-            slaves = []
-            for row in self.connection.execute(
-                """SELECT o.slave_id,u.display_name,u.username,s.slot,w.role FROM ownership o
-                   LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.slave_id
-                   LEFT JOIN arena_combat_slots s ON s.chat_id=o.chat_id AND s.slave_id=o.slave_id AND s.owner_id=o.owner_id
-                   LEFT JOIN business_workers w ON w.chat_id=o.chat_id AND w.worker_id=o.slave_id AND w.owner_id=o.owner_id
-                   WHERE o.chat_id=? AND o.owner_id=? ORDER BY s.slot IS NULL,s.slot,o.acquired_at""",
-                (chat, actor),
-            ).fetchall():
-                profile = dict(self._arena_profile_locked(chat, row["slave_id"]))
-                profile["loadout"] = json.loads(profile["loadout"])
-                slaves.append(
-                    {
-                        **profile,
-                        "name": row["display_name"] or str(row["slave_id"]),
-                        "username": row["username"],
-                        "combat_slot": row["slot"],
-                        "working_role": row["role"],
-                        "in_battle": self._arena_busy_locked(chat, row["slave_id"]),
-                    }
-                )
-            self_slave = None
-            owned_by = self.connection.execute(
-                "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
-                (chat, actor),
-            ).fetchone()
-            if owned_by:
-                self_slave = dict(self._arena_profile_locked(chat, actor))
-                self_slave["loadout"] = json.loads(self_slave["loadout"])
-                self_slave["name"] = "Мой персонаж-раб"
-                self_slave["combat_slot"] = self._arena_combat_slot_locked(
-                    chat, owned_by["owner_id"], actor
-                )
-            self._refresh_owner_record_locked(chat, actor)
-            owner = dict(self._settle_materials_locked(chat, actor))
-            active = [
-                dict(r)
-                for r in self.connection.execute(
-                    "SELECT token,mode,status FROM arena_battles WHERE chat_id=? AND status IN ('pending','active') AND (a_owner=? OR b_owner=? OR a_fighter=? OR b_fighter=?)",
-                    (chat, actor, actor, actor, actor),
-                )
-            ]
+            personal['loadout'] = json.loads(personal['loadout'])
+            personal['name'] = 'Мой персонаж'
+            active = [dict(r) for r in self.connection.execute(
+                "SELECT token,mode,status,chat_id FROM arena_battles WHERE status IN ('pending','active') AND (a_owner=? OR b_owner=?)",
+                (actor,actor))]
             self.connection.commit()
-            return dict(
-                personal=personal,
-                slaves=slaves,
-                self_slave=self_slave,
-                owner=owner,
-                active=active,
-                combat_capacity=COMBAT_SLAVE_CAPACITY,
-                combat_count=sum(bool(s["combat_slot"]) for s in slaves),
-            )
+            return dict(personal=personal,slaves=[],self_slave=None,owner={},active=active,
+                        combat_capacity=0,combat_count=0,global_progression=True)
 
     async def arena_edit_profile(
         self, chat: int, actor: int, user: int, personal: bool, action: str, value
     ) -> str:
         async with self._lock:
+            self._require_feature_locked(chat, 'arena')
+            if not personal or actor != user:
+                raise ValueError('Можно менять только своего личного персонажа.')
             profile = self._arena_profile_locked(chat, user, personal)
-            choice_action = action in {"progression", "class", "archclass", "module_class", "restore_class"}
-            if actor != user:
-                pending = (
-                    profile["progression_pending_at"]
-                    if action == "progression"
-                    else (
-                        profile["class_choice_pending_at"]
-                        if action == "class"
-                        else (
-                            profile["archclass_pending_at"]
-                            if action == "archclass"
-                            else profile["skills_pending_at"]
-                        )
-                    )
-                )
-                if action=='module_class':
-                    settings=self.connection.execute('SELECT updated_at FROM arena_module_settings WHERE chat_id=?',(chat,)).fetchone()
-                    pending=settings['updated_at'] if settings else None
-                if (
-                    personal
-                    or not self._arena_owns_locked(chat, actor, user)
-                    or pending is None
-                    or utc_timestamp() < pending + SKILL_DELEGATION_SECONDS
-                ):
-                    raise ValueError(
-                        "Владелец может выбрать за раба после 48 часов ожидания."
-                    )
+            if action in {"module_class","restore_class"}:
+                raise ValueError("Модули классов удалены.")
+            choice_action = action in {"progression", "class", "archclass"}
             if (
                 self._arena_choice_busy_locked(chat, user)
                 if choice_action
@@ -1662,23 +1455,14 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin):
             ):
                 raise ValueError("Нельзя менять навыки во время боя.")
             classes, skills = self._fighter_catalog_locked()
-            table = "personal_profiles" if personal else "slave_profiles"
+            chat = RPG_SCOPE
+            table = "personal_profiles"
             progression_stage = None
-            if action in {'module_class','restore_class'}:
-                try:
-                    notice = self._arena_module_switch_locked(chat,user,personal,value,restore=action=='restore_class')
-                    self.connection.commit()
-                    return notice
-                except Exception:
-                    self.connection.rollback()
-                    raise
             if action == "reset_class":
                 if value is not True:
                     raise ValueError(
                         "Подтверди сброс класса, уровня, опыта и всех навыков."
                     )
-                # Resetting a delegated fighter is an owner action just like
-                # using a class tractate; never another user's personal fighter.
                 self._arena_reset_profile_locked(chat, user, personal)
                 self.connection.commit()
                 return "Класс сброшен: Оборванец, уровень 5. Прежние навыки забыты. Боевой опыт ×2 до возвращения прежнего уровня."

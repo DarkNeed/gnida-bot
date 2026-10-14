@@ -159,12 +159,12 @@ class PetStoreTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):await self.db.pet_open(10,0,'second_open')
         self.assertEqual((await self.db.pet_view(10))['wallet']['tickets'],1)
 
-    async def test_duplicates_and_global_inventory_local_equipment(self):
+    async def test_duplicates_and_global_inventory_and_equipment(self):
         await self.wallet(2);await self.open();r=await self.open('second_open')
         self.assertTrue(r['result']['duplicate']);self.assertEqual(r['view']['wallet']['shards'],10)
         rev=r['view']['wallet']['revision'];await self.db.pet_action(10,rev,'equip','sandwich',chat=1)
         self.assertEqual((await self.db.pet_view(10,1))['equipped'],'sandwich')
-        self.assertIsNone((await self.db.pet_view(10,2))['equipped'])
+        self.assertEqual((await self.db.pet_view(10,2))['equipped'],'sandwich')
         self.assertEqual(len((await self.db.pet_view(10,2))['owned']),1)
 
     async def test_daily_and_reward_caps_global_replay_safe(self):

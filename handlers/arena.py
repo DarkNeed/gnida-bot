@@ -188,11 +188,12 @@ def create_arena_router(db, bot, username, enabled, publisher):
             )
         try:
             await require_member(bot, chat, actor)
+            await db.arena_require_enabled(chat)
         except ValueError as error:
             await message.answer(str(error))
             return
         await message.answer(
-            "Арена: личный персонаж, рабы и Пустошь.",
+            "Арена: единый персонаж во всех чатах, Пустошь и рейды.",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
@@ -273,7 +274,10 @@ def create_arena_router(db, bot, username, enabled, publisher):
         target = await resolve_target(message, db, match["payload"])
         if not target:
             return
-        mode = "slaves" if match["slave"] else "personal"
+        if match["slave"]:
+            await message.answer("Боевые рабы удалены. Вызови личного персонажа: /бой @участник.")
+            return
+        mode = "personal"
         target_id, _, rest = target
         try:
             stake = 0
@@ -281,69 +285,16 @@ def create_arena_router(db, bot, username, enabled, publisher):
                 amount = re.fullmatch(r"(\d+)\s*(?:франк(?:ов|а)?|₣)?", rest, re.I)
                 if not amount:
                     raise ValueError(
-                        "Личный бой: /бой @участник 50 франков или ответом /бой. Для рабов: /бой рабами."
+                        "Личный бой: /бой @участник 50 франков или ответом /бой."
                     )
                 stake = int(amount[1])
-            # 'Я выбираю тебя @мой_раб' chooses the fighter, then an opposing owner.
-            if mode == "slaves" and await db.get_owner(message.chat.id, target_id):
-                owner = await db.get_owner(message.chat.id, target_id)
-                if owner["owner_id"] == message.from_user.id:
-                    equipped = await db.arena_combat_slaves(
-                        message.chat.id, message.from_user.id
-                    )
-                    if not any(s["user_id"] == target_id for s in equipped):
-                        raise ValueError(
-                            "Сначала экипируйте этого раба в меню арены. Он будет снят с работы."
-                        )
-                    async with db._lock:
-                        owners = db.connection.execute(
-                            """SELECT DISTINCT o.owner_id,u.display_name FROM ownership o LEFT JOIN users u
-                               ON u.chat_id=o.chat_id AND u.user_id=o.owner_id WHERE o.chat_id=? AND o.owner_id<>? LIMIT 20""",
-                            (message.chat.id, message.from_user.id),
-                        ).fetchall()
-                    buttons = [
-                        [
-                            InlineKeyboardButton(
-                                text=str(o["display_name"] or o["owner_id"])[:50],
-                                callback_data=f"arp:{message.from_user.id}:{target_id}:{o['owner_id']}:{stake}",
-                            )
-                        ]
-                        for o in owners
-                    ]
-                    if not buttons:
-                        raise ValueError("Нет других владельцев для боя.")
-                    await message.answer(
-                        "Боец выбран. Кому бросить вызов?",
-                        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-                    )
-                    return
             await offer(message, message.from_user.id, target_id, mode, stake)
         except ValueError as error:
             await message.answer(str(error))
 
     @router.callback_query(F.data.startswith("arp:"))
     async def opponent_pick(callback: CallbackQuery):
-        if not enabled or not callback.message:
-            await callback.answer()
-            return
-        _, raw_actor, raw_fighter, raw_target, raw_stake = callback.data.split(":")
-        if int(raw_actor) != callback.from_user.id:
-            await callback.answer("Это не ваш выбор.", show_alert=True)
-            return
-        try:
-            await require_member(bot, callback.message.chat.id, int(raw_fighter))
-            await offer(
-                callback.message,
-                int(raw_actor),
-                int(raw_target),
-                "slaves",
-                int(raw_stake),
-                int(raw_fighter),
-            )
-            await callback.message.edit_reply_markup(reply_markup=None)
-            await callback.answer("Вызов отправлен.")
-        except ValueError as error:
-            await callback.answer(str(error), show_alert=True)
+        await callback.answer("Боевые рабы удалены. Вызови личного персонажа: /бой @участник.", show_alert=True)
 
     @router.callback_query(F.data.startswith("ar:"))
     async def arena_callback(callback: CallbackQuery):

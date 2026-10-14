@@ -34,9 +34,9 @@ def create_admin_menu_router(database):
             rows = [[InlineKeyboardButton(text=('🟢 ' if m['enabled'] else '⚪ ')+m['name'],
                        callback_data=f"adm:toggle:{chat['chat_id']}:{m['id']}:{int(not m['enabled'])}:{settings['revision']}")] for m in settings['modules']]
             rows.append([InlineKeyboardButton(text='← Админ-меню',callback_data='adm:home')])
-            return title+'<b>🧩 Модули классов</b>\nНажми, чтобы включить или выключить модуль.\nОборванец и общие навыки доступны всегда. Текущие бои продолжаются; выключенные билды можно сохранить в архиве и бесплатно сменить класс перед новым боем.', markup(rows)
+            return title+'<b>🧩 Функции чата</b>\nНажми, чтобы включить или выключить модуль.\nАрена: личные бои, пустоши и рейды. Рабовладение: рабство и предприятия. Классы доступны всем. Выключение не удаляет прогресс; при выключении арены незавершённые бои закрываются со возвратом ставок.', markup(rows)
         return title+'<b>⚙️ Админ-меню</b>\nНастройки, команды и события относятся только к этому чату.', markup([
-            [InlineKeyboardButton(text='🧩 Модули классов',callback_data='adm:modules')],
+            [InlineKeyboardButton(text='🧩 Функции чата',callback_data='adm:modules')],
             [InlineKeyboardButton(text='⚙️ Кастомные команды',callback_data='cc:list:0')],
             [InlineKeyboardButton(text='🎲 Конструктор событий',callback_data='evm:list')],
             [InlineKeyboardButton(text='💬 Выбрать чат',callback_data='adm:chats')],

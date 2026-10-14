@@ -131,16 +131,21 @@ class RaidMixin:
         return row
 
     def _raid_busy_locked(self, chat, user, exclude="", active_only=False):
-        return bool(
-            self.connection.execute(
-                """SELECT 1 FROM arena_raids r JOIN arena_raid_players p ON p.token=r.token
-               WHERE r.chat_id=? AND r.token<>? AND r.status IN ('lobby','active')
+        rows=self.connection.execute(
+                """SELECT r.status,r.data_json,p.actor_id FROM arena_raids r JOIN arena_raid_players p ON p.token=r.token
+               WHERE r.token<>? AND r.status IN ('lobby','active')
                AND (?=0 OR r.status='active') AND (p.actor_id=? OR p.fighter_id=?)""",
-                (chat, exclude, int(active_only), user, user),
-            ).fetchone()
-        )
+                (exclude, int(active_only), user, user),
+            ).fetchall()
+        for row in rows:
+            if row['status']=='lobby':return True
+            player=json.loads(row['data_json'])['players'].get(str(row['actor_id']))
+            if player and not player.get('withdrawn'):return True
+        return False
 
     def _raid_validate_fighter_locked(self, chat, actor, fighter, personal, token):
+        if not personal or fighter != actor:
+            raise ValueError('Рейды доступны только личным персонажам.')
         if personal and fighter != actor:
             raise ValueError("Личный персонаж может быть только своим.")
         owner = actor
@@ -372,9 +377,8 @@ class RaidMixin:
                 dict(r)
                 for r in self.connection.execute(
                     """SELECT DISTINCT r.token,r.status,r.round FROM arena_raids r
-                   JOIN arena_raid_players p ON p.token=r.token WHERE r.chat_id=?
-                   AND p.actor_id=? ORDER BY r.created_at DESC LIMIT 5""",
-                    (chat, actor),
+                   JOIN arena_raid_players p ON p.token=r.token WHERE p.actor_id=? ORDER BY r.created_at DESC LIMIT 5""",
+                    (actor,),
                 ).fetchall()
             ]
 
@@ -390,6 +394,7 @@ class RaidMixin:
             raise ValueError("Этот босс недоступен для новых рейдов.")
         async with self._lock:
             try:
+                self._require_feature_locked(chat, 'arena')
                 self._raid_expire_locked()
                 self._arena_expire_locked()
                 self._raid_validate_fighter_locked(chat, actor, actor, True, "")
@@ -415,6 +420,7 @@ class RaidMixin:
         async with self._lock:
             try:
                 row = self._raid_row_locked(token)
+                self._require_feature_locked(row['chat_id'], 'arena')
                 if row["status"] != "lobby":
                     raise ValueError("Состав рейда уже закрыт.")
                 if row["deadline"] <= int(time.time()):

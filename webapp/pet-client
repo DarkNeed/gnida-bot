@@ -54,7 +54,7 @@
     $('resources').textContent=`Корм ${w.food} · эссенция ${w.essence} · осколки ${w.shards}`+(w.ticket_debt?` · долг ${w.ticket_debt} билетов`: '');
     $('pity').textContent=`Эпический или выше: не позднее ${view.pity.epic}-го открытия. Легендарный: не позднее ${view.pity.legendary}-го.`;
     $('count').textContent=view.owned.length+' / '+view.catalog.length;
-    $('equipment').textContent=chat?'Выбранный чат: '+view.chat_title+'. Питомец: '+(view.owned.find(p=>p.id===view.equipped)?.name||'не экипирован'):'Открой раздел из меню арены нужного чата, чтобы экипировать спутника. Коллекция доступна и здесь.';
+    $('equipment').textContent='Спутник во всех чатах: '+(view.owned.find(p=>p.id===view.equipped)?.name||'не экипирован');
     $('packs').innerHTML=view.packs.map(p=>`<button class="primary" data-buy="${esc(p.id)}">${ticketsText(p.tickets)}<small>${p.stars} ⭐</small></button>`).join('');
     $('sales').textContent=view.payments_enabled?'Билеты начисляются только после подтверждения Telegram.':'Продажи пока выключены. Пользуйтесь бесплатными билетами.';
     $('odds').textContent='Обычный 20% · редкий 50% · эпический 27% · легендарный 3%. Внутри редкости шансы одинаковые. На 10-м подряд открытии без эпического или выше: эпический 90%, легендарный 10%. На 30-м подряд без легендарного: легендарный 100%. Гарантии сбрасываются соответствующим выпадением.';
@@ -75,7 +75,7 @@
     const own=view.owned.find(o=>o.id===id);$('detailImage').src=p.sprite_url;$('detailImage').alt=p.name;$('detailName').textContent=p.name;$('detailRarity').textContent=labels[p.rarity];$('detailEffect').textContent=p.description;
     $('detailLevel').textContent=own?`Уровень ${own.level} / 10 · сила ${own.power} · частота ${own.tempo}\nКаждый уровень немного усиливает бонус. На 3 / 6 / 10 — выбор силы или частоты. У сэндвича частота повышает порог лечения, он всё равно лечит один раз за бой.`:'Ещё нет в коллекции. Можно получить из посылки или выбрать за осколки.';
     let actions='';const button=(label,action,choice='')=>`<button class="secondary" data-action="${action}" data-id="${id}" data-choice="${choice}">${esc(label)}</button>`;
-    if(own){if(chat)actions+=button(view.equipped===id?'Снять с боя':'Экипировать в этом чате',view.equipped===id?'unequip':'equip');
+    if(own){actions+=button(view.equipped===id?'Снять с боя':'Экипировать для всех чатов',view.equipped===id?'unequip':'equip');
       if(own.upgrade){const cost=`${own.upgrade.food} корма${own.upgrade.essence?' + '+own.upgrade.essence+' эссенции':''}`;
         actions+='<p class="muted">Следующий уровень: '+cost+'. Недостающий корм заменяется осколками 2:1, эссенция 10:1.</p>';
         actions+=own.upgrade.choice?button('Улучшить: сила','upgrade','power')+button('Улучшить: частота','upgrade','tempo'):button('Улучшить','upgrade');}}
@@ -116,7 +116,7 @@
     if(!chat&&tg?.initData)$('back').onclick=e=>{e.preventDefault();tg.close();};
     document.body.classList.toggle('gentle',$('gentle').checked);
     try{await refresh();const p=pending(),old=view.openings.find(o=>o.nonce===p?.nonce);if(old){clearPending();last=old;busy=true;await animate(old);}
-      $('termsBody').innerHTML='<p>Покупаются билеты, а не конкретный питомец. 1 / 5 / 10 билетов: 25 / 110 / 200 Stars. Результат случайный, дубликаты дают осколки. Шансы и гарантии показаны в магазине; бесплатные и купленные билеты равнозначны.</p><p>Предметы не обмениваются на деньги и не передаются между аккаунтами. Бонусы могут меняться при балансировке. Питомцы и ресурсы общие для аккаунта, экипировка отдельная для каждого чата. Результат сохраняется до анимации.</p><p>При возврате билеты пакета вычитаются. Если они потрачены, возникает долг билетов: использование питомцев в новых боях приостанавливается до погашения долга бесплатными или купленными билетами. Выпавшие питомцы сохраняются.</p><p>Подробные условия: /terms в боте. Поддержка и возвраты: /paysupport, укажите номер заказа.</p><p>Версия '+esc(view.terms_version)+'</p>';}
+      $('termsBody').innerHTML='<p>Покупаются билеты, а не конкретный питомец. 1 / 5 / 10 билетов: 25 / 110 / 200 Stars. Результат случайный, дубликаты дают осколки. Шансы и гарантии показаны в магазине; бесплатные и купленные билеты равнозначны.</p><p>Предметы не обмениваются на деньги и не передаются между аккаунтами. Бонусы могут меняться при балансировке. Питомцы, ресурсы и экипированный спутник общие для аккаунта. Результат сохраняется до анимации.</p><p>При возврате билеты пакета вычитаются. Если они потрачены, возникает долг билетов: использование питомцев в новых боях приостанавливается до погашения долга бесплатными или купленными билетами. Выпавшие питомцы сохраняются.</p><p>Подробные условия: /terms в боте. Поддержка и возвраты: /paysupport, укажите номер заказа.</p><p>Версия '+esc(view.terms_version)+'</p>';}
     catch(e){error(e);$('tickets').textContent='Открой раздел через Telegram';}
   }
   setInterval(()=>{if(!busy&&!dialog.open&&!document.hidden)refresh().catch(()=>{});},15000);

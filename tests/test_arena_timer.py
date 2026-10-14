@@ -160,15 +160,6 @@ class ArenaTimerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(changed["deadline"], row["deadline"])
         self.assertEqual(json.loads(changed["state_json"])["active_side"], "a")
 
-    async def test_slave_battle_same_timer(self):
-        await self.db.force_enslave(1, 30, 10)
-        await self.db.force_enslave(1, 40, 20)
-        await self.db.arena_equip_slave(1, 10, 30, True)
-        await self.db.arena_equip_slave(1, 20, 40, True)
-        row = await self.duel("slaves")
-        changed = await self.expire(row)
-        self.assertEqual(changed["status"], "active")
-        self.assertEqual(json.loads(changed["state_json"])["active_side"], "b")
 
     async def test_pve_no_timeout_even_with_legacy_deadline_can_resume(self):
         row = await self.db.arena_wasteland(1, 10)

@@ -116,6 +116,24 @@ process.stdout.write(c.out||app.innerHTML);
         self.assertIn('data-do="useitem:42"', body)
         self.assertEqual(body.count("<select "), body.count("</select>"))
 
+    def test_global_activity_cards_use_correct_open_and_exit_actions(self):
+        data=self.menu_data()
+        data['active']=[dict(token='battle-key',mode='personal',status='pending')]
+        data['mirror_runs']=[dict(token='mirror-key',status='active',floor=2,xp=40)]
+        data['raids']=[dict(token='raid-key',status='active',round=2)]
+        body=self.run_client("page='personal';menuScreen(input);",data)
+        for action in ('battle:battle-key','leavebattle:battle-key','leavemirror:mirror-key','leaveraid:raid-key'):
+            self.assertIn('data-do="'+action+'"',body)
+        self.assertNotIn('data-do="open:battle-key"',body)
+        self.assertEqual(body.count('Твои бои во всех чатах'),1)
+
+    def test_leave_confirmation_warns_about_stakes_and_no_reward(self):
+        body=self.run_client("leavePending={kind:'battle',token:'key'};page='leaveConfirm';menuScreen(input);",self.menu_data())
+        self.assertIn('проигрыш ставки',body)
+        self.assertIn('без награды',body)
+        self.assertIn('data-do="confirmleave"',body)
+        self.assertIn('data-do="cancelleave"',body)
+
     def test_class_reset_requires_warning_and_confirmation(self):
         body = self.render("classConfirm")
         self.assertIn("Уровень станет 5", body)
@@ -237,9 +255,9 @@ process.stdout.write(c.out||app.innerHTML);
 
     def test_owner_has_no_craft_buttons(self):
         body = self.render("owner")
-        self.assertIn("Крафт убран", body)
+        self.assertIn("Персонаж", body)
         self.assertNotIn('data-do="craft:', body)
-        self.assertIn("Владелец · Lv.25", body)
+        self.assertNotIn("Владелец · Lv.25", body)
 
     def test_native_details_dialog_preserves_scroll_and_restores_focus(self):
         code = """

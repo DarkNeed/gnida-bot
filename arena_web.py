@@ -271,8 +271,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
     mirror_runs = await db.arena_mirror_list(chat, actor)
     result = await db.arena_menu(chat, actor)
     classes, skills = await db.get_fighter_catalog()
-    module_state=await db.arena_modules(chat)
-    enabled_classes={k for k in classes if not any(k in m['classes'] and not m['enabled'] for m in module_state['modules'])}
+    enabled_classes=set(classes)
     profiles = [(result["personal"], True), *((p, False) for p in result["slaves"])]
     if result["self_slave"]:
         profiles.append((result["self_slave"], False))
@@ -412,7 +411,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
         )
     result["chat_id"] = chat
     result["actor_id"] = actor
-    result["admin"] = actor == CUSTOM_COMMAND_OWNER_ID
+    result["admin"] = False
     result["max_level"] = MAX_FIGHTER_LEVEL
     result.update(await db.arena_market_view(chat, actor))
     result["mirror_runs"] = mirror_runs
@@ -432,6 +431,7 @@ def create_arena_app(
     member_cache: dict[tuple[int, int], float] = {}
 
     async def read_member(chat: int, actor: int) -> None:
+        await db.arena_require_enabled(chat)
         now = time.monotonic()
         key = (chat, actor)
         if member_cache.get(key, 0) > now:
@@ -735,10 +735,25 @@ def create_arena_app(
         chat = int(request.match_info["chat"])
         actor = request[ACTOR]
         member = await require_member(bot, chat, actor)
+        await db.arena_require_enabled(chat)
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Некорректный запрос.")
         action = body.get("action")
+        if action in {'leave_battle','leave_mirror','leave_raid'}:
+            battle_token=body.get('token')
+            if not isinstance(battle_token,str):
+                raise ValueError('Некорректный бой.')
+            if action=='leave_mirror':
+                notice=await db.arena_leave_mirror(chat,actor,battle_token)
+            elif action=='leave_raid':
+                notice=await db.arena_leave_raid(chat,actor,battle_token)
+                if raid_changed:await raid_changed(battle_token)
+            else:
+                notice=await db.arena_leave_battle(chat,actor,battle_token)
+            if changed and action=='leave_battle':
+                await changed(battle_token)
+            return web.json_response(dict(notice=notice,menu=await menu_view(db,chat,actor)))
         if action == "forge":
             notice = await db.arena_forge_action(chat, actor, body)
             return web.json_response({"notice": notice, "menu": await menu_view(db, chat, actor)})
@@ -766,6 +781,8 @@ def create_arena_app(
                 chat, actor, fighter, str(body.get("previous", "")), personal
             )
             return web.json_response({"token": row["token"]})
+        if action in {"equipment","module_class","restore_class"}:
+            raise ValueError("Боевые рабы и модули классов удалены.")
         if action == "equipment":
             fighter = int_field(body, "user")
             equipped = body.get("equipped")
@@ -788,7 +805,7 @@ def create_arena_app(
             "learn_skill",
             "learn_passive",
         }:
-            personal = body.get("personal", False)
+            personal = body.get("personal", True)
             if type(personal) is not bool:
                 raise ValueError("Некорректный персонаж.")
             notice = await db.arena_edit_profile(
@@ -820,7 +837,7 @@ def create_arena_app(
         elif action == "craft":
             raise ValueError("Крафт убран. Зелья и конфеты есть у торговца.")
         elif action == "candy":
-            notice = await db.give_candy(chat, actor, int_field(body, "user"))
+            raise ValueError('Боевые рабы удалены. Конфета применяется только к своему персонажу из инвентаря.')
         elif (
             action in {"create_content", "grant_content"}
             and actor == CUSTOM_COMMAND_OWNER_ID

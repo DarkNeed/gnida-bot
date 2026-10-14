@@ -249,14 +249,14 @@ class RebalanceStoreTests(unittest.IsolatedAsyncioTestCase):
     ):
         await self.db.arena_passive_view(1, 10, True)
         self.db.connection.execute(
-            "UPDATE personal_profiles SET class_id='cutie',passive_loadout='[]' WHERE chat_id=1 AND user_id=10"
+            "UPDATE personal_profiles SET class_id='cutie',passive_loadout='[]' WHERE chat_id=0 AND user_id=10"
         )
         view = await self.db.arena_passive_view(1, 10, True)
         self.assertEqual(
             view["passive_loadout"], ["inherent:cutie:0", "inherent:cutie:1"]
         )
         self.db.connection.execute(
-            "UPDATE personal_profiles SET passive_loadout='[]' WHERE chat_id=1 AND user_id=10"
+            "UPDATE personal_profiles SET passive_loadout='[]' WHERE chat_id=0 AND user_id=10"
         )
         again = await self.db.arena_passive_view(1, 10, True)
         self.assertEqual(again["passive_loadout"], [])
@@ -273,7 +273,7 @@ class RebalanceStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_use_item(1, 10, item, 10)
         await self.db.arena_edit_profile(1, 10, 10, True, "passives", ["stone_skin"])
         self.db.connection.execute(
-            "UPDATE personal_profiles SET class_id='nerd' WHERE chat_id=1 AND user_id=10"
+            "UPDATE personal_profiles SET class_id='nerd' WHERE chat_id=0 AND user_id=10"
         )
         view = await self.db.arena_passive_view(1, 10, True)
         self.assertEqual(view["passive_loadout"], ["stone_skin", "inherent:nerd:0"])

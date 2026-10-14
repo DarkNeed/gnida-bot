@@ -190,8 +190,6 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
             await self.db.upsert_user(1, user, str(user), "User " + str(user))
         await self.db.force_enslave(1, 30, 10)
         await self.db.force_enslave(1, 40, 20)
-        await self.db.arena_equip_slave(1, 10, 30, True)
-        await self.db.arena_equip_slave(1, 20, 40, True)
         self.bot = SimpleNamespace(
             get_chat_member=AsyncMock(
                 return_value=SimpleNamespace(
@@ -221,8 +219,8 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.db.grant_slave_xp(1, 10, 20)
         data = await menu_view(self.db, 1, 10)
         self.assertEqual(data["personal"]["level"], 1)
-        self.assertEqual(data["slaves"][0]["user_id"], 30)
-        self.assertEqual(data["owner"]["level"], 1)
+        self.assertEqual(data["slaves"], [])
+        self.assertEqual(data["owner"], {})
 
     async def test_personal_duel_needs_no_slaves(self):
         await self.db.release_all_slaves(1, 10)
@@ -270,154 +268,16 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(row["message_id"], 99)
             await self.db.arena_setup(row["token"], 10, "cancel")
 
-    async def test_equipment_limit_and_no_work_loss_on_sixth(self):
-        await self.db.create_business(1, 10, "field")
-        for user in (50, 60, 70, 80, 90):
-            await self.db.force_enslave(1, user, 10)
-        for user in (50, 60, 70, 80):
-            await self.db.arena_equip_slave(1, 10, user, True)
-        await self.db.set_business_worker_role(1, 10, 90, "collector")
-        with self.assertRaisesRegex(ValueError, "5 боевых"):
-            await self.db.arena_equip_slave(1, 10, 90, True)
-        self.assertEqual(await self.db.business_worker_role(1, 10, 90), "collector")
-        data = await self.db.arena_menu(1, 10)
-        self.assertEqual(data["combat_count"], 5)
-        self.assertEqual(data["combat_capacity"], 5)
-        self.assertEqual(
-            len({s["combat_slot"] for s in data["slaves"] if s["combat_slot"]}), 5
-        )
-        await self.db.arena_equip_slave(1, 10, 30, False)
-        await self.db.arena_equip_slave(1, 10, 90, True)
-        self.assertIsNone(await self.db.business_worker_role(1, 10, 90))
 
-    async def test_equipment_settles_income_and_blocks_work(self):
-        await self.db.arena_equip_slave(1, 10, 30, False)
-        await self.db.create_business(1, 10, "field")
-        await self.db.set_business_worker_role(1, 10, 30, "collector")
-        business = await self.db.get_business(1, 10)
-        with patch(
-            "arena_store.utc_timestamp", return_value=business["last_accrued"] + 3600
-        ):
-            await self.db.arena_equip_slave(1, 10, 30, True)
-        self.assertEqual(self.balance(10), 3)
-        self.assertIsNone(await self.db.business_worker_role(1, 10, 30))
-        self.assertEqual(
-            await self.db.set_business_worker_role(1, 10, 30, "collector"),
-            "combat_equipped",
-        )
-        await self.db.arena_equip_slave(1, 10, 30, False)
-        self.assertEqual(
-            await self.db.set_business_worker_role(1, 10, 30, "collector"), "updated"
-        )
 
-    async def test_equipment_and_work_race(self):
-        await self.db.arena_equip_slave(1, 10, 30, False)
-        await self.db.create_business(1, 10, "field")
-        await asyncio.gather(
-            self.db.set_business_worker_role(1, 10, 30, "collector"),
-            self.db.arena_equip_slave(1, 10, 30, True),
-        )
-        self.assertIsNone(await self.db.business_worker_role(1, 10, 30))
-        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 1)
 
-    async def test_equipment_forbidden_for_other_owners(self):
-        with self.assertRaises(ValueError):
-            await self.db.arena_equip_slave(1, 20, 30, False)
-        with self.assertRaises(ValueError):
-            await self.db.arena_equip_slave(1, 50, 30, True)
-        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 1)
 
-    async def test_equipment_survives_restart_and_transfer_clears_it(self):
-        await self.db.grant_slave_xp(1, 30, 20)
-        await self.db.close()
-        self.db = Database(Path(self.temp.name) / "bot.sqlite3")
-        await self.db.connect()
-        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 1)
-        await self.db.force_enslave(1, 30, 20)
-        await self.db.force_enslave(1, 30, 10)
-        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 0)
-        self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 20)
 
-    async def test_release_clears_equipment(self):
-        await self.db.release_slave(1, 10, 30)
-        self.assertEqual(
-            self.db.connection.execute(
-                "SELECT COUNT(*) FROM arena_combat_slots WHERE slave_id=30"
-            ).fetchone()[0],
-            0,
-        )
 
-    async def test_unprepared_slave_cannot_be_selected_or_farm(self):
-        await self.db.arena_equip_slave(1, 10, 30, False)
-        row = await self.db.arena_offer(1, 10, 20)
-        with self.assertRaisesRegex(ValueError, "экипируйте"):
-            await self.db.arena_setup(row["token"], 10, "select", 30)
-        self.assertEqual((await battle_view(self.db, row, 10))["available"], [])
-        await self.db.arena_setup(row["token"], 10, "cancel")
-        with self.assertRaisesRegex(ValueError, "экипируйте"):
-            await self.db.arena_wasteland(1, 10, 30, personal=False)
-        with self.assertRaisesRegex(ValueError, "экипируйте"):
-            await self.db.arena_wasteland(1, 30, 30, personal=False)
 
-    async def test_selected_slave_cannot_be_unequipped(self):
-        row = await self.db.arena_offer(1, 10, 20)
-        await self.db.arena_setup(row["token"], 10, "select", 30)
-        with self.assertRaisesRegex(ValueError, "текущего боя"):
-            await self.db.arena_equip_slave(1, 10, 30, False)
-        await self.db.arena_setup(row["token"], 10, "cancel")
-        await self.db.arena_equip_slave(1, 10, 30, False)
-        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 0)
 
-    async def test_equipment_is_scoped_to_chat(self):
-        await self.db.upsert_chat(2, "Другой чат")
-        await self.db.force_enslave(2, 30, 10)
-        self.assertEqual((await self.db.arena_menu(2, 10))["combat_count"], 0)
-        await self.db.arena_equip_slave(2, 10, 30, True)
-        await self.db.release_slave(2, 10, 30)
-        self.assertEqual((await self.db.arena_menu(1, 10))["combat_count"], 1)
 
-    async def test_equipment_http_validation(self):
-        import time
 
-        client = TestClient(TestServer(create_arena_app(self.db, self.bot, TOKEN)))
-        await client.start_server()
-        headers = {"X-Telegram-Init-Data": signed(10, int(time.time()))}
-        try:
-            response = await client.post(
-                "/api/menu/1",
-                headers=headers,
-                json={"action": "equipment", "user": 30, "equipped": False},
-            )
-            self.assertEqual(response.status, 200, await response.text())
-            self.assertEqual((await response.json())["menu"]["combat_count"], 0)
-            response = await client.post(
-                "/api/menu/1",
-                headers=headers,
-                json={"action": "equipment", "user": 30, "equipped": "false"},
-            )
-            self.assertEqual(response.status, 400)
-            self.bot.get_chat_member.return_value = SimpleNamespace(status="left")
-            response = await client.post(
-                "/api/menu/1",
-                headers=headers,
-                json={"action": "equipment", "user": 30, "equipped": True},
-            )
-            self.assertEqual(response.status, 400)
-        finally:
-            await client.close()
-
-    async def test_slave_selection_and_consent(self):
-        r = await self.db.arena_offer(1, 10, 20)
-        r = await self.db.arena_setup(r["token"], 10, "select", 30, False)
-        r = await self.db.arena_setup(r["token"], 20, "accept")
-        r = await self.db.arena_setup(r["token"], 20, "select", 40)
-        self.assertEqual(r["status"], "pending")
-        r = await self.db.arena_setup(r["token"], 30, "consent")
-        self.assertEqual(r["status"], "active")
-        st = json.loads(r["state_json"])
-        self.assertEqual(st["sides"]["a"]["controller_id"], 30)
-        self.assertEqual(st["sides"]["b"]["controller_id"], 20)
-        self.assertEqual(st["sides"]["b"]["hp"], 16)
 
     async def test_view_spectator(self):
         r = await self.db.arena_offer(1, 10, 20)
@@ -425,7 +285,7 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(view["own_side"])
         self.assertEqual(view["available"], [])
         view = await battle_view(self.db, r, 10)
-        self.assertEqual(view["available"][0]["id"], 30)
+        self.assertEqual(view["available"], [])
 
     async def test_stale_revision_and_outsider(self):
         r = await self.duel()
@@ -439,17 +299,18 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
         for user in (10, 20):
             self.db._add_francs_locked(1, user, 100)
         self.db.connection.commit()
-        r = await self.db.arena_offer(1, 10, 20, "slaves", 50)
+        r = await self.db.arena_offer(1, 10, 20, "personal", 50)
         self.assertEqual(self.balance(10), 50)
         self.assertEqual(self.balance(20), 100)
         await self.db.arena_setup(r["token"], 20, "accept")
-        await self.db.arena_setup(r["token"], 20, "accept")
+        with self.assertRaises(ValueError):
+            await self.db.arena_setup(r["token"], 20, "accept")
         self.assertEqual(self.balance(20), 50)
-        await self.db.arena_setup(r["token"], 10, "cancel")
+        await self.db.arena_set_module(1, 10, "arena", False, 0)
         self.assertEqual(self.balance(10), 100)
         self.assertEqual(self.balance(20), 100)
-        with self.assertRaises(ValueError):
-            await self.db.arena_setup(r["token"], 10, "cancel")
+        await self.db.arena_set_module(1, 10, "arena", False, 1)
+        self.assertEqual(self.balance(10), 100)
 
     async def test_not_enough_stake(self):
         with self.assertRaises(ValueError):
@@ -489,17 +350,6 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.arena_get(r["token"]))["status"], "expired")
         self.assertEqual(await self.db.arena_expire(), [])
 
-    async def test_changed_owner_cancels(self):
-        r = await self.db.arena_offer(1, 10, 20)
-        await self.db.arena_setup(r["token"], 10, "select", 30)
-        await self.db.arena_setup(r["token"], 20, "accept")
-        r = await self.db.arena_setup(r["token"], 20, "select", 40)
-        await self.db.force_enslave(1, 30, 50)
-        st = json.loads(r["state_json"])
-        actor = st["sides"][st["active_side"]]["controller_id"]
-        with self.assertRaises(ValueError):
-            await self.db.arena_action(r["token"], actor, r["revision"], "bum_punch")
-        self.assertEqual((await self.db.arena_get(r["token"]))["status"], "cancelled")
 
     async def test_wasteland_bot_moves_and_reward(self):
         r = await self.db.arena_wasteland(1, 10)
@@ -515,23 +365,12 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(st["log"]), 2)
         self.assertEqual(st["active_side"], "a")
 
-    async def test_class_selection_personal_and_slave(self):
+    async def test_class_selection_personal_and_slave_rejected(self):
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 72)
         self.db.connection.commit()
         await self.db.arena_edit_profile(1, 10, 10, True, "class", "nerd")
-        self.assertEqual(
-            (await self.db.arena_menu(1, 10))["personal"]["class_id"], "nerd"
-        )
-        self.assertEqual(
-            (await self.db.get_slave_profile(1, 10))["class_id"], "ragamuffin"
-        )
-        await self.db.grant_slave_xp(1, 30, 72)
+        self.assertEqual((await self.db.arena_menu(1, 10))["personal"]["class_id"], "nerd")
         with self.assertRaises(ValueError):
-            await self.db.arena_edit_profile(1, 10, 30, False, "class", "jock")
-        with patch(
-            "arena_store.utc_timestamp",
-            return_value=__import__("time").time().__int__() + 48 * 3600 + 1,
-        ):
             await self.db.arena_edit_profile(1, 10, 30, False, "class", "jock")
 
     async def test_http_auth_membership_and_assets(self):
@@ -584,67 +423,8 @@ class ArenaStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.arena_get(r["token"]))["status"], "cancelled")
         self.assertEqual(self.balance(10), 100)
 
-    async def test_wasteland_slave_profile_is_independent(self):
-        r = await self.db.arena_wasteland(1, 30, 30, personal=False)
-        r = await self.db.arena_action(r["token"], 30, r["revision"], "surrender")
-        self.assertEqual(r["status"], "finished")
-        self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 0)
-        self.assertEqual((await self.db.arena_menu(1, 30))["personal"]["xp"], 0)
 
-    async def test_exclusive_content_and_immediate_class(self):
-        admin = 1980056841
-        payload = {
-            "name": "Свет",
-            "class_id": "ragamuffin",
-            "damage_type": "magic",
-            "power": 10,
-            "cost": 0,
-        }
-        self.assertEqual(
-            await self.db.create_custom_fighter_content(
-                "skill", "custom_light", payload, admin
-            ),
-            "created",
-        )
-        data = await menu_view(self.db, 1, 10)
-        self.assertNotIn(
-            "custom_light", [s["skill_id"] for s in data["personal"]["skills"]]
-        )
-        await self.db.arena_admin_grant(1, 10, "skill", "custom_light", admin, True)
-        data = await menu_view(self.db, 1, 10)
-        self.assertIn(
-            "custom_light", [s["skill_id"] for s in data["personal"]["skills"]]
-        )
-        from dataclasses import asdict
-        from arena_engine import FIGHTER_CLASSES
 
-        payload = asdict(FIGHTER_CLASSES["cutie"])
-        payload["name"] = "Фембой"
-        payload["passives"] = []
-        self.assertEqual(
-            await self.db.create_custom_fighter_content(
-                "class", "femboy", payload, admin
-            ),
-            "created",
-        )
-        await self.db.arena_admin_grant(1, 10, "class", "femboy", admin, True)
-        self.assertEqual(
-            (await self.db.arena_menu(1, 10))["personal"]["class_id"], "femboy"
-        )
-        with self.assertRaises(ValueError):
-            await self.db.arena_admin_grant(1, 10, "class", "femboy", 50)
-
-    async def test_materials_do_not_apply_new_slave_count_retroactively(self):
-        await self.db.grant_owner_xp(1, 10, 72)
-        before = await self.db.get_owner_profile(1, 10)
-        with patch(
-            "arena_store.utc_timestamp",
-            return_value=before["material_updated_at"] + 3600,
-        ):
-            await self.db.force_enslave(1, 50, 10)
-            after = await self.db.get_owner_profile(1, 10)
-        self.assertEqual(after["raw_material"], 1)
-        self.assertEqual(after["slave_count"], 2)
 
     async def test_http_outsider_write_and_admin_gate(self):
         import time

@@ -905,6 +905,8 @@ class Database(ArenaMixin):
             forced = False
             opponent_newcomer = False
         async with self._lock:
+            if not self._feature_enabled_locked(chat_id, 'slavery'):
+                friendly, forced, opponent_newcomer = True, False, False
             existing = self.connection.execute(
                 """SELECT id FROM challenges WHERE chat_id=?
                    AND status IN ('pending', 'betting', 'active')
@@ -1902,6 +1904,8 @@ class Database(ArenaMixin):
     ) -> tuple[str, int]:
         """Apply slavery consequences while preserving the no-slave-owners rule."""
         async with self._lock:
+            if not self._feature_enabled_locked(chat_id, 'slavery'):
+                return 'module_disabled', loser_id
             with self.connection:
                 if challenge_id is not None:
                     challenge = self.connection.execute(
@@ -2028,6 +2032,7 @@ class Database(ArenaMixin):
         self, chat_id: int, current_owner_id: int, slave_id: int, new_owner_id: int
     ) -> str:
         async with self._lock:
+            self._require_feature_locked(chat_id, 'slavery')
             with self.connection:
                 if slave_id == new_owner_id:
                     return "self"
@@ -2074,12 +2079,15 @@ class Database(ArenaMixin):
 
     async def force_enslave(self, chat_id: int, slave_id: int, owner_id: int) -> str:
         async with self._lock:
+            self._require_feature_locked(chat_id, 'slavery')
             with self.connection:
                 result = self._force_enslave_locked(chat_id, slave_id, owner_id)
                 self.connection.commit()
                 return result
 
     def _force_enslave_locked(self, chat_id: int, slave_id: int, owner_id: int) -> str:
+        if not self._feature_enabled_locked(chat_id, 'slavery'):
+            return 'module_disabled'
         if slave_id == owner_id:
             return "self"
         owner = self.connection.execute(
@@ -2136,6 +2144,7 @@ class Database(ArenaMixin):
 
     async def release_all_slaves(self, chat_id: int, owner_id: int) -> int:
         async with self._lock:
+            self._require_feature_locked(chat_id, 'slavery')
             self._settle_materials_locked(chat_id, owner_id)
             cursor = self.connection.execute(
                 "DELETE FROM ownership WHERE chat_id=? AND owner_id=?",
@@ -2351,6 +2360,8 @@ class Database(ArenaMixin):
         ).fetchone()
         if business is None:
             return None
+        if not self._feature_enabled_locked(chat_id, 'slavery'):
+            return dict(hours=0,owner_income=0,gross_income=0,tax=0,business_type=business['business_type'])
         hours = max(0, (now - int(business["last_accrued"])) // BUSINESS_HOUR_SECONDS)
         if hours == 0:
             return {"hours": 0, "owner_income": 0, "gross_income": 0, "tax": 0, "business_type": business["business_type"]}
@@ -2891,6 +2902,7 @@ class Database(ArenaMixin):
         if business_type not in BUSINESS_CONFIG:
             raise ValueError("Unknown business type")
         async with self._lock:
+            self._require_feature_locked(chat_id, 'slavery')
             existing = self.connection.execute(
                 "SELECT 1 FROM businesses WHERE owner_id=?",
                 (owner_id,),
@@ -3034,6 +3046,7 @@ class Database(ArenaMixin):
         self, chat_id: int, owner_id: int, worker_id: int, role: str | None
     ) -> str:
         async with self._lock:
+            self._require_feature_locked(chat_id, 'slavery')
             business = self.connection.execute(
                 "SELECT business_type FROM businesses WHERE chat_id=? AND owner_id=?",
                 (chat_id, owner_id),
@@ -3092,6 +3105,7 @@ class Database(ArenaMixin):
     ) -> tuple[str, int | None, int | None, int | None]:
         """Pay a one-hour temporary job. Returns status, worker pay, owner pay, cooldown."""
         async with self._lock:
+            self._require_feature_locked(chat_id, 'slavery')
             business = self.connection.execute(
                 """SELECT business_type FROM businesses
                    WHERE chat_id=? AND owner_id=?""",
@@ -3155,6 +3169,7 @@ class Database(ArenaMixin):
 
     async def buyout_slave(self, chat_id: int, owner_id: int, slave_id: int) -> str:
         async with self._lock:
+            self._require_feature_locked(chat_id, 'slavery')
             owned = self.connection.execute(
                 """SELECT 1 FROM ownership
                    WHERE chat_id=? AND owner_id=? AND slave_id=?""",
@@ -3349,6 +3364,7 @@ class Database(ArenaMixin):
         self, chat_id: int, owner_id: int, slave_id: int, enabled: bool
     ) -> str:
         async with self._lock:
+            self._require_feature_locked(chat_id, 'slavery')
             row = self.connection.execute(
                 """SELECT transfer_priority FROM ownership
                    WHERE chat_id=? AND owner_id=? AND slave_id=?""",
@@ -3369,6 +3385,7 @@ class Database(ArenaMixin):
 
     async def release_slave(self, chat_id: int, owner_id: int, slave_id: int) -> bool:
         async with self._lock:
+            self._require_feature_locked(chat_id, 'slavery')
             self._settle_materials_locked(chat_id, owner_id)
             cursor = self.connection.execute(
                 "DELETE FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?",

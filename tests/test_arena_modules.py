@@ -1,3 +1,4 @@
+"""Per-chat feature switches; class groups are no longer gated."""
 import json
 import tempfile
 import unittest
@@ -6,9 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from database import Database
-from arena_engine import BUILTIN_SKILLS
 from arena_web import menu_view
-from arena_wasteland import enemy_source
 
 
 class ModuleTests(unittest.IsolatedAsyncioTestCase):
@@ -24,82 +23,61 @@ class ModuleTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.db.close();self.temp.cleanup()
 
-    async def toggle(self, key, on, chat=1):
+    async def toggle(self,key,on,chat=1):
         settings=await self.db.arena_modules(chat)
         return await self.db.arena_set_module(chat,10,key,on,settings['revision'])
 
-    def profile(self,cls='jock',arch='mge_bro'):
-        self.db._arena_profile_locked(1,10,True)
-        self.db.connection.execute("UPDATE personal_profiles SET class_id=?,archclass_id=?,level=18,xp=1500,progression_level=10,loadout='[\"club_hit\"]' WHERE chat_id=1 AND user_id=10",(cls,arch))
-        self.db.connection.commit()
-
     async def test_defaults_chat_isolation_revision_restart(self):
         settings=await self.db.arena_modules(1)
-        self.assertEqual({m['id'] for m in settings['modules'] if m['enabled']},{'moon','humor'})
-        await self.toggle('classic',True)
+        self.assertEqual({m['id'] for m in settings['modules'] if m['enabled']},{'arena','slavery'})
+        await self.toggle('arena',False)
         with self.assertRaisesRegex(ValueError,'изменились'):
-            await self.db.arena_set_module(1,20,'moon',False,0)
+            await self.db.arena_set_module(1,20,'slavery',False,0)
         await self.db.close();await self.db.connect()
-        self.assertTrue(next(m['enabled'] for m in (await self.db.arena_modules(1))['modules'] if m['id']=='classic'))
-        self.assertFalse(next(m['enabled'] for m in (await self.db.arena_modules(2))['modules'] if m['id']=='classic'))
+        self.assertFalse(await self.db.feature_enabled(1,'arena'))
+        self.assertTrue(await self.db.feature_enabled(2,'arena'))
+        self.assertTrue(await self.db.feature_enabled(1,'slavery'))
 
-    async def test_disabled_class_blocks_new_fight_but_preserves_old_battle(self):
-        self.profile()
+    async def test_disabled_arena_cancels_old_fight_and_blocks_new_until_enabled(self):
         battle=await self.db.arena_wasteland(1,10,10,personal=True)
-        snapshot=battle['state_json']
-        await self.toggle('humor',False)
-        self.assertEqual((await self.db.arena_get(battle['token']))['state_json'],snapshot)
-        with self.assertRaises(ValueError):
-            await self.db.arena_edit_profile(1,10,10,True,'module_class','ragamuffin')
-        await self.db.arena_action(battle['token'],10,battle['revision'],'surrender')
+        await self.toggle('arena',False)
+        closed=await self.db.arena_get(battle['token'])
+        self.assertEqual(closed['status'],'cancelled')
+        self.assertEqual(json.loads(closed['state_json'])['rewards'],{})
         with self.assertRaisesRegex(ValueError,'выключен'):
             await self.db.arena_wasteland(1,10,10,personal=True)
+        await self.toggle('arena',True)
+        self.assertEqual((await self.db.arena_wasteland(1,10,10,personal=True))['status'],'active')
 
-    async def test_archive_roundtrip_preserves_levels_items_skin_and_progress(self):
-        self.profile()
-        self.db.connection.execute("INSERT INTO arena_learned VALUES(1,10,1,'skill','super_fan')")
+    async def test_all_classes_and_tractates_available_and_old_group_controls_rejected(self):
+        self.db._arena_profile_locked(1,10,True)
+        self.db.connection.execute('UPDATE personal_profiles SET xp=72,level=5,progression_level=5 WHERE chat_id=0 AND user_id=10')
+        self.db._arena_add_item_locked(1,10,'skill','mana_shot','uncommon',1)
+        item=self.db.connection.execute('SELECT id FROM arena_inventory WHERE chat_id=0').fetchone()[0]
+        self.db.connection.commit()
+        await self.db.arena_use_item(1,10,item,10,True)
+        view=await menu_view(self.db,2,10)
+        self.assertIn('mage',{c['id'] for c in view['personal']['classes']})
+        self.assertIn('mana_shot',{s['skill_id'] for s in view['personal']['skills']})
+        self.assertIn(('skill','mana_shot'),self.db._forge_catalog_locked(1))
+        for key in ('classic','humor','moon'):
+            with self.assertRaises(ValueError):await self.toggle(key,False)
+        with self.assertRaises(ValueError):
+            await self.db.arena_edit_profile(1,10,10,True,'module_class','ragamuffin')
+
+    async def test_toggling_does_not_restore_or_change_profile_and_items(self):
+        self.db._arena_profile_locked(1,10,True)
+        self.db.connection.execute("UPDATE personal_profiles SET class_id='jock',level=18,xp=1500,progression_level=10 WHERE chat_id=0 AND user_id=10")
         self.db._arena_add_item_locked(1,10,'skill','dust_in_eyes','common',3)
         self.db.connection.commit()
-        await self.db.arena_set_sprite(1,10,b'test bytes',False)
         before=dict(self.db._arena_profile_locked(1,10,True))
-        await self.toggle('humor',False)
-        await self.db.arena_edit_profile(1,10,10,True,'module_class','ragamuffin')
-        switched=dict(self.db._arena_profile_locked(1,10,True))
-        self.assertEqual((switched['level'],switched['xp']),(18,1500))
-        self.assertTrue((await self.db.arena_sprite_info(1,10))['sprite_url'])
-        self.assertEqual(self.db.connection.execute('SELECT quantity FROM arena_inventory').fetchone()[0],3)
-        with self.assertRaises(ValueError):
-            await self.db.arena_edit_profile(1,20,10,True,'restore_class','jock')
-        with self.assertRaises(ValueError):
-            await self.db.arena_edit_profile(1,10,10,True,'restore_class','jock')
-        self.db.connection.execute('UPDATE personal_profiles SET xp=2000,level=19 WHERE chat_id=1 AND user_id=10')
-        self.db.connection.commit()
-        await self.toggle('humor',True)
-        await self.db.arena_edit_profile(1,10,10,True,'restore_class','jock')
-        restored=dict(self.db._arena_profile_locked(1,10,True))
-        self.assertEqual((restored['class_id'],restored['archclass_id']),('jock','mge_bro'))
-        self.assertEqual((restored['level'],restored['xp']),(19,2000))
-        self.assertEqual(restored['loadout'],before['loadout'])
-        self.assertIsNotNone(self.db.connection.execute("SELECT 1 FROM arena_learned WHERE content_id='super_fan'").fetchone())
+        await self.toggle('arena',False)
+        await self.toggle('arena',True)
+        self.assertEqual(dict(self.db._arena_profile_locked(2,10,True)),before)
+        self.assertEqual(self.db.connection.execute('SELECT quantity FROM arena_inventory WHERE chat_id=0').fetchone()[0],3)
+        self.assertEqual(self.db.connection.execute('SELECT count(*) FROM arena_class_archives').fetchone()[0],0)
 
-    async def test_disabled_tractates_cannot_be_used_or_forged(self):
-        self.profile('ragamuffin','')
-        self.db._arena_add_item_locked(1,10,'skill','mana_shot','uncommon',1)
-        item=self.db.connection.execute('SELECT id FROM arena_inventory').fetchone()[0]
-        self.db.connection.commit()
-        with self.assertRaisesRegex(ValueError,'выключен'):
-            await self.db.arena_use_item(1,10,item,10,True)
-        self.assertEqual(self.db.connection.execute('SELECT quantity FROM arena_inventory').fetchone()[0],1)
-        self.assertNotIn(('skill','mana_shot'),self.db._forge_catalog_locked(1))
-        await self.toggle('classic',True)
-        self.assertIn(('skill','mana_shot'),self.db._forge_catalog_locked(1))
-        view=await menu_view(self.db,1,10)
-        self.assertIn('mage',{c['id'] for c in view['personal']['classes']})
-
-    async def test_npcs_respect_enabled_classes_and_hunter_ai_ignores_locked_visceral(self):
-        for _ in range(40):
-            self.assertEqual(enemy_source(18,enabled_classes={'ragamuffin'})['class_id'],'ragamuffin')
-        await self.toggle('classic',True)
+    async def test_hunter_ai_ignores_locked_visceral(self):
         def hunter(*args,**kwargs):
             return dict(slave_id=0,owner_id=0,controlled=False,class_id='hunter',level=18,
                         archclass_id='hunter_moon',loadout=['hunter_visceral'],known_skills=['hunter_visceral'])
@@ -110,17 +88,4 @@ class ModuleTests(unittest.IsolatedAsyncioTestCase):
         self.db.connection.commit()
         result=await self.db.arena_action(battle['token'],10,battle['revision'],'bum_punch')
         self.assertEqual(result['revision'],battle['revision']+1)
-        log=json.loads(result['state_json'])['log']
-        self.assertEqual(log[-1]['skill_id'],'bum_punch')
-
-    async def test_deliberate_reset_cannot_recover_sacrificed_levels_from_archive(self):
-        self.profile()
-        await self.toggle('humor',False)
-        await self.db.arena_edit_profile(1,10,10,True,'module_class','ragamuffin')
-        self.assertEqual(self.db.connection.execute('SELECT count(*) FROM arena_class_archives').fetchone()[0],1)
-        await self.db.arena_edit_profile(1,10,10,True,'reset_class',True)
-        await self.toggle('humor',True)
-        with self.assertRaises(ValueError):
-            await self.db.arena_edit_profile(1,10,10,True,'restore_class','jock')
-        profile=dict(self.db._arena_profile_locked(1,10,True))
-        self.assertEqual((profile['level'],profile['xp']),(5,72))
+        self.assertEqual(json.loads(result['state_json'])['log'][-1]['skill_id'],'bum_punch')

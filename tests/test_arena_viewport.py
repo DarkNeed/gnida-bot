@@ -154,34 +154,16 @@ process.stdout.write(app.innerHTML);
             encoding="utf-8",
         ).stdout
 
-    def test_five_empty_slots(self):
-        body = self.render([])
-        self.assertEqual(body.count("· свободен"), 5)
-        self.assertIn("Боевой отряд · 0 / 5", body)
 
-    def test_equipped_and_working_cards(self):
-        profile = {
-            "user_id": 30,
-            "level": 1,
-            "class_name": "Оборванец",
-            "personal": False,
-        }
-        body = self.render(
-            [
-                {**profile, "combat_slot": 2, "in_battle": True},
-                {
-                    **profile,
-                    "user_id": 40,
-                    "working_role": "collector",
-                    "combat_slot": None,
-                },
-            ]
-        )
-        self.assertEqual(body.count("· свободен"), 4)
-        self.assertIn('data-do="unequip:30" disabled', body)
-        self.assertIn('data-do="equip:40"', body)
-        self.assertIn('data-do="waste:40" disabled', body)
-        self.assertIn("Экипировать и снять с работы", body)
+
+    def test_old_slave_page_redirects_to_global_personal_character(self):
+        body = self.render([{"user_id":30,"level":1,"class_name":"Оборванец","personal":False,"combat_slot":2}])
+        self.assertIn('data-do="waste:10">', body)
+        self.assertNotIn('data-do="waste:30"', body)
+        self.assertNotIn('data-do="equip:', body)
+        self.assertNotIn('data-do="unequip:', body)
+        self.assertNotIn('Боевой отряд', body)
+        self.assertIn('общие для всех чатов', body)
 
     def test_personal_fighter_does_not_need_equipment(self):
         body = self.render([], "personal")
@@ -189,9 +171,6 @@ process.stdout.write(app.innerHTML);
         self.assertIn("/бой @участник", body)
         self.assertIn('data-do="appearance"', body)
 
-    def test_cannot_change_owned_slave_sprite(self):
-        body = self.render([{"user_id":30,"level":1,"class_name":"Оборванец","can_edit_sprite":False}])
-        self.assertNotIn('data-do="appearance"', body)
 
     def test_appearance_upload_and_reset_controls(self):
         body = self.render([], "appearance")

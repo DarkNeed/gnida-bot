@@ -31,13 +31,13 @@ class ProgressionTests(unittest.IsolatedAsyncioTestCase):
                 await self.db.upsert_user(chat, user, str(user), str(user))
                 await self.db.arena_menu(chat, user)
         await self.db.force_enslave(1, 30, 10)
-        await self.db.arena_equip_slave(1, 10, 30, True)
 
     async def asyncTearDown(self):
         await self.db.close()
         self.temp.cleanup()
 
     def level(self, level, cls="ragamuffin", user=10, personal=True, chat=1):
+        chat = 0 if personal else chat
         table = "personal_profiles" if personal else "slave_profiles"
         self.db.connection.execute(
             f"UPDATE {table} SET level=?,class_id=?,xp=? WHERE chat_id=? AND user_id=?",
@@ -61,7 +61,7 @@ class ProgressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(choice["level"], 5)
         self.assertTrue(choice["options"][0]["current"])
         self.assertEqual(choice["options"][0]["id"], "stay")
-        self.assertEqual(len(choice["options"]), 9)
+        self.assertEqual(len(choice["options"]), 13)
         before = (p["xp"], p["loadout"])
         await self.choose("stay")
         p = await self.profile()
@@ -72,8 +72,8 @@ class ProgressionTests(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
         await self.db.connect()
         self.assertIsNone((await self.profile())["progression_choice"])
-        self.assertEqual((await self.profile(chat=2))["progression_level"], 0)
-        self.assertEqual((await self.profile(user=30, personal=False))["progression_level"], 0)
+        self.assertEqual((await self.profile(chat=2))["progression_level"], 5)
+        self.assertEqual(dict(self.db._arena_profile_locked(1,30,False))["progression_level"], 0)
         await self.db.arena_edit_profile(1, 10, 10, True, "reset_class", True)
         self.level(5)
         self.assertEqual((await self.profile())["progression_choice"]["level"], 5)
@@ -132,25 +132,6 @@ class ProgressionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.choose("advance")
 
-    async def test_owner_wait_and_wrong_actor_personal_scope(self):
-        self.level(10, "jock", user=30, personal=False)
-        with patch("arena_store.utc_timestamp", return_value=100000):
-            p = await self.profile(user=30, personal=False)
-            stamp = p["progression_pending_at"]
-            with self.assertRaises(ValueError):
-                await self.choose("mge_bro", user=30, personal=False)
-            with self.assertRaises(ValueError):
-                await self.choose("mge_bro", user=30, personal=False, actor=20)
-            await self.db.arena_edit_profile(1, 30, 30, False, "loadout", ["bum_punch"])
-        await self.db.close()
-        await self.db.connect()
-        self.assertEqual((await self.profile(user=30, personal=False))["progression_pending_at"], stamp)
-        with patch("arena_store.utc_timestamp", return_value=stamp + 48 * 3600):
-            await self.choose("mge_bro", user=30, personal=False)
-        self.assertEqual((await self.profile(user=30, personal=False))["archclass_id"], "mge_bro")
-        self.level(10, "jock", user=20)
-        with self.assertRaises(ValueError):
-            await self.db.arena_edit_profile(1, 10, 20, True, "progression", "mge_bro")
 
     async def test_unresolved_fighter_blocks_pvp_wasteland_mirror_without_spending(self):
         self.level(10, "jock")
@@ -217,33 +198,6 @@ class ProgressionTests(unittest.IsolatedAsyncioTestCase):
         p = await self.profile()
         self.assertEqual((p["level"], p["progression_level"], p["archclass_id"]), (5, 0, ""))
         self.assertEqual(p["sprite_url"], sprite_url)
-
-    async def test_old_delegation_clock_survives_progression_schema_migration(self):
-        self.level(10, "jock", user=30, personal=False)
-        self.db.connection.execute(
-            "UPDATE slave_profiles SET archclass_pending_at=0 "
-            "WHERE chat_id=1 AND user_id=30"
-        )
-        self.db.connection.commit()
-        await self.db.close()
-        import sqlite3
-
-        with closing(sqlite3.connect(Path(self.temp.name) / "test.sqlite3")) as con:
-            for table in ("personal_profiles", "slave_profiles"):
-                for column in (
-                    "progression_level", "archclass_stage",
-                    "progression_pending_level", "progression_pending_at",
-                ):
-                    con.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
-            con.commit()
-        await self.db.connect()
-        p = await self.profile(user=30, personal=False)
-        self.assertEqual(p["progression_pending_at"], 0)
-        self.assertTrue(p["progression_choice"]["can_choose"])
-        self.assertEqual(p["progression_choice"]["level"], 10)
-        self.assertEqual((await self.db.get_owner(1, 30))["owner_id"], 10)
-        await self.choose("mge_bro", user=30, personal=False)
-        self.assertEqual((await self.profile(user=30, personal=False))["archclass_id"], "mge_bro")
 
 
 class ProgressionClientTests(unittest.TestCase):

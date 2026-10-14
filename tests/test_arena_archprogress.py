@@ -201,7 +201,7 @@ class ArchProgressStoreTests(unittest.IsolatedAsyncioTestCase):
     def level(self, branch, level, user=10, personal=True):
         table = "personal_profiles" if personal else "slave_profiles"
         self.db.connection.execute(
-            f"UPDATE {table} SET class_id=?,level=?,xp=?,archclass_id=?,progression_level=10,archclass_stage=10 WHERE chat_id=1 AND user_id=?",
+            f"UPDATE {table} SET class_id=?,level=?,xp=?,archclass_id=?,progression_level=10,archclass_stage=10 WHERE chat_id={0 if personal else 1} AND user_id=?",
             (
                 ARCHCLASSES[branch]["class_id"],
                 level,
@@ -262,38 +262,6 @@ class ArchProgressStoreTests(unittest.IsolatedAsyncioTestCase):
                 await self.db.arena_edit_profile(1, 10, 10, True, "loadout", [sid])
         self.assertFalse((await menu_view(self.db, 1, 20))["personal"]["archclass"])
 
-    async def test_slave_menu_and_combat_keep_unique_and_scope(self):
-        await self.db.force_enslave(1, 30, 10)
-        await self.db.arena_equip_slave(1, 10, 30, True)
-        self.level("ring_fauvist", 18, user=30, personal=False)
-        p = (await menu_view(self.db, 1, 10))["slaves"][0]
-        self.assertIn(
-            "arch_ring_fauvist", [s["skill_id"] for s in p["available_skills"]]
-        )
-        await self.db.arena_edit_profile(
-            1, 30, 30, False, "forget_skill", "dust_in_eyes"
-        )
-        await self.db.arena_edit_profile(
-            1, 30, 30, False, "learn_skill", "arch_ring_fauvist"
-        )
-        p = (await menu_view(self.db, 1, 10))["slaves"][0]
-        self.assertIn("arch_ring_fauvist", p["known_skills"])
-        await self.db.arena_edit_profile(
-            1, 30, 30, False, "loadout", ["arch_ring_fauvist"]
-        )
-        row = await self.db.arena_wasteland(1, 10, 30, personal=False)
-        view = await battle_view(self.db, row, 10)
-        detail = next(
-            s
-            for s in view["state"]["sides"]["a"]["skill_details"]
-            if s["skill_id"] == "arch_ring_fauvist"
-        )
-        self.assertEqual(detail["power"], 15)
-        self.assertEqual(detail["evolution"]["min_level"], 18)
-        self.assertNotIn(
-            "arch_ring_fauvist",
-            (await menu_view(self.db, 1, 30))["personal"]["known_skills"],
-        )
 
     async def test_uniques_not_sold_and_wrong_branch_scroll_not_consumed(self):
         self.level("hacker", 15)
@@ -308,40 +276,6 @@ class ArchProgressStoreTests(unittest.IsolatedAsyncioTestCase):
             await self.db.arena_use_item(1, 10, item, 10, True)
         self.assertEqual(
             (await self.db.arena_market_view(1, 10))["inventory"][0]["quantity"], 1
-        )
-
-    async def test_update_starts_delegation_once_even_for_full_level_18_memory(self):
-        await self.db.force_enslave(1, 30, 10)
-        self.level("hacker", 14, user=30, personal=False)
-        await menu_view(self.db, 1, 10)
-        self.db.connection.execute(
-            "UPDATE slave_profiles SET skills_pending_at=NULL WHERE user_id=30"
-        )
-        self.db.connection.commit()
-        self.level("hacker", 18, user=30, personal=False)
-        with patch("arena_market.market_now", return_value=100000):
-            await menu_view(self.db, 1, 10)
-        with patch("arena_market.market_now", return_value=200000):
-            await menu_view(self.db, 1, 10)
-        profile = self.db.connection.execute(
-            "SELECT * FROM slave_profiles WHERE user_id=30"
-        ).fetchone()
-        self.assertEqual(profile["skills_pending_at"], 100000)
-        with patch("arena_store.utc_timestamp", return_value=100001):
-            with self.assertRaises(ValueError):
-                await self.db.arena_edit_profile(
-                    1, 10, 30, False, "forget_skill", "dust_in_eyes"
-                )
-        with patch("arena_store.utc_timestamp", return_value=100000 + 48 * 3600):
-            await self.db.arena_edit_profile(
-                1, 10, 30, False, "forget_skill", "dust_in_eyes"
-            )
-            await self.db.arena_edit_profile(
-                1, 10, 30, False, "learn_skill", "arch_hacker"
-            )
-        self.assertIn(
-            "arch_hacker",
-            (await menu_view(self.db, 1, 10))["slaves"][0]["known_skills"],
         )
 
 

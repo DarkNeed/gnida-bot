@@ -6,9 +6,8 @@ const audio=window.ArenaAudio||{scene(){},effect(){},actionStart(){},impact(){},
 let current=null, menu=null, busy=false, lastSeq=0, polling=false, token="", chat=null, page="personal", profileId=null, near="a";
 const demo=new URLSearchParams(location.search).get("demo")==="1" && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-const adminDraft={};
 let spriteDraft=null;
-let inspectSide=null,classUsePending=null,skillUsePending=null,resetPending=null;
+let inspectSide=null,classUsePending=null,skillUsePending=null,resetPending=null,leavePending=null;
 let inspectEffect=null,statusViews=null;
 let serverClockOffset=0;
 let mirrorRun=null,mirrorAbandonConfirm=false;
@@ -147,14 +146,10 @@ function progressionScreen(p){
   const choice=p.progression_choice;
   profileId=p.user_id;page=p.personal?'personalProfile':'slaveProfile';
   const options=choice.options||[];
-  app.innerHTML='<section class="menu progression">'+top('Выбор '+(choice.level===5?'класса':'подкласса'),'УРОВЕНЬ '+choice.level)+'<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p>Выбери развитие или останься в текущем классе. Уровень, опыт и изученные навыки не сбрасываются.</p><p class="muted">До решения этот боец не может начать новый бой. Карточки прокручиваются вбок.</p><div class="class-row" role="group" aria-label="Варианты класса">'+options.map(c=>'<button class="class-option'+(c.current?' current-class':'')+'" data-do="progression:'+esc(c.id)+'" '+(!choice.can_choose?'disabled':'')+'><img src="'+esc(c.avatar_url)+'" data-fallback="/static/assets/ragamuffin.png" alt="'+esc(c.name)+'"><span class="class-label">'+esc(c.name)+'</span><span class="pill">'+(c.current?'ОСТАТЬСЯ':choice.level===20?'РАЗВИТЬ':'ВЫБРАТЬ')+'</span><span class="muted">'+esc(c.description||'')+'</span></button>').join('')+'</div>'+(!choice.can_choose?'<p class="note">'+(choice.busy?'Сначала заверши текущий бой / зеркальный забег.':'Раб выбирает самостоятельно; владелец сможет принять решение после 48 часов ожидания.')+'</p>'+button('Вернуться в меню','choiceback','small'):'')+'</div></section>';
+  app.innerHTML='<section class="menu progression">'+top('Выбор '+(choice.level===5?'класса':'подкласса'),'УРОВЕНЬ '+choice.level)+'<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p>Выбери развитие или останься в текущем классе. Уровень, опыт и изученные навыки не сбрасываются.</p><p class="muted">До решения этот боец не может начать новый бой. Карточки прокручиваются вбок.</p><div class="class-row" role="group" aria-label="Варианты класса">'+options.map(c=>'<button class="class-option'+(c.current?' current-class':'')+'" data-do="progression:'+esc(c.id)+'" '+(!choice.can_choose?'disabled':'')+'><img src="'+esc(c.avatar_url)+'" data-fallback="/static/assets/ragamuffin.png" alt="'+esc(c.name)+'"><span class="class-label">'+esc(c.name)+'</span><span class="pill">'+(c.current?'ОСТАТЬСЯ':choice.level===20?'РАЗВИТЬ':'ВЫБРАТЬ')+'</span><span class="muted">'+esc(c.description||'')+'</span></button>').join('')+'</div>'+(!choice.can_choose?'<p class="note">'+(choice.busy?'Сначала заверши текущий бой / зеркальный забег.':'Заверши текущую RPG-активность и обнови меню.')+'</p>'+button('Вернуться в меню','choiceback','small'):'')+'</div></section>';
   audio.refresh();
 }
-function moduleClassScreen(p){
-  profileId=p.user_id;page=p.personal?'personalProfile':'slaveProfile';
-  app.innerHTML='<section class="menu progression">'+top('Модуль класса выключен','БИЛД СОХРАНЁН')+'<div class="card"><h2>'+esc(p.name||p.class_name)+'</h2><p>Класс «'+esc(p.class_name)+'» отключён владельцем чата. Для нового боя выбери разрешённый класс бесплатно. Уровень и опыт сохранятся, прежний билд попадёт в архив. Предметы и свой спрайт не меняются.</p><div class="class-row" role="group" aria-label="Разрешённые классы">'+(p.module_options||[]).map(c=>'<button class="class-option" data-do="moduleclass:'+esc(c.id)+'" '+(!p.module_can_choose?'disabled':'')+'><img src="'+esc(c.avatar_url)+'" alt="'+esc(c.name)+'"><span class="class-label">'+esc(c.name)+'</span><span class="muted">Бесплатно · без потери уровня</span></button>').join('')+'</div>'+(!p.module_can_choose?'<p class="note">Сначала заверши текущий бой. Раб выбирает сам; владелец сможет выбрать после 48 часов ожидания.</p>':'')+button('Вернуться в меню','moduleback','small')+'</div></section>';
-  audio.refresh();
-}
+
 function passiveLimit(f){return f.level>=10?3:2;}
 function learnedLimit(kind){return kind==='skill'?6:4;}
 function itemInfo(item){const d=item.details||{};return d.description?'<p class="muted">'+esc(d.description)+'</p>':item.kind==='class'?'<p class="muted">Меняет класс с 5 уровня, сбрасывает развитие до 5 уровня и забывает изученные навыки. Боевой опыт ×2 до возвращения прежнего уровня, без сложения бонусов. Инвентарь и спрайт сохраняются.</p>':'<p class="muted">'+(item.kind==='passive'?'Пассивный навык · 2 в бою, с 10 уровня — 3':'Активный навык · нужен уровень '+(d.unlock_level||1))+'</p>'+skillInfo(d);}
@@ -242,20 +237,12 @@ function updateTurnTimer(){
 function setupScreen(data){
   audio.scene('menu');
   const status={cancelled:"Вызов отменён",expired:"Время вызова истекло",refused:"Вызов отклонён"};
-  app.innerHTML='<section class="menu">'+top("Подготовка боя","АРЕНА",button("Меню","menu","small"))+'<div class="content"><div class="card"><h2>'+esc(data.names.a_owner)+' × '+esc(data.names.b_owner)+'</h2><p class="muted">'+(status[data.status]||(data.mode==="personal"?"Личный бой. Ждём принятия вызова соперником.":"Соперник принимает вызов, каждый владелец выбирает своего бойца."))+'</p><div id="setup" class="stack"></div></div></div></section>';
+  app.innerHTML='<section class="menu">'+top("Подготовка боя","АРЕНА",button("Меню","menu","small"))+'<div class="content"><div class="card"><h2>'+esc(data.names.a_owner)+' × '+esc(data.names.b_owner)+'</h2><p class="muted">'+(status[data.status]||"Личный бой. Ждём принятия вызова соперником.")+'</p><div id="setup" class="stack"></div></div></div></section>';
   audio.refresh();
   const box=document.getElementById("setup");if(data.status!=="pending")return;
   if(data.own_side==="b"&&!data.b_accepted)box.innerHTML+=button("Принять"+(data.stake?" · "+data.stake+" ₣":""),"accept","primary")+button("Отклонить","refuse");
-  if(data.mode==="slaves"&&data.own_side){
-    const key=data.own_side;
-    box.innerHTML+='<label class="check"><input type="checkbox" id="control" checked> Управлять самому · все характеристики −20%</label><div class="muted">Без контроля раб должен согласиться и самостоятельно выбирать навыки.</div>';
-    box.innerHTML+=data.available.map(s=>button(esc(s.name)+" · Lv."+s.level+(s.choice_required?' · сначала выбор класса':''),(s.id===data[key+"_fighter"]?"selected:":"select:")+s.id,s.id===data[key+"_fighter"]?"primary":"",s.choice_required)).join("");
-    if(data.available.some(s=>s.choice_required))box.innerHTML+='<p class="note">Открой Меню → Рабы → Класс и навыки, чтобы завершить выбор. Вызов останется доступен.</p>';
-    if(!data.available.length)box.innerHTML+='<div class="note">Нет экипированных бойцов. Открой меню → Рабы и займи свободный боевой слот. При экипировке раб снимается с работы.</div>';
-  }
-  if(data.consent_side&&!data[data.consent_side+"_consent"])box.innerHTML+=button("Согласен сражаться сам","consent","primary");
   if(data.own_side==="a")box.innerHTML+=button("Отменить вызов","cancel","danger");
-  box.innerHTML+='<div class="muted">'+(data.mode==="personal"?"Бой начнётся сразу после принятия вызова.":"Бой начнётся после принятия вызова и выбора обоих бойцов.")+' Никаких подтверждений навыков в бою.</div>';
+  box.innerHTML+='<div class="muted">'+"Бой начнётся сразу после принятия вызова."+' Никаких подтверждений навыков в бою.</div>';
 }
 async function animateEvent(event){
   const panel=document.getElementById("panel"); if(!panel)return;
@@ -378,11 +365,11 @@ function profileCard(p,title,owned=false){
   const progress=p.progress||[p.level,0,10];
   const maxed=p.level>=20;
   const catchup=p.catchup_level?'<p class="muted">Боевой опыт ×2 до '+esc(p.catchup_level)+' уровня. Конфеты без множителя.</p>':'';
-  const status=p.personal?"":'<p class="muted">'+(p.combat_slot?"Боевой слот "+p.combat_slot+" / 5":p.working_role?"На работе · не экипирован":"Вне боевого отряда")+(p.in_battle?" · выбран для боя":"")+'</p>';
-  const equipment=owned?button(p.combat_slot?"Снять с боевого слота":"Экипировать и снять с работы",(p.combat_slot?"unequip:":"equip:")+p.user_id,"",p.in_battle):"";
+  const status='';
+  const equipment='';
   return '<div class="card"><div class="profile">'+fighterImage(p)+'<div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+(maxed?'МАКСИМУМ · 20':progress[1]+' / '+progress[2]+' XP')+'</span></div><div class="bar"><i style="width:'+(maxed?100:100*progress[1]/progress[2])+'%"></i></div></div></div></div>'+catchup+status+'<div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary",!p.personal&&!p.combat_slot)+button('Зеркальная Пустошь','mirrorstart:'+(p.personal?'p:':'s:')+p.user_id,'',(!p.personal&&!p.combat_slot)||(menu?.mirror_runs||[]).some(r=>r.status==='active'))+button("Класс и навыки","profile:"+p.user_id)+equipment+(p.can_edit_sprite?button("Свой спрайт","appearance"):"")+'</div></div>';
 }
-function activeProfile(){return [...(menu?.slaves||[]),menu?.self_slave,menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
+function activeProfile(){return [menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
 function forgeInfo(item){const d=item.details||{},shown={...d,effects:(d.effects||[]).map(e=>e.kind==='resource_leech'?{...e,value:-Math.abs(e.value)}:e)};return item.kind==='skill'?'<p class="muted">Активный навык · нужен уровень '+esc(d.unlock_level||1)+'</p>'+skillInfo(shown):itemInfo(item);}
 function forgeNonce(){const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');}
 function forgeCost(craft){return craft.pages+' стр. · '+craft.price+' ₣';}
@@ -398,7 +385,7 @@ function forgeBody(data){
     return '<div class="card"><h2>Подтвердить операцию?</h2>'+forgePending.summary+'<p class="muted">Предметы и ресурсы будут списаны окончательно. Навык не изучается автоматически.</p><div class="row">'+button('Подтвердить','forgeconfirm','primary')+button('Назад','forgecancel')+'</div></div>';
   }
   let body='<div class="card"><h2>Кузница трактатов</h2><p>Баланс: '+(data.balance||0)+' ₣</p><div class="forge-wallet">'+f.rarities.map(r=>'<span>'+rarityBadge(r.id)+' '+(f.pages[r.id]||0)+' стр.</span>').join('')+'</div>';
-  body+='<p class="muted">Материалы — только для выбранного чата. Один трактат даёт 2 страницы своей редкости. Для случайной ковки нужны 6 страниц одной редкости и франки. Рецептов нет; боссовые навыки остаются наградой рейдов.</p></div>';
+  body+='<p class="muted">Страницы и трактаты общие для аккаунта; оплата франками выбранного чата. Один трактат даёт 2 страницы своей редкости. Для случайной ковки нужны 6 страниц одной редкости и франки. Рецептов нет; боссовые навыки остаются наградой рейдов.</p></div>';
   body+='<div class="tabs">'+button('Разобрать','forgemode:dismantle',forgeMode==='dismantle'?'selected':'')+button('Ковать','forgemode:craft',forgeMode==='craft'?'selected':'')+button('Слияние','forgemode:rewrite',forgeMode==='rewrite'?'selected':'')+'</div>';
   if(forgeMode==='dismantle'){
     body+='<div class="note">Разбираются только предметы-трактаты, а не изученные навыки. За каждый — 2 страницы его редкости.</div>';
@@ -423,67 +410,52 @@ function forgePreview(operation,extra,summary){
   page='forgeConfirm';menuScreen(menu);
 }
 function menuScreen(data){
+  if(['slaves','owner','slaveProfile','admin'].includes(page))page='personal';
   audio.scene('menu');
   menu=data;chat=data.chat_id;token="";
   const selected=(page==='personalProfile'||page==='slaveProfile')?activeProfile():null;
-  const moduleBlocked=selected?.module_blocked?selected:page==='personal'&&data.personal?.module_blocked?data.personal:null;
-  if(moduleBlocked){moduleClassScreen(moduleBlocked);return;}
-  const required=(page==='personalProfile'||page==='slaveProfile')&&selected?.progression_choice?selected:[data.personal,data.self_slave].find(p=>p?.progression_choice?.can_choose);
+  const required=(page==='personalProfile'||page==='slaveProfile')&&selected?.progression_choice?selected:[data.personal].find(p=>p?.progression_choice?.can_choose);
   if(required){progressionScreen(required);return;}
   if(page!=="appearance")clearSpriteDraft();
-  let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+button("Рабы","tab:slaves",page==="slaves"?"selected":"")+button("Владелец","tab:owner",page==="owner"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+button("Рейды","tab:raids",page==="raids"?"selected":"")+'</div>';
+  let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+button("Рейды","tab:raids",page==="raids"?"selected":"")+'</div>';
   body+=button('⚒️ Кузница трактатов','tab:forge',page==='forge'||page==='forgeConfirm'?'primary':'');
   if(page==='forge'||page==='forgeConfirm')body+=forgeBody(data);
-  else if(page==="personal")body+=profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Личный персонаж есть у всех, раб не нужен. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
-  else if(page==="slaves"){
-    body+='<div class="card"><h2>Боевой отряд · '+data.combat_count+' / '+data.combat_capacity+'</h2><p class="muted">При экипировке раб снимается с работы. Чтобы вернуть его на предприятие, сначала сними с боевого слота.</p></div>';
-    for(let slot=1;slot<=data.combat_capacity;slot++){
-      const p=data.slaves.find(s=>s.combat_slot===slot);
-      body+=p?profileCard(p,"БОЕВОЙ СЛОТ "+slot,true):'<div class="card"><div class="muted">Слот '+slot+' · свободен</div></div>';
-    }
-    const reserve=data.slaves.filter(p=>!p.combat_slot);
-    if(reserve.length)body+='<h2>Остальные рабы</h2>'+reserve.map(p=>profileCard(p,"ВНЕ ОТРЯДА",true)).join("");
-    if(!data.slaves.length)body+='<div class="note">Пока нет рабов. Личный персонаж доступен всем.</div>';
-    if(data.self_slave)body+=profileCard(data.self_slave,"ТВОЙ ПЕРСОНАЖ-РАБ");
-    body+='<div class="note">Ответь владельцу <b>/бой рабами</b> или напиши <b>Я выбираю тебя @раб</b>. Каждый владелец выбирает экипированного бойца. Без контроля раб должен согласиться; контроль доступен с 1 уровня.</div>';
-  }else if(page==="owner"){
-    const o=data.owner;
-    body+='<div class="card"><h2>Владелец · Lv.'+o.level+'</h2><p class="muted">Опыт: '+o.xp+' XP · Рабов: '+data.slaves.length+'</p><div class="stack">'+button("Инвентарь","tab:inventory")+button("Странствующий торговец","tab:merchant")+'</div></div><div class="note">Крафт убран. Зелья, конфеты и трактаты покупаются за франки у торговца. Владелец получает опыт за победы рабов и новые рекорды их количества.</div>';
-    if(data.admin)body+=button("Авторские классы и навыки","admin");
-  }else if(page==="raids"){
-    body+='<div class="note">Выбери босса и создай тихий рейд — сообщение в группу не отправляется. В сборе можно выбрать личного персонажа или боевого раба и сразу начать соло. На сбор — 10 минут.</div>';
+  else if(page==="personal")body+=profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Персонаж и инвентарь общие для всех чатов. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
+  else if(page==="raids"){
+    body+='<div class="note">Выбери босса и создай тихий рейд — сообщение в группу не отправляется. В рейд отправляется твой общий персонаж. Можно сразу начать соло. На сбор — 10 минут.</div>';
     body+='<div class="note">Босс сильнее отряда: уровень равен большему из среднего уровня (вверх) +2 и уровня самого сильного бойца +1. Полная награда раз в день на каждого босса, общая для всех чатов и бойцов. Повторы: 20% франков и XP, без трактатов и ресурсов питомцев. Обновление в 00:00 МСК.</div>';
     body+=(data.raid_bosses||[]).map(b=>'<div class="card"><div class="profile">'+(b.sprite?'<img class="portrait" src="'+esc(b.sprite)+'" alt="">':'')+'<div><h2>'+esc(b.name)+'</h2><p class="muted">'+(b.full_reward===false?'Сегодня: повторная награда 20%':'Сегодня: полная награда доступна')+'</p></div></div>'+button('Создать тихий рейд','raidcreate:'+b.id,'primary')+'</div>').join('');
   }else if(page==="merchant"){
     const m=data.merchant||{offers:[]};
     body+='<div class="card"><h2>Странствующий торговец</h2><p>Баланс: '+(data.balance||0)+' ₣</p><p class="muted">'+(m.visit_id?'Уходит: '+esc(new Date(m.ends*1000).toLocaleString('ru-RU')):'Сейчас торговца нет. Следующее появление: '+esc(m.next_starts?new Date(m.next_starts*1000).toLocaleString('ru-RU'):'скоро'))+'</p>'+button('Обновить товары','refresh','small')+'</div>';
     body+=(m.offers||[]).map(item=>'<div class="card"><h2>'+esc(item.name)+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+'<p class="muted">Можно купить ещё '+item.remaining+' за этот визит.</p>'+button('Купить — '+item.price+' ₣','buy:'+item.id,'primary',!item.remaining||(data.balance||0)<item.price)+'</div>').join('');
-    body+='<div class="note">Два визита в день по два часа. Купленные предметы лежат в инвентаре. Ассортимент общий для чата, лимиты покупки индивидуальные.</div>';
+    body+='<div class="note">Два визита в день по два часа. Купленные предметы лежат в инвентаре. Предметы попадают в общий инвентарь аккаунта. Оплата франками выбранного чата; ассортимент и лимиты предложений относятся к нему.</div>';
   }else if(page==="inventory"){
-    const targets=[data.personal,...data.slaves,data.self_slave].filter(Boolean);
-    body+='<div class="card"><h2>Инвентарь</h2><p class="muted">Предметы этого чата. Трактат расходуется при изучении, смена класса требует подтверждения. Передавать можно по номеру предмета.</p>'+button('К торговцу','tab:merchant')+'</div>';
+    const targets=[data.personal].filter(Boolean);
+    body+='<div class="card"><h2>Инвентарь</h2><p class="muted">Предметы общие для аккаунта. Трактат расходуется при изучении, смена класса требует подтверждения. Передавать можно по номеру предмета.</p>'+button('К торговцу','tab:merchant')+'</div>';
     body+=(data.inventory||[]).map(item=>'<div class="card"><h2>№'+item.id+' · '+esc(item.name)+' × '+item.quantity+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+(item.kind==='potion'?'<p class="muted">Используется кнопкой «Зелье» в свой ход.</p>':'<select id="item-target-'+item.id+'">'+targets.map(p=>'<option value="'+(p.personal?'p':'s')+':'+p.user_id+'">'+esc(p.personal?'Мой личный персонаж':p.name||'Мой персонаж-раб')+' · Lv.'+p.level+'</option>').join('')+'</select>'+button('Использовать','useitem:'+item.id,'primary'))+'<p class="muted">Передать в чате: <code>/передать предмет '+item.id+' @участник</code><br>Или ответом: <code>/передать предмет '+item.id+'</code></p></div>').join('')||'<div class="note">Пока пусто.</div>';
   }else if(page==="skillReplace"){
     const pending=skillUsePending;
     const row=(data.inventory||[]).find(i=>i.id===pending?.item);
-    const target=[data.personal,...data.slaves,data.self_slave].filter(Boolean).find(p=>p.user_id===pending?.user&&p.personal===pending?.personal);
+    const target=[data.personal].filter(Boolean).find(p=>p.user_id===pending?.user&&p.personal===pending?.personal);
     if(!row||!target){page='inventory';menuScreen(data);return;}
     const known=row.kind==='skill'?target.skills:(target.passives||[]);
     body+='<div class="card"><h2>Какой навык заменить?</h2><p>Новый: <b>'+esc(row.name)+'</b></p><p>Боец: '+esc(target.name||target.class_name)+'</p><p class="muted">Лимит изученных '+(row.kind==='skill'?'активных навыков — 6':'пассивных навыков — 4')+'. Выбери замену. До выбора трактат не тратится.</p><div class="stack">';
     body+=known.filter(s=>s.skill_id!=='bum_punch').map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),'replaceitem:'+s.skill_id)).join('');
     body+=button('Отмена — ничего не менять','tab:inventory')+'</div></div>';
+  }else if(page==="leaveConfirm"){
+    if(!leavePending){page='personal';menuScreen(data);return;}
+    body+='<div class="card"><h2>Выйти из боя?</h2><p>Непринятый вызов будет отменён с возвратом ставки. В начатом PvP это сдача и проигрыш ставки. Пустошь, зеркальный забег или рейд завершатся для тебя без награды за победу.</p><div class="row">'+button('Выйти / сдаться','confirmleave','danger')+button('Остаться','cancelleave')+'</div></div>';
   }else if(page==="resetConfirm"){
     if(!resetPending){page='personal';menuScreen(data);return;}
-    body+='<div class="card"><h2>Сбросить класс и уровень?</h2><p>Боец: '+esc(resetPending.name)+'</p><p class="danger-text">Боец станет Оборванцем 5 уровня и сможет сразу выбрать класс. Все изученные активные и пассивные навыки будут забыты. Архивы модулей тоже будут удалены. Это нельзя отменить.</p><p>Боевой опыт ×2 до возвращения прежнего уровня. Повторный сброс не увеличивает множитель; конфеты без бонуса.</p><p class="muted">Франки, инвентарь, питомцы, свой спрайт, принадлежность и уровень рабовладельца сохранятся. Сброс бесплатный, доступен с 5 уровня.</p><div class="stack">'+button('Сбросить класс и уровень','confirmreset','danger')+button('Не менять','cancelreset')+'</div></div>';
+    body+='<div class="card"><h2>Сбросить класс и уровень?</h2><p>Боец: '+esc(resetPending.name)+'</p><p class="danger-text">Боец станет Оборванцем 5 уровня и сможет сразу выбрать класс. Все изученные активные и пассивные навыки будут забыты. Это нельзя отменить.</p><p>Боевой опыт ×2 до возвращения прежнего уровня. Повторный сброс не увеличивает множитель; конфеты без бонуса.</p><p class="muted">Франки, инвентарь, питомцы и свой спрайт сохранятся. Сброс бесплатный, доступен с 5 уровня.</p><div class="stack">'+button('Сбросить класс и уровень','confirmreset','danger')+button('Не менять','cancelreset')+'</div></div>';
   }else if(page==="classConfirm"){
     const row=(data.inventory||[]).find(i=>i.id===classUsePending?.item);
     if(!row){page='inventory';menuScreen(data);return;}
-    body+='<div class="card"><h2>Сменить класс на '+esc(row.name)+'?</h2><p>Боец: '+esc(classUsePending.name)+'</p><p class="danger-text">Уровень станет 5, прежние изученные активные и пассивные навыки исчезнут. Архивы модулей тоже будут удалены. Инвентарь, питомцы и спрайт сохранятся. Трактат будет потрачен.</p><p>Боевой опыт ×2 до возвращения прежнего уровня. Бонусы не складываются. Смена доступна с 5 уровня.</p><div class="stack">'+button('Сменить класс и сбросить развитие','confirmitem','danger')+button('Не менять','tab:inventory')+'</div></div>';
+    body+='<div class="card"><h2>Сменить класс на '+esc(row.name)+'?</h2><p>Боец: '+esc(classUsePending.name)+'</p><p class="danger-text">Уровень станет 5, прежние изученные активные и пассивные навыки исчезнут. Инвентарь, питомцы и спрайт сохранятся. Трактат будет потрачен.</p><p>Боевой опыт ×2 до возвращения прежнего уровня. Бонусы не складываются. Смена доступна с 5 уровня.</p><div class="stack">'+button('Сменить класс и сбросить развитие','confirmitem','danger')+button('Не менять','tab:inventory')+'</div></div>';
   }else if(page==="appearance"){
     const p=data.personal;
-    body+='<div class="card"><h2>Свой спрайт</h2><div class="sprite-preview">'+fighterImage(p,"", "upload-preview")+'</div><p class="muted">PNG с прозрачным фоном, до 2 МБ. Каждая сторона — от 16 до 1024 пикселей. Одна поза; пропорции сохраняются. Картинка видна всем в боях личного персонажа и твоего персонажа-раба в этом чате. На характеристики она не влияет.</p><input type="file" id="sprite-file" accept="image/png,.png" hidden><label class="check"><input type="checkbox" id="sprite-pixels" checked> Пиксельный рисунок — без сглаживания</label><p class="muted" id="sprite-filename">Файл не выбран.</p><div class="stack">'+button("Выбрать PNG","choose_sprite")+button("Сохранить спрайт","upload_sprite","primary",true)+(p.sprite_url?button("Вернуть стандартный","reset_sprite"):"")+button("Назад","tab:personal")+'</div></div>';
-  }else if(page==="admin"){
-    body+='<div class="card"><h2>Авторский контент</h2><p class="muted">Создание и выдача доступны только тебе. Формат JSON описан в ARENA.md.</p><div class="form"><select id="content-type"><option value="skill">Навык</option><option value="class">Класс + пассивки</option></select><input id="content-id" placeholder="Уникальный ID, например fire_ball"><textarea id="content-json" placeholder=\'{"name":"Огненный шар","damage_type":"magic","power":15,"cost":20}\'></textarea>'+button("Создать","create_content","primary")+'<input id="content-user" type="number" placeholder="Telegram ID получателя">'+button("Выдать выбранный ID участнику","grant_content")+'</div></div>';
+    body+='<div class="card"><h2>Свой спрайт</h2><div class="sprite-preview">'+fighterImage(p,"", "upload-preview")+'</div><p class="muted">PNG с прозрачным фоном, до 2 МБ. Каждая сторона — от 16 до 1024 пикселей. Одна поза; пропорции сохраняются. Картинка общая для твоего персонажа во всех чатах. На характеристики она не влияет.</p><input type="file" id="sprite-file" accept="image/png,.png" hidden><label class="check"><input type="checkbox" id="sprite-pixels" checked> Пиксельный рисунок — без сглаживания</label><p class="muted" id="sprite-filename">Файл не выбран.</p><div class="stack">'+button("Выбрать PNG","choose_sprite")+button("Сохранить спрайт","upload_sprite","primary",true)+(p.sprite_url?button("Вернуть стандартный","reset_sprite"):"")+button("Назад","tab:personal")+'</div></div>';
   }else {
     const p=activeProfile();
     if(!p){page="personal";menuScreen(data);return;}
@@ -500,19 +472,13 @@ function menuScreen(data){
     if(p.skills.length>=6&&(p.available_skills||[]).length)body+='<p class="note">Все 6 мест заняты. Можно забыть ненужный навык кнопкой выше, затем изучить открывшийся. Бесплатный удар остаётся.</p>';
     for(const s of p.available_passives||[])body+=button('Изучить пассивку: '+esc(s.name),'learn_passive:'+s.skill_id,'small',(p.passives||[]).length>=4);
     body+='</div></details>'+button('Сбросить класс и уровень','resetprofile','small danger',p.level<5);
-    if(p.module_archives?.length)body+='<h3>Архив классов</h3><p class="muted">Восстановление заменит текущий билд, сохранив его в архиве. Уровень и накопленный опыт не уменьшаются.</p>'+p.module_archives.map(a=>button('Вернуть: '+esc(a.name)+' · '+a.level+' ур.','restoreclass:'+a.class_id,'small',!a.enabled)).join('');
-    if(!p.personal&&p.user_id!==tg?.initDataUnsafe?.user?.id)body+='<p class="muted">Владелец может выбирать класс и навыки за раба после 48 часов ожидания.</p>'+button("Дать конфету · 30 XP","candy");
     body+='</div>';
   }
-  if(data.active?.length)body+='<div class="card"><h3>Текущие бои</h3><div class="stack">'+data.active.map(b=>button((b.mode==="wasteland"?"Пустошь":"Бой")+" · "+b.status,"battle:"+b.token)).join("")+'</div></div>';
-  if(data.mirror_runs?.length)body+='<div class="card"><h3>Зеркальные забеги</h3><div class="stack">'+data.mirror_runs.map(r=>button((r.status==='active'?'Продолжить':'Итоги')+' · этаж '+r.floor+' / 5 · '+r.xp+' XP','mirror:'+r.token,r.status==='active'?'primary':'')).join('')+'</div></div>';
-  if(data.raids?.length)body+='<div class="card"><h3>Командные рейды</h3><div class="stack">'+data.raids.map(r=>raidButton((r.status==='active'?'Продолжить':r.status==='lobby'?'Сбор отряда':'Итоги')+' · раунд '+r.round,'open:'+r.token)).join('')+'</div></div>';
+  if(data.active?.length)body+='<div class="card"><h3>Твои бои во всех чатах</h3>'+data.active.map(b=>'<div class="row">'+button('Открыть бой','battle:'+b.token)+button(b.status==='pending'?'Отменить приглашение':'Сдаться / выйти','leavebattle:'+b.token,'small danger')+'</div>').join('')+'</div>';
+  if(data.mirror_runs?.length)body+='<div class="card"><h3>Зеркальные забеги</h3><div class="stack">'+data.mirror_runs.map(r=>button((r.status==='active'?'Продолжить':'Итоги')+' · этаж '+r.floor+' / 5 · '+r.xp+' XP','mirror:'+r.token,r.status==='active'?'primary':'')+(r.status==='active'?button('Оставить забег','leavemirror:'+r.token,'small danger'):'' )).join('')+'</div></div>';
+  if(data.raids?.length)body+='<div class="card"><h3>Командные рейды</h3><div class="stack">'+data.raids.map(r=>raidButton((r.status==='active'?'Продолжить':r.status==='lobby'?'Сбор отряда':'Итоги')+' · раунд '+r.round,'open:'+r.token)+(r.status==='active'||r.status==='lobby'?button('Выйти из рейда','leaveraid:'+r.token,'small danger'):'' )).join('')+'</div></div>';
   app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content"><div class="stack">'+button('✦ Питомцы · посылки и коллекция','pets')+'</div>'+body+'</div></section>';
   audio.refresh();
-  if(page==="admin"){
-    document.querySelector(".form").insertAdjacentHTML("beforeend",'<label class="check"><input id="grant-personal" type="checkbox"> Выдать класс личному персонажу (иначе — персонажу-рабу)</label>');
-    for(const [id,value] of Object.entries(adminDraft)){const field=document.getElementById(id);if(field){if(field.type==="checkbox")field.checked=value;else field.value=value;}}
-  }
 }
 async function openMenu(){
   raidCurrent=null;closeRaidDetails();
@@ -592,6 +558,9 @@ app.addEventListener("click",async event=>{
   if(cmd==="choose_sprite"){document.getElementById("sprite-file").click();return;}
   if(cmd==="upload_sprite"||cmd==="reset_sprite"){await saveSprite(cmd==="reset_sprite");return;}
   if(cmd==="profile"){profileId=Number(arg);page=page==="personal"?"personalProfile":"slaveProfile";menuScreen(menu);return;}
+  if(['leavebattle','leavemirror','leaveraid'].includes(cmd)){leavePending={kind:cmd.slice(5),token:arg};page='leaveConfirm';menuScreen(menu);return;}
+  if(cmd==='cancelleave'){leavePending=null;page='personal';menuScreen(menu);return;}
+  if(cmd==='confirmleave'){if(leavePending&&await menuAction('leave_'+leavePending.kind,{token:leavePending.token})){leavePending=null;page='personal';menuScreen(menu);}return;}
   if(cmd==='resetprofile'){const p=activeProfile();if(!p)return;resetPending={user:p.user_id,personal:p.personal,name:p.name||p.class_name};page='resetConfirm';menuScreen(menu);return;}
   if(cmd==='cancelreset'){page=resetPending?.personal?'personalProfile':'slaveProfile';resetPending=null;menuScreen(menu);return;}
   if(cmd==='confirmreset'){const pending=resetPending;if(!pending)return;if(await menuAction('reset_class',{user:pending.user,personal:pending.personal,value:true})){page=pending.personal?'personalProfile':'slaveProfile';resetPending=null;menuScreen(menu);}return;}
@@ -608,7 +577,7 @@ app.addEventListener("click",async event=>{
   if(cmd==="useitem"){
     const item=(menu.inventory||[]).find(i=>i.id===Number(arg));if(!item)return;
     const [mode,id]=document.getElementById('item-target-'+arg).value.split(':');
-    const target=[menu.personal,...menu.slaves,menu.self_slave].filter(Boolean).find(p=>p.user_id===Number(id)&&p.personal===(mode==='p'));
+    const target=[menu.personal].filter(Boolean).find(p=>p.user_id===Number(id)&&p.personal===(mode==='p'));
     if(item.kind==='class'){classUsePending={item:item.id,user:Number(id),personal:mode==='p',name:target?.name||(mode==='p'?'Мой личный персонаж':'Мой персонаж-раб')};page='classConfirm';menuScreen(menu);return;}
     if(target&&(item.kind==='skill'||item.kind==='passive')){
       const known=item.kind==='skill'?target.skills:(target.passives||[]),limit=learnedLimit(item.kind);
@@ -620,19 +589,8 @@ app.addEventListener("click",async event=>{
   }
   if(cmd==="confirmitem"){const pending=classUsePending;if(!pending)return;page='inventory';await menuAction('use_item',{item:pending.item,user:pending.user,personal:pending.personal,confirm:true});return;}
   if(cmd==='replaceitem'){const pending=skillUsePending;if(!pending)return;if(await menuAction('use_item',{...pending,replace_skill:arg})){skillUsePending=null;page='inventory';menuScreen(menu);}return;}
-  if(cmd==="equip"||cmd==="unequip"){await menuAction("equipment",{user:Number(arg),equipped:cmd==="equip"});return;}
   const p=activeProfile();
-  if(cmd==='choiceback'){page='slaves';menuScreen(menu);return;}
-  if(cmd==='moduleback'){page='inventory';menuScreen(menu);return;}
-  if(cmd==='moduleclass'){
-    if(!p?.module_can_choose||!p.module_options?.some(c=>c.id===arg))return;
-    await menuAction('module_class',{user:p.user_id,personal:p.personal,value:arg});return;
-  }
-  if(cmd==='restoreclass'){
-    if(!p?.module_archives?.some(a=>a.class_id===arg&&a.enabled))return;
-    if(!window.confirm('Восстановить архивный билд? Текущий билд будет сохранён в архиве, уровень и опыт не уменьшатся.'))return;
-    await menuAction('restore_class',{user:p.user_id,personal:p.personal,value:arg});return;
-  }
+  if(cmd==='choiceback'){page='personal';menuScreen(menu);return;}
   if(cmd==='progression'){
     if(!p?.progression_choice?.can_choose)return;
     if(!p.progression_choice.options.some(c=>c.id===arg))return;
@@ -654,12 +612,7 @@ app.addEventListener("click",async event=>{
   if(cmd==="togglepassive"){p.passive_loadout=p.passive_loadout||[];if(p.passive_loadout.includes(arg))p.passive_loadout=p.passive_loadout.filter(k=>k!==arg);else if(p.passive_loadout.length<passiveLimit(p))p.passive_loadout.push(arg);else toast('Максимум '+passiveLimit(p)+' пассивки в бою.');menuScreen(menu);return;}
   if(cmd==="savepassives"){await menuAction('passives',{user:p.user_id,personal:p.personal,value:p.passive_loadout||[]});return;}
   if(cmd==="candy"){await menuAction("candy",{user:p.user_id});return;}
-  if(cmd==="create_content"||cmd==="grant_content"){
-    let definition={};try{if(cmd==="create_content")definition=JSON.parse(document.getElementById("content-json").value);}catch{toast("Не удалось разобрать JSON.");return;}
-    await menuAction(cmd,{type:document.getElementById("content-type").value,id:document.getElementById("content-id").value,definition,user:Number(document.getElementById("content-user").value),personal:document.getElementById("grant-personal").checked});
-  }
 });
-app.addEventListener("input",event=>{if(page==="admin"&&event.target.id)adminDraft[event.target.id]=event.target.type==="checkbox"?event.target.checked:event.target.value;});
 app.addEventListener('change',event=>{if(event.target.id==='forge-pool'){forgePool=event.target.value;menuScreen(menu);}else if(event.target.id?.startsWith('forge-rewrite-'))forgeUpdateSelection();});
 app.addEventListener('input',event=>{if(event.target.id?.startsWith('forge-rewrite-'))forgeUpdateSelection();});
 async function poll(){
@@ -695,7 +648,7 @@ function startDemoMenu(){
     {id:2,kind:'passive',name:'Каменная кожа',rarity:'uncommon',details:{effects:[{kind:'physical_defense_pct',value:.15}]},quantity:1,price:140,remaining:1},
     {id:3,kind:'candy',name:'Конфета опыта',rarity:'common',details:{description:'Даёт выбранному бойцу 30 XP.'},quantity:2,price:50,remaining:3}
   ];
-  menuScreen({chat_id:-1,personal:fighter,slaves:[],combat_count:0,combat_capacity:5,owner:{level:1,xp:0},active:[],balance:1000,inventory:items,merchant:{visit_id:1,ends:Math.floor(Date.now()/1000)+7200,offers:items}});
+  menuScreen({chat_id:-1,personal:fighter,slaves:[],combat_count:0,combat_capacity:0,owner:{},active:[],balance:1000,inventory:items,merchant:{visit_id:1,ends:Math.floor(Date.now()/1000)+7200,offers:items}});
 }
 function configureViewport(){
   tg?.ready();tg?.expand();
@@ -756,7 +709,7 @@ function raidScreen(data){
   let body='';
   if(data.status==='lobby'){
     body='<div class="card"><h2>'+esc(data.boss_name)+'</h2>'+(['lei_heng','doofenshmirtz'].includes(data.boss_id)?'<p class="muted">'+esc(data.loot_name||(data.boss_id==='doofenshmirtz'?'Депортатор-инатор':'Трактат поступи тигробоя'))+': 20% при полной дневной награде; пятая такая победа без выпадения гарантирует трактат. Уровень босса подстраивается под отряд и выше самого сильного бойца.</p>':'')+'<p>Отряд: '+data.participants.length+' / 3</p><div class="stack">'+data.participants.map(p=>'<div>'+esc(p.name)+' · '+(p.personal?'личный персонаж':'раб: '+esc(p.fighter_name))+'</div>').join('')+'</div><p class="muted">От 1 до 3 игроков против одного босса. Можно начать в одиночку или вдвоём. Вход бесплатный. Каждый выбирает одно действие за раунд одновременно с остальными.</p><p class="muted">На сбор — 10 минут. На выбор в бою — 2 минуты. После трёх пропусков подряд награды отключаются; для награды нужны минимум два ручных действия.</p><p>'+(data.reward_status?.full_reward===false?'Сегодня уже получена полная награда: 20% франков и XP, без предметов.':'Полная дневная награда доступна.')+'</p><p class="muted">Лимит на аккаунт и босса общий для всех чатов и бойцов. Обновление в 00:00 МСК. Поражение не расходует награду.</p></div>';
-    body+='<div class="card"><h3>'+(me?'Твой боец':'Присоединиться')+'</h3><div class="stack">'+data.choices.map(c=>raidButton(esc(c.name),'join:'+(c.personal?'p':'s')+':'+c.fighter_id,me?.fighter_id===c.fighter_id&&me?.personal===c.personal?'primary':'',!me&&data.participants.length>=3)).join('')+'</div><p class="muted">Перед стартом заверши обязательный выбор класса в меню арены. Раб должен быть экипирован и снят с работы.</p></div>';
+    body+='<div class="card"><h3>'+(me?'Твой боец':'Присоединиться')+'</h3><div class="stack">'+data.choices.map(c=>raidButton(esc(c.name),'join:'+(c.personal?'p':'s')+':'+c.fighter_id,me?.fighter_id===c.fighter_id&&me?.personal===c.personal?'primary':'',!me&&data.participants.length>=3)).join('')+'</div><p class="muted">Перед стартом заверши обязательный выбор класса в меню арены. В рейде участвует твой личный персонаж.</p></div>';
     if(data.actor_id===data.creator_id)body+='<div class="row">'+raidButton('Начать рейд','start','primary',data.participants.length<1||data.participants.length>3)+raidButton('Отменить сбор','cancel','danger')+'</div>';
     else if(me)body+=raidButton('Выйти из отряда','leave');
   }else if(data.data){

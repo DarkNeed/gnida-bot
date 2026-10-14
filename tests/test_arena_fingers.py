@@ -224,7 +224,7 @@ class FingerStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_menu(1, user)
         table = "personal_profiles" if personal else "slave_profiles"
         self.db.connection.execute(
-            f"UPDATE {table} SET level=20,xp=1234,skills_pending_at=0 WHERE chat_id=1 AND user_id=?",
+            f"UPDATE {table} SET level=20,xp=1234,skills_pending_at=0 WHERE chat_id=0 AND user_id=?",
             (user,),
         )
         self.db.connection.commit()
@@ -255,7 +255,7 @@ class FingerStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_set_sprite(1, 10, b"test-sprite", False)
         before_owner = await self.db.get_owner_profile(1, 10)
         self.db.connection.execute(
-            "INSERT INTO arena_learned VALUES(1,10,1,'skill','meow')"
+            "INSERT INTO arena_learned VALUES(0,10,1,'skill','meow')"
         )
         self.db.connection.commit()
         inventory = (await self.db.arena_market_view(1, 10))["inventory"]
@@ -269,7 +269,7 @@ class FingerStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(menu["balance"], 345)
         self.assertEqual(menu["inventory"], inventory)
         self.assertEqual(await self.db.get_owner_profile(1, 10), before_owner)
-        self.assertEqual(len(menu["slaves"]), 1)
+        self.assertEqual(menu["slaves"], [])
         await self.level()
         self.assertNotIn(
             "meow", (await menu_view(self.db, 1, 10))["personal"]["known_skills"]
@@ -287,8 +287,8 @@ class FingerStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.level(30, False)
         with self.assertRaises(ValueError):
             await self.db.arena_edit_profile(1, 20, 30, False, "reset_class", True)
-        await self.db.arena_edit_profile(1, 10, 30, False, "reset_class", True)
-        self.assertEqual((await self.db.get_slave_profile(1, 30))["level"], 5)
+        with self.assertRaises(ValueError):
+            await self.db.arena_edit_profile(1, 10, 30, False, "reset_class", True)
 
     async def test_reset_busy_and_http_endpoint(self):
         await self.level()

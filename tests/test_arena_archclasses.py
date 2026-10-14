@@ -337,6 +337,7 @@ class ArchStoreTests(unittest.IsolatedAsyncioTestCase):
         self.temp.cleanup()
 
     def profile(self, cls="jock", level=10, user=10, personal=True, chat=1):
+        chat = 0 if personal else chat
         table = "personal_profiles" if personal else "slave_profiles"
         self.db.connection.execute(
             f"UPDATE {table} SET class_id=?,level=?,skills_pending_at=0 WHERE chat_id=? AND user_id=?",
@@ -358,7 +359,7 @@ class ArchStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(before["passive_loadout"], after["passive_loadout"])
         self.assertEqual(after["archclass"]["title"], "Мге-браток")
         self.assertEqual(
-            (await menu_view(self.db, 2, 10))["personal"]["archclass_id"], ""
+            (await menu_view(self.db, 2, 10))["personal"]["archclass_id"], "mge_bro"
         )
         self.assertEqual((await self.db.get_slave_profile(1, 10))["archclass_id"], "")
         await self.db.close()
@@ -368,7 +369,7 @@ class ArchStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         self.profile("thumb", 20)
         self.db.connection.execute(
-            "UPDATE personal_profiles SET archclass_id='thumb_execution' WHERE chat_id=1 AND user_id=10"
+            "UPDATE personal_profiles SET archclass_id='thumb_execution' WHERE chat_id=0 AND user_id=10"
         )
         result = (await menu_view(self.db, 1, 10))["personal"]
         self.assertEqual(result["progression_choice"]["level"], 20)
@@ -391,21 +392,6 @@ class ArchStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(sum(isinstance(r, ValueError) for r in results), 1)
 
-    async def test_owner_wait_is_separate_from_skill_changes(self):
-        self.profile(user=30, personal=False)
-        with patch("arena_store.utc_timestamp", return_value=100000):
-            await self.db.arena_menu(1, 10)
-            with self.assertRaisesRegex(ValueError, "48 часов"):
-                await self.choose(actor=10, user=30, personal=False)
-            await self.db.arena_edit_profile(1, 30, 30, False, "loadout", ["bum_punch"])
-            self.assertEqual(
-                (await self.db.get_slave_profile(1, 30))["archclass_pending_at"], 100000
-            )
-        with patch("arena_store.utc_timestamp", return_value=100000 + 48 * 3600):
-            await self.choose(actor=10, user=30, personal=False)
-        self.assertEqual(
-            (await self.db.get_slave_profile(1, 30))["archclass_id"], "mge_bro"
-        )
 
     async def test_reset_and_class_scroll_clear_branch(self):
         self.profile()

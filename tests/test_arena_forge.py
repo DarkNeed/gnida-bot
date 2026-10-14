@@ -39,10 +39,10 @@ class ForgeTests(unittest.IsolatedAsyncioTestCase):
         item = (BUILTIN_SKILLS if kind == 'skill' else BUILTIN_PASSIVES)[content]
         self.db._arena_add_item_locked(chat, actor, kind, content, item.rarity, quantity)
         self.db.connection.commit()
-        return self.db.connection.execute('SELECT id FROM arena_inventory WHERE chat_id=? AND owner_id=? AND kind=? AND content_id=?', (chat, actor, kind, content)).fetchone()[0]
+        return self.db.connection.execute('SELECT id FROM arena_inventory WHERE chat_id=? AND owner_id=? AND kind=? AND content_id=?', (0, actor, kind, content)).fetchone()[0]
 
     def qty(self, content='dust_in_eyes', kind='skill', actor=10, chat=1):
-        row = self.db.connection.execute('SELECT quantity FROM arena_inventory WHERE chat_id=? AND owner_id=? AND kind=? AND content_id=?', (chat, actor, kind, content)).fetchone()
+        row = self.db.connection.execute('SELECT quantity FROM arena_inventory WHERE chat_id=? AND owner_id=? AND kind=? AND content_id=?', (0, actor, kind, content)).fetchone()
         return row[0] if row else 0
 
     def resources(self, pages=None, seals=None, actor=10, chat=1):
@@ -87,10 +87,10 @@ class ForgeTests(unittest.IsolatedAsyncioTestCase):
         self.fixed(.30)
         await self.perform('craft', kind='passive', rarity='uncommon')
         self.assertEqual(await self.db.franc_balance(1, 10), 9930)
-        row = self.db.connection.execute('SELECT * FROM arena_inventory WHERE chat_id=1 AND owner_id=10').fetchone()
+        row = self.db.connection.execute('SELECT * FROM arena_inventory WHERE chat_id=0 AND owner_id=10').fetchone()
         self.assertEqual((row['kind'], row['rarity'], row['quantity']), ('passive', 'uncommon', 1))
-        for chat, actor in ((2, 10), (1, 20)):
-            self.assertFalse((await self.db.arena_forge_view(chat, actor))['pages'])
+        self.assertEqual((await self.db.arena_forge_view(2,10))['pages'],(await self.db.arena_forge_view(1,10))['pages'])
+        self.assertFalse((await self.db.arena_forge_view(1,20))['pages'])
 
     async def test_transfer_does_not_transfer_pages_or_require_recipe(self):
         item = self.add(quantity=2)
@@ -129,7 +129,7 @@ class ForgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Редкий', notice)
         self.assertEqual(self.qty('last_argument'), 0)
         self.assertEqual(await self.db.franc_balance(1, 10), 9875)
-        row = self.db.connection.execute('SELECT * FROM arena_inventory WHERE chat_id=1 AND owner_id=10').fetchone()
+        row = self.db.connection.execute('SELECT * FROM arena_inventory WHERE chat_id=0 AND owner_id=10').fetchone()
         self.assertEqual((row['rarity'], row['quantity']), ('rare', 1))
 
     async def test_mixed_rarity_fusion_weighted_average_price_and_epic_result(self):
@@ -137,7 +137,7 @@ class ForgeTests(unittest.IsolatedAsyncioTestCase):
         self.fixed(.95)
         await self.perform('rewrite', items=[dict(id=i, quantity=1) for i in ids])
         self.assertEqual(await self.db.franc_balance(1, 10), 9930)
-        row = self.db.connection.execute('SELECT * FROM arena_inventory WHERE chat_id=1 AND owner_id=10').fetchone()
+        row = self.db.connection.execute('SELECT * FROM arena_inventory WHERE chat_id=0 AND owner_id=10').fetchone()
         self.assertEqual((row['rarity'], row['quantity']), ('epic', 1))
         self.assertNotIn('raid_loot', BUILTIN_SKILLS[row['content_id']].tags)
 

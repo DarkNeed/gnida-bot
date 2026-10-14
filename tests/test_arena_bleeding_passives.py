@@ -149,7 +149,7 @@ class PassiveStoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_four_learned_and_level_gated_three_equipped_for_both_profiles(self):
         keys = list(BUILTIN_PASSIVES)[:4]
-        for user, personal in ((10, True), (30, False)):
+        for user, personal in ((10, True),):
             for key in keys:
                 await self.db.arena_use_item(
                     1, 10, self.add("passive", key), user, personal
@@ -164,7 +164,7 @@ class PassiveStoreTests(unittest.IsolatedAsyncioTestCase):
                 )
             table = "personal_profiles" if personal else "slave_profiles"
             self.db.connection.execute(
-                f"UPDATE {table} SET level=10,progression_level=10,progression_pending_level=0 WHERE chat_id=1 AND user_id=?",
+                f"UPDATE {table} SET level=10,progression_level=10,progression_pending_level=0 WHERE chat_id=0 AND user_id=?",
                 (user,),
             )
             self.db.connection.commit()

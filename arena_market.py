@@ -23,6 +23,7 @@ from arena_engine import (
 )
 from arena_archprogress import branch_skill_allowed, skill_branch
 from arena_forge import ForgeMixin
+from arena_global import RPG_SCOPE
 
 MSK = timezone(timedelta(hours=3))
 MERCHANT_DURATION = 2 * 3600
@@ -162,6 +163,7 @@ class ArenaMarketMixin(ForgeMixin):
         self.connection.commit()
 
     def _arena_add_item_locked(self, chat, owner, kind, content, rarity, quantity=1):
+        chat = RPG_SCOPE
         self.connection.execute(
             """INSERT INTO arena_inventory(chat_id,owner_id,kind,content_id,rarity,quantity)
             VALUES(?,?,?,?,?,?) ON CONFLICT(chat_id,owner_id,kind,content_id)
@@ -181,15 +183,19 @@ class ArenaMarketMixin(ForgeMixin):
             )
 
     def _arena_item_locked(self, chat, actor, item):
+        alias = self.connection.execute('SELECT new_id FROM arena_global_item_aliases WHERE old_id=? AND owner_id=?',(item,actor)).fetchone()
+        item = alias['new_id'] if alias else item
+        chat = RPG_SCOPE
         row = self.connection.execute(
             "SELECT * FROM arena_inventory WHERE id=? AND chat_id=? AND owner_id=?",
             (item, chat, actor),
         ).fetchone()
         if not row:
-            raise ValueError("Предмета нет в твоём инвентаре этого чата.")
+            raise ValueError("Предмета нет в твоём общем инвентаре.")
         return row
 
     def _arena_learned_locked(self, chat, user, personal, kind):
+        chat = RPG_SCOPE if personal else chat
         return {
             r["content_id"]
             for r in self.connection.execute(
@@ -208,6 +214,7 @@ class ArenaMarketMixin(ForgeMixin):
         )
 
     def _arena_memory_locked(self, chat, user, personal, kind, eligible, profile=None):
+        chat = RPG_SCOPE if personal else chat
         """Stable capped memory; overflow remains available, never silently deleted.
 
         Only newly unlocked class skills auto-fill free slots. Forgetting a skill
@@ -247,6 +254,7 @@ class ArenaMarketMixin(ForgeMixin):
         return memory
 
     def _arena_known_skills_locked(self, chat, user, personal, profile=None):
+        chat = RPG_SCOPE if personal else chat
         profile = profile or self._arena_profile_locked(chat, user, personal)
         _, skills = self._fighter_catalog_locked()
         eligible = unlocked_skill_ids(
@@ -270,6 +278,7 @@ class ArenaMarketMixin(ForgeMixin):
         )
 
     def _arena_remember_locked(self, chat, user, personal, kind, content):
+        chat = RPG_SCOPE if personal else chat
         profile = self._arena_profile_locked(chat, user, personal)
         memory = json.loads(profile[kind + "_memory"] or "[]")
         limit = (
@@ -291,6 +300,7 @@ class ArenaMarketMixin(ForgeMixin):
     def _arena_passive_catalog_locked(
         self, chat, user, personal, profile=None, all_available=False
     ):
+        chat = RPG_SCOPE if personal else chat
         profile = profile or self._arena_profile_locked(chat, user, personal)
         classes, _ = self._fighter_catalog_locked()
         cls = classes.get(profile["class_id"], FIGHTER_CLASSES["ragamuffin"])
@@ -439,6 +449,7 @@ class ArenaMarketMixin(ForgeMixin):
         return data
 
     def _arena_inventory_locked(self, chat, actor):
+        chat = RPG_SCOPE
         catalog = self._arena_shop_catalog_locked()
         return [
             self._arena_describe_item_locked(r, catalog)
@@ -554,10 +565,11 @@ class ArenaMarketMixin(ForgeMixin):
             now = market_now()
             day = datetime.fromtimestamp(now, MSK).date()
             chats = self.connection.execute(
-                "SELECT DISTINCT chat_id FROM personal_profiles WHERE chat_id<0"
+                "SELECT DISTINCT chat_id FROM arena_account_chats WHERE chat_id<0"
             ).fetchall()
             for row in chats:
-                self._arena_make_visits_locked(row["chat_id"], day)
+                if self._feature_enabled_locked(row['chat_id'],'arena'):
+                    self._arena_make_visits_locked(row["chat_id"], day)
             if not merchant_is_open(now):
                 self.connection.commit()
                 return []
@@ -567,6 +579,7 @@ class ArenaMarketMixin(ForgeMixin):
                     "SELECT * FROM arena_merchant_visits WHERE chat_id<0 AND starts<=? AND ends>? AND notified=0",
                     (now, now),
                 )
+                if self._feature_enabled_locked(r['chat_id'],'arena')
             ]
             # Claim notifications before sending: no duplicated chat posts after restart.
             for row in due:
@@ -580,6 +593,7 @@ class ArenaMarketMixin(ForgeMixin):
     async def arena_buy_item(self, chat, actor, offer_id):
         async with self._lock:
             try:
+                self._require_feature_locked(chat, 'arena')
                 now = market_now()
                 if not merchant_is_open(now):
                     raise ValueError("Торговец доступен только с 10:00 до 22:00 МСК.")
@@ -628,6 +642,7 @@ class ArenaMarketMixin(ForgeMixin):
             raise ValueError("Выбери другого участника.")
         async with self._lock:
             try:
+                self._require_feature_locked(chat, 'arena')
                 row = self._arena_item_locked(chat, actor, item)
                 description = self._arena_describe_item_locked(row)
                 self._arena_consume_item_locked(row)
@@ -641,6 +656,7 @@ class ArenaMarketMixin(ForgeMixin):
                 raise
 
     def _arena_reset_profile_locked(self, chat, user, personal, class_id="ragamuffin", *, preserve_archives=False):
+        chat = RPG_SCOPE if personal else chat
         table = "personal_profiles" if personal else "slave_profiles"
         profile = dict(self._arena_profile_locked(chat, user, personal))
         if not preserve_archives and profile["level"] < 5:
@@ -669,6 +685,7 @@ class ArenaMarketMixin(ForgeMixin):
         )
 
     def _arena_equip_class_passives_locked(self, chat, user, personal, class_id):
+        chat = RPG_SCOPE if personal else chat
         profile = dict(
             self._arena_profile_locked(chat, user, personal), class_id=class_id
         )
@@ -687,9 +704,13 @@ class ArenaMarketMixin(ForgeMixin):
     ):
         async with self._lock:
             try:
+                self._require_feature_locked(chat, 'arena')
+                if not personal or actor != user:
+                    raise ValueError('Предмет можно применить только к своему личному персонажу.')
+                chat = RPG_SCOPE
                 row = self._arena_item_locked(chat, actor, item)
                 if not self._arena_content_enabled_locked(chat,row['kind'],row['content_id']):
-                    raise ValueError("Модуль этого трактата выключен. Предмет сохранён.")
+                    raise ValueError("Этот трактат больше недоступен. Предмет сохранён.")
                 if (personal and user != actor) or (
                     not personal
                     and user != actor
@@ -845,6 +866,7 @@ class ArenaMarketMixin(ForgeMixin):
                 raise
 
     def _arena_potion_count_locked(self, chat, actor):
+        chat = RPG_SCOPE
         row = self.connection.execute(
             "SELECT quantity FROM arena_inventory WHERE chat_id=? AND owner_id=? AND kind='potion' AND content_id='healing'",
             (chat, actor),

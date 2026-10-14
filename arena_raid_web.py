@@ -127,22 +127,6 @@ async def raid_view(db, row, actor):
         choices.append(
             dict(fighter_id=actor, personal=True, name="Мой личный персонаж")
         )
-        async with db._lock:
-            rows = db.connection.execute(
-                """SELECT s.slave_id,u.display_name FROM arena_combat_slots s JOIN ownership o
-                   ON o.chat_id=s.chat_id AND o.slave_id=s.slave_id AND o.owner_id=s.owner_id
-                   LEFT JOIN users u ON u.chat_id=s.chat_id AND u.user_id=s.slave_id
-                   WHERE s.chat_id=? AND (s.owner_id=? OR s.slave_id=?)""",
-                (row["chat_id"], actor, actor),
-            ).fetchall()
-            choices += [
-                dict(
-                    fighter_id=r["slave_id"],
-                    personal=False,
-                    name="Раб: " + (r["display_name"] or str(r["slave_id"])),
-                )
-                for r in rows
-            ]
     return dict(
         token=row["token"],
         chat_id=row["chat_id"],

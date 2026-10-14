@@ -1,4 +1,4 @@
-"""Atomic, chat-scoped random scroll forging, without recipes."""
+"""Atomic account-wide scroll forging; francs are paid in the invoking chat."""
 
 import hashlib
 import json
@@ -8,6 +8,7 @@ import re
 import time
 from arena_engine import RARITY_LABELS
 from arena_modules import ClassModulesMixin
+from arena_global import RPG_SCOPE
 
 FORGE_RULES = {
     r: dict(salvage_pages=2, craft_pages=6, craft_price=p, rewrite_price=p // 2)
@@ -47,11 +48,13 @@ class ForgeMixin(ClassModulesMixin):
         """)
 
     def _forge_wallet_locked(self, chat, actor):
+        chat = RPG_SCOPE
         self.connection.execute("INSERT OR IGNORE INTO arena_forge_wallets(chat_id,owner_id) VALUES(?,?)", (chat, actor))
         row = self.connection.execute("SELECT * FROM arena_forge_wallets WHERE chat_id=? AND owner_id=?", (chat, actor)).fetchone()
         return dict(revision=row["revision"], pages=json.loads(row["pages_json"]), seals=json.loads(row["seals_json"]))
 
     def _forge_save_wallet_locked(self, chat, actor, wallet):
+        chat = RPG_SCOPE
         self.connection.execute("UPDATE arena_forge_wallets SET revision=revision+1,pages_json=?,seals_json=? WHERE chat_id=? AND owner_id=?",
             (json.dumps(wallet["pages"]), json.dumps(wallet["seals"]), chat, actor))
 
@@ -89,6 +92,7 @@ class ForgeMixin(ClassModulesMixin):
 
     async def arena_forge_view(self, chat, actor):
         async with self._lock:
+            self._require_feature_locked(chat, 'arena')
             with self.connection:
                 return self._forge_view_locked(chat, actor)
 
@@ -149,7 +153,7 @@ class ForgeMixin(ClassModulesMixin):
         quote = data.get("catalog_revision")
         if not isinstance(quote, str) or not re.fullmatch(r"[0-9a-f]{16}", quote):
             raise ValueError("Обнови шансы и стоимость.")
-        request = dict(operation=action, revision=revision, catalog_revision=quote)
+        request = dict(operation=action, revision=revision, catalog_revision=quote, payment_chat=chat)
         if action == "craft":
             kind, rarity = data.get("kind"), data.get("rarity")
             if not isinstance(kind, str) or kind not in {"skill", "passive"} or not isinstance(rarity, str) or rarity not in FORGE_RULES or "content" in data:
@@ -163,7 +167,7 @@ class ForgeMixin(ClassModulesMixin):
         serialized = json.dumps(request, sort_keys=True)
         async with self._lock:
             with self.connection:
-                previous = self.connection.execute("SELECT * FROM arena_forge_actions WHERE chat_id=? AND owner_id=? AND nonce=?", (chat, actor, nonce)).fetchone()
+                previous = self.connection.execute("SELECT * FROM arena_forge_actions WHERE chat_id=? AND owner_id=? AND nonce=?", (RPG_SCOPE, actor, nonce)).fetchone()
                 if previous:
                     if previous["request_json"] != serialized:
                         raise ValueError("Этот запрос уже использован для другой операции.")
@@ -186,6 +190,8 @@ class ForgeMixin(ClassModulesMixin):
                     notice = f"Выкован трактат «{result['name']}» · {RARITY_LABELS[result['rarity']]}. Он в инвентаре."
                 else:
                     rows = [(self._arena_item_locked(chat, actor, i["id"]), i["quantity"]) for i in inputs]
+                    if len({row['id'] for row,_ in rows}) != len(rows):
+                        raise ValueError('Один предмет указан повторно через старые номера.')
                     for row, quantity in rows:
                         if row["kind"] not in {"skill", "passive"} or row["rarity"] not in FORGE_RULES or row["quantity"] < quantity:
                             raise ValueError("Выбери имеющиеся активные или пассивные трактаты.")
@@ -214,5 +220,5 @@ class ForgeMixin(ClassModulesMixin):
                         self._arena_add_item_locked(chat, actor, kind, result["content_id"], result["rarity"])
                         notice = f"Слияние: получен трактат «{result['name']}» · {RARITY_LABELS[result['rarity']]}. Он в инвентаре."
                 self._forge_save_wallet_locked(chat, actor, wallet)
-                self.connection.execute("INSERT INTO arena_forge_actions VALUES(?,?,?,?,?,?)", (chat, actor, nonce, serialized, notice, int(time.time())))
+                self.connection.execute("INSERT INTO arena_forge_actions VALUES(?,?,?,?,?,?)", (RPG_SCOPE, actor, nonce, serialized, notice, int(time.time())))
                 return notice

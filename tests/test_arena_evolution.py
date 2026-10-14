@@ -288,7 +288,7 @@ class EvolutionStoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_menu_explains_native_evolutions_without_extra_learned_slots(self):
         self.db.connection.execute(
-            "UPDATE personal_profiles SET class_id='cutie',level=10 WHERE chat_id=1 AND user_id=10"
+            "UPDATE personal_profiles SET class_id='cutie',level=10 WHERE chat_id=0 AND user_id=10"
         )
         self.db.connection.commit()
         profile = (await menu_view(self.db, 1, 10))["personal"]

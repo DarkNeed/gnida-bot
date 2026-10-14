@@ -232,6 +232,9 @@ class MirrorMixin:
 
     async def arena_mirror_start(self, chat, actor, fighter=None, personal=True):
         async with self._lock:
+            self._require_feature_locked(chat, 'arena')
+            if not personal or (fighter and fighter != actor):
+                raise ValueError('Забеги доступны только личным персонажам.')
             self._mirror_cleanup_locked(chat)
             self.connection.commit()
             fighter = fighter or actor
@@ -411,8 +414,8 @@ class MirrorMixin:
         async with self._lock:
             self._mirror_cleanup_locked(chat)
             rows = self.connection.execute(
-                "SELECT * FROM arena_mirror_runs WHERE chat_id=? AND actor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 5",
-                (chat, actor),
+                "SELECT * FROM arena_mirror_runs WHERE actor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 5",
+                (actor,),
             ).fetchall()
             self.connection.commit()
             return [self._mirror_public_locked(dict(r)) for r in rows]

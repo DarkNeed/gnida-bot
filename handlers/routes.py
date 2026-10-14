@@ -818,6 +818,23 @@ class TrackingMiddleware(BaseMiddleware):
             )
             if message_has_image(event):
                 await self.database.complete_leg_requests(event.chat.id, user.id)
+        if isinstance(event, Message):
+            content=message_content(event)
+            commands=(SLAVES_RE,RELEASE_RE,TRANSFER_RE,SLAVE_PRIORITY_RE,
+                BUSINESS_ASSIGN_RE,BUSINESS_SUMMARY_RE,SELL_RE,WHIP_RE,
+                ADMIN_SLAVE_TRANSFER_RE,ADMIN_SLAVE_RELEASE_RE,CLEAR_SLAVES_RE,
+                MAKE_SLAVE_RE,MAKE_SLAVE_REPLY_RE)
+            enabled=getattr(self.database,'feature_enabled',None)
+            feature_chat=event.chat.id if event.chat.type in GROUP_TYPES else (
+                await self.database.selected_menu_chat(event.from_user.id) if event.from_user and enabled else None)
+            if feature_chat is not None and enabled:
+                if any(pattern.search(content) for pattern in commands) and not await enabled(feature_chat,'slavery'):
+                    await event.answer('Рабовладение выключено в этом чате.')
+                    return
+                from handlers.arena import OFFER_RE,MENU_RE,ITEM_TRANSFER_RE
+                if any(pattern.search(content) for pattern in (OFFER_RE,MENU_RE,ITEM_TRANSFER_RE)) and not await enabled(feature_chat,'arena'):
+                    await event.answer('Арена выключена в этом чате.')
+                    return
         return await handler(event, data)
 
 
@@ -1666,13 +1683,22 @@ def create_router(
         )
         owner_text = f"\nВладельцы:\n{owner_lines}" if owner_lines else ""
         francs = await database.franc_balance(chat_id, user_id)
+        keyboard=slave_menu_keyboard(user_id)
+        slavery_on=await database.feature_enabled(chat_id,'slavery')
+        arena_on=await database.feature_enabled(chat_id,'arena')
+        hidden=set() if slavery_on else {'sm:slaves','sm:priority','sm:business','sm:work','sm:buyout'}
+        if not arena_on:hidden.add('sm:arena')
+        rows=[[b for b in row if b.callback_data not in hidden] for row in keyboard.inline_keyboard]
+        keyboard=InlineKeyboardMarkup(inline_keyboard=[row for row in rows if row])
+        if not slavery_on:
+            return f'<b>Игровое меню</b>\nФранки: <b>{francs} ₣</b>\nРабовладение выключено. Личный персонаж общий для всех чатов.',keyboard
         return (
             "<b>Рабовладение</b>\n"
             f"Статус: <b>{status}</b>\n"
             f"Твоих рабов: {len(slaves)}\n"
             f"Франки: <b>{francs} ₣</b>{owner_text}\n\n"
-            "Выбери раздел.",
-            slave_menu_keyboard(user_id),
+            "Личный персонаж общий для всех чатов. Выбери раздел.",
+            keyboard,
         )
 
     async def slave_menu_slaves(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -2598,7 +2624,9 @@ def create_router(
         outcome, affected_id = await database.transfer_after_loss(
             chat_id, loser_id, winner_id, challenge_id=int(challenge["id"])
         )
-        if outcome == "legacy":
+        if outcome == "module_disabled":
+            consequence = "Рабовладение выключено — владение не изменилось."
+        elif outcome == "legacy":
             consequence = "Последствия этого старого вызова уже обработаны."
         elif outcome == "freed":
             consequence = f"{plain_name(winner)} побеждает владельца и становится свободным."
@@ -4126,13 +4154,20 @@ def create_router(
                 if target_chat_id != menu_chat_id:
                     await callback.answer("Кнопка относится к другому чату. Открой его через «Сменить чат».", show_alert=True)
                     return
+            base_action=action.split(':',1)[0]
+            if base_action in {'slaves','priority','business','work','buyout','bc','bn','bd','bw','bs','br','job','buy','p'} and not await database.feature_enabled(menu_chat_id,'slavery'):
+                await callback.answer('Рабовладение выключено в этом чате.',show_alert=True)
+                return
+            if base_action=='arena' and not await database.feature_enabled(menu_chat_id,'arena'):
+                await callback.answer('Арена выключена в этом чате.',show_alert=True)
+                return
             await database.upsert_user(menu_chat_id, user_id, callback.from_user.username, callback.from_user.full_name, touch=False)
         notice: str | None = None
         if action == "home":
             body, keyboard = await slave_menu_home(user_id, menu_chat_id)
         elif action == "arena":
             from arena_links import arena_link
-            body = "⚔️ Арена\nЛичный персонаж, бои рабов и этажи Пустоши. Один навык — одно нажатие."
+            body = "⚔️ Арена\nЕдиный персонаж для всех чатов, Пустошь и рейды. Один навык — одно нажатие."
             buttons = [[InlineKeyboardButton(text="⬅️ Меню", callback_data="sm:home")]]
             if arena_username:
                 buttons.insert(0, [InlineKeyboardButton(text="⚔️ Открыть арену", url=arena_link(arena_username, f"menu_{menu_chat_id}"))])
@@ -4761,6 +4796,8 @@ def create_router(
             return
         target_id, target_name, _ = target
         if not can_manage_basement_ranks(message.from_user):
+            if not await database.feature_enabled(message.chat.id,'slavery'):
+                return
             business = await database.get_business(message.chat.id, message.from_user.id)
             if not business:
                 return
@@ -6093,7 +6130,7 @@ def create_router(
         if player_stake > 1_000_000 or (stake_specified and player_stake == 0):
             await message.answer("Ставка игрока: от 1 до 1 000 000 франков.")
             return
-        friendly = game_match is not None or competition_match is not None or player_stake > 0
+        friendly = game_match is not None or competition_match is not None or player_stake > 0 or not await database.feature_enabled(message.chat.id, 'slavery')
         if (
             message.sender_chat
             or not message.reply_to_message

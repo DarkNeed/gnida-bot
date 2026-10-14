@@ -327,11 +327,10 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
             7,
         )
 
-    async def test_rewards_stack_only_for_controller_and_current_chat(self):
+    async def test_rewards_stack_for_account_inventory_only_for_controller(self):
         await self.db.force_enslave(1, 30, 10)
-        await self.db.arena_equip_slave(1, 10, 30, True)
         for _ in range(2):
-            run = await self.db.arena_mirror_start(1, 30, 30, False)
+            run = await self.db.arena_mirror_start(1, 30, 30, True)
             self.final_floor(run)
             run = await self.win(run, actor=30, rng=Roll(123))
             self.assertEqual(len(run["item_rewards"]), 4)
@@ -342,7 +341,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
             {"skill": 2, "passive": 2, "potion": 6, "candy": 4},
         )
         self.assertEqual((await self.db.arena_market_view(1, 10))["inventory"], [])
-        self.assertEqual((await self.db.arena_market_view(2, 30))["inventory"], [])
+        self.assertEqual((await self.db.arena_market_view(2, 30))["inventory"], inventory)
 
     async def test_surrender_on_final_floor_gives_no_items(self):
         run = await self.db.arena_mirror_start(1, 10)
@@ -451,26 +450,11 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
             await self.db.arena_mirror_action(
                 run["token"], 20, run["revision"], "abandon"
             )
-        self.assertEqual(await self.db.arena_mirror_list(2, 10), [])
+        self.assertEqual((await self.db.arena_mirror_list(2, 10))[0]["token"], run["token"])
         run = await self.win(run)
         with self.assertRaises(ValueError):
             await self.db.arena_wasteland(1, 10, previous=run["battle_token"])
 
-    async def test_slave_requires_equipment_and_transfer_ends_run_between_floors(self):
-        await self.db.force_enslave(1, 30, 10)
-        with self.assertRaises(ValueError):
-            await self.db.arena_mirror_start(1, 10, 30, False)
-        await self.db.arena_equip_slave(1, 10, 30, True)
-        run = await self.win(await self.db.arena_mirror_start(1, 10, 30, False))
-        self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 7)
-        self.assertEqual((await self.db.arena_menu(1, 10))["personal"]["xp"], 0)
-        with self.assertRaises(ValueError):
-            await self.db.arena_equip_slave(1, 10, 30, False)
-        await self.db.force_enslave(1, 30, 20)
-        ended = await self.db.arena_mirror_get(run["token"], 10)
-        self.assertEqual(ended["status"], "cancelled")
-        self.assertFalse(self.db._arena_busy_locked(1, 10))
-        self.assertEqual(await self.db.franc_balance(1, 10), 0)
 
     async def test_failed_payout_rolls_back_entire_boss_completion(self):
         run = await self.db.arena_mirror_start(1, 10)
@@ -492,27 +476,6 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after["xp"], 0)
         self.assertEqual((await self.db.arena_menu(1, 10))["personal"]["xp"], 0)
 
-    async def test_slave_transfer_during_combat_cancels_for_owner_and_self(self):
-        for self_control in (False, True):
-            await self.db.force_enslave(1, 30, 10)
-            await self.db.arena_equip_slave(1, 10, 30, True)
-            actor = 30 if self_control else 10
-            run = await self.db.arena_mirror_start(1, actor, 30, False)
-            battle = await self.db.arena_get(run["battle_token"])
-            await self.db.force_enslave(1, 30, 20)
-            with self.assertRaises(ValueError):
-                await self.db.arena_action(
-                    battle["token"], actor, battle["revision"], "bum_punch"
-                )
-            self.assertEqual(
-                (await self.db.arena_get(battle["token"]))["status"], "cancelled"
-            )
-            self.assertEqual(
-                (await self.db.arena_mirror_get(run["token"], actor))["status"],
-                "cancelled",
-            )
-            self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 0)
-            self.assertFalse(self.db._arena_busy_locked(1, actor))
 
     async def test_chest_success_trap_and_safe_outcomes_are_saved_once(self):
         for choice, roll, hp, shards in (

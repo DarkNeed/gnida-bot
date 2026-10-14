@@ -164,35 +164,6 @@ class WastelandStoreTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(json.loads(done["state_json"])["rewards"], {"a": 0})
 
-    async def test_next_floor_new_class_same_level_cap_and_slave_profile(self):
-        await self.db.force_enslave(1, 30, 10)
-        await self.db.arena_equip_slave(1, 10, 30, True)
-        await self.db.grant_slave_xp(1, 30, fighter_xp_limit())
-        await self.db.arena_edit_profile(1, 30, 30, False, "progression", "stay")
-        row = await self.db.arena_wasteland(1, 10, 30, personal=False)
-        state = json.loads(row["state_json"])
-        previous_class = state["sides"]["b"]["class_id"]
-        state.update(finished=True, winner="a")
-        self.db.connection.execute(
-            "UPDATE arena_battles SET status='finished',state_json=? WHERE token=?",
-            (json.dumps(state), row["token"]),
-        )
-        self.db.connection.commit()
-        with patch("arena_store.enemy_source", wraps=enemy_source) as choose:
-            next_row = await self.db.arena_wasteland(1, 10, previous=row["token"])
-            choose.assert_called_once()
-            self.assertEqual(choose.call_args.args,(21,previous_class))
-            self.assertNotIn('mage',choose.call_args.kwargs['enabled_classes'])
-        next_state = json.loads(next_row["state_json"])
-        self.assertNotEqual(next_state["sides"]["b"]["class_id"], previous_class)
-        self.assertEqual(next_state["sides"]["b"]["level"], 20)
-        self.assertEqual(
-            (next_row["floor"], next_row["a_fighter"], next_row["personal_solo"]),
-            (2, 30, 0),
-        )
-        self.assertTrue(next_state["sides"]["a"]["controlled"])
-        self.assertEqual(next_row["deadline"], 0)
-
 
 class WastelandRewardTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -235,7 +206,7 @@ class WastelandRewardTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(level=level, floor=floor):
                 self.db.connection.execute(
-                    "UPDATE personal_profiles SET xp=0,level=1 WHERE chat_id=1 AND user_id=10"
+                    "UPDATE personal_profiles SET xp=0,level=1 WHERE chat_id=0 AND user_id=10"
                 )
                 self.db.connection.commit()
                 row = await self.win(level, floor)
@@ -255,15 +226,6 @@ class WastelandRewardTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(row["deadline"], 0)
 
-    async def test_slave_win_same_formula_owner_reward_unchanged(self):
-        await self.db.force_enslave(1, 30, 10)
-        await self.db.arena_equip_slave(1, 10, 30, True)
-        before = (await self.db.get_owner_profile(1, 10))["xp"]
-        row = await self.win(10, personal=False)
-        self.assertEqual(json.loads(row["state_json"])["rewards"], {"a": 25})
-        self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 25)
-        self.assertEqual((await self.db.get_owner_profile(1, 10))["xp"], before + 6)
-        self.assertEqual((await self.db.arena_menu(1, 10))["personal"]["xp"], 0)
 
     async def test_level_twenty_player_does_not_accumulate_more_xp(self):
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, fighter_xp_limit())

@@ -81,7 +81,6 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
             for user in (10, 20, 30):
                 await self.db.upsert_user(chat, user, str(user), f"User {user}")
         await self.db.force_enslave(1, 30, 10)
-        await self.db.arena_equip_slave(1, 10, 30, True)
         self.db._add_francs_locked(1, 10, 10000)
         self.db.connection.commit()
         self.bot = SimpleNamespace(
@@ -104,7 +103,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         self.db.connection.commit()
         return self.db.connection.execute(
             "SELECT id FROM arena_inventory WHERE chat_id=? AND owner_id=? AND kind=? AND content_id=?",
-            (chat, owner, kind, content),
+            (0, owner, kind, content),
         ).fetchone()["id"]
 
     def qty(self, item):
@@ -142,7 +141,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.qty(item), 1)
 
     async def test_surrender_before_and_after_moves_gives_no_xp(self):
-        for personal, user in ((True, 10), (False, 30)):
+        for personal, user in ((True, 10),):
             for moved in (False, True):
                 row = await self.db.arena_wasteland(1, 10, user, personal=personal)
                 if moved:
@@ -246,7 +245,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_transfer_item(1, 10, item, 20)
         self.assertEqual(self.qty(item), 1)
         self.assertEqual(self.qty(other), 4)
-        for args in ((1, 20, item, 30), (2, 10, item, 20), (1, 10, item, 10)):
+        for args in ((1, 20, item, 30), (2, 20, item, 30), (1, 10, item, 10)):
             with self.assertRaises(ValueError):
                 await self.db.arena_transfer_item(*args)
         self.assertEqual(self.qty(item), 1)
@@ -376,7 +375,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_menu(1, 10)
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 10**6)
         self.db.connection.execute(
-            "UPDATE personal_profiles SET class_id='nerd',skill_memory=NULL,loadout=? WHERE chat_id=1 AND user_id=10",
+            "UPDATE personal_profiles SET class_id='nerd',skill_memory=NULL,loadout=? WHERE chat_id=0 AND user_id=10",
             (json.dumps(["go_to_store", "mother_joke", "deanon", "humiliate"]),),
         )
         self.db.connection.commit()
@@ -412,12 +411,11 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(sum(isinstance(o, ValueError) for o in outcomes), 1)
         self.assertEqual(sum(self.qty(i) for i in items), 1)
-        await self.db.arena_use_item(
-            1, 10, self.add("passive", "stone_skin"), 30, False
-        )
+        with self.assertRaises(ValueError):
+            await self.db.arena_use_item(1, 10, self.add("passive", "stone_skin"), 30, False)
         view = await menu_view(self.db, 1, 10)
         self.assertEqual(len(view["personal"]["passives"]), 4)
-        self.assertEqual(len(view["slaves"][0]["passives"]), 1)
+        self.assertEqual(view["slaves"], [])
 
     async def test_scroll_replacement_is_atomic_and_keeps_equipped_slot(self):
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 10**6)
@@ -485,43 +483,6 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.qty(candy), 3)
         self.assertEqual(self.qty(item), 0)
 
-    async def test_reset_does_not_reenable_old_author_grants_after_leveling(self):
-        self.db._grant_profile_xp_locked("personal_profiles",1,10,72)
-        admin = 1980056841
-        await self.db.create_custom_fighter_content(
-            "skill",
-            "exclusive",
-            {"name": "Свет", "class_id": "ragamuffin", "power": 10},
-            admin,
-        )
-        await self.db.arena_admin_grant(1, 10, "skill", "exclusive", admin, True)
-        item = self.add("class", "nerd")
-        await self.db.arena_use_item(1, 10, item, 10, confirm=True)
-        self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 1000)
-        self.db.connection.commit()
-        self.assertNotIn(
-            "exclusive",
-            [
-                s["skill_id"]
-                for s in (await menu_view(self.db, 1, 10))["personal"]["skills"]
-            ],
-        )
-        rejected = await self.db.arena_admin_grant(
-            1, 10, "skill", "exclusive", admin, True
-        )
-        self.assertIn("Максимум 6", rejected)
-        await self.db.arena_edit_profile(1, 10, 10, True, "forget_skill", "mother_joke")
-        self.assertEqual(
-            await self.db.arena_admin_grant(1, 10, "skill", "exclusive", admin, True),
-            "granted",
-        )
-        self.assertIn(
-            "exclusive",
-            [
-                s["skill_id"]
-                for s in (await menu_view(self.db, 1, 10))["personal"]["skills"]
-            ],
-        )
 
     async def test_cannot_use_on_other_personal_or_non_owned_slave_or_in_battle(self):
         item = self.add("candy", "experience", quantity=2)
@@ -533,13 +494,14 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
             await self.db.arena_use_item(1, 10, item, 10)
         self.assertEqual(self.qty(item), 2)
 
-    async def test_candy_can_train_slave_and_personal_separately_and_craft_is_disabled(
+    async def test_candy_only_trains_own_personal_and_craft_is_disabled(
         self,
     ):
         item = self.add("candy", "experience", quantity=2)
-        await self.db.arena_use_item(1, 10, item, 30, False)
+        with self.assertRaises(ValueError):
+            await self.db.arena_use_item(1, 10, item, 30, False)
         await self.db.arena_use_item(1, 10, item, 10, True)
-        self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 30)
+        self.assertEqual((await self.db.get_slave_profile(1, 30))["xp"], 0)
         self.assertEqual((await self.db.arena_menu(1, 10))["personal"]["xp"], 30)
         self.assertIn("Крафт убран", await self.db.craft_owner_item(1, 10, "potion"))
 

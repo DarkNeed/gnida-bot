@@ -451,7 +451,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         for actor in (20, 50):
             await self.db.arena_raid_setup(row["token"], actor, "join")
         self.db.connection.execute(
-            "UPDATE personal_profiles SET level=5 WHERE chat_id=1 AND user_id=10"
+            "UPDATE personal_profiles SET level=5 WHERE chat_id=0 AND user_id=10"
         )
         self.db.connection.commit()
         with self.assertRaisesRegex(ValueError, "выбор класса"):
@@ -483,24 +483,8 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.balance(10), 0)
         self.assertEqual(self.db._arena_profile_locked(1, 10, True)["xp"], 0)
 
-    async def test_slave_equipment_ownership_and_duplicate(self):
-        row = await self.lobby()
-        await self.db.arena_equip_slave(1, 20, 40, False)
-        with self.assertRaises(ValueError):
-            await self.db.arena_raid_setup(row["token"], 10, "join", 40, False)
-        with self.assertRaisesRegex(ValueError, "экипируйте"):
-            await self.db.arena_raid_setup(row["token"], 20, "join", 40, False)
-        await self.db.arena_raid_setup(row["token"], 10, "join", 30, False)
-        with self.assertRaisesRegex(ValueError, "уже занимает"):
-            await self.db.arena_raid_setup(row["token"], 30, "join", 30, False)
-        with self.assertRaises(ValueError):
-            await self.db.arena_equip_slave(1, 10, 30, False)
-        await self.db.arena_raid_setup(row["token"], 10, "join", 10, True)
-        await self.db.arena_raid_setup(row["token"], 30, "join", 30, False)
-        row = await self.db.arena_raid_get(row["token"])
-        self.assertFalse(row["participants"][1]["personal"])
 
-    async def test_reservations_block_other_modes_and_are_chat_scoped(self):
+    async def test_reservations_block_other_modes_across_all_chats(self):
         row = await self.lobby()
         for operation in (
             self.db.arena_offer(1, 10, 20, "personal"),
@@ -510,8 +494,8 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 await operation
         await self.db.upsert_chat(2, "Другой")
-        other = await self.db.arena_raid_create(2, 10)
-        self.assertNotEqual(other["token"], row["token"])
+        with self.assertRaises(ValueError):
+            await self.db.arena_raid_create(2, 10)
         await self.db.arena_raid_setup(row["token"], 10, "cancel")
         duel = await self.db.arena_offer(1, 10, 20, "personal")
         with self.assertRaises(ValueError):
@@ -573,24 +557,6 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
             await handler(msg)
         self.assertFalse(self.db._arena_busy_locked(1, 10))
 
-    async def test_ownership_change_withdraws_slave_not_whole_team(self):
-        row = await self.start(slave=True)
-        data = json.loads(row["data_json"])
-        personal_stats = self.db._arena_source_locked(1, 30, 30, False, False)
-        from arena_engine import create_battle_state
-
-        original = create_battle_state(personal_stats, personal_stats)["sides"]["a"]
-        self.assertLess(
-            data["players"]["10"]["fighter"]["stats"]["max_hp"],
-            original["stats"]["max_hp"],
-        )
-        await self.db.force_enslave(1, 30, 20)
-        await self.db.arena_raid_expire()
-        data = json.loads((await self.db.arena_raid_get(row["token"]))["data_json"])
-        self.assertTrue(data["players"]["10"]["withdrawn"])
-        self.assertFalse(data["finished"])
-        with self.assertRaises(ValueError):
-            await self.db.arena_raid_action(row["token"], 10, 1, "bum_punch")
 
     async def test_forged_skills_and_viewer_cannot_act(self):
         row = await self.start()
@@ -699,7 +665,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         row = await self.db.arena_raid_action(row["token"], 10, 1, "bum_punch")
         self.db.connection.execute(
             "INSERT INTO arena_sprites VALUES(?,?,?,?,?)",
-            (1, 10, "test-key", b"test", 0),
+            (0, 10, "test-key", b"test", 0),
         )
         self.db.connection.commit()
         spectator = await raid_view(self.db, row, 40)
@@ -710,25 +676,6 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("test-key", own["data"]["players"]["10"]["fighter"]["sprite_url"])
         self.assertEqual(len(spectator["data"]["boss"]["skill_details"]), 3)
 
-    async def test_chat_join_does_not_reset_chosen_slave(self):
-        row = await self.lobby()
-        await self.db.arena_raid_setup(row["token"], 10, "join", 30, False)
-        pub = RaidPublisher(self.db, self.bot, "TestBot")
-        self.bot.edit_message_text = AsyncMock()
-        router = create_raid_router(self.db, self.bot, True, pub)
-        callback = SimpleNamespace(
-            data="rr:join:" + row["token"],
-            from_user=SimpleNamespace(id=10),
-            message=SimpleNamespace(chat=SimpleNamespace(id=1)),
-            answer=AsyncMock(),
-        )
-        await router.callback_query.handlers[0].callback(callback)
-        self.assertEqual(
-            (await self.db.arena_raid_get(row["token"]))["participants"][0][
-                "fighter_id"
-            ],
-            30,
-        )
 
     async def test_publisher_escapes_names_and_skips_readiness_spam(self):
         await self.db.upsert_user(1, 10, "10", "<b>fake</b>")

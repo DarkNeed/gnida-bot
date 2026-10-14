@@ -63,16 +63,16 @@ class ChatOwnerAdminTests(constructors.ConstructorChatTests):
         values={b.callback_data for b in self.buttons(callback)}
         self.assertIn('adm:chat:-100',values)
         self.assertNotIn('adm:chat:-200',values)
-        await self.admin_click('adm:toggle:-100:classic:1:0')
-        self.assertTrue(next(m['enabled'] for m in (await self.db.arena_modules(-100))['modules'] if m['id']=='classic'))
-        callback=await self.admin_click('adm:toggle:-100:moon:0:0')
+        await self.admin_click('adm:toggle:-100:arena:0:0')
+        self.assertFalse(next(m['enabled'] for m in (await self.db.arena_modules(-100))['modules'] if m['id']=='arena'))
+        callback=await self.admin_click('adm:toggle:-100:slavery:0:0')
         self.assertIn('изменились',callback.answer.await_args.args[0])
-        callback=await self.admin_click('adm:toggle:-200:moon:0:0')
+        callback=await self.admin_click('adm:toggle:-200:slavery:0:0')
         self.assertIn('прав',callback.answer.await_args.args[0])
         self.roles[-100]='administrator'
-        callback=await self.admin_click('adm:toggle:-100:moon:0:1')
+        callback=await self.admin_click('adm:toggle:-100:slavery:0:1')
         self.assertIn('прав',callback.answer.await_args.args[0])
-        self.assertTrue(next(m['enabled'] for m in (await self.db.arena_modules(-100))['modules'] if m['id']=='moon'))
+        self.assertTrue(next(m['enabled'] for m in (await self.db.arena_modules(-100))['modules'] if m['id']=='slavery'))
 
     async def test_revoked_role_blocks_constructor_inputs(self):
         self.roles[-100]='administrator'

@@ -134,13 +134,13 @@ class SpriteHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone((await response.json())["menu"]["personal"]["sprite_url"])
         self.assertIsNone(await self.db.arena_sprite_png(profile["sprite_url"].split("/")[-1][:-4]))
 
-    async def test_replace_one_row_and_chat_separation(self):
+    async def test_replace_one_row_shared_across_chats(self):
         first=await self.upload()
         second=await self.upload(png(color=(0,255,0,255)),pixels="false")
         self.assertNotEqual(first["menu"]["personal"]["sprite_url"],second["menu"]["personal"]["sprite_url"])
         self.assertFalse(second["menu"]["personal"]["pixel_art"])
         self.assertEqual(self.db.connection.execute("SELECT COUNT(*) FROM arena_sprites").fetchone()[0],1)
-        self.assertIsNone((await menu_view(self.db,2,10))["personal"]["sprite_url"])
+        self.assertEqual((await menu_view(self.db,2,10))["personal"]["sprite_url"],second["menu"]["personal"]["sprite_url"])
         self.assertIsNone((await menu_view(self.db,1,20))["personal"]["sprite_url"])
 
     async def test_upload_cannot_choose_other_user(self):
@@ -189,27 +189,22 @@ class SpriteHTTPTests(unittest.IsolatedAsyncioTestCase):
             response=await self.client.get(path)
             self.assertEqual(response.status,404)
 
-    async def test_own_art_in_slave_and_personal_battle_and_owner_menu(self):
+    async def test_own_art_is_used_in_personal_battles_even_if_player_is_slave(self):
         url=(await self.upload(user=30))["menu"]["personal"]["sprite_url"]
         await self.db.force_enslave(1,30,10)
-        await self.db.arena_equip_slave(1,10,30,True)
         owner=await menu_view(self.db,1,10)
-        self.assertEqual(owner["slaves"][0]["sprite_url"],url)
-        self.assertFalse(owner["slaves"][0]["can_edit_sprite"])
-        slave=await menu_view(self.db,1,30)
-        self.assertEqual(slave["self_slave"]["sprite_url"],url)
-        self.assertTrue(slave["self_slave"]["can_edit_sprite"])
-        for actor,fighter,personal in ((10,30,False),(30,30,True)):
-            row=await self.db.arena_wasteland(1,actor,fighter,personal=personal)
-            view=await battle_view(self.db,row,20)
-            self.assertEqual(view["state"]["sides"]["a"]["sprite_url"],url)
-            self.assertIsNone(view["state"]["sides"]["b"]["sprite_url"])
-            await self.db.arena_action(row["token"],actor,row["revision"],"surrender")
+        self.assertEqual(owner["slaves"],[])
+        self.assertIsNone(owner["self_slave"])
+        self.assertEqual((await menu_view(self.db,2,30))["personal"]["sprite_url"],url)
+        row=await self.db.arena_wasteland(1,30,30,personal=True)
+        view=await battle_view(self.db,row,20)
+        self.assertEqual(view["state"]["sides"]["a"]["sprite_url"],url)
+        self.assertIsNone(view["state"]["sides"]["b"]["sprite_url"])
+        await self.db.arena_action(row["token"],30,row["revision"],"surrender")
         row=await self.db.arena_offer(1,30,20,"personal")
         await self.db.arena_set_message(row["token"],1)
         row=await self.db.arena_setup(row["token"],20,"accept")
-        view=await battle_view(self.db,row,20)
-        self.assertEqual(view["state"]["sides"]["a"]["sprite_url"],url)
+        self.assertEqual((await battle_view(self.db,row,20))["state"]["sides"]["a"]["sprite_url"],url)
 
     async def test_backup_restart_and_ownership_transfer_preserve_image(self):
         url=(await self.upload(user=30))["menu"]["personal"]["sprite_url"]
@@ -219,7 +214,7 @@ class SpriteHTTPTests(unittest.IsolatedAsyncioTestCase):
         snapshot=Path(self.temp.name)/"backup.sqlite3"
         await self.db.backup_to(snapshot)
         with closing(sqlite3.connect(snapshot)) as connection:
-            raw=connection.execute("SELECT png FROM arena_sprites WHERE chat_id=1 AND user_id=30").fetchone()[0]
+            raw=connection.execute("SELECT png FROM arena_sprites WHERE chat_id=0 AND user_id=30").fetchone()[0]
             self.assertEqual(raw,normalize_sprite(png()))
         await self.db.close()
         await self.db.connect()

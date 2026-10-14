@@ -5,6 +5,7 @@ import secrets
 import time
 from datetime import datetime, timedelta, timezone
 
+from arena_global import RPG_SCOPE
 from arena_pets import PETS, PET_ODDS, PET_PACKS, PET_TERMS_VERSION, PET_MILESTONES, pet_snapshot
 
 
@@ -78,7 +79,7 @@ class PetMixin:
                 item["upgrade"] = dict(food=10 * new_level, essence=2 if new_level in PET_MILESTONES else 0,
                                        choice=new_level in PET_MILESTONES) if new_level <= 10 else None
                 owned.append(item)
-        equipment = self.connection.execute("SELECT pet_id FROM pet_equipment WHERE chat_id=? AND user_id=?", (chat, user)).fetchone()
+        equipment = self.connection.execute("SELECT pet_id FROM pet_equipment WHERE chat_id=? AND user_id=?", (RPG_SCOPE, user)).fetchone()
         openings = [dict(id=r["id"], **json.loads(r["result_json"])) for r in self.connection.execute(
             "SELECT * FROM pet_openings WHERE user_id=? ORDER BY id DESC LIMIT 12", (user,))]
         history = [dict(r) for r in self.connection.execute(
@@ -107,7 +108,7 @@ class PetMixin:
         if wallet and wallet["tickets"] < 0:
             return None
         row = self.connection.execute("""SELECT o.* FROM pet_equipment e JOIN pet_owned o
-          ON o.user_id=e.user_id AND o.pet_id=e.pet_id WHERE e.chat_id=? AND e.user_id=?""", (chat,user)).fetchone()
+          ON o.user_id=e.user_id AND o.pet_id=e.pet_id WHERE e.chat_id=? AND e.user_id=?""", (RPG_SCOPE,user)).fetchone()
         return pet_snapshot(dict(row,id=row["pet_id"])) if row else None
 
     def _pet_revision_locked(self, user, revision):
@@ -164,13 +165,12 @@ class PetMixin:
                 if action == "daily":
                     self._pet_reward_locked(user,"daily","daily:"+pet_day())
                 elif action in {"equip","unequip"}:
-                    if not chat: raise ValueError("Выберите чат для экипировки.")
                     if action == "unequip":
-                        self.connection.execute("DELETE FROM pet_equipment WHERE chat_id=? AND user_id=?",(chat,user))
+                        self.connection.execute("DELETE FROM pet_equipment WHERE chat_id=? AND user_id=?",(RPG_SCOPE,user))
                     else:
                         if pet_id not in PETS or not self.connection.execute("SELECT 1 FROM pet_owned WHERE user_id=? AND pet_id=?",(user,pet_id)).fetchone():
                             raise ValueError("Этот питомец вам не принадлежит.")
-                        self.connection.execute("INSERT INTO pet_equipment VALUES(?,?,?) ON CONFLICT(chat_id,user_id) DO UPDATE SET pet_id=excluded.pet_id",(chat,user,pet_id))
+                        self.connection.execute("INSERT INTO pet_equipment VALUES(?,?,?) ON CONFLICT(chat_id,user_id) DO UPDATE SET pet_id=excluded.pet_id",(RPG_SCOPE,user,pet_id))
                     self.connection.execute("UPDATE pet_wallets SET revision=revision+1 WHERE user_id=?",(user,))
                 elif action == "exchange":
                     if pet_id not in PETS: raise ValueError("Неизвестный питомец.")
