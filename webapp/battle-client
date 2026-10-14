@@ -389,17 +389,17 @@ function forgeBody(data){
   body+='<div class="tabs">'+button('Разобрать','forgemode:dismantle',forgeMode==='dismantle'?'selected':'')+button('Ковать','forgemode:craft',forgeMode==='craft'?'selected':'')+button('Слияние','forgemode:rewrite',forgeMode==='rewrite'?'selected':'')+'</div>';
   if(forgeMode==='dismantle'){
     body+='<div class="note">Разбираются только предметы-трактаты, а не изученные навыки. За каждый — 2 страницы его редкости.</div>';
-    body+=f.inventory.map(i=>'<div class="card"><h2>№'+i.id+' · '+esc(i.name)+' × '+i.quantity+'</h2>'+rarityBadge(i.rarity)+forgeInfo(i)+'<label>Количество для разбора<input id="forge-dismantle-'+i.id+'" type="number" min="1" max="'+Math.min(99,i.quantity)+'" step="1" value="1"></label><p class="muted">За каждый: '+i.salvage_pages+' страницы той же редкости. Франки не нужны.</p>'+button('Посмотреть разбор','forgedismantle:'+i.id)+'</div>').join('');
+    body+=f.inventory.map(i=>'<div class="card"><h2>№'+i.id+' · '+esc(i.name)+' × '+i.quantity+'</h2>'+rarityBadge(i.rarity)+forgeInfo(i)+'<label>Количество для разбора<input id="forge-dismantle-'+i.id+'" type="number" min="1" max="'+Math.min(99,i.quantity)+'" step="1" value="1"></label><p class="muted">За каждый: '+i.salvage_pages+' страницы той же редкости. Франки не нужны.</p>'+button('Разобрать','forgedismantle:'+i.id)+'</div>').join('');
     if(!f.inventory.length)body+='<div class="note">Нет трактатов для разбора. Их можно купить у торговца, получить в пустошах или от другого игрока.</div>';
   }else if(forgeMode==='craft'){
     body+='<div class="note">Выбери качество страниц и активный или пассивный трактат. Пустого результата нет, но редкость результата может отличаться. Требования изучения и лимиты навыков сохраняются.</div>';
-    body+=f.crafts.map(c=>'<div class="card"><h2>'+(c.kind==='skill'?'Активный':'Пассивный')+' трактат</h2><p>Из страниц: '+rarityBadge(c.rarity)+'</p><p>'+forgeCost(c)+'</p>'+forgeOdds(c.odds)+forgeChoices(f,c.kind,c.odds)+button('Проверить ковку','forgecraft:'+c.kind+':'+c.rarity,'primary',(f.pages[c.rarity]||0)<c.pages||(data.balance||0)<c.price)+'</div>').join('');
+    body+=f.crafts.map(c=>'<div class="card"><h2>'+(c.kind==='skill'?'Активный':'Пассивный')+' трактат</h2><p>Из страниц: '+rarityBadge(c.rarity)+'</p><p>'+forgeCost(c)+'</p>'+forgeOdds(c.odds)+forgeChoices(f,c.kind,c.odds)+button('Ковать','forgecraft:'+c.kind+':'+c.rarity,'primary',(f.pages[c.rarity]||0)<c.pages||(data.balance||0)<c.price)+'</div>').join('');
   }else{
     if(!['skill','passive'].includes(forgePool))forgePool='skill';
     const ingredients=f.inventory.filter(i=>i.can_rewrite&&i.kind===forgePool);
     body+='<div class="card"><h2>Три трактата → один случайный</h2><select id="forge-pool" aria-label="Тип слияния"><option value="skill"'+(forgePool==='skill'?' selected':'')+'>Активные</option><option value="passive"'+(forgePool==='passive'?' selected':'')+'>Пассивные</option></select><p>Выбери ровно 3 экземпляра одного типа. Редкости можно смешивать: шансы — среднее от вложенных трактатов, цена — среднее с округлением вверх.</p><div id="forge-selection"><p>Выбрано 0 / 3</p></div>'+forgeChoices(f,forgePool,null)+'</div>';
     body+=ingredients.map(i=>'<div class="card"><h2>№'+i.id+' · '+esc(i.name)+' × '+i.quantity+'</h2>'+rarityBadge(i.rarity)+forgeInfo(i)+'<label>Отдать в слияние<input id="forge-rewrite-'+i.id+'" type="number" min="0" max="'+Math.min(3,i.quantity)+'" step="1" value="0"></label></div>').join('');
-    body+=button('Проверить слияние','forgerewrite','primary',ingredients.reduce((n,i)=>n+i.quantity,0)<3);
+    body+=button('Слить трактаты','forgerewrite','primary',ingredients.reduce((n,i)=>n+i.quantity,0)<3);
     if(!ingredients.length)body+='<div class="note">Нет подходящих трактатов. Выбери другой тип или редкость.</div>';
   }
   return body;

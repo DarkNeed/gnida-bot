@@ -73,7 +73,8 @@
   function inspect(id){
     selected=id;const p=view.catalog.find(p=>p.id===id);if(!p)return;
     const own=view.owned.find(o=>o.id===id);$('detailImage').src=p.sprite_url;$('detailImage').alt=p.name;$('detailName').textContent=p.name;$('detailRarity').textContent=labels[p.rarity];$('detailEffect').textContent=p.description;
-    $('detailLevel').textContent=own?`Уровень ${own.level} / 10 · сила ${own.power} · частота ${own.tempo}\nКаждый уровень немного усиливает бонус. На 3 / 6 / 10 — выбор силы или частоты. У сэндвича частота повышает порог лечения, он всё равно лечит один раз за бой.`:'Ещё нет в коллекции. Можно получить из посылки или выбрать за осколки.';
+    const upgradeHint=id==='sandwich'?' Частота повышает порог HP для лечения; сэндвич всё равно лечит один раз за бой.':id==='smesharik'?' Сила усиливает кровотечение; частота уменьшает число попаданий для накопления краски. Кровотечение на цели ускоряет накопление.':'';
+    $('detailLevel').textContent=own?`Уровень ${own.level} / 10 · сила ${own.power} · частота ${own.tempo}\nКаждый уровень немного усиливает бонус. На 3 / 6 / 10 — выбор силы или частоты.${upgradeHint}`:'Ещё нет в коллекции. Можно получить из посылки или выбрать за осколки.';
     let actions='';const button=(label,action,choice='')=>`<button class="secondary" data-action="${action}" data-id="${id}" data-choice="${choice}">${esc(label)}</button>`;
     if(own){actions+=button(view.equipped===id?'Снять с боя':'Экипировать для всех чатов',view.equipped===id?'unequip':'equip');
       if(own.upgrade){const cost=`${own.upgrade.food} корма${own.upgrade.essence?' + '+own.upgrade.essence+' эссенции':''}`;
