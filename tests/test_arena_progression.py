@@ -14,7 +14,6 @@ from aiohttp.test_utils import TestClient, TestServer
 from arena_archclasses import ARCHCLASSES
 from arena_engine import xp_for_next_level
 from arena_progression import choice_avatar
-from arena_rpg import RPG_BRANCHES
 from arena_web import menu_view, battle_view, create_arena_app
 from database import Database
 import test_arena_market_client as client_tests
@@ -283,14 +282,11 @@ class ArchclassAssetsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.get(choice_avatar("", key))
                 self.assertEqual(response.status, 200, key)
                 raw = await response.read()
-                self.assertLess(len(raw), 2200000 if key in RPG_BRANCHES else 700000)
+                self.assertLess(len(raw), 700000)
                 with Image.open(BytesIO(raw)) as im:
-                    self.assertEqual(im.size, (1024, 1536) if key in RPG_BRANCHES else (512, 768))
+                    self.assertEqual(im.size, (512, 768))
                     self.assertEqual(im.mode, "RGBA")
-                    self.assertEqual(im.getchannel("A").getextrema(), (0, 254) if key in RPG_BRANCHES else (0, 255))
-                    if key in RPG_BRANCHES:
-                        self.assertEqual(im.getpixel((0, 0))[3],0)
-                    else:
-                        self.assertEqual(im.getpixel((0, 0)), (0, 0, 0, 0))
+                    self.assertEqual(im.getchannel("A").getextrema(), (0, 255))
+                    self.assertEqual(im.getpixel((0, 0)), (0, 0, 0, 0))
         finally:
             await client.close()

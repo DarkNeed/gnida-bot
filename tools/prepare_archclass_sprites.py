@@ -8,6 +8,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 from arena_archclasses import ARCHCLASSES
+from arena_rpg import RPG_BRANCHES
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -16,6 +17,10 @@ def export():
     target = ROOT / "webapp" / "assets" / "archclasses"
     target.mkdir(parents=True, exist_ok=True)
     for key in ARCHCLASSES:
+        if key in RPG_BRANCHES:
+            # RPG branches currently reuse the approved initial class sprites.
+            # Their export pipeline is tools/prepare_rpg_sprites.py.
+            continue
         revision = "revision4" if key.startswith("middle_") else "revision3"
         source = ROOT / "output" / "archclass-review" / revision / (key + ".png")
         with Image.open(source) as original:

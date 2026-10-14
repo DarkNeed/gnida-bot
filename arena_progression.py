@@ -18,10 +18,11 @@ def pending_choice(profile):
 
 
 def choice_avatar(class_id, archclass_id=""):
-    from arena_rpg import RPG_BRANCHES
-    if class_id in {'warrior','mage','priest','hunter'} or archclass_id in RPG_BRANCHES:
-        # Art is not deployed before the owner's review. Custom sprites take precedence.
-        return '/static/assets/ragamuffin.png'
+    # Only the four initial RPG designs are approved. Their branches share
+    # the base skin until distinct branch artwork is reviewed separately.
+    rpg_class = RPG_BRANCHES[archclass_id][0] if archclass_id in RPG_BRANCHES else class_id
+    if rpg_class in {'warrior','mage','priest','hunter'}:
+        return '/static/assets/rpg/' + rpg_class + '.png'
     if archclass_id:
         return "/static/assets/archclasses/" + archclass_id + ".png"
     native = {

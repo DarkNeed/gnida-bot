@@ -19,7 +19,13 @@ const statNames={max_hp:"Макс. HP",resource_max:"Макс. энергия",p
 const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",physical_attack_pct:"Физ. атака",magic_attack_pct:"Маг. атака",evasion_flat:"Уклонение",resource:"Энергия",resource_leech:"Похищение энергии (возврат половины)",next_magic_damage:"Следующая магическая атака",next_physical_damage:"Следующая физическая атака",prepared_attack:"Подготовленная атака",stun:"Ошеломление",bleed:"Кровотечение"};
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,reduced?Math.min(50,ms):ms));
-const sprite=c=>c&&typeof c==="object"&&/^\/sprites\/[0-9a-f]{64}\.png$/.test(c.sprite_url||"")?c.sprite_url:c&&typeof c==='object'&&/^\/static\/assets\/(archclasses\/)?[a-z_]+\.png$/.test(c.class_avatar_url||'')?c.class_avatar_url:"/static/assets/"+(["cutie","jock","nerd","thumb","index","middle","ring","pinky"].includes(typeof c==="object"?c?.sprite:c)?(typeof c==="object"?c.sprite:c):"ragamuffin")+".png";
+const sprite=c=>{
+  const data=c&&typeof c==="object"?c:{},id=typeof c==="object"?c?.sprite:c;
+  if(/^\/sprites\/[0-9a-f]{64}\.png$/.test(data.sprite_url||""))return data.sprite_url;
+  if(/^\/static\/assets\/(?:(?:archclasses|rpg)\/)?[a-z_]+\.png$/.test(data.class_avatar_url||""))return data.class_avatar_url;
+  if(["warrior","mage","priest","hunter"].includes(id))return "/static/assets/rpg/"+id+".png";
+  return "/static/assets/"+(["cutie","jock","nerd","thumb","index","middle","ring","pinky"].includes(id)?id:"ragamuffin")+".png";
+};
 function fighterImage(p,cls="",id=""){
   const image='<img class="'+cls+(p.sprite_url&&p.pixel_art?' pixel-art':'')+'"'+(id?' id="'+id+'"':'')+' src="'+sprite(p)+'" data-fallback="'+sprite(p.sprite)+'" alt="'+esc(p.class_name)+'">';
   return image+(cls.includes('sprite')?petImage(p,cls):'');

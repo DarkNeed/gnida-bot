@@ -337,7 +337,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
                 name=c.name,
                 rarity=c.rarity,
                 avatar_url=choice_avatar(k),
-                description="Ресурс: " + c.resource_name + (' · временный спрайт до утверждения рисунков' if k in {'warrior','mage','priest','hunter'} else ''),
+                description="Ресурс: " + c.resource_name,
             )
             for k, c in classes.items()
             if k in enabled_classes and ((k in set(VISIBLE_CLASS_ALIASES.values()) and k != "ragamuffin")
