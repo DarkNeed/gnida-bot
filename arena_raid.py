@@ -389,12 +389,13 @@ class RaidMixin:
             )
             self.connection.commit()
 
-    async def arena_raid_create(self, chat, actor, boss_id="lei_heng", *, silent=False):
+    async def arena_raid_create(self, chat, actor, boss_id="lei_heng", *, silent=False, expected_slot=None):
         if boss_id not in AVAILABLE_BOSSES:
             raise ValueError("Этот босс недоступен для новых рейдов.")
         async with self._lock:
             try:
                 self._require_feature_locked(chat, 'arena')
+                self._character_require_locked(actor,expected_slot)
                 self._raid_expire_locked()
                 self._arena_expire_locked()
                 self._raid_validate_fighter_locked(chat, actor, actor, True, "")
@@ -502,6 +503,8 @@ class RaidMixin:
                         data = create_raid_state(
                             members, sources, classes, skills, row["boss_id"]
                         )
+                        for player in data['players'].values():
+                            player['character_slot']=self._character_active_locked(player['actor_id'])
                         self._raid_save_locked(row, data, "active")
                 else:
                     raise ValueError("Действие недоступно.")

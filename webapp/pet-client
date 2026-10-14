@@ -60,7 +60,7 @@
     $('odds').textContent='Обычный 20% · редкий 50% · эпический 27% · легендарный 3%. Внутри редкости шансы одинаковые. На 10-м подряд открытии без эпического или выше: эпический 90%, легендарный 10%. На 30-м подряд без легендарного: легендарный 100%. Гарантии сбрасываются соответствующим выпадением.';
     $('gallery').innerHTML=view.catalog.map(p=>{const owned=view.owned.find(o=>o.id===p.id);return `<button class="pet-card ${owned?'':'not-owned'} ${view.equipped===p.id?'equipped':''}" data-pet="${esc(p.id)}" style="--card-tone:${tones[p.rarity]}"><span class="card-rarity">${labels[p.rarity]}${owned?' · Lv.'+owned.level:''}</span><img src="${esc(p.sprite_url)}" alt="${esc(p.name)}" loading="lazy"><h3>${esc(p.name)}</h3><p>${esc(p.description)}</p></button>`;}).join('');
     $('history').innerHTML=view.openings.map(o=>'<div>'+esc(o.pet.name)+(o.duplicate?' · дубликат → '+o.shards+' осколков':' · новый')+'</div>').join('')||'Пока нет открытий.';
-    $('orders').innerHTML=view.orders.map(o=>`<div>№${o.id} · ${o.tickets} билетов · ${o.stars} ⭐ · ${esc(({pending:'ожидает оплаты',paid:'оплачен',refunding:'возврат проверяется',refunded:'возвращён'})[o.status]||o.status)}</div>`).join('')||'Пока нет заказов.';
+    $('orders').innerHTML=view.orders.map(o=>`<div>№${o.id} · ${o.pack==='characters'?'4 слота персонажей':o.tickets+' билетов'} · ${o.stars} ⭐ · ${esc(({pending:'ожидает оплаты',paid:'оплачен',refunding:'возврат проверяется',refunded:'возвращён'})[o.status]||o.status)}</div>`).join('')||'Пока нет заказов.';
     controls();
   }
   async function refresh(){const next=await api('/api/pets'+(chat?'?chat='+chat:''));const changed=JSON.stringify(view)!==JSON.stringify(next);view=next;if(changed)draw();}

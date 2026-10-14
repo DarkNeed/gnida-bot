@@ -40,6 +40,7 @@ from arena_progression import pending_choice, choice_avatar
 from arena_raid_web import raid_view
 from arena_raid_engine import BOSSES, AVAILABLE_BOSSES
 from arena_pets import pet_cost, PET_PACKS, PET_TERMS_VERSION
+from arena_characters import CHARACTER_PACK, CHARACTER_TERMS_VERSION
 from aiogram.types import LabeledPrice
 
 ROOT = Path(__file__).parent / "webapp"
@@ -132,7 +133,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 else "ragamuffin"
             )
             side.update(
-                await db.arena_sprite_info(row["chat_id"], row[key + "_fighter"] or 0)
+                await db.arena_character_sprite_info(row[key + "_fighter"] or 0,row.get(key+'_character_slot',1))
             )
             side["skill_details"] = []
             for s in side["loadout"]:
@@ -257,6 +258,8 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             "b_accepted",
         )
     } | dict(
+        a_character_slot=row.get('a_character_slot',1),
+        b_character_slot=row.get('b_character_slot',1),
         server_time=int(time.time()),
         state=state,
         names=names,
@@ -268,6 +271,17 @@ async def battle_view(db, row: dict, actor: int) -> dict:
 
 
 async def menu_view(db, chat: int, actor: int) -> dict:
+    await db.arena_require_enabled(chat)
+    for _ in range(3):
+        before=await db.arena_characters(actor)
+        result=await _menu_view(db,chat,actor)
+        if result['characters']['revision']==before['revision']:
+            await db.arena_require_enabled(chat)
+            return result
+    raise ValueError('Персонаж изменился в другом окне. Обнови меню.')
+
+
+async def _menu_view(db, chat: int, actor: int) -> dict:
     mirror_runs = await db.arena_mirror_list(chat, actor)
     result = await db.arena_menu(chat, actor)
     classes, skills = await db.get_fighter_catalog()
@@ -412,6 +426,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
     result["chat_id"] = chat
     result["actor_id"] = actor
     result["admin"] = False
+    result['characters']=await db.arena_characters(actor)
     result["max_level"] = MAX_FIGHTER_LEVEL
     result.update(await db.arena_market_view(chat, actor))
     result["mirror_runs"] = mirror_runs
@@ -429,6 +444,11 @@ def create_arena_app(
     db, bot, token: str, changed=None, raid_changed=None, *, pets_payments_enabled=False
 ) -> web.Application:
     member_cache: dict[tuple[int, int], float] = {}
+
+    async def app_menu(chat,actor):
+        result=await menu_view(db,chat,actor)
+        result['characters']['payments_enabled']=pets_payments_enabled
+        return result
 
     async def read_member(chat: int, actor: int) -> None:
         await db.arena_require_enabled(chat)
@@ -563,6 +583,20 @@ def create_arena_app(
             prices=[LabeledPrice(label="Билеты", amount=order["stars"])])
         return web.json_response(dict(invoice=link, order_id=order["id"]))
 
+    async def characters_invoice(request):
+        if not pets_payments_enabled:raise ValueError('Продажи временно выключены.')
+        data=await request.json()
+        if not isinstance(data,dict) or data.get('accept_terms') is not True or data.get('terms_version')!=CHARACTER_TERMS_VERSION:
+            raise ValueError('Примите условия открытия персонажей.')
+        chat=int_field(data,'chat')
+        await require_member(bot,chat,request[ACTOR])
+        await db.arena_require_enabled(chat)
+        order=await db.pet_create_order(request[ACTOR],CHARACTER_PACK,CHARACTER_TERMS_VERSION)
+        link=await bot.create_invoice_link(title='Четыре дополнительных персонажа',
+            description='Всего 5 слотов во всех чатах. Без подписки. Новые персонажи с 1 уровня; лимиты наград общие для аккаунта.',
+            payload=order['payload'],provider_token='',currency='XTR',prices=[LabeledPrice(label='4 слота персонажей',amount=order['stars'])])
+        return web.json_response(dict(invoice=link,order_id=order['id']))
+
     async def get_battle(request):
         row = await db.arena_get(request.match_info["token"])
         await read_member(row["chat_id"], request[ACTOR])
@@ -607,7 +641,7 @@ def create_arena_app(
         chat = int(request.match_info["chat"])
         actor = request[ACTOR]
         await read_member(chat, actor)
-        return web.json_response(await menu_view(db, chat, actor))
+        return web.json_response(await app_menu(chat, actor))
 
     async def get_raid(request):
         row = await db.arena_raid_get(request.match_info["token"])
@@ -698,22 +732,22 @@ def create_arena_app(
         async with image_slots:
             raw = await request.clone(client_max_size=MAX_SPRITE_BYTES + 1).read()
             png = await asyncio.to_thread(normalize_sprite, raw)
-        await db.arena_set_sprite(chat, actor, png, pixel_art == "true")
+        await db.arena_set_sprite(chat, actor, png, pixel_art == "true",expected_slot=int(request.query.get('character_slot',1)))
         return web.json_response(
             {
                 "notice": "Свой спрайт сохранён.",
-                "menu": await menu_view(db, chat, actor),
+                "menu": await app_menu(chat, actor),
             }
         )
 
     async def reset_sprite(request):
         chat, actor = int(request.match_info["chat"]), request[ACTOR]
         await require_member(bot, chat, actor)
-        await db.arena_reset_sprite(chat, actor)
+        await db.arena_reset_sprite(chat, actor,expected_slot=int(request.query.get('character_slot',1)))
         return web.json_response(
             {
                 "notice": "Стандартный спрайт возвращён.",
-                "menu": await menu_view(db, chat, actor),
+                "menu": await app_menu(chat, actor),
             }
         )
 
@@ -740,6 +774,10 @@ def create_arena_app(
         if not isinstance(body, dict):
             raise ValueError("Некорректный запрос.")
         action = body.get("action")
+        expected_slot=int_field(body,'character_slot',1)
+        if action=='select_character':
+            notice=await db.arena_select_character(chat,actor,int_field(body,'slot'),int_field(body,'character_revision'))
+            return web.json_response(dict(notice=notice,menu=await app_menu(chat,actor)))
         if action in {'leave_battle','leave_mirror','leave_raid'}:
             battle_token=body.get('token')
             if not isinstance(battle_token,str):
@@ -753,14 +791,14 @@ def create_arena_app(
                 notice=await db.arena_leave_battle(chat,actor,battle_token)
             if changed and action=='leave_battle':
                 await changed(battle_token)
-            return web.json_response(dict(notice=notice,menu=await menu_view(db,chat,actor)))
+            return web.json_response(dict(notice=notice,menu=await app_menu(chat,actor)))
         if action == "forge":
             notice = await db.arena_forge_action(chat, actor, body)
-            return web.json_response({"notice": notice, "menu": await menu_view(db, chat, actor)})
+            return web.json_response({"notice": notice, "menu": await app_menu(chat, actor)})
         if action == "raid_create":
             if member.user.is_bot:
                 raise ValueError("Боты не участвуют в рейдах.")
-            row = await db.arena_raid_create(chat, actor, str(body.get("boss", "")), silent=True)
+            row = await db.arena_raid_create(chat, actor, str(body.get("boss", "")), silent=True,expected_slot=expected_slot)
             return web.json_response({"raid": await raid_view(db, row, actor)})
         if action in {"wasteland", "mirror_start"}:
             fighter = int_field(body, "fighter")
@@ -773,12 +811,12 @@ def create_arena_app(
                 return web.json_response(
                     {
                         "mirror": await db.arena_mirror_start(
-                            chat, actor, fighter, personal
+                            chat, actor, fighter, personal,expected_slot=expected_slot
                         )
                     }
                 )
             row = await db.arena_wasteland(
-                chat, actor, fighter, str(body.get("previous", "")), personal
+                chat, actor, fighter, str(body.get("previous", "")), personal,expected_slot=expected_slot
             )
             return web.json_response({"token": row["token"]})
         if action in {"equipment","module_class","restore_class"}:
@@ -815,6 +853,7 @@ def create_arena_app(
                 personal,
                 action,
                 body.get("value"),
+                expected_slot=expected_slot,
             )
         elif action == "buy_item":
             notice = await db.arena_buy_item(chat, actor, int_field(body, "offer"))
@@ -833,6 +872,7 @@ def create_arena_app(
                 personal,
                 confirm,
                 body.get("replace_skill"),
+                expected_slot=expected_slot,
             )
         elif action == "craft":
             raise ValueError("Крафт убран. Зелья и конфеты есть у торговца.")
@@ -867,7 +907,7 @@ def create_arena_app(
         else:
             raise ValueError("Действие недоступно.")
         return web.json_response(
-            {"notice": notice, "menu": await menu_view(db, chat, actor)}
+            {"notice": notice, "menu": await app_menu(chat, actor)}
         )
 
     app.router.add_get("/", index)
@@ -876,6 +916,7 @@ def create_arena_app(
     app.router.add_get("/api/pets", get_pets)
     app.router.add_post("/api/pets", post_pets)
     app.router.add_post("/api/pets/invoice", pets_invoice)
+    app.router.add_post('/api/characters/invoice',characters_invoice)
     app.router.add_get("/health", health)
     app.router.add_get("/static/client.js", client)
     app.router.add_get("/static/audio.js", audio)

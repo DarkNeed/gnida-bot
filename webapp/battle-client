@@ -409,10 +409,36 @@ function forgePreview(operation,extra,summary){
   forgePending={payload:{operation,...extra,nonce:forgeNonce(),revision:f.revision,catalog_revision:f.catalog_revision,confirm:true},summary};
   page='forgeConfirm';menuScreen(menu);
 }
+function characterSlot(){return current?.own_side?current[current.own_side+'_character_slot']||1:menu?.characters?.active_slot||1;}
+function charactersBody(data){
+  const c=data.characters;if(!c)return '';
+  return '<div class="card"><h3>Твои персонажи · '+c.capacity+' / 5</h3><p class="muted">Отдельные билды и внешний вид. Инвентарь и лимиты наград общие.</p><div class="character-row">'+c.slots.map(s=>'<button class="character-option'+(s.active?' selected':'')+(s.locked?' locked':'')+'" data-do="'+(s.locked?'charactersbuy':'character:'+s.slot)+'" '+(!s.locked&&c.busy&&!s.active?'disabled':'')+'>'+(s.locked?'<span class="character-lock">🔒</span>':'<img src="'+esc(s.avatar_url)+'" class="'+(s.pixel_art?'pixel-art':'')+'" alt="'+esc(s.class_name)+'">')+'<b>№'+s.slot+(s.active?' · выбран':'')+'</b><span>'+esc(s.locked?'Закрыт':s.created?s.class_name:'Создать персонажа')+'</span><small>'+(s.locked?'Пакет всех 4 слотов':s.created?'Lv.'+s.level:'С 1 уровня')+'</small></button>').join('')+'</div>'+(!c.unlocked?button('Открыть все 4 слота · '+c.price+' Stars','charactersbuy','primary',c.payments_enabled===false):'')+(c.busy?'<p class="muted">Переключение доступно после завершения RPG-активности.</p>':'')+'</div>';
+}
+async function buyCharacters(){
+  if(demo){toast('Демо: платежи не выполняются.');return;}
+  if(busy)return;
+  if(!tg?.openInvoice){toast('Покупка доступна только в Telegram.');return;}
+  if(!document.getElementById('characters-agree')?.checked)return;
+  busy=true;
+  try{
+    const d=await api('/api/characters/invoice',{chat,accept_terms:true,terms_version:menu.characters.terms_version});
+    const status=await new Promise(resolve=>tg.openInvoice(d.invoice,resolve));
+    if(status==='paid'||status==='pending'){
+      toast('Ожидаем подтверждение оплаты от бота…');
+      for(let attempt=0;attempt<8;attempt++){
+        const data=await api('/api/menu/'+chat);
+        if(data.characters?.unlocked){page='personal';menuScreen(data);toast('Все четыре дополнительных слота открыты.');return;}
+        await sleep(1000);
+      }
+      toast('Платёж ещё проверяется. Нажми «Обновить» после сообщения бота.');
+    }else toast('Оплата не завершена.');
+    page='personal';await openMenu();
+  }catch(error){toast(error.message);}finally{busy=false;}
+}
 function menuScreen(data){
   if(['slaves','owner','slaveProfile','admin'].includes(page))page='personal';
   audio.scene('menu');
-  menu=data;chat=data.chat_id;token="";
+  menu=data;chat=data.chat_id;token="";current=null;
   const selected=(page==='personalProfile'||page==='slaveProfile')?activeProfile():null;
   const required=(page==='personalProfile'||page==='slaveProfile')&&selected?.progression_choice?selected:[data.personal].find(p=>p?.progression_choice?.can_choose);
   if(required){progressionScreen(required);return;}
@@ -420,7 +446,7 @@ function menuScreen(data){
   let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+button("Рейды","tab:raids",page==="raids"?"selected":"")+'</div>';
   body+=button('⚒️ Кузница трактатов','tab:forge',page==='forge'||page==='forgeConfirm'?'primary':'');
   if(page==='forge'||page==='forgeConfirm')body+=forgeBody(data);
-  else if(page==="personal")body+=profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Персонаж и инвентарь общие для всех чатов. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
+  else if(page==="personal")body+=charactersBody(data)+profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Персонаж и инвентарь общие для всех чатов. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
   else if(page==="raids"){
     body+='<div class="note">Выбери босса и создай тихий рейд — сообщение в группу не отправляется. В рейд отправляется твой общий персонаж. Можно сразу начать соло. На сбор — 10 минут.</div>';
     body+='<div class="note">Босс сильнее отряда: уровень равен большему из среднего уровня (вверх) +2 и уровня самого сильного бойца +1. Полная награда раз в день на каждого босса, общая для всех чатов и бойцов. Повторы: 20% франков и XP, без трактатов и ресурсов питомцев. Обновление в 00:00 МСК.</div>';
@@ -443,6 +469,10 @@ function menuScreen(data){
     body+='<div class="card"><h2>Какой навык заменить?</h2><p>Новый: <b>'+esc(row.name)+'</b></p><p>Боец: '+esc(target.name||target.class_name)+'</p><p class="muted">Лимит изученных '+(row.kind==='skill'?'активных навыков — 6':'пассивных навыков — 4')+'. Выбери замену. До выбора трактат не тратится.</p><div class="stack">';
     body+=known.filter(s=>s.skill_id!=='bum_punch').map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),'replaceitem:'+s.skill_id)).join('');
     body+=button('Отмена — ничего не менять','tab:inventory')+'</div></div>';
+  }else if(page==="charactersPurchase"){
+    const c=data.characters;
+    if(!c||c.unlocked){page='personal';menuScreen(data);return;}
+    body+='<div class="card"><h2>Четыре дополнительных персонажа</h2><p><b>'+c.price+' Stars · одна покупка без подписки</b></p><p>'+esc(c.terms)+'</p><p class="muted">Текущий персонаж сохранится в первом слоте. Новые начинают с 1 уровня. Поддержка: /paysupport.</p><label class="check"><input id="characters-agree" type="checkbox"> Принимаю условия покупки</label><div class="stack">'+button('Оплатить '+c.price+' Stars','characterinvoice','primary',true)+button('Назад','tab:personal')+'</div></div>';
   }else if(page==="leaveConfirm"){
     if(!leavePending){page='personal';menuScreen(data);return;}
     body+='<div class="card"><h2>Выйти из боя?</h2><p>Непринятый вызов будет отменён с возвратом ставки. В начатом PvP это сдача и проигрыш ставки. Пустошь, зеркальный забег или рейд завершатся для тебя без награды за победу.</p><div class="row">'+button('Выйти / сдаться','confirmleave','danger')+button('Остаться','cancelleave')+'</div></div>';
@@ -490,7 +520,7 @@ async function menuAction(action,extra={}){
   if(demo){toast('Демо: покупки и изменения не сохраняются.');menuScreen(menu);return;}
   if(busy)return;busy=true;
   try{
-    const response=await api("/api/menu/"+chat,{action,...extra});
+    const response=await api("/api/menu/"+chat,{action,character_slot:characterSlot(),...extra});
     if(response.mirror){mirrorAbandonConfirm=false;mirrorScreen(response.mirror);}
     else if(response.raid){raidScreen(response.raid);}
     else if(response.token){token=response.token;current=null;lastSeq=0;battleScreen(await api("/api/battle/"+token));}
@@ -503,7 +533,7 @@ async function saveSprite(reset=false){
   busy=true;
   document.querySelectorAll(".content button,.tabs button,#sprite-file").forEach(b=>b.disabled=true);
   try{
-    const response=await fetch("/api/menu/"+chat+"/sprite",{method:reset?"DELETE":"POST",headers:{"X-Telegram-Init-Data":tg?.initData||"",...(!reset?{"Content-Type":"image/png","X-Pixel-Art":String(document.getElementById("sprite-pixels").checked)}:{})},body:reset?undefined:spriteDraft.file});
+    const response=await fetch("/api/menu/"+chat+"/sprite?character_slot="+characterSlot(),{method:reset?"DELETE":"POST",headers:{"X-Telegram-Init-Data":tg?.initData||"",...(!reset?{"Content-Type":"image/png","X-Pixel-Art":String(document.getElementById("sprite-pixels").checked)}:{})},body:reset?undefined:spriteDraft.file});
     const data=await response.json().catch(()=>({error:"Сервер недоступен. Попробуй ещё раз."}));
     if(!response.ok)throw new Error(data.error||"Не удалось сохранить спрайт.");
     clearSpriteDraft();page="personal";menuScreen(data.menu);toast(data.notice);
@@ -534,6 +564,9 @@ app.addEventListener("click",async event=>{
   if(cmd==="select"||cmd==="selected"){await action("select",{fighter:Number(arg),controlled:document.getElementById("control").checked});return;}
   if(cmd==="potion"||cmd==="surrender"){await action("skill",{skill:cmd});return;}
   if(cmd==="menu"||cmd==="refresh"){closeEffect();statusViews=null;closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
+  if(cmd==='charactersbuy'){page='charactersPurchase';menuScreen(menu);return;}
+  if(cmd==='characterinvoice'){await buyCharacters();return;}
+  if(cmd==='character'){page='personal';classUsePending=null;skillUsePending=null;resetPending=null;await menuAction('select_character',{slot:Number(arg),character_revision:menu.characters.revision});return;}
   if(cmd==='pets'){location.assign('/pets?chat='+chat+location.hash);return;}
   if(cmd==='raidcreate'){await menuAction('raid_create',{boss:arg});return;}
   if(cmd==='forgemode'){forgeMode=arg;page='forge';menuScreen(menu);return;}
@@ -613,7 +646,7 @@ app.addEventListener("click",async event=>{
   if(cmd==="savepassives"){await menuAction('passives',{user:p.user_id,personal:p.personal,value:p.passive_loadout||[]});return;}
   if(cmd==="candy"){await menuAction("candy",{user:p.user_id});return;}
 });
-app.addEventListener('change',event=>{if(event.target.id==='forge-pool'){forgePool=event.target.value;menuScreen(menu);}else if(event.target.id?.startsWith('forge-rewrite-'))forgeUpdateSelection();});
+app.addEventListener('change',event=>{if(event.target.id==='characters-agree'){const b=app.querySelector('[data-do="characterinvoice"]');if(b)b.disabled=!event.target.checked||menu.characters.payments_enabled===false;}else if(event.target.id==='forge-pool'){forgePool=event.target.value;menuScreen(menu);}else if(event.target.id?.startsWith('forge-rewrite-'))forgeUpdateSelection();});
 app.addEventListener('input',event=>{if(event.target.id?.startsWith('forge-rewrite-'))forgeUpdateSelection();});
 async function poll(){
   if(raidCurrent){await pollRaid();return;}
@@ -648,7 +681,8 @@ function startDemoMenu(){
     {id:2,kind:'passive',name:'Каменная кожа',rarity:'uncommon',details:{effects:[{kind:'physical_defense_pct',value:.15}]},quantity:1,price:140,remaining:1},
     {id:3,kind:'candy',name:'Конфета опыта',rarity:'common',details:{description:'Даёт выбранному бойцу 30 XP.'},quantity:2,price:50,remaining:3}
   ];
-  menuScreen({chat_id:-1,personal:fighter,slaves:[],combat_count:0,combat_capacity:0,owner:{},active:[],balance:1000,inventory:items,merchant:{visit_id:1,ends:Math.floor(Date.now()/1000)+7200,offers:items}});
+  const characters={active_slot:1,revision:0,capacity:1,unlocked:false,price:200,payments_enabled:true,terms_version:'demo',terms:'Все четыре дополнительных слота за 200 Stars, без подписки. Персонажи с первого уровня, инвентарь и лимиты наград общие. При возврате слоты закрываются, персонажи сохраняются. Демо: реальные платежи не выполняются.',slots:Array.from({length:5},(_,i)=>({slot:i+1,active:i===0,locked:i>0,created:i===0,level:i?1:fighter.level,class_name:i?'Оборванец':fighter.class_name,avatar_url:i?'/static/assets/ragamuffin.png':sprite(fighter)}))};
+  menuScreen({chat_id:-1,personal:fighter,characters,slaves:[],combat_count:0,combat_capacity:0,owner:{},active:[],balance:1000,inventory:items,merchant:{visit_id:1,ends:Math.floor(Date.now()/1000)+7200,offers:items}});
 }
 function configureViewport(){
   tg?.ready();tg?.expand();

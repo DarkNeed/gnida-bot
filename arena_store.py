@@ -41,6 +41,7 @@ from arena_archclasses import ARCHCLASSES, ARCHCLASS_LEVEL, branch_options
 from arena_progression import pending_choice
 from arena_pet_store import PetMixin
 from arena_global import GlobalArenaMixin, RPG_SCOPE
+from arena_characters import CharacterMixin
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -53,7 +54,7 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin):
+class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin):
     def _connect_arena(self) -> None:
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (
@@ -186,6 +187,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
         self._connect_raids()
         self._connect_pets()
         self._connect_global_arena()
+        self._connect_characters()
         # Upgrade live battles once. Restarting must never renew a PvP deadline.
         for raw in self.connection.execute(
             "SELECT id,mode,state_json FROM arena_battles WHERE status='active' AND state_json IS NOT NULL"
@@ -872,6 +874,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             raise ValueError("Некорректный вызов.")
         async with self._lock:
             self._require_feature_locked(chat, 'arena')
+            a_slot=self._character_require_locked(actor)
+            b_slot=self._character_require_locked(target)
             self._arena_expire_locked()
             self.connection.commit()
             if self._arena_busy_locked(chat, actor) or self._arena_busy_locked(
@@ -924,6 +928,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     "UPDATE franc_balances SET balance=balance-?,updated_at=? WHERE chat_id=? AND user_id=?",
                     (stake, now, chat, actor),
                 )
+            self.connection.execute("UPDATE arena_battles SET a_character_slot=?,b_character_slot=? WHERE token=?",(a_slot,b_slot,token))
             self.connection.commit()
             return self._arena_row_locked(token)
 
@@ -1289,10 +1294,11 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             return result
 
     async def arena_wasteland(
-        self, chat: int, actor: int, fighter=0, previous="", personal: bool = True
+        self, chat: int, actor: int, fighter=0, previous="", personal: bool = True, *, expected_slot=None
     ) -> dict:
         async with self._lock:
             self._require_feature_locked(chat, 'arena')
+            slot=self._character_require_locked(actor,expected_slot)
             if not personal or (fighter and fighter != actor):
                 raise ValueError('Боевые рабы удалены. Используй своего личного персонажа.')
             floor = 1
@@ -1303,6 +1309,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     raise ValueError("Продолжайте зеркальный забег через его меню.")
                 if (
                     old["mode"] != "wasteland"
+                    or old["a_character_slot"] != slot
                     or old["a_owner"] != actor
                     or old["chat_id"] != chat
                     or old["status"] != "finished"
@@ -1377,31 +1384,36 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 "UPDATE arena_battles SET personal_solo=? WHERE token=?",
                 (int(personal), token),
             )
+            self.connection.execute("UPDATE arena_battles SET a_character_slot=? WHERE token=?",(slot,token))
             self.connection.commit()
             return self._arena_row_locked(token)
 
     async def arena_set_sprite(
-        self, chat: int, actor: int, png: bytes, pixel_art: bool
+        self, chat: int, actor: int, png: bytes, pixel_art: bool, *, expected_slot=None
     ) -> str:
         # HTTP boundary has already decoded/validated PNG. No user/target supplied by caller.
         key = hashlib.sha256(png).hexdigest()
         async with self._lock:
             self._require_feature_locked(chat, 'arena')
+            self._character_require_locked(actor,expected_slot)
             self.connection.execute(
                 """INSERT INTO arena_sprites(chat_id,user_id,sprite_key,png,pixel_art)
                    VALUES(?,?,?,?,?) ON CONFLICT(chat_id,user_id) DO UPDATE SET
                    sprite_key=excluded.sprite_key,png=excluded.png,pixel_art=excluded.pixel_art""",
                 (RPG_SCOPE, actor, key, png, int(pixel_art)),
             )
+            self._character_save_locked(actor)
             self.connection.commit()
         return key
 
-    async def arena_reset_sprite(self, chat: int, actor: int) -> None:
+    async def arena_reset_sprite(self, chat: int, actor: int, *, expected_slot=None) -> None:
         async with self._lock:
             self._require_feature_locked(chat, 'arena')
+            self._character_require_locked(actor,expected_slot)
             self.connection.execute(
                 "DELETE FROM arena_sprites WHERE chat_id=? AND user_id=?", (RPG_SCOPE, actor)
             )
+            self._character_save_locked(actor)
             self.connection.commit()
 
     async def arena_sprite_info(self, chat: int, user: int) -> dict:
@@ -1420,7 +1432,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
     async def arena_sprite_png(self, key: str) -> bytes | None:
         async with self._lock:
             row = self.connection.execute(
-                "SELECT png FROM arena_sprites WHERE chat_id=0 AND sprite_key=? LIMIT 1", (key,)
+                "SELECT png FROM arena_sprites WHERE chat_id=0 AND sprite_key=? UNION ALL SELECT png FROM arena_character_slots WHERE sprite_key=? LIMIT 1", (key,key)
             ).fetchone()
             return bytes(row["png"]) if row else None
 
@@ -1438,10 +1450,11 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                         combat_capacity=0,combat_count=0,global_progression=True)
 
     async def arena_edit_profile(
-        self, chat: int, actor: int, user: int, personal: bool, action: str, value
+        self, chat: int, actor: int, user: int, personal: bool, action: str, value, *, expected_slot=None
     ) -> str:
         async with self._lock:
             self._require_feature_locked(chat, 'arena')
+            self._character_require_locked(actor,expected_slot)
             if not personal or actor != user:
                 raise ValueError('Можно менять только своего личного персонажа.')
             profile = self._arena_profile_locked(chat, user, personal)

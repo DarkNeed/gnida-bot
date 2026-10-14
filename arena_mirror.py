@@ -220,6 +220,7 @@ class MirrorMixin:
                 row["personal"],
             ),
         )
+        self.connection.execute('UPDATE arena_battles SET a_character_slot=? WHERE token=?',(self._character_active_locked(row['actor_id']),token))
         data.update(
             phase="combat",
             battle_token=token,
@@ -230,9 +231,10 @@ class MirrorMixin:
             previous_class=enemy["class_id"],
         )
 
-    async def arena_mirror_start(self, chat, actor, fighter=None, personal=True):
+    async def arena_mirror_start(self, chat, actor, fighter=None, personal=True, *, expected_slot=None):
         async with self._lock:
             self._require_feature_locked(chat, 'arena')
+            self._character_require_locked(actor,expected_slot)
             if not personal or (fighter and fighter != actor):
                 raise ValueError('Забеги доступны только личным персонажам.')
             self._mirror_cleanup_locked(chat)

@@ -700,11 +700,12 @@ class ArenaMarketMixin(ForgeMixin):
         )
 
     async def arena_use_item(
-        self, chat, actor, item, user, personal=True, confirm=False, replace_skill=None
+        self, chat, actor, item, user, personal=True, confirm=False, replace_skill=None, *, expected_slot=None
     ):
         async with self._lock:
             try:
                 self._require_feature_locked(chat, 'arena')
+                self._character_require_locked(actor,expected_slot)
                 if not personal or actor != user:
                     raise ValueError('Предмет можно применить только к своему личному персонажу.')
                 chat = RPG_SCOPE

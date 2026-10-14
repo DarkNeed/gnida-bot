@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from arena_global import RPG_SCOPE
+from arena_characters import CHARACTER_PACK, CHARACTER_PRICE, CHARACTER_TERMS_VERSION
 from arena_pets import PETS, PET_ODDS, PET_PACKS, PET_TERMS_VERSION, PET_MILESTONES, pet_snapshot
 
 
@@ -84,7 +85,7 @@ class PetMixin:
             "SELECT * FROM pet_openings WHERE user_id=? ORDER BY id DESC LIMIT 12", (user,))]
         history = [dict(r) for r in self.connection.execute(
             "SELECT id,pack,tickets,stars,status,created_at,paid_at FROM pet_orders WHERE user_id=? ORDER BY id DESC LIMIT 12", (user,))]
-        refund_pending = bool(self.connection.execute("SELECT 1 FROM pet_orders WHERE user_id=? AND status='refunding'", (user,)).fetchone())
+        refund_pending = bool(self.connection.execute("SELECT 1 FROM pet_orders WHERE user_id=? AND status='refunding' AND pack<>'characters'", (user,)).fetchone())
         chat_row = self.connection.execute("SELECT title FROM chats WHERE chat_id=?", (chat,)).fetchone() if chat else None
         return dict(wallet=dict(tickets=max(0,wallet["tickets"]), ticket_debt=max(0,-wallet["tickets"]),
                                 food=wallet["food"], essence=wallet["essence"], shards=wallet["shards"], revision=wallet["revision"]),
@@ -130,7 +131,7 @@ class PetMixin:
                     wallet = self._pet_revision_locked(user,revision)
                     if wallet["tickets"] <= 0:
                         raise ValueError("Нет билетов на посылку.")
-                    if self.connection.execute("SELECT 1 FROM pet_orders WHERE user_id=? AND status='refunding'", (user,)).fetchone():
+                    if self.connection.execute("SELECT 1 FROM pet_orders WHERE user_id=? AND status='refunding' AND pack<>'characters'", (user,)).fetchone():
                         raise ValueError("Сначала дождитесь завершения возврата.")
                     rng = rng or random.SystemRandom()
                     odds = next_odds(wallet)
@@ -217,13 +218,20 @@ class PetMixin:
         return reward
 
     async def pet_create_order(self,user,pack,terms_version):
-        if pack not in PET_PACKS or terms_version!=PET_TERMS_VERSION: raise ValueError("Примите актуальные условия покупки.")
+        packs={**PET_PACKS,CHARACTER_PACK:(0,CHARACTER_PRICE)}
+        expected_terms=CHARACTER_TERMS_VERSION if pack==CHARACTER_PACK else PET_TERMS_VERSION
+        if pack not in packs or terms_version!=expected_terms: raise ValueError("Примите актуальные условия покупки.")
         async with self._lock:
             try:
                 self.connection.execute("BEGIN IMMEDIATE")
                 self._pet_wallet_locked(user)
-                tickets,stars=PET_PACKS[pack]
+                tickets,stars=packs[pack]
                 now=int(time.time())
+                if pack==CHARACTER_PACK:
+                    if self._character_unlocked_locked(user):raise ValueError('Все дополнительные слоты уже открыты.')
+                    pending=self.connection.execute("SELECT * FROM pet_orders WHERE user_id=? AND pack=? AND status='pending' AND created_at>? ORDER BY id DESC LIMIT 1",(user,pack,now-3600)).fetchone()
+                    if pending:
+                        self.connection.commit();return dict(pending)
                 recent = self.connection.execute("SELECT count(*) AS n FROM pet_orders WHERE user_id=? AND created_at>?", (user, now-300)).fetchone()["n"]
                 if recent >= 5:
                     raise ValueError("Слишком много счетов. Подождите пять минут.")
@@ -239,6 +247,8 @@ class PetMixin:
             row=self.connection.execute("SELECT * FROM pet_orders WHERE payload=?",(payload,)).fetchone()
             if not row or row["user_id"]!=user or currency!="XTR" or type(total) is not int or total!=row["stars"] or row["status"]!="pending" or int(time.time())-row["created_at"]>3600:
                 raise ValueError("Счёт недействителен. Создайте новый в магазине питомцев.")
+            if row['pack']==CHARACTER_PACK and self._character_unlocked_locked(user):
+                raise ValueError('Все дополнительные слоты уже открыты.')
             return dict(row)
 
     async def pet_payment(self,user,payload,currency,total,charge):
@@ -252,6 +262,8 @@ class PetMixin:
                 if row["charge_id"]==charge:
                     self.connection.commit(); return dict(row, replay=True)
                 if row["status"]!="pending": raise ValueError("Этот заказ уже оплачен.")
+                if row['pack']==CHARACTER_PACK and self._character_unlocked_locked(user):
+                    raise ValueError('Слоты уже открыты другим платежом. Требуется возврат второго платежа.')
                 self._pet_wallet_locked(user)
                 self.connection.execute("UPDATE pet_orders SET status='paid',charge_id=?,paid_at=? WHERE id=?",(charge,int(time.time()),row["id"]))
                 receipt = self.connection.execute("SELECT * FROM pet_refund_receipts WHERE charge_id=?", (charge,)).fetchone()
@@ -264,6 +276,7 @@ class PetMixin:
                     self.connection.commit()
                     return dict(row, status="refunded", charge_id=charge, replay=False)
                 self.connection.execute("UPDATE pet_wallets SET tickets=tickets+?,revision=revision+1 WHERE user_id=?",(row["tickets"],user))
+                if row['pack']==CHARACTER_PACK:self._character_license_changed_locked(user)
                 result=dict(row,status="paid",charge_id=charge,replay=False)
                 self.connection.commit(); return result
             except Exception: self.connection.rollback(); raise
@@ -274,7 +287,9 @@ class PetMixin:
                 self.connection.execute("BEGIN IMMEDIATE")
                 row=self.connection.execute("SELECT * FROM pet_orders WHERE id=?",(order_id,)).fetchone()
                 if not row or row["status"] not in {"paid","refunding","refunded"}: raise ValueError("Нет оплаченного заказа.")
-                if row["status"]=="paid": self.connection.execute("UPDATE pet_orders SET status='refunding' WHERE id=?",(order_id,))
+                if row["status"]=="paid":
+                    self.connection.execute("UPDATE pet_orders SET status='refunding' WHERE id=?",(order_id,))
+                    if row['pack']==CHARACTER_PACK:self._character_license_changed_locked(row['user_id'])
                 self.connection.commit(); return dict(row)
             except Exception: self.connection.rollback(); raise
 
@@ -307,6 +322,7 @@ class PetMixin:
                     if row["status"] != "refunded":
                         self.connection.execute("UPDATE pet_wallets SET tickets=tickets-?,revision=revision+1 WHERE user_id=?", (row["tickets"],row["user_id"]))
                         self.connection.execute("UPDATE pet_orders SET status='refunded',refund_at=? WHERE id=?", (receipt["received_at"],row["id"]))
+                        if row['pack']==CHARACTER_PACK:self._character_license_changed_locked(row['user_id'])
                 self.connection.execute("UPDATE pet_payment_issues SET refunded_at=? WHERE payload=? AND charge_id=? AND currency=? AND total=?", (receipt["received_at"],payload,charge,currency,total))
                 self.connection.commit()
             except Exception:
@@ -348,5 +364,6 @@ class PetMixin:
                     # Spent tickets create explicit debt, never a second free paid pack.
                     self.connection.execute("UPDATE pet_wallets SET tickets=tickets-?,revision=revision+1 WHERE user_id=?",(row["tickets"],row["user_id"]))
                     self.connection.execute("UPDATE pet_orders SET status='refunded',refund_at=? WHERE id=?",(int(time.time()),order_id))
+                    if row['pack']==CHARACTER_PACK:self._character_license_changed_locked(row['user_id'])
                 self.connection.commit(); return dict(row,status="refunded")
             except Exception: self.connection.rollback(); raise

@@ -18,7 +18,7 @@ async def raid_view(db, row, actor):
     data = json.loads(row["data_json"]) if row["data_json"] else None
     boss_info = BOSSES.get(row.get("boss_id", "iron"), BOSSES["iron"])
 
-    async def decorate(side, fighter, boss=False):
+    async def decorate(side, fighter, boss=False, character_slot=1):
         cls = classes.get(side["class_id"], classes["ragamuffin"])
         user = await db.get_user(row["chat_id"], fighter) if fighter else None
         side.update(
@@ -50,7 +50,7 @@ async def raid_view(db, row, actor):
             - 1
         )
         if not boss:
-            side.update(await db.arena_sprite_info(row["chat_id"], fighter))
+            side.update(await db.arena_character_sprite_info(fighter,character_slot))
         elif boss_info.get("sprite"):
             side["class_avatar_url"] = boss_info["sprite"]
         if boss and boss_info.get("ally_sprite"):
@@ -117,7 +117,7 @@ async def raid_view(db, row, actor):
     if data:
         await decorate(data["boss"], 0, True)
         for key, player in data["players"].items():
-            await decorate(player["fighter"], player["fighter_id"])
+            await decorate(player["fighter"], player["fighter_id"],character_slot=player.get('character_slot',1))
             player["ready"] = player["selected"] is not None
             # Other players see only readiness, not the selected ability.
             if player["actor_id"] != actor:

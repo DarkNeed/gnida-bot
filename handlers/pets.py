@@ -9,6 +9,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from arena_links import arena_link
 from arena_pets import PET_TERMS_VERSION
+from arena_characters import CHARACTER_PACK, CHARACTER_TERMS, CHARACTER_TERMS_VERSION
 from custom_commands import CUSTOM_COMMAND_OWNER_ID
 
 PET_TERMS = (
@@ -41,7 +42,7 @@ def create_pet_router(db, username, payments_enabled=False):
 
     @router.message(F.text.regexp(re.compile(r"^/terms(?:@\w+)?\s*$", re.I)))
     async def terms(message):
-        await message.answer(PET_TERMS)
+        await message.answer(PET_TERMS+'\n\nДополнительные персонажи:\n'+CHARACTER_TERMS+'\nВерсия: '+CHARACTER_TERMS_VERSION)
 
     @router.message(F.text.regexp(re.compile(r"^/paysupport(?:@\w+)?(?:\s.*)?$", re.I | re.S)))
     async def support(message):
@@ -59,7 +60,7 @@ def create_pet_router(db, username, payments_enabled=False):
                 logging.exception("Could not deliver pet support request")
                 await message.answer("Не удалось передать обращение. Используйте кнопку связи с владельцем ниже.")
         view = await db.pet_view(message.from_user.id)
-        lines = [f"№{o['id']}: {o['tickets']} бил. / {o['stars']} Stars · {o['status']}" for o in view["orders"]]
+        lines = [f"№{o['id']}: "+('4 слота персонажей' if o['pack']==CHARACTER_PACK else f"{o['tickets']} бил.")+f" / {o['stars']} Stars · {o['status']}" for o in view["orders"]]
         await message.answer("Поддержка оплат: /paysupport НОМЕР ЗАКАЗА И ОПИСАНИЕ ПРОБЛЕМЫ — передам обращение владельцу. Также можно написать по кнопке ниже.\n"
                              + ("Ваши последние заказы:\n" + "\n".join(lines) if lines else "Оплаченных заказов пока нет."),
                              reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
@@ -106,7 +107,9 @@ def create_pet_router(db, username, payments_enabled=False):
             return
         if not order["replay"]:
             if order["status"] == "refunded":
-                await message.answer(f"Заказ №{order['id']}: Telegram уже вернул оплату, билеты не начислены. Поддержка: /paysupport")
+                await message.answer(f"Заказ №{order['id']}: Telegram уже вернул оплату, покупка не выдана. Поддержка: /paysupport")
+            elif order['pack']==CHARACTER_PACK:
+                await message.answer(f"✅ Заказ №{order['id']} оплачен. Открыты все 4 дополнительных слота: всего 5 персонажей во всех чатах. Выбирай персонажа в арене. Поддержка: /paysupport")
             else:
                 await message.answer(f"✅ Заказ №{order['id']} оплачен. Начислено {order['tickets']} билетов. Питомцы: /питомцы\nПоддержка: /paysupport")
 
@@ -115,16 +118,16 @@ def create_pet_router(db, username, payments_enabled=False):
         p = message.refunded_payment
         await db.pet_receive_refund(p.invoice_payload, p.currency, p.total_amount, p.telegram_payment_charge_id)
 
-    @router.message(F.text.regexp(re.compile(r"^/(?:возвратпитомцев|подтвердитьвозвратпитомцев)\s+\d+\s*$", re.I)))
+    @router.message(F.text.regexp(re.compile(r"^/(?:возвратпитомцев|подтвердитьвозвратпитомцев|возвратслотов|подтвердитьвозвратслотов)\s+\d+\s*$", re.I)))
     async def refund(message):
         if message.from_user.id != CUSTOM_COMMAND_OWNER_ID or message.chat.type != "private":
             return
         order_id = int(message.text.split()[1])
-        confirm = message.text.split()[0].lower() == "/подтвердитьвозвратпитомцев"
+        confirm = message.text.split()[0].lower().startswith('/подтвердитьвозврат')
         async with refund_lock:
             try:
                 if confirm:
-                    await db.pet_finish_refund(order_id)
+                    order = await db.pet_finish_refund(order_id)
                     await message.answer("Возврат отмечен завершённым. Используйте подтверждение только после проверки возврата Stars в Telegram.")
                     return
                 order = await db.pet_start_refund(order_id)
@@ -133,12 +136,15 @@ def create_pet_router(db, username, payments_enabled=False):
                     return
                 await message.bot.refund_star_payment(user_id=order["user_id"], telegram_payment_charge_id=order["charge_id"])
                 await db.pet_finish_refund(order_id)
-                await message.answer(f"Заказ №{order_id}: Stars возвращены, билеты вычтены.")
+                await message.answer(f"Заказ №{order_id}: Stars возвращены. "+('Дополнительные слоты закрыты, персонажи сохранены.' if order['pack']==CHARACTER_PACK else 'Билеты вычтены.'))
             except ValueError as error:
                 await message.answer(str(error))
             except TelegramAPIError:
                 logging.exception("Pet refund needs reconciliation: %s", order_id)
-                await message.answer("Telegram не подтвердил возврат. Открытия для аккаунта приостановлены. Проверь статус платежа; повтори возврат или после проверки напиши /подтвердитьвозвратпитомцев НОМЕР.")
+                if order['pack']==CHARACTER_PACK:
+                    await message.answer('Telegram не подтвердил возврат. Дополнительные слоты временно закрыты, персонажи сохранены. Проверь статус платежа; повтори возврат или после проверки напиши /подтвердитьвозвратслотов НОМЕР.')
+                else:
+                    await message.answer("Telegram не подтвердил возврат. Открытия для аккаунта приостановлены. Проверь статус платежа; повтори возврат или после проверки напиши /подтвердитьвозвратпитомцев НОМЕР.")
 
     @router.message(F.text.regexp(re.compile(r"^/возвратсбояпитомцев\s+\d+\s*$", re.I)))
     async def issue_refund(message):
