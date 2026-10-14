@@ -455,7 +455,7 @@ function menuScreen(data){
     const m=data.merchant||{offers:[]};
     body+='<div class="card"><h2>Странствующий торговец</h2><p>Баланс: '+(data.balance||0)+' ₣</p><p class="muted">'+(m.visit_id?'Уходит: '+esc(new Date(m.ends*1000).toLocaleString('ru-RU')):'Сейчас торговца нет. Следующее появление: '+esc(m.next_starts?new Date(m.next_starts*1000).toLocaleString('ru-RU'):'скоро'))+'</p>'+button('Обновить товары','refresh','small')+'</div>';
     body+=(m.offers||[]).map(item=>'<div class="card"><h2>'+esc(item.name)+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+'<p class="muted">Можно купить ещё '+item.remaining+' за этот визит.</p>'+button('Купить — '+item.price+' ₣','buy:'+item.id,'primary',!item.remaining||(data.balance||0)<item.price)+'</div>').join('');
-    body+='<div class="note">Два визита в день по два часа. Купленные предметы лежат в инвентаре. Предметы попадают в общий инвентарь аккаунта. Оплата франками выбранного чата; ассортимент и лимиты предложений относятся к нему.</div>';
+    body+='<div class="note">Два визита в день по два часа, с 10:00 до 22:00 МСК. Время прихода и ассортимент едины для всех чатов. Лимиты покупок общие для аккаунта и всех его персонажей. Оплата франками выбранного чата; покупки попадают в общий инвентарь.</div>';
   }else if(page==="inventory"){
     const targets=[data.personal].filter(Boolean);
     body+='<div class="card"><h2>Инвентарь</h2><p class="muted">Предметы общие для аккаунта. Трактат расходуется при изучении, смена класса требует подтверждения. Передавать можно по номеру предмета.</p>'+button('К торговцу','tab:merchant')+'</div>';

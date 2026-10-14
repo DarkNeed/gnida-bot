@@ -116,7 +116,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         with patch("arena_market.CLASS_SCROLL_CHANCE", 1):
             await self.db.arena_market_view(1, 10)
         visit = self.db.connection.execute(
-            "SELECT * FROM arena_merchant_visits WHERE chat_id=1 ORDER BY starts LIMIT 1"
+            "SELECT * FROM arena_merchant_visits WHERE chat_id=0 ORDER BY starts LIMIT 1"
         ).fetchone()
         now = self.now
         self.db.connection.execute(
@@ -213,12 +213,13 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
             shop["offers"],
         )
 
-    async def test_atomic_purchase_limit_and_no_foreign_chat_purchase(self):
+    async def test_atomic_purchase_limit_shared_across_chats(self):
         offer = next(
             o for o in (await self.open_shop())["offers"] if o["kind"] == "passive"
         )
         results = await asyncio.gather(
-            *(self.db.arena_buy_item(1, 10, offer["id"]) for _ in range(2)),
+            self.db.arena_buy_item(1, 10, offer['id']),
+            self.db.arena_buy_item(2, 10, offer['id']),
             return_exceptions=True,
         )
         self.assertEqual(sum(isinstance(r, ValueError) for r in results), 1)
@@ -577,28 +578,27 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_merchant_notification_claims_are_persistent_and_once_only(self):
         await self.db.arena_menu(-100, 10)
-        await self.db.arena_market_view(-100, 10)
-        now = self.now
-        self.db.connection.execute("UPDATE arena_merchant_visits SET notified=1")
-        self.db.connection.execute(
-            "UPDATE arena_merchant_visits SET starts=?,ends=?,notified=0 WHERE chat_id=-100 AND visit=1",
-            (now - 1, now + 100),
-        )
-        self.db.connection.commit()
+        await self.db.arena_menu(-200, 10)
+        shop = await self.open_shop()
         due = await self.db.arena_due_merchants()
-        self.assertEqual(len(due), 2)  # Today's and tomorrow's test rows forced active.
+        self.assertEqual({r['chat_id'] for r in due}, {-100, -200})
+        self.assertEqual({r['id'] for r in due}, {shop['visit_id']})
+        self.assertEqual(await self.db.arena_due_merchants(), [])
+        await self.db.close()
+        await self.db.connect()
         self.assertEqual(await self.db.arena_due_merchants(), [])
 
     async def test_visit_start_and_end_stay_within_new_moscow_hours(self):
         for chat, extreme in ((1, "min"), (2, "max")):
+            now = self.now + (chat - 1) * 2 * 86400
             with patch(
                 "arena_market.random.SystemRandom.randint",
                 side_effect=lambda lo, hi: lo if extreme == "min" else hi,
-            ):
+            ), patch('arena_market.market_now', return_value=now):
                 await self.db.arena_market_view(chat, 10)
             visits = self.db.connection.execute(
-                "SELECT * FROM arena_merchant_visits WHERE chat_id=? ORDER BY day,visit",
-                (chat,),
+                "SELECT * FROM arena_merchant_visits WHERE chat_id=0 AND day>=? ORDER BY day,visit",
+                (datetime.fromtimestamp(now, MSK).date().isoformat(),),
             ).fetchall()
             self.assertEqual(len(visits), 4)
             for visit in visits:
@@ -614,10 +614,10 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_menu(-100, 10)
         await self.db.arena_market_view(-100, 10)
         visit = self.db.connection.execute(
-            "SELECT id FROM arena_merchant_visits WHERE chat_id=-100 ORDER BY starts LIMIT 1"
+            "SELECT id FROM arena_merchant_visits WHERE chat_id=0 ORDER BY starts LIMIT 1"
         ).fetchone()["id"]
         midnight = int(datetime(2026, 10, 10, tzinfo=MSK).timestamp())
-        self.db.connection.execute("UPDATE arena_merchant_visits SET notified=1")
+        self.db.connection.execute('UPDATE arena_merchant_visits SET ends=0 WHERE id<>?', (visit,))
         self.db.connection.execute(
             "UPDATE arena_merchant_visits SET starts=?,ends=? WHERE id=?",
             (midnight, midnight + 86400, visit),
@@ -629,9 +629,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
             (22 * 3600 - 1, True),
             (22 * 3600, False),
         ):
-            self.db.connection.execute(
-                "UPDATE arena_merchant_visits SET notified=0 WHERE id=?", (visit,)
-            )
+            self.db.connection.execute('DELETE FROM arena_merchant_notifications')
             self.db.connection.commit()
             with patch("arena_market.market_now", return_value=midnight + offset):
                 merchant = (await self.db.arena_market_view(-100, 10))["merchant"]
@@ -675,7 +673,7 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
             (midnight + 7 * 3600, midnight + 9 * 3600, shop["visit_id"]),
         )
         evening = self.db.connection.execute(
-            "SELECT id FROM arena_merchant_visits WHERE chat_id=1 AND day='2026-10-10' AND visit=2"
+            "SELECT id FROM arena_merchant_visits WHERE chat_id=0 AND day='2026-10-10' AND visit=2"
         ).fetchone()["id"]
         self.db.connection.execute(
             "UPDATE arena_merchant_visits SET starts=?,ends=?,notified=0 WHERE id=?",

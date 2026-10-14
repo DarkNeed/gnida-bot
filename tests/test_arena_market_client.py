@@ -144,6 +144,9 @@ process.stdout.write(c.out||app.innerHTML);
 
     def test_merchant_affordable_and_expensive_disabled(self):
         body = self.render("merchant")
+        self.assertIn('ассортимент едины для всех чатов', body)
+        self.assertIn('Лимиты покупок общие для аккаунта', body)
+        self.assertIn('Оплата франками выбранного чата', body)
         self.assertIn('data-do="buy:7">', body)
         self.assertIn('data-do="buy:8" disabled', body)
         self.assertIn("Баланс: 100", body)

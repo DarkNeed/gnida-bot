@@ -3,7 +3,10 @@
 from __future__ import annotations
 import json
 import random
+import sqlite3
 import time
+import uuid
+from contextlib import closing
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from arena_engine import (
@@ -86,6 +89,12 @@ class ArenaMarketMixin(ForgeMixin):
                 quantity INTEGER NOT NULL, PRIMARY KEY(offer_id,user_id)
             );
             CREATE TABLE IF NOT EXISTS arena_market_migrations(name TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS arena_merchant_notifications(
+                day TEXT NOT NULL, visit INTEGER NOT NULL, chat_id INTEGER NOT NULL,
+                PRIMARY KEY(day,visit,chat_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_merchant_period ON arena_merchant_visits(day,visit);
+            CREATE INDEX IF NOT EXISTS idx_merchant_offer_content ON arena_merchant_offers(visit_id,kind,content_id);
         """)
         if not self.connection.execute(
             "SELECT 1 FROM arena_market_migrations WHERE name='inventory_v1'"
@@ -161,6 +170,42 @@ class ArenaMarketMixin(ForgeMixin):
                 "INSERT INTO arena_market_migrations VALUES('merchant_hours_10_22_v1')"
             )
         self.connection.commit()
+        self._connect_global_merchant()
+
+    def _connect_global_merchant(self):
+        name = 'account_merchant_v1'
+        if self.connection.execute('SELECT 1 FROM arena_market_migrations WHERE name=?', (name,)).fetchone():
+            return
+        legacy = self.connection.execute('SELECT 1 FROM arena_merchant_visits WHERE chat_id<>0').fetchone()
+        if legacy:
+            # Keep an independent, WAL-consistent snapshot before promoting old
+            # visits. Historical offers/purchases remain untouched below.
+            backup_dir = self.path.parent / 'backups'
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / ('before-global-merchant-' + str(int(time.time())) + '-' + uuid.uuid4().hex[:8] + '.sqlite3')
+            with closing(sqlite3.connect(self.path)) as source:
+                with closing(sqlite3.connect(backup_path)) as snapshot:
+                    source.backup(snapshot)
+        with self.connection:
+            self.connection.execute('''INSERT OR IGNORE INTO arena_merchant_notifications
+                SELECT day,visit,chat_id FROM arena_merchant_visits WHERE chat_id<>0 AND notified=1''')
+            # Adopt one existing schedule/assortment for each period, preserving
+            # its IDs and end time. Never reroll or revive an expired visit.
+            for row in self.connection.execute('''SELECT MIN(id) AS id,day,visit
+                FROM arena_merchant_visits GROUP BY day,visit''').fetchall():
+                if not self.connection.execute('SELECT 1 FROM arena_merchant_visits WHERE chat_id=0 AND day=? AND visit=?',
+                                               (row['day'], row['visit'])).fetchone():
+                    self.connection.execute('UPDATE arena_merchant_visits SET chat_id=0 WHERE id=?', (row['id'],))
+            self.connection.execute('INSERT INTO arena_market_migrations VALUES(?)', (name,))
+
+    def _arena_merchant_bought_locked(self, visit, actor, kind, content):
+        # Count old local purchases too, including offers not chosen as the
+        # canonical global offer. Migrating must not reset anyone's limits.
+        return self.connection.execute('''SELECT COALESCE(SUM(p.quantity),0) AS quantity
+            FROM arena_merchant_visits v JOIN arena_merchant_offers o ON o.visit_id=v.id
+            JOIN arena_merchant_purchases p ON p.offer_id=o.id
+            WHERE v.day=? AND v.visit=? AND o.kind=? AND o.content_id=? AND p.user_id=?''',
+            (visit['day'], visit['visit'], kind, content, actor)).fetchone()['quantity']
 
     def _arena_add_item_locked(self, chat, owner, kind, content, rarity, quantity=1):
         chat = RPG_SCOPE
@@ -460,6 +505,7 @@ class ArenaMarketMixin(ForgeMixin):
         ]
 
     def _arena_make_visits_locked(self, chat, day):
+        chat = RPG_SCOPE
         rng = random.SystemRandom()
         midnight = int(
             datetime.combine(day, datetime.min.time(), tzinfo=MSK).timestamp()
@@ -532,26 +578,26 @@ class ArenaMarketMixin(ForgeMixin):
             self._arena_make_visits_locked(chat, date)
         visit = self.connection.execute(
             "SELECT * FROM arena_merchant_visits WHERE chat_id=? AND starts<=? AND ends>? ORDER BY starts DESC LIMIT 1",
-            (chat, now, now),
+            (RPG_SCOPE, now, now),
         ).fetchone()
         if not merchant_is_open(now):
             visit = None
         next_visit = self.connection.execute(
             "SELECT starts FROM arena_merchant_visits WHERE chat_id=? AND starts>? ORDER BY starts LIMIT 1",
-            (chat, now),
+            (RPG_SCOPE, now),
         ).fetchone()
         offers = []
         if visit:
             catalog = self._arena_shop_catalog_locked()
             for row in self.connection.execute(
-                """SELECT o.*,COALESCE(p.quantity,0) AS bought FROM arena_merchant_offers o
-                LEFT JOIN arena_merchant_purchases p ON p.offer_id=o.id AND p.user_id=? WHERE o.visit_id=? ORDER BY o.id""",
-                (actor, visit["id"]),
+                "SELECT * FROM arena_merchant_offers WHERE visit_id=? ORDER BY id",
+                (visit["id"],),
             ):
                 item = self._arena_describe_item_locked(row, catalog)
                 if not self._arena_content_enabled_locked(chat,row['kind'],row['content_id']):
                     continue
-                item["remaining"] = row["per_user"] - row["bought"]
+                item['bought'] = self._arena_merchant_bought_locked(visit, actor, row['kind'], row['content_id'])
+                item["remaining"] = max(0, row["per_user"] - item['bought'])
                 offers.append(item)
         return dict(
             visit_id=visit["id"] if visit else None,
@@ -567,25 +613,25 @@ class ArenaMarketMixin(ForgeMixin):
             chats = self.connection.execute(
                 "SELECT DISTINCT chat_id FROM arena_account_chats WHERE chat_id<0"
             ).fetchall()
-            for row in chats:
-                if self._feature_enabled_locked(row['chat_id'],'arena'):
-                    self._arena_make_visits_locked(row["chat_id"], day)
+            chats = [row['chat_id'] for row in chats if self._feature_enabled_locked(row['chat_id'], 'arena')]
+            if chats:
+                self._arena_make_visits_locked(RPG_SCOPE, day)
             if not merchant_is_open(now):
                 self.connection.commit()
                 return []
-            due = [
-                dict(r)
-                for r in self.connection.execute(
-                    "SELECT * FROM arena_merchant_visits WHERE chat_id<0 AND starts<=? AND ends>? AND notified=0",
-                    (now, now),
-                )
-                if self._feature_enabled_locked(r['chat_id'],'arena')
-            ]
+            visit = self.connection.execute('''SELECT * FROM arena_merchant_visits
+                WHERE chat_id=0 AND starts<=? AND ends>? ORDER BY starts DESC LIMIT 1''', (now, now)).fetchone()
+            due = []
+            if visit:
+                for chat in chats:
+                    if not self.connection.execute('SELECT 1 FROM arena_merchant_notifications WHERE day=? AND visit=? AND chat_id=?',
+                                                   (visit['day'], visit['visit'], chat)).fetchone():
+                        due.append(dict(visit, chat_id=chat))
             # Claim notifications before sending: no duplicated chat posts after restart.
             for row in due:
                 self.connection.execute(
-                    "UPDATE arena_merchant_visits SET notified=1 WHERE id=?",
-                    (row["id"],),
+                    "INSERT INTO arena_merchant_notifications VALUES(?,?,?)",
+                    (row['day'], row['visit'], row['chat_id']),
                 )
             self.connection.commit()
             return due
@@ -594,17 +640,19 @@ class ArenaMarketMixin(ForgeMixin):
         async with self._lock:
             try:
                 self._require_feature_locked(chat, 'arena')
+                if not self.connection.in_transaction:
+                    self.connection.execute('BEGIN IMMEDIATE')
                 now = market_now()
                 if not merchant_is_open(now):
                     raise ValueError("Торговец доступен только с 10:00 до 22:00 МСК.")
                 row = self.connection.execute(
-                    """SELECT o.* FROM arena_merchant_offers o JOIN arena_merchant_visits v ON v.id=o.visit_id
+                    """SELECT o.*,v.day,v.visit FROM arena_merchant_offers o JOIN arena_merchant_visits v ON v.id=o.visit_id
                     WHERE o.id=? AND v.chat_id=? AND v.starts<=? AND v.ends>?""",
-                    (offer_id, chat, now, now),
+                    (offer_id, RPG_SCOPE, now, now),
                 ).fetchone()
                 if not row:
                     raise ValueError(
-                        "Торговец уже ушёл или предложение не из этого чата."
+                        "Предложение торговца устарело. Обнови товары."
                     )
                 if not self._arena_content_enabled_locked(chat,row['kind'],row['content_id']):
                     raise ValueError("Модуль этого предмета выключен в чате.")
@@ -613,11 +661,8 @@ class ArenaMarketMixin(ForgeMixin):
                     row["content_id"],
                 ) not in self._arena_shop_catalog_locked():
                     raise ValueError("Предмет больше недоступен.")
-                bought = self.connection.execute(
-                    "SELECT quantity FROM arena_merchant_purchases WHERE offer_id=? AND user_id=?",
-                    (offer_id, actor),
-                ).fetchone()
-                if bought and bought["quantity"] >= row["per_user"]:
+                bought = self._arena_merchant_bought_locked(row, actor, row['kind'], row['content_id'])
+                if bought >= row["per_user"]:
                     raise ValueError("Лимит покупки этого товара исчерпан.")
                 if not self.connection.execute(
                     "UPDATE franc_balances SET balance=balance-?,updated_at=? WHERE chat_id=? AND user_id=? AND balance>=?",
@@ -876,6 +921,7 @@ class ArenaMarketMixin(ForgeMixin):
 
     async def arena_market_view(self, chat, actor):
         async with self._lock:
+            self._require_feature_locked(chat, 'arena')
             balance = self.connection.execute(
                 "SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?",
                 (chat, actor),
