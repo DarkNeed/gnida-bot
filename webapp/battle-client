@@ -81,10 +81,15 @@ function fighterStatuses(side){
     if(rpg[id]>0)items.push({id:'rpg:'+id,name,icon,count:rpg[id]+'/3',detail:detail+' Это заряды, не длительность.'});
   }
   if(rpg.weapon_open)items.push({id:'rpg:weapon',name:'Оружие раскрыто',icon:10,count:'1',detail:'Тяжёлый разрез сильнее, дороже и пробивает защиту. Возврат крови слабее, чем в сложенной форме.'});
-  if(rpg.visceral_ready&&(side.own_turns||0)<rpg.visceral_until)items.push({id:'rpg:visceral',name:'Висцеральная атака готова',icon:14,count:String(rpg.visceral_until-(side.own_turns||0)),detail:'Открытие после прерывания. Расходуется при попытке висцеральной атаки; число — оставшиеся собственные действия.'});
+  if(rpg.visceral_ready&&(side.own_turns||0)<rpg.visceral_until)items.push({id:'rpg:visceral',name:'Висцеральная атака готова',icon:14,count:String(rpg.visceral_until-(side.own_turns||0)),detail:'Открытие после прерывания. '+(side.archclass_id==='hunter_moon'&&side.level>=18?'Полный промах сохраняет окно до его истечения.':'Расходуется при попытке висцеральной атаки.')+' Число — оставшиеся собственные действия.'});
   if(rpg.rally>0)items.push({id:'rpg:rally',name:'Кровавый ответ',icon:1,count:String(rpg.rally),detail:'Можно вернуть до '+esc(rpg.rally)+' недавно потерянного HP следующей успешной атакой. Пропуск или поддержка теряет запас.'});
   if(rpg.summon>0)items.push({id:'rpg:skeleton',name:'Скелет',icon:12,count:String(rpg.summon),detail:'Атакует после следующего действия хозяина. Осталось атак: '+esc(rpg.summon)+'.'});
-  if(rpg.echo_ready)items.push({id:'rpg:echo',name:'Мановое эхо',icon:5,count:'1',detail:'Следующая магическая атака: +35% урона. Расходуется при попытке.'});
+  if(rpg.echo_ready)items.push({id:'rpg:echo',name:'Мановое эхо',icon:5,count:'1',detail:'Следующая платная родная атака: +35% урона; с 12 уровня −10 маны. Полный промах сохраняет Эхо.'});
+  for(const [id,name,icon,max,detail] of [['onslaught','Натиск',4,3,'Усиливает родные атаки; повышает входящий урон.'],['heat','Жар',4,5,'3: горение и возможность возрождения. 5: Всё обратить в пепел.'],['steadfast','Стойкость',6,3,'Накапливается от прямого урона под защитой; 3 открывает Бастион.']]){
+    if(rpg[id]>0)items.push({id:'rpg:'+id,name,icon,count:rpg[id]+'/'+max,detail});
+  }
+  if(rpg.moon_mark&&rpg.visceral_ready&&(side.own_turns||0)<rpg.visceral_until)items.push({id:'rpg:moon',name:'Лунная метка',icon:14,count:'1',detail:'Висцеральные атаки +25% урона. Полный промах с 18 уровня сохраняет окно до обычного истечения.'});
+  if(rpg.beast_fury_until>(side.own_turns||0))items.push({id:'rpg:beast_fury',name:'Ярость первородного',icon:4,count:String(rpg.beast_fury_until-(side.own_turns||0)),detail:'Родные удары пробивают защиту; входящий урон повышен.'});
   const epic=side.epic_state||{},traits=(side.passive_details||[]).flatMap(p=>p.effects||[]);
   if(epic.plan_b_ready&&traits.some(e=>e.kind==='epic_plan_b'))items.push({id:'epic:plan_b',name:'План Б',icon:10,count:'1',detail:'Следующая атака: +25 точности и +30% урона. Расходуется при попытке атаки.'});
   if(side.hp>0&&side.hp<=side.stats?.max_hp*.35&&traits.some(e=>e.kind==='epic_desperation'))items.push({id:'epic:desperation',name:'Мне уже нечего терять',icon:4,count:'+50%',detail:'Урон ×1,5, пока HP не выше 35%. Штрафа к защите нет.'});
@@ -703,8 +708,9 @@ async function boot(){
     const mirrorPreview=new URLSearchParams(location.search).get('mirror_preview');
     if(mirrorPreview){try{mirrorScreen(await api('/demo/mirror/'+encodeURIComponent(mirrorPreview)));return;}catch{}}
     const cls=new URLSearchParams(location.search).get('fighter');
-    if(['thumb','index','middle','ring','pinky'].includes(cls)){
-      try{battleScreen(await api('/demo/fighter/'+cls));return;}catch{}
+    if(['thumb','index','middle','ring','pinky','warrior','mage','priest','hunter'].includes(cls)){
+      const previewParams=new URLSearchParams(location.search);
+      try{battleScreen(await api('/demo/fighter/'+cls+'?arch='+encodeURIComponent(previewParams.get('arch')||'')+'&stage='+encodeURIComponent(previewParams.get('stage')||'20')));return;}catch{}
     }
     startDemo();return;
   }

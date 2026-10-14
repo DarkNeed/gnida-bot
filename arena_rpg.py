@@ -2,6 +2,10 @@
 
 from dataclasses import replace
 from arena_fingers import has_trait
+from arena_rpg_combat import (
+    variant as path_variant, modifiers as path_modifiers, context as action_context,
+    received as path_received, buff, armor_break, incoming, post_action,
+)
 
 RPG_BRANCHES = {
     'warrior_berserker': ('warrior','Берсерк','Натиск и усиленные атаки ценой уязвимости.'),
@@ -115,7 +119,8 @@ def rpg_variant(skill, actor, target):
             changes.update(name='Лунная висцеральная атака',damage_type='magic',tags=skill.tags+('hybrid_attack',))
         if skill.damage_type and actor['level']>=12 and not sid.startswith('arch_'):
             changes['power']=changes.get('power',skill.power)+1
-    return replace(skill,**changes) if changes else skill
+    result = replace(skill,**changes) if changes else skill
+    return path_variant(result, actor, target, key)
 
 
 def rpg_restriction(actor, skill):
@@ -139,10 +144,10 @@ def rpg_modifiers(actor,target,skill):
         if 'rpg_soul_spend' in skill.tags: multiplier*=1+.30*m.get('souls',0)
         if 'rpg_beast_spend' in skill.tags: multiplier*=1+.25*m.get('beast',0)
         if 'rpg_meteor' in skill.tags and any(e['kind']=='burn' for e in target['effects']): multiplier*=1.50
-        if key=='mage_archmage' and skill.damage_type=='magic' and m.get('echo_ready'): multiplier*=1.35
+        if key=='mage_archmage' and skill.class_id=='mage' and skill.cost>0 and m.get('echo_ready'): multiplier*=1.35
         if key=='hunter_beast': multiplier*=1+.10*m.get('beast',0)
         if key=='priest_paladin' and 'rpg_faith_spend' in skill.tags: multiplier*=1+.15*m.get('retribution',0)
-    return accuracy,multiplier
+    return accuracy,multiplier*path_modifiers(actor,target,skill,key)
 
 
 def rpg_parry(actor,target,skill):
@@ -150,27 +155,32 @@ def rpg_parry(actor,target,skill):
     target['effects']=[e for e in target['effects'] if e['kind']!='rpg_parry']
     saved=target.setdefault('rpg_state',{})
     saved.update(visceral_ready=True,visceral_until=target.get('own_turns',0)+2)
+    if branch(target)=='hunter_moon' and target['level']>=12:
+        saved['moon_mark']=True
     return (False,.65) if actor.get('is_boss') else (True,1.0)
 
 
-def rpg_received_damage(target, damage, before_hp):
-    if damage<=0 or target['hp']<=0: return
+def rpg_received_damage(target, damage, before_hp, action_id=None):
+    if damage<=0: return
+    m=target.setdefault('rpg_state',{})
+    fresh=action_id is None or m.get('received_action')!=action_id
+    if action_id is not None: m['received_action']=action_id
+    path_received(target,damage,branch(target),fresh)
+    if target['hp']<=0: return
     m=target.setdefault('rpg_state',{})
     if has_trait(target,'rpg_rally'):
         m['rally_ceiling']=max(m.get('rally_ceiling',0),before_hp)
         m['rally']=min(target['stats']['max_hp'],m.get('rally',0)+damage)
-    if has_trait(target,'rpg_barrier_charge') and any(e.get('id')=='mana_barrier' for e in target['effects']): m['mana']=min(3,m.get('mana',0)+1)
-    if branch(target)=='priest_paladin' and any(e['kind']=='incoming_damage_multiplier' for e in target['effects']):
+    if fresh and has_trait(target,'rpg_barrier_charge') and any(e.get('id')=='mana_barrier' for e in target['effects']): m['mana']=min(3,m.get('mana',0)+1)
+    if fresh and branch(target)=='priest_paladin' and any(e['kind']=='incoming_damage_multiplier' for e in target['effects']):
         m['retribution']=min(3,m.get('retribution',0)+1)
 
 
-def rpg_effect(actor,target,item,rng,allies=None):
+def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
     """Return None for ordinary engine effects, otherwise a log note."""
     kind=item['kind']; recipient=target if item.get('target')=='enemy' else actor
     if kind=='rpg_armor_break':
-        previous=next((e['value'] for e in target['effects'] if e.get('id')=='armor_split'),0)
-        target['effects']=[e for e in target['effects'] if e.get('id')!='armor_split']
-        target['effects'].append(dict(id='armor_split',kind='physical_defense_pct',value=max(-.45,previous-.15),duration=3))
+        armor_break(target)
         return 'броня расколота'
     if kind=='rpg_heal':
         candidates=[s for s in (allies or [actor]) if s['hp']>0]
@@ -181,20 +191,62 @@ def rpg_effect(actor,target,item,rng,allies=None):
         if branch(actor)=='priest_bishop' and healed:
             recipient['effects']=[e for e in recipient['effects'] if e.get('id')!='bishop_guard']
             recipient['effects'].append(dict(id='bishop_guard',kind='incoming_damage_multiplier',value=.85,duration=1))
+            if actor['level']>=12 and recipient['hp']-healed<=recipient['stats']['max_hp']*.40:
+                from arena_epic import cleanse_one
+                cleanse_one(recipient,rng)
         actor.setdefault('rpg_state',{})['healed']=healed
+        if healed: actor['rpg_state']['support_useful']=True
         return f'исцеление: +{healed} HP'+(' союзнику' if recipient is not actor else '')
     if kind=='rpg_blood_bullets':
         loss=max(1,round(actor['stats']['max_hp']*.10));actor['hp']-=loss
         gained=min(35,actor['stats']['resource_max']-actor['resource']);actor['resource']+=gained
         return f'Кровавые пули: −{loss} HP, +{gained} энергии'
     if kind=='rpg_summon':
-        actor.setdefault('rpg_state',{}).update(summon=3,summon_power=item['value'],summon_fresh=True)
+        actor.setdefault('rpg_state',{}).update(summon=3,summon_power=item['value'],summon_fresh=True,death_servants=False)
         return 'скелет призван на три действия'
+    if kind=='rpg_death_servants':
+        actor.setdefault('rpg_state',{}).update(summon=3,summon_power=item['value'],summon_fresh=True,death_servants=True,souls=0)
+        return 'Страж и Палач призваны на три действия'
+    if kind=='rpg_dawn':
+        m=actor.setdefault('rpg_state',{})
+        candidates=allies or [actor]
+        dead=[s for s in candidates if s['hp']<=0]
+        if raid_context is not None and dead and not raid_context.get('rpg_revive_used'):
+            restored=dead[0]
+            restored['hp']=max(1,round(restored['stats']['max_hp']*.30))
+            restored['effects']=[e for e in restored['effects'] if e['kind'] not in ('bleed','burn','stun')]
+            raid_context['rpg_revive_used']=True
+            note=f'союзник возвращён с {restored["hp"]} HP'
+        else:
+            total=0
+            for restored in candidates:
+                if restored['hp']<=0: continue
+                amount=min(restored['stats']['max_hp']-restored['hp'],round(restored['stats']['max_hp']*(.25 if allies else .50)))
+                restored['hp']+=amount;total+=amount
+                buff(restored,'dawn_guard','incoming_damage_multiplier',.70,1)
+            note=f'рассветное исцеление: +{total} HP'
+        m.update(dawn_used=True,faith=0)
+        return note
+    if kind=='incoming_damage_multiplier' and item.get('id')=='priest_ward' and branch(actor)=='priest_paladin':
+        buff(actor,'priest_ward',kind,item['value'],max(1,item.get('turns',1)))
+        if actor['level']>=12 and actor.get('rpg_state',{}).get('faith',0)>0:
+            live=[s for s in (allies or []) if s is not actor and s['hp']>0]
+            if live:
+                buff(min(live,key=lambda s:s['hp']/s['stats']['max_hp']),'paladin_ward',kind,item['value'],1)
+        return 'Святой заслон'
+    if kind=='cleanse_one' and item.get('id')=='priest_cleanse':
+        from arena_epic import cleanse_one
+        before=len(actor['effects'])
+        cleanse_one(actor,rng)
+        if len(actor['effects'])<before:
+            actor.setdefault('rpg_state',{})['support_useful']=True
+        return 'Очищение'
     return None
 
 
-def rpg_after_action(actor,target,skill,hit,damage,before_hp,rng,effective_stat):
+def rpg_after_action(actor,target,skill,hit,damage,before_hp,rng,effective_stat,context=None,allies=None):
     m,key=actor.setdefault('rpg_state',{}),branch(actor)
+    context=context or action_context(actor,target)
     m['actions']=actor.get('own_turns',0);notes=[]
     reaction_damage=0
     if hit and skill.damage_type:
@@ -206,14 +258,8 @@ def rpg_after_action(actor,target,skill,hit,damage,before_hp,rng,effective_stat)
         if 'rpg_beast_spend' in skill.tags: m['beast']=0
         elif key=='hunter_beast' and skill.class_id=='hunter': m['beast']=min(3,m.get('beast',0)+1)
         if 'rpg_meteor' in skill.tags: target['effects']=[e for e in target['effects'] if e['kind']!='burn']
-    if hit and skill.class_id=='priest' and not skill.damage_type and (m.get('healed',0)>0 or skill.skill_id=='priest_ward') and has_trait(actor,'rpg_faith'): m['faith']=min(3,m.get('faith',0)+1)
+    if hit and skill.class_id=='priest' and not skill.damage_type and (m.get('healed',0)>0 or m.get('support_useful') or skill.skill_id=='priest_ward') and has_trait(actor,'rpg_faith'): m['faith']=min(3,m.get('faith',0)+1)
     m.pop('healed',None)
-    if key=='mage_archmage' and skill.damage_type=='magic':
-        if m.get('echo_ready'): m['echo_ready']=False;m['echo_chain']=0
-        if hit and skill.class_id=='mage':
-            m['echo_chain']=min(3,m.get('echo_chain',0)+1) if m.get('echo_last')!=skill.skill_id else 1
-            m['echo_last']=skill.skill_id
-            if m['echo_chain']>=3: m['echo_ready']=True;notes.append('Мановое эхо подготовлено')
     if actor['hp']>0:
         if damage and has_trait(actor,'rpg_rally'):
             share=.75 if not m.get('weapon_open') or 'rpg_visceral' in skill.tags else .50
@@ -225,17 +271,25 @@ def rpg_after_action(actor,target,skill,hit,damage,before_hp,rng,effective_stat)
             if gain: notes.append(f'Похищение жизни: +{gain} HP')
         if m.get('summon',0)>0 and not m.pop('summon_fresh',False) and target['hp']>0:
             dealt=min(target['hp'],max(1,round(m.get('summon_power',6)*(1+effective_stat(actor,'magic_attack')/20)*100/(100+effective_stat(target,'magic_defense')*4))))
-            old_hp=target['hp'];target['hp']-=dealt;rpg_received_damage(target,dealt,old_hp)
-            m['summon']-=1;m['souls']=min(3,m.get('souls',0)+1);notes.append(f'Скелет: −{dealt} HP, души {m["souls"]}/3')
+            dealt=incoming(target,dealt,branch(target))
+            old_hp=target['hp'];target['hp']=max(0,target['hp']-dealt);rpg_received_damage(target,dealt,old_hp,context.get('action_id'))
+            m['summon']-=1;m['souls']=min(3,m.get('souls',0)+1);notes.append(f'{"Палач" if m.get("death_servants") else "Скелет"}: −{dealt} HP, души {m["souls"]}/3')
     m.pop('rally',None);m.pop('rally_ceiling',None)
     if 'rpg_transform' in skill.tags: m['weapon_open']=not m.get('weapon_open',False);notes.append('оружие раскрыто' if m['weapon_open'] else 'оружие сложено')
     if 'rpg_visceral' in skill.tags or actor.get('own_turns',0)>=m.get('visceral_until',0): m['visceral_ready']=False
+    notes+=post_action(actor,target,skill,hit,damage,key,context,allies)
     # A prepared counter is one reaction, not another selectable player turn.
     counter=next((e for e in target['effects'] if e['kind']=='rpg_counter'),None)
     if damage and target['hp']>0 and actor['hp']>0 and counter:
         target['effects']=[e for e in target['effects'] if e is not counter]
         dealt=min(actor['hp'],max(1,round(counter['value']*(1+effective_stat(target,'physical_attack')/20)*100/(100+effective_stat(actor,'physical_defense')*4))))
-        old_hp=actor['hp'];actor['hp']-=dealt;rpg_received_damage(actor,dealt,old_hp)
+        if branch(target)=='warrior_knight' and target['level']>=18 and any(e.get('id')=='armor_split' for e in actor['effects']):
+            dealt=round(dealt*1.25)
+            target.setdefault('rpg_state',{})['steadfast']=max(1,target.get('rpg_state',{}).get('steadfast',0))
+        dealt=incoming(actor,dealt,branch(actor))
+        old_hp=actor['hp'];actor['hp']=max(0,actor['hp']-dealt);rpg_received_damage(actor,dealt,old_hp)
+        if branch(target)=='warrior_knight' and target['level']>=12:
+            armor_break(actor)
         reaction_damage=dealt
         notes.append(f'Контрудар врага: −{dealt} HP')
     return notes,reaction_damage

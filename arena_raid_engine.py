@@ -95,7 +95,7 @@ def pair_state(actor, target):
     )
 
 
-def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True, allies=None):
+def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True, allies=None, raid_context=None):
     return resolve_skill(
         pair_state(actor, target),
         "a",
@@ -105,6 +105,7 @@ def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True
         advance_turn=False,
         tick_actor_bleed=tick_actor_bleed,
         allies=allies,
+        raid_context=raid_context,
     )
 
 
@@ -372,7 +373,9 @@ def resolve_round(data, skills, rng=None):
         # or execute an unaffordable ability, and never abort the whole round.
         try:
             event = native_attack(actor, boss, selected, skills, rng,
-                                  allies=[p['fighter'] for p in alive_players(data).values()])
+                                  allies=[p['fighter'] for p in data['players'].values()
+                                          if not p.get('withdrawn') and not p.get('reward_blocked')],
+                                  raid_context=data)
         except ValueError:
             defend(actor)
             log_event(data, key, key, "Навык недоступен после изменений в бою: защита.")
@@ -494,6 +497,7 @@ def resolve_round(data, skills, rng=None):
                         BOSS_SKILLS,
                         rng,
                         tick_actor_bleed=False,
+                        raid_context=data,
                     )
                     if boss_after is None:
                         boss_after = attacker

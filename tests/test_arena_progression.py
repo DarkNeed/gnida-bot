@@ -238,7 +238,12 @@ class ArchclassAssetsTests(unittest.IsolatedAsyncioTestCase):
                 raw = await response.read()
                 self.assertLess(len(raw), 700000)
                 with Image.open(BytesIO(raw)) as im:
-                    self.assertEqual(im.size, (512, 768))
+                    from arena_rpg import RPG_BRANCHES
+                    if key in RPG_BRANCHES:
+                        self.assertEqual(im.width,512)
+                        self.assertTrue(96<=im.height<=768)
+                    else:
+                        self.assertEqual(im.size, (512, 768))
                     self.assertEqual(im.mode, "RGBA")
                     self.assertEqual(im.getchannel("A").getextrema(), (0, 255))
                     self.assertEqual(im.getpixel((0, 0)), (0, 0, 0, 0))

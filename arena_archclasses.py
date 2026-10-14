@@ -129,8 +129,9 @@ ARCHCLASSES = {
         "Сила 22, цена остаётся 45.",
     ),
 }
-ARCHCLASSES.update({key:branch(cid,name,name,description,
-    'Финальный архикласс 20 уровня пока не добавлен; сохраняется выбранная ветка.')
+from arena_rpg_paths import PATHS
+
+ARCHCLASSES.update({key:branch(cid,name,PATHS[key][0],PATHS[key][1],PATHS[key][5])
     for key,(cid,name,description) in RPG_BRANCHES.items()})
 
 

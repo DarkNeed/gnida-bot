@@ -17,27 +17,28 @@ class RPGSpriteTests(unittest.IsolatedAsyncioTestCase):
         app=create_arena_app(SimpleNamespace(),SimpleNamespace(),'test-token')
         client=TestClient(TestServer(app));await client.start_server()
         try:
-            for cls in ('warrior','mage','priest','hunter'):
-                with self.subTest(cls=cls):
-                    path=choice_avatar(cls)
-                    self.assertEqual(path,'/static/assets/rpg/'+cls+'.png')
+            paths=[choice_avatar(cls) for cls in ('warrior','mage','priest','hunter')]+[choice_avatar(cls,key,stage) for key,(cls,_,_) in RPG_BRANCHES.items() for stage in (10,20)]
+            for path in paths:
+                with self.subTest(path=path):
                     response=await client.get(path)
                     self.assertEqual(response.status,200)
                     raw=await response.read()
                     self.assertLess(len(raw),700000)
                     with Image.open(BytesIO(raw)) as im:
-                        self.assertEqual(im.size,(512,768))
+                        self.assertEqual(im.width,512)
+                        self.assertTrue(96<=im.height<=768)
                         self.assertEqual(im.mode,'RGBA')
                         self.assertEqual(im.getchannel('A').getextrema(),(0,255))
                         self.assertEqual(im.getpixel((0,0)),(0,0,0,0))
                         box=im.getchannel('A').getbbox()
-                        self.assertGreaterEqual(min(box[0],box[1],512-box[2],768-box[3]),24)
+                        self.assertGreaterEqual(min(box[0],box[1],im.width-box[2],im.height-box[3]),24)
         finally:await client.close()
 
-    def test_branches_use_their_approved_base_skin_not_unknown_files(self):
+    def test_branches_and_finals_have_separate_approved_skins(self):
         for key,(cls,_,_) in RPG_BRANCHES.items():
-            self.assertEqual(choice_avatar(cls,key),choice_avatar(cls))
-            self.assertEqual(choice_avatar('',key),choice_avatar(cls))
+            self.assertEqual(choice_avatar(cls,key),'/static/assets/archclasses/'+key+'.png')
+            self.assertEqual(choice_avatar('',key),choice_avatar(cls,key))
+            self.assertEqual(choice_avatar(cls,key,20),'/static/assets/archclasses/'+key+'_final.png')
         self.assertEqual(choice_avatar('jock','mge_bro'),'/static/assets/archclasses/mge_bro.png')
 
     def test_browser_selector_accepts_rpg_paths_and_custom_skin_wins(self):

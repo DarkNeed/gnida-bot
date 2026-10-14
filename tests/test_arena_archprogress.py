@@ -94,8 +94,10 @@ class ArchProgressEngineTests(unittest.TestCase):
                     skill = effective_skill(state, "a", sid)
                     self.assertEqual(skill.cost, BUILTIN_SKILLS[sid].cost)
                     self.assertEqual(skill.cooldown, BUILTIN_SKILLS[sid].cooldown)
-                    if level >= 18:
+                    if level >= 18 or branch=='warrior_knight':
                         self.assertNotEqual(skill, BUILTIN_SKILLS[sid])
+                        if branch=='warrior_knight':
+                            self.assertTrue(any(e['kind']=='incoming_damage_multiplier' for e in skill.effects))
                     else:
                         self.assertIs(skill, BUILTIN_SKILLS[sid])
                     before = a["resource"]

@@ -149,14 +149,16 @@ class RPGTests(unittest.TestCase):
         self.use(state,'arch_mage_elementalist')
         self.assertFalse(any(e['kind']=='burn' for e in enemy['effects']))
 
-    def test_archmage_echo_requires_alternating_attacks(self):
+    def test_archmage_echo_requires_different_actions_and_preserves_miss(self):
         state=self.state('mage','mage_archmage')
-        for sid in ('mana_shot','mana_blob','mana_shot'):self.use(state,sid)
+        for sid in ('mana_shot','mana_blob','mana_focus'):self.use(state,sid)
         actor=state['sides']['a']
         self.assertTrue(actor['rpg_state']['echo_ready'])
         self.use(state,'mana_focus')
         self.assertTrue(actor['rpg_state']['echo_ready'])
         self.use(state,'mana_shot',hit=False)
+        self.assertTrue(actor['rpg_state']['echo_ready'])
+        self.use(state,'mana_shot')
         self.assertFalse(actor['rpg_state']['echo_ready'])
 
     def test_raid_area_attack_keeps_all_three_warrior_counters_and_one_burn_tick(self):

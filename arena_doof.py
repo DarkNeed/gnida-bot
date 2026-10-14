@@ -172,6 +172,7 @@ def resolve_doof_action(data, rng):
             DOOF_SKILLS,
             rng,
             tick_actor_bleed=False,
+            raid_context=data,
         )
         if boss_after is None:
             boss_after = attacker

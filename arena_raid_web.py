@@ -29,7 +29,7 @@ async def raid_view(db, row, actor):
             ),
             class_name="Рейдовый босс" if boss else class_title(side, cls.name),
             class_avatar_url=choice_avatar(
-                side["class_id"], side.get("archclass_id", "")
+                side["class_id"], side.get("archclass_id", ""), 20 if side.get('level', 0) >= 20 and side.get('archclass_stage', 20) >= 20 else 10
             ),
             sprite=side["class_id"],
             resource_name=cls.resource_name,

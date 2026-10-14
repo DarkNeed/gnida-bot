@@ -12,14 +12,15 @@ def pending_choice(profile):
     if branch_options(profile["class_id"]):
         if level >= 10 and resolved < 10 and not profile.get("archclass_id"):
             return 10
-        if level >= 20 and resolved < 20 and profile['class_id'] not in {v[0] for v in RPG_BRANCHES.values()}:
+        if level >= 20 and resolved < 20:
             return 20
     return 0
 
 
-def choice_avatar(class_id, archclass_id=""):
-    # Only the four initial RPG designs are approved. Their branches share
-    # the base skin until distinct branch artwork is reviewed separately.
+def choice_avatar(class_id, archclass_id="", stage=10):
+    if archclass_id in RPG_BRANCHES:
+        suffix = '_final' if stage >= 20 else ''
+        return '/static/assets/archclasses/' + archclass_id + suffix + '.png'
     rpg_class = RPG_BRANCHES[archclass_id][0] if archclass_id in RPG_BRANCHES else class_id
     if rpg_class in {'warrior','mage','priest','hunter'}:
         return '/static/assets/rpg/' + rpg_class + '.png'

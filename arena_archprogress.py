@@ -267,6 +267,9 @@ def upgrade_description(branch_id):
 
 def milestones(source):
     key = source["archclass_id"]
+    if key in RPG_BRANCHES:
+        from arena_rpg_paths import path_milestones
+        return path_milestones(source)
     # Avoid importing the engine at module import time (the catalog calls us).
     from arena_engine import BUILTIN_SKILLS
 

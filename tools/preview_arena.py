@@ -28,7 +28,7 @@ from arena_raid_engine import (
     BOSS_SKILLS,
 )
 from arena_engine import effective_skill
-from arena_archclasses import class_title
+from arena_archclasses import class_title, ARCHCLASSES
 from arena_progression import choice_avatar
 
 app = web.Application()
@@ -59,23 +59,43 @@ async def demo_fighter(request):
     cls = request.match_info["class_id"]
     if cls not in FIGHTER_CLASSES:
         raise web.HTTPNotFound()
+    arch=request.query.get('arch','')
+    if arch and (arch not in ARCHCLASSES or ARCHCLASSES[arch]['class_id']!=cls):
+        raise web.HTTPNotFound()
+    stage=20 if request.query.get('stage','20')=='20' else 10
     owned = [
-        k for k in unlocked_skill_ids(cls, 20) if BUILTIN_SKILLS[k].class_id == cls
+        k for k in unlocked_skill_ids(cls, 20,archclass_id=arch) if BUILTIN_SKILLS[k].class_id == cls
     ]
-    source = dict(slave_id=1, owner_id=1, class_id=cls, level=20, loadout=owned)
+    if arch:
+        primary={'warrior':['armor_split','steel_charge','counter_lunge'],
+                 'mage':['mana_shot','mana_blob','mana_focus' if arch=='mage_archmage' else 'mana_overload' if arch=='mage_elementalist' else 'mana_barrier'],
+                 'priest':['light_word','priest_heal','priest_ward'],
+                 'hunter':['hunter_cut','hunter_shot','blood_bullets']}
+        owned=primary[cls]+['arch_'+arch]
+    source = dict(slave_id=1, owner_id=1, class_id=cls, level=20, loadout=owned,archclass_id=arch,archclass_stage=stage)
     state = create_battle_state(
         source,
         dict(source, slave_id=2, owner_id=2, class_id="ragamuffin", loadout=None),
     )
+    if arch:
+        state['sides']['a']['rpg_state']={
+            'warrior_berserker':dict(heat=5) if stage==20 else dict(onslaught=3),
+            'warrior_knight':dict(steadfast=3), 'mage_necromancer':dict(souls=3),
+            'mage_elementalist':{}, 'mage_archmage':dict(echo_ready=True),
+            'priest_bishop':dict(faith=3), 'priest_paladin':dict(faith=3,retribution=3),
+            'hunter_beast':dict(beast=3), 'hunter_moon':dict(visceral_ready=True,visceral_until=8,moon_mark=True),
+        }.get(arch,{})
+        state['sides']['a']['own_turns']=4
     for key, side in state["sides"].items():
         c = FIGHTER_CLASSES[side["class_id"]]
         side.update(
-            name=c.name,
-            class_name=c.name,
+            name=class_title(side,c.name),
+            class_name=class_title(side,c.name),
+            class_avatar_url=choice_avatar(c.class_id,side.get('archclass_id',''),side.get('archclass_stage',10)),
             sprite=c.class_id,
             class_rarity=c.rarity,
             resource_name=c.resource_name,
-            skill_details=[asdict(BUILTIN_SKILLS[k]) for k in side["loadout"]],
+            skill_details=[asdict(effective_skill(state,key,k)) for k in side["loadout"]],
             effective_stats={k: effective_stat(side, k) for k in side["stats"]},
         )
     return web.json_response(

@@ -36,6 +36,7 @@ from arena_rpg import (
     build_rpg_catalog, rpg_variant, rpg_restriction, rpg_modifiers, rpg_parry,
     rpg_received_damage, rpg_effect, rpg_after_action, branch as rpg_branch,
 )
+from arena_rpg_combat import context as rpg_action_context, incoming as rpg_incoming, incoming_multiplier as rpg_incoming_multiplier, paid_action as rpg_paid_action, revive as rpg_revive
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -999,6 +1000,7 @@ def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
 def _tick(side: dict, *, tick_dot=True, preserve_rally=False) -> None:
     if tick_dot:
         side['hp'] = max(0, side['hp'] - sum(max(0,int(e['value'])) for e in side['effects'] if e['kind']=='burn'))
+        rpg_revive(side,rpg_branch(side))
     side["own_turns"] = side.get("own_turns", 0) + 1
     memory = side.get('rpg_state', {})
     if not preserve_rally:
@@ -1133,6 +1135,7 @@ def resolve_skill(
     advance_turn=True,
     tick_actor_bleed=True,
     allies=None,
+    raid_context=None,
 ) -> dict:
     """Resolve one tap entirely on the server. No directional/confirmation phase."""
     rng = rng or random.SystemRandom()
@@ -1143,6 +1146,8 @@ def resolve_skill(
     actor = state["sides"][side_key]
     other = "b" if side_key == "a" else "a"
     target = state["sides"][other]
+    rpg_context = rpg_action_context(actor,target)
+    rpg_context['action_id']=[actor.get('controller_id'),actor.get('own_turns',0)]
     # Capture before _tick expires the last turn; utilities and misses without an
     # attacking skill never trigger it. A missed attack still is an attack.
     pending_bleed = (
@@ -1197,8 +1202,8 @@ def resolve_skill(
         skill.damage_type and not hit and roll < max(5, min(95, raw_accuracy))
     )
     strike_results = None
-    strike_count = 6 if 'six_strike' in skill.tags else 2
-    if ("six_strike" in skill.tags or 'two_strike' in skill.tags) and skill.damage_type:
+    strike_count = 6 if 'six_strike' in skill.tags else 3 if 'three_strike' in skill.tags else 2
+    if any(tag in skill.tags for tag in ('six_strike','three_strike','two_strike')) and skill.damage_type:
         # One paid action, six independent accuracy/evasion checks. The total
         # power, buffs and critical multiplier still belong to the whole action.
         rolls = [roll] + [rng.random() * 100 for _ in range(strike_count-1)]
@@ -1218,6 +1223,7 @@ def resolve_skill(
             for part in strike_results:
                 part.update(hit=False,dodged=False)
     actor["resource"] -= actual_cost
+    horizon_note=rpg_paid_action(actor,target,actual_cost,raid_context)
     if "once_per_battle" in skill.tags:
         actor.setdefault("used_skills", []).append(skill_id)
     order_note = obey_enemy_prescript(actor, skill_id)
@@ -1246,7 +1252,7 @@ def resolve_skill(
                 * rpg_multiplier
                 * parry_multiplier
                 * actor.get("raid_damage_multiplier", 1)
-                * (1+.10*target.get('rpg_state',{}).get('beast',0) if rpg_branch(target)=='hunter_beast' else 1)
+                * rpg_incoming_multiplier(target,rpg_branch(target))
                 * math.prod(max(.1, e.get("value", 1)) for e in target["effects"] if e.get("kind") == "incoming_damage_multiplier")
                 * math.prod(
                     max(0.1, e.get("value", 1))
@@ -1266,6 +1272,7 @@ def resolve_skill(
                 * rng.uniform(0.95, 1.05)
             ),
         )
+        damage = rpg_incoming(target,damage,rpg_branch(target))
         if strike_results is not None:
             # Divide the same full-hit damage budget without rounding six
             # tiny hits up to an artificial minimum. Misses lose their share.
@@ -1288,7 +1295,7 @@ def resolve_skill(
         actor["effects"] = [
             e for e in actor["effects"] if e["kind"] != "next_physical_damage"
         ]
-    rpg_received_damage(target,min(before[other]['hp'],damage),before[other]['hp'])
+    rpg_received_damage(target,min(before[other]['hp'],damage),before[other]['hp'],rpg_context['action_id'])
     _tick(actor,tick_dot=False,preserve_rally=True)
     effects_text = []
     charmed = False
@@ -1303,7 +1310,7 @@ def resolve_skill(
             if rng.random() >= effect.get("chance", 1):
                 continue
             recipient = target if effect.get("target") == "enemy" else actor
-            rpg_note = rpg_effect(actor,target,effect,rng,allies)
+            rpg_note = rpg_effect(actor,target,effect,rng,allies,raid_context)
             if rpg_note is not None:
                 effects_text.append(rpg_note)
                 continue
@@ -1396,10 +1403,13 @@ def resolve_skill(
     actor["hp"] -= bleed_damage
     burn_damage = min(actor['hp'],pending_burn)
     actor['hp'] -= burn_damage
+    if (bleed_damage or burn_damage) and actor['hp']<=0:
+        rpg_revive(actor,rpg_branch(actor))
     pet_notes = pet_after_action(
         actor, target, skill, hit, min(before[other]["hp"], damage), actual_cost,
         pet_context, effects_text, skills or BUILTIN_SKILLS)
-    rpg_notes,reaction_damage = rpg_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),before[side_key]['hp'],rng,effective_stat)
+    rpg_notes,reaction_damage = rpg_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),before[side_key]['hp'],rng,effective_stat,rpg_context,allies)
+    if horizon_note: rpg_notes.append(horizon_note)
     pet_notes += rpg_notes
     pet_notes += epic_after_action(actor, target, skill, hit, rng)
     text = f"{skill.name}: " + (

@@ -122,7 +122,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side["archclass"] = archclass_view(side)
             side["class_name"] = class_title(side, cls.name)
             side["class_avatar_url"] = choice_avatar(
-                side["class_id"], side.get("archclass_id", "")
+                side["class_id"], side.get("archclass_id", ""), 20 if side["archclass"] and side["archclass"]["stage"] == 20 else 10
             )
             side["resource_name"] = cls.resource_name
             side["class_rarity"] = cls.rarity
@@ -302,7 +302,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
         profile["archclass"] = archclass_view(profile)
         profile["class_name"] = class_title(profile, profile["class_name"])
         profile["class_avatar_url"] = choice_avatar(
-            profile["class_id"], profile.get("archclass_id", "")
+            profile["class_id"], profile.get("archclass_id", ""), 20 if profile["archclass"] and profile["archclass"]["stage"] == 20 else 10
         )
         profile["archclass_options"] = branch_options(profile["class_id"])
         pending = profile.get("archclass_pending_at")
@@ -401,7 +401,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
                     dict(
                         id="advance",
                         name=a["final_name"],
-                        avatar_url=profile["class_avatar_url"],
+                        avatar_url=choice_avatar(profile["class_id"], profile["archclass_id"], 20),
                         description=a["final_description"],
                         current=False,
                     )
@@ -411,7 +411,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
                     dict(
                         id=a["id"],
                         name=a["final_name"] if stage == 20 else a["name"],
-                        avatar_url=choice_avatar(profile["class_id"], a["id"]),
+                        avatar_url=choice_avatar(profile["class_id"], a["id"], stage),
                         description=a["description"]
                         + (" " + a["final_description"] if stage == 20 else ""),
                         current=False,
