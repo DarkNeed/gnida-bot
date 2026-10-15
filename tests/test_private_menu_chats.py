@@ -196,7 +196,8 @@ class PrivateMenuChatTests(unittest.IsolatedAsyncioTestCase):
         callback = await self.click("sm:c:-100:br:-100:20:collector")
         self.assertIn("Чат: Каргассия", self.view(callback)[0])
         workers = await self.db.list_business_slaves(-100, 10)
-        self.assertEqual(workers[0]["role"], "collector")
+        self.assertIsNone(workers[0]["role"]) # obsolete single-business buttons cannot mutate a newer assignment
+        self.assertIn('Меню предприятий обновилось',callback.answer.await_args.args[0])
         self.assertFalse((await self.db.get_owner(-300, 20))["transfer_priority"])
         callback = await self.click("sm:c:-200:job:-200:30")
         self.assertIn("Чат: Другой чат", self.view(callback)[0])

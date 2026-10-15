@@ -20,6 +20,7 @@ from arena_web import create_arena_app
 from arena_links import arena_link
 from handlers.pets import create_pet_router
 from handlers.admin_menu import create_admin_menu_router
+from handlers.enterprises import create_enterprise_router, sweep_recovery_events
 
 
 def pet_sales_enabled() -> bool:
@@ -73,6 +74,7 @@ async def main() -> None:
     )
     dispatcher.include_router(create_pet_router(database, username, pets_payments_enabled))
     dispatcher.include_router(create_franc_event_router(database))
+    dispatcher.include_router(create_enterprise_router(database))
     dispatcher.include_router(
         create_arena_router(database, bot, username, bool(webapp_url), publisher)
     )
@@ -88,6 +90,19 @@ async def main() -> None:
     )
     runner = None
     arena_task = None
+    enterprise_task = None
+
+    async def enterprise_events():
+        last_create=float('-inf')
+        while True:
+            try:
+                current=asyncio.get_running_loop().time()
+                create=current-last_create>=60
+                if create:last_create=current
+                await sweep_recovery_events(database,bot,create=create)
+            except Exception:
+                logging.exception('Enterprise event sweep failed')
+            await asyncio.sleep(5)
 
     async def arena_timeouts() -> None:
         last_merchant_sweep = float("-inf")
@@ -143,12 +158,16 @@ async def main() -> None:
             await web.TCPSite(runner, "0.0.0.0", port).start()
             logging.info("Arena HTTP server is listening on port %s", port)
         arena_task = asyncio.create_task(arena_timeouts())
+        enterprise_task = asyncio.create_task(enterprise_events())
         await dispatcher.start_polling(
             bot,
             allowed_updates=dispatcher.resolve_used_update_types(),
             close_bot_session=False,
         )
     finally:
+        if enterprise_task:
+            enterprise_task.cancel()
+            await asyncio.gather(enterprise_task,return_exceptions=True)
         if arena_task:
             arena_task.cancel()
             await asyncio.gather(arena_task, return_exceptions=True)

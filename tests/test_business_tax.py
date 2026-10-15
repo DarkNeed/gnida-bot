@@ -26,8 +26,8 @@ class BusinessTaxTests(unittest.IsolatedAsyncioTestCase):
         config_roles = ("courtesan", "manager") if kind == "brothel" else ("collector", "overseer")
         # Fixed fixtures avoid settlement during worker assignment and keep workers active.
         self.db.connection.execute(
-            "INSERT INTO businesses(chat_id,owner_id,business_type,created_at,last_accrued) VALUES(?,?,?,?,?)",
-            (chat, owner, kind, self.start, self.start),
+            "INSERT INTO businesses(chat_id,owner_id,business_type,created_at,last_accrued,rules_since) VALUES(?,?,?,?,?,?)",
+            (chat, owner, kind, self.start, self.start, self.start+72*3600),
         )
         for index in range(producers + leaders):
             worker = owner * 1000 + index

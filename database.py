@@ -11,6 +11,7 @@ from typing import Any
 
 from blackjack import compare_stood_hands, hand_total, shuffled_deck
 from arena_store import ArenaMixin
+from enterprises import EnterpriseMixin, NEW_CONFIG
 from checkers import (
     BLACK,
     WHITE,
@@ -90,7 +91,10 @@ def utc_timestamp() -> int:
     return int(datetime.now(timezone.utc).timestamp())
 
 
-class Database(ArenaMixin):
+BUSINESS_CONFIG.update(NEW_CONFIG)
+
+
+class Database(EnterpriseMixin, ArenaMixin):
     """Small async-friendly SQLite repository for one aiogram process."""
 
     def __init__(self, path: str | Path) -> None:
@@ -524,6 +528,7 @@ class Database(ArenaMixin):
         self._ensure_column("ownership", "last_forced_at", "INTEGER")
         self._ensure_column("business_workers", "wage_hours", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("businesses", "income_remainder", "INTEGER NOT NULL DEFAULT 0")
+        self._init_enterprises()
         self._ensure_column(
             "ownership", "transfer_priority", "INTEGER NOT NULL DEFAULT 0"
         )
@@ -2351,76 +2356,8 @@ class Database(ArenaMixin):
             tax += withheld
         return net_income, sum(daily_income.values()), tax
 
-    def _settle_business_locked(
-        self, chat_id: int, owner_id: int, now: int
-    ) -> dict[str, int | str] | None:
-        business = self.connection.execute(
-            """SELECT * FROM businesses WHERE chat_id=? AND owner_id=?""",
-            (chat_id, owner_id),
-        ).fetchone()
-        if business is None:
-            return None
-        if not self._feature_enabled_locked(chat_id, 'slavery'):
-            return dict(hours=0,owner_income=0,gross_income=0,tax=0,business_type=business['business_type'])
-        hours = max(0, (now - int(business["last_accrued"])) // BUSINESS_HOUR_SECONDS)
-        if hours == 0:
-            return {"hours": 0, "owner_income": 0, "gross_income": 0, "tax": 0, "business_type": business["business_type"]}
-        config = BUSINESS_CONFIG[str(business["business_type"])]
-        interval_start = int(business["last_accrued"])
-        interval_end = interval_start + hours * BUSINESS_HOUR_SECONDS
-        workers = self.connection.execute(
-            """SELECT w.worker_id, w.role, w.wage_hours, u.last_seen
-               FROM business_workers w
-               INNER JOIN ownership o
-                   ON o.chat_id=w.chat_id AND o.owner_id=w.owner_id
-                      AND o.slave_id=w.worker_id
-               LEFT JOIN users u ON u.chat_id=w.chat_id AND u.user_id=w.worker_id
-               WHERE w.chat_id=? AND w.owner_id=?""",
-            (chat_id, owner_id),
-        ).fetchall()
-        producers = [worker for worker in workers if worker["role"] == config["producer_role"]]
-        leaders = [worker for worker in workers if worker["role"] == config["leader_role"]]
-        # The next manager contributes half the previous bonus: 20%, 10%, 5%, 2%, 1%.
-        bonus_percent = sum(20 // (2**index) for index in range(min(len(leaders), 5)))
-        owner_income, gross_income, tax = self._record_business_income_locked(
-            chat_id, owner_id, interval_start, hours, producers, config,
-            bonus_percent, int(business["income_remainder"]),
-        )
-        for worker in workers:
-            active_hours = self._active_hours_in_interval(
-                int(worker["last_seen"]) if worker["last_seen"] is not None else None,
-                interval_start,
-                interval_end,
-            )
-            if worker["role"] == config["producer_role"]:
-                period = int(config["producer_wage_period_hours"])
-                wage = int(config["producer_wage"])
-            else:
-                period = int(config["leader_wage_period_hours"])
-                wage = int(config["leader_wage"])
-            accrued_hours = int(worker["wage_hours"]) + active_hours
-            payouts, remainder = divmod(accrued_hours, period)
-            if payouts:
-                self._credit_labor_income_locked(
-                    chat_id, int(worker["worker_id"]), payouts * wage, now
-                )
-            self.connection.execute(
-                """UPDATE business_workers SET wage_hours=?
-                   WHERE chat_id=? AND owner_id=? AND worker_id=?""",
-                (remainder, chat_id, owner_id, int(worker["worker_id"])),
-            )
-        self.connection.execute(
-            """UPDATE businesses SET last_accrued=last_accrued + ?
-               WHERE chat_id=? AND owner_id=?""",
-            (hours * BUSINESS_HOUR_SECONDS, chat_id, owner_id),
-        )
-        return {
-            "hours": hours,
-            "owner_income": owner_income,
-            "gross_income": gross_income,
-            "tax": tax,
-            "business_type": str(business["business_type"]),
-        }
+    def _settle_business_locked(self, chat_id, owner_id, now):
+        return self._enterprise_settle_owner_locked(chat_id, owner_id, now)
 
     async def settle_business(
         self, chat_id: int, owner_id: int
@@ -2898,42 +2835,19 @@ class Database(ArenaMixin):
             self.connection.commit()
             return "transferred"
 
-    async def create_business(self, chat_id: int, owner_id: int, business_type: str) -> str:
-        if business_type not in BUSINESS_CONFIG:
-            raise ValueError("Unknown business type")
-        async with self._lock:
-            self._require_feature_locked(chat_id, 'slavery')
-            existing = self.connection.execute(
-                "SELECT 1 FROM businesses WHERE owner_id=?",
-                (owner_id,),
-            ).fetchone()
-            if existing:
-                return "exists"
-            slave = self.connection.execute(
-                "SELECT 1 FROM ownership WHERE chat_id=? AND owner_id=? LIMIT 1",
-                (chat_id, owner_id),
-            ).fetchone()
-            if slave is None:
-                return "no_slaves"
-            now = utc_timestamp()
-            self.connection.execute(
-                """INSERT INTO businesses(
-                       chat_id, owner_id, business_type, created_at, last_accrued
-                   ) VALUES (?, ?, ?, ?, ?)""",
-                (chat_id, owner_id, business_type, now, now),
-            )
-            self.connection.commit()
-            return "created"
+    async def create_business(self, chat_id, owner_id, business_type):
+        return await self.enterprise_create(chat_id, owner_id, business_type)
 
-    async def get_business(self, chat_id: int, owner_id: int) -> sqlite3.Row | None:
+    async def get_business(self, chat_id: int, owner_id: int, business_id=None, business_type=None) -> sqlite3.Row | None:
         async with self._lock:
             return self.connection.execute(
                 """SELECT b.*, c.title AS chat_title, u.username, u.display_name
                    FROM businesses b
                    LEFT JOIN chats c ON c.chat_id=b.chat_id
                    LEFT JOIN users u ON u.chat_id=b.chat_id AND u.user_id=b.owner_id
-                   WHERE b.chat_id=? AND b.owner_id=?""",
-                (chat_id, owner_id),
+                   WHERE b.chat_id=? AND b.owner_id=? AND (? IS NULL OR b.id=?)
+                   AND (? IS NULL OR b.business_type=?) ORDER BY b.id""",
+                (chat_id, owner_id,business_id,business_id,business_type,business_type),
             ).fetchone()
 
     async def list_owned_businesses(self, owner_id: int) -> list[sqlite3.Row]:
@@ -3032,7 +2946,7 @@ class Database(ArenaMixin):
     ) -> list[sqlite3.Row]:
         async with self._lock:
             return self.connection.execute(
-                """SELECT o.slave_id AS user_id, u.username, u.display_name, w.role
+                """SELECT o.slave_id AS user_id, u.username, u.display_name, w.role, w.business_id
                    FROM ownership o
                    LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.slave_id
                    LEFT JOIN business_workers w
@@ -3042,49 +2956,8 @@ class Database(ArenaMixin):
                 (chat_id, owner_id),
             ).fetchall()
 
-    async def set_business_worker_role(
-        self, chat_id: int, owner_id: int, worker_id: int, role: str | None
-    ) -> str:
-        async with self._lock:
-            self._require_feature_locked(chat_id, 'slavery')
-            business = self.connection.execute(
-                "SELECT business_type FROM businesses WHERE chat_id=? AND owner_id=?",
-                (chat_id, owner_id),
-            ).fetchone()
-            if business is None:
-                return "no_business"
-            config = BUSINESS_CONFIG[str(business["business_type"])]
-            valid_roles = {config["producer_role"], config["leader_role"]}
-            if role is not None and role not in valid_roles:
-                return "invalid_role"
-            owned = self.connection.execute(
-                """SELECT 1 FROM ownership
-                   WHERE chat_id=? AND owner_id=? AND slave_id=?""",
-                (chat_id, owner_id, worker_id),
-            ).fetchone()
-            if owned is None:
-                return "not_owned"
-            if role is not None and self._arena_combat_slot_locked(
-                chat_id, owner_id, worker_id
-            ):
-                return "combat_equipped"
-            if role is None:
-                self.connection.execute(
-                    """DELETE FROM business_workers
-                       WHERE chat_id=? AND owner_id=? AND worker_id=?""",
-                    (chat_id, owner_id, worker_id),
-                )
-                self.connection.commit()
-                return "removed"
-            self.connection.execute(
-                """INSERT INTO business_workers(
-                       chat_id, owner_id, worker_id, role, assigned_at
-                   ) VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(chat_id, owner_id, worker_id) DO UPDATE SET role=excluded.role""",
-                (chat_id, owner_id, worker_id, role, utc_timestamp()),
-            )
-            self.connection.commit()
-            return "updated"
+    async def set_business_worker_role(self, chat_id, owner_id, worker_id, role, business_id=None):
+        return await self.enterprise_assign(chat_id, owner_id, worker_id, role, business_id)
 
     async def business_worker_role(
         self, chat_id: int, owner_id: int, worker_id: int
@@ -3101,21 +2974,19 @@ class Database(ArenaMixin):
             return str(row["role"]) if row else None
 
     async def work_at_business(
-        self, chat_id: int, owner_id: int, worker_id: int
+        self, chat_id: int, owner_id: int, worker_id: int, business_id=None
     ) -> tuple[str, int | None, int | None, int | None]:
         """Pay a one-hour temporary job. Returns status, worker pay, owner pay, cooldown."""
         async with self._lock:
             self._require_feature_locked(chat_id, 'slavery')
-            business = self.connection.execute(
-                """SELECT business_type FROM businesses
-                   WHERE chat_id=? AND owner_id=?""",
-                (chat_id, owner_id),
-            ).fetchone()
+            business = self._enterprise_locked(chat_id,owner_id,business_id)
             if business is None:
                 return "no_business", None, None, None
             if owner_id == worker_id:
                 return "own_business", None, None, None
             now = utc_timestamp()
+            if self.connection.execute("SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND slave_id=? AND status IN ('pending','playing')",(chat_id,worker_id)).fetchone():
+                return 'away',None,None,None
             cooldown = self.connection.execute(
                 """SELECT cooldown_until FROM business_shift_cooldowns
                    WHERE chat_id=? AND worker_id=?""",
@@ -3150,7 +3021,7 @@ class Database(ArenaMixin):
                     chat_id, worker_id, worker_pay, now
                 )
             income_day = datetime.fromtimestamp(now, BUSINESS_STATS_TZ).date().isoformat()
-            owner_pay, _ = self._credit_business_income_locked(chat_id, owner_id, income_day, owner_pay)
+            owner_pay, _ = self._enterprise_credit_site_locked(business, income_day, owner_pay)
             cooldown_until = now + BUSINESS_HOUR_SECONDS
             self.connection.execute(
                 """INSERT INTO business_shift_cooldowns(chat_id, worker_id, cooldown_until)

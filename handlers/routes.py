@@ -135,6 +135,8 @@ BUSINESS_META = {
         "assign": "Назначить сборщиком",
     },
 }
+from enterprises import CATALOG as ENTERPRISE_CATALOG
+BUSINESS_META.update({key:dict(value,assign='Назначить: '+value['producer']) for key,value in ENTERPRISE_CATALOG.items() if key not in BUSINESS_META})
 RANDOM_CHAT_PHRASES = (
     "У чела сверху писька маленькая ☝️",
     "Хей, давно не видел тебя на сайте сочныефембойчики.ком 💌",
@@ -1818,51 +1820,9 @@ def create_router(
         buttons.append([InlineKeyboardButton(text="← Франки", callback_data="sm:francs")])
         return body, InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    async def slave_menu_businesses(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
-        await database.settle_businesses_for_user(user_id)
-        businesses, slaves = await asyncio.gather(
-            database.list_owned_businesses(user_id),
-            database.list_slaves_globally(user_id),
-        )
-        has_business = bool(businesses)
-        businesses = [row for row in businesses if int(row["chat_id"]) == chat_id]
-        slaves = [row for row in slaves if int(row["ownership_chat_id"]) == chat_id]
-        buttons: list[list[InlineKeyboardButton]] = []
-        for business in businesses:
-            meta = BUSINESS_META[str(business["business_type"])]
-            title = business["chat_title"] or f"Чат {business['chat_id']}"
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"{meta['emoji']} {title}"[:60],
-                        callback_data=f"sm:bd:{business['chat_id']}",
-                    )
-                ]
-            )
-        creation_chats: dict[int, str] = {}
-        if not has_business:
-            for slave in slaves:
-                chat_id = int(slave["ownership_chat_id"])
-                creation_chats[chat_id] = slave["chat_title"] or f"Чат {chat_id}"
-        for chat_id, title in creation_chats.items():
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"➕ Создать · {title}"[:60],
-                        callback_data=f"sm:bc:{chat_id}",
-                    )
-                ]
-            )
-        buttons.append([InlineKeyboardButton(text="← Меню", callback_data="sm:home")])
-        if businesses:
-            text = "<b>🏢 Твои предприятия</b>\nВыбери предприятие для управления."
-        elif creation_chats:
-            text = "<b>🏢 Предприятия</b>\nВыбери чат и открой первое предприятие."
-        elif has_business:
-            text = "<b>🏢 Предприятия</b>\nТвоё предприятие открыто в другом чате. Пока можно иметь только одно предприятие."
-        else:
-            text = "<b>🏢 Предприятия</b>\nДля открытия предприятия нужен хотя бы один раб."
-        return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+    async def slave_menu_businesses(user_id, chat_id):
+        from handlers.enterprises import enterprise_menu
+        return await enterprise_menu(database,user_id,chat_id)
 
     async def slave_menu_business_type(
         user_id: int, chat_id: int
@@ -2011,22 +1971,29 @@ def create_router(
         yesterday_income, week_income = periods
         yesterday_tax, week_tax = tax_periods
         business_type = str(business["business_type"])
-        meta = BUSINESS_META[business_type]
-        producer_role = "courtesan" if business_type == "brothel" else "collector"
-        leader_role = "manager" if business_type == "brothel" else "overseer"
+        from enterprises import config,role_labels,title as enterprise_title
+        meta = dict(BUSINESS_META[business_type])
+        cfg=config(business)
+        producer_role,leader_role=cfg['producer_role'],cfg['leader_role']
+        meta['producer'],meta['leader']=role_labels(business)
+        meta['name']=enterprise_title(business)
+        sites=[s for s in await database.list_owned_businesses(owner_id) if s['chat_id']==chat_id]
         producers = sum(worker["role"] == producer_role for worker in workers)
         leaders = sum(worker["role"] == leader_role for worker in workers)
         unassigned = len(workers) - producers - leaders
+        staff_text=f"{html.escape(meta['producer'])}: <b>{producers}</b> · {html.escape(meta['leader'])}: <b>{leaders}</b>\nНе назначены: {unassigned}\n\n"
+        if len(sites)>1:
+            meta.update(emoji='🏭',name='Все предприятия владельца')
+            staff_text='\n'.join('• '+html.escape(enterprise_title(s)) for s in sites)+'\n\nОбщий доход и налог всех предприятий в этом чате.\n\n'
         owner_name = (
             "@" + html.escape(str(business["username"]))
             if business["username"]
             else html.escape(str(business["display_name"] or owner_id))
         )
         return (
-            f"<b>{meta['emoji']} {meta['name']}</b>\n"
+            f"<b>{meta['emoji']} {html.escape(meta['name'])}</b>\n"
             f"Владелец: {owner_name}\n"
-            f"{meta['producer']}: <b>{producers}</b> · {meta['leader']}: <b>{leaders}</b>\n"
-            f"Не назначены: {unassigned}\n\n"
+            f"{staff_text}"
             f"💰 Доход после налога вчера: <b>{yesterday_income} ₣</b> "
             f"(налог {yesterday_tax} ₣)\n"
             f"📈 Доход после налога за 7 завершённых дней: <b>{week_income} ₣</b> "
@@ -2107,29 +2074,9 @@ def create_router(
             InlineKeyboardMarkup(inline_keyboard=buttons),
         )
 
-    async def slave_menu_work(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
-        businesses = await database.list_available_businesses(user_id)
-        businesses = [row for row in businesses if int(row["chat_id"]) == chat_id]
-        if not businesses:
-            return "<b>🧰 Подработка</b>\nПодходящих предприятий пока нет.", slave_menu_back_keyboard()
-        buttons: list[list[InlineKeyboardButton]] = []
-        for business in businesses[:20]:
-            meta = BUSINESS_META[str(business["business_type"])]
-            owner = business["username"] and "@" + business["username"] or business["display_name"] or str(business["owner_id"])
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"{meta['emoji']} {owner}"[:60],
-                        callback_data=f"sm:job:{business['chat_id']}:{business['owner_id']}",
-                    )
-                ]
-            )
-        buttons.append([InlineKeyboardButton(text="← Меню", callback_data="sm:home")])
-        return (
-            "<b>🧰 Подработка</b>\nВыбери предприятие. Одна смена доступна раз в час. "
-            "Выплата: 20–100 ₣; для рабов действует прежний лимит заработка.",
-            InlineKeyboardMarkup(inline_keyboard=buttons),
-        )
+    async def slave_menu_work(user_id, chat_id):
+        from handlers.enterprises import enterprise_jobs
+        return await enterprise_jobs(database,user_id,chat_id)
 
     async def slave_menu_buyout(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         await database.settle_businesses_for_user(user_id)
@@ -3805,23 +3752,24 @@ def create_router(
             if not business:
                 await message.answer("Такого предприятия у тебя пока нет.")
                 return
-            body, keyboard = scoped_menu_view(await slave_menu_business_detail(
-                message.from_user.id, chat_id
+            from handlers.enterprises import enterprise_detail
+            body, keyboard = scoped_menu_view(await enterprise_detail(
+                database, message.from_user.id, chat_id, business['id']
             ), chat)
             await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
             return
         if message.chat.type not in GROUP_TYPES:
             return
         await database.settle_business(message.chat.id, message.from_user.id)
-        business = await database.get_business(message.chat.id, message.from_user.id)
+        business = await database.get_business(message.chat.id, message.from_user.id,business_type=requested_type)
         if not business or business["business_type"] != requested_type:
             return
         workers = await database.list_business_slaves(message.chat.id, message.from_user.id)
         meta = BUSINESS_META[requested_type]
         producer_role = "courtesan" if requested_type == "brothel" else "collector"
         leader_role = "manager" if requested_type == "brothel" else "overseer"
-        producers = sum(row["role"] == producer_role for row in workers)
-        leaders = sum(row["role"] == leader_role for row in workers)
+        producers = sum(row["role"] == producer_role and row['business_id']==business['id'] for row in workers)
+        leaders = sum(row["role"] == leader_role and row['business_id']==business['id'] for row in workers)
         balance = await database.franc_balance(message.chat.id, message.from_user.id)
         await message.answer(
             f"<b>{meta['emoji']} {meta['name']}</b>\n"
@@ -3971,7 +3919,7 @@ def create_router(
         if not match:
             return
         business_type = "brothel" if match.group(1).casefold() == "бордель" else "field"
-        business = await database.get_business(message.chat.id, sender.id)
+        business = await database.get_business(message.chat.id, sender.id,business_type=business_type)
         if not business or business["business_type"] != business_type:
             await message.answer("У тебя нет такого предприятия в этом чате.")
             return
@@ -3989,7 +3937,7 @@ def create_router(
             )
             return
         result = await database.set_business_worker_role(
-            message.chat.id, sender.id, target_id, producer_role
+            message.chat.id, sender.id, target_id, producer_role,business['id']
         )
         if result == "combat_equipped":
             await message.answer(
@@ -3997,7 +3945,8 @@ def create_router(
             )
             return
         if result != "updated":
-            await message.answer("В предприятие можно назначить только своего раба.")
+            await message.answer({'full':'Нет свободных мест. Расширь предприятие или перераспредели работников.',
+                                  'away':'Раб временно отсутствует: сначала заверши событие возвращения.'}.get(result,'В предприятие можно назначить только своего раба.'))
             return
         if current == producer_role:
             await message.answer(
@@ -4026,7 +3975,7 @@ def create_router(
             return
         owner = await database.get_owner(message.chat.id, sender.id)
         owner_id = sender.id if not owner else int(owner["owner_id"])
-        business = await database.get_business(message.chat.id, owner_id)
+        business = await database.get_business(message.chat.id, owner_id,business_type='brothel')
         if not business or business["business_type"] != "brothel":
             return
         if sender.id != owner_id and await database.business_worker_role(
@@ -4061,7 +4010,7 @@ def create_router(
             return
         owner = await database.get_owner(message.chat.id, sender.id)
         owner_id = sender.id if not owner else int(owner["owner_id"])
-        business = await database.get_business(message.chat.id, owner_id)
+        business = await database.get_business(message.chat.id, owner_id,business_type='field')
         if not business or business["business_type"] != "field":
             return
         if sender.id != owner_id and await database.business_worker_role(
@@ -4162,6 +4111,10 @@ def create_router(
                 await callback.answer('Арена выключена в этом чате.',show_alert=True)
                 return
             await database.upsert_user(menu_chat_id, user_id, callback.from_user.username, callback.from_user.full_name, touch=False)
+            if base_action in {'bc','bn','bd','bw','bs','br','job'}:
+                body,keyboard=await slave_menu_businesses(user_id,menu_chat_id)
+                await edit_menu_callback(callback,scoped_menu_view((body,keyboard),menu_chat),'Меню предприятий обновилось. Выбери предприятие заново.')
+                return
         notice: str | None = None
         if action == "home":
             body, keyboard = await slave_menu_home(user_id, menu_chat_id)
@@ -4798,13 +4751,17 @@ def create_router(
         if not can_manage_basement_ranks(message.from_user):
             if not await database.feature_enabled(message.chat.id,'slavery'):
                 return
-            business = await database.get_business(message.chat.id, message.from_user.id)
+            business = await database.business_for_worker(message.chat.id, message.from_user.id,target_id)
             if not business:
+                await message.answer('Выбери предприятие и должность в личном меню бота.')
                 return
             business_type = str(business["business_type"])
             meta = BUSINESS_META[business_type]
-            producer_role = "courtesan" if business_type == "brothel" else "collector"
-            leader_role = "manager" if business_type == "brothel" else "overseer"
+            from enterprises import config,role_labels
+            cfg=config(business)
+            producer_role,leader_role=cfg['producer_role'],cfg['leader_role']
+            producer_title,leader_title=role_labels(business)
+            meta=dict(meta,producer=producer_title,leader=leader_title)
             current = await database.business_worker_role(
                 message.chat.id, message.from_user.id, target_id
             )
@@ -4828,14 +4785,16 @@ def create_router(
                 )
                 return
             result = await database.set_business_worker_role(
-                message.chat.id, message.from_user.id, target_id, next_role
+                message.chat.id, message.from_user.id, target_id, next_role,business['id']
             )
             if result == "combat_equipped":
                 await message.answer("Сначала снимите раба с боевого слота в арене.")
                 return
             if result not in {"updated", "removed"}:
                 await message.answer(
-                    "Повышать и понижать можно только собственных рабов этого предприятия."
+                    {'full':'Нет свободных мест. Расширь предприятие или перераспредели работников.',
+                     'leader_full':'Управляющий уже назначен.',
+                     'away':'Раб временно отсутствует: сначала заверши событие возвращения.'}.get(result,'Повышать и понижать можно только собственных рабов этого предприятия.')
                 )
                 return
             previous_name = (

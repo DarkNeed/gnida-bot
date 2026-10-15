@@ -80,6 +80,10 @@ class ClassModulesMixin:
                         self.connection.execute('UPDATE businesses SET last_accrued=? WHERE chat_id=?',(int(time.time()),chat))
                         if not enabled:
                             self.connection.execute("UPDATE challenges SET friendly=1,forced=0,opponent_newcomer=0 WHERE chat_id=? AND status IN ('pending','betting','active')",(chat,))
+                            from slave_recovery import timestamp
+                            self.connection.execute("""UPDATE slave_recovery_events SET status='cancelled',
+                                ended_at=?,deadline=NULL,revision=revision+1 WHERE chat_id=?
+                                AND status IN ('announcing','pending','playing')""",(timestamp(),chat))
                 self.connection.execute("""INSERT INTO chat_feature_modules VALUES(?,?,?,?,?)
                     ON CONFLICT(chat_id) DO UPDATE SET revision=excluded.revision,disabled_json=excluded.disabled_json,
                     updated_by=excluded.updated_by,updated_at=excluded.updated_at""",
