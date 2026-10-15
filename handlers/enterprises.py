@@ -12,7 +12,9 @@ from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from enterprises import CATALOG, CAPACITIES, MAX_ENTERPRISES, UPGRADE_PRICES, config, title, role_labels
-from slave_recovery import DIRECTIONS, RECOVERY_LENGTH, RECOVERY_MAX_ERRORS
+from slave_recovery import (RECOVERY_CODE_LENGTH, RECOVERY_MAX_ATTEMPTS,
+                            RECOVERY_SYMBOLS, RECOVERY_TZ, timestamp)
+from datetime import datetime
 
 
 def button(text, data):return InlineKeyboardButton(text=text[:60],callback_data=data)
@@ -69,10 +71,12 @@ async def enterprise_jobs(db, actor, chat):
     return '<b>🧰 Подработка</b>\n'+intro+' Одна смена в час на все предприятия чата, выплата 20–100 ₣. Прежний лимит заработка рабов сохраняется.',keyboard(rows)
 
 
-async def present(db, bot, chat, actor):
+async def present(db, bot, chat, actor, *, raise_delivery_error=False):
     if not await db.user_knows_chat(actor,chat):return False
     try:member=await bot.get_chat_member(chat,actor)
-    except (TelegramAPIError,asyncio.TimeoutError):return False
+    except (TelegramAPIError,asyncio.TimeoutError):
+        if raise_delivery_error:raise
+        return False
     status=getattr(member.status,'value',member.status)
     return bool(getattr(member,'is_member',False)) if status=='restricted' else status not in ('left','kicked')
 
@@ -82,17 +86,36 @@ async def recovery_view(db, row):
     name=(user['display_name'] or str(row['slave_id'])) if user else str(row['slave_id'])
     tag=f'<a href="tg://user?id={row["slave_id"]}">{esc(name)}</a>'
     status=row['status'];prefix=f'🚨 {tag} '+('сбежал!' if row['kind']=='escaped' else 'похитили!')
-    if status in ('announcing','pending'):
-        pattern=' '.join(DIRECTIONS[i] for i in json.loads(row['pattern_json']))
-        return (prefix+'\n\nЗапомни путь и повтори его после старта:\n<b>'+pattern+'</b>\n\n'
-                '⚠️ После нажатия «Начать»: 2 минуты и максимум одна ошибка. Вторая ошибка или истечение времени освобождает раба. До старта таймера нет. Играть может только владелец.',
-                keyboard([[button('Начать · риск потерять раба',f"rec:{row['id']}:{row['revision']}:start")]]))
-    if status=='playing':
-        text=prefix+f"\nПовтори путь: направление {row['step']+1}/{RECOVERY_LENGTH}.\nОшибки: {row['errors']}/{RECOVERY_MAX_ERRORS}. После старта — 2 минуты."
-        return text,keyboard([[button(arrow,f"rec:{row['id']}:{row['revision']}:{i}") for i,arrow in enumerate(DIRECTIONS)]])
+    if status in ('announcing','pending','playing'):
+        deadline=row['deadline']
+        if deadline is not None:
+            left=max(0,deadline-timestamp())
+            until=datetime.fromtimestamp(deadline,RECOVERY_TZ).strftime('%H:%M:%S')
+            clock=f'⏳ Осталось при обновлении: {left//60:02}:{left%60:02} · до {until} МСК.'
+        else:clock='⏳ Всего 5 минут с публикации сообщения.'
+        text=prefix+'\n\n🔓 <b>Взлом замка</b>\n'+clock+'\nТаймер идёт даже без участия владельца.'
+        text+=f'\nКод: {RECOVERY_CODE_LENGTH} разных символа из '+' '.join(RECOVERY_SYMBOLS)+'.'
+        text+='\nПодсказки показывают количество символов на месте и в коде, но не на месте — без указания самих символов.'
+        text+=f'\n⚠️ {RECOVERY_MAX_ATTEMPTS} попыток. Не успел или исчерпал попытки — раб освобождается. Играть может только владелец.'
+        refresh=[button('🔄 Обновить таймер',f"rec:{row['id']}:{row['revision']}:view")]
+        if status in ('announcing','pending'):
+            return text,keyboard([[button('🔓 Начать · время уже идёт',f"rec:{row['id']}:{row['revision']}:start")],refresh])
+        history=json.loads(row['history_json']);guess=json.loads(row['guess_json'])
+        text+=f'\n\nПопытка {len(history)+1}/{RECOVERY_MAX_ATTEMPTS}'
+        for index,item in enumerate(history,1):
+            symbols=' '.join(RECOVERY_SYMBOLS[i] for i in item['guess'])
+            text+=f"\n{index}. {symbols} — на месте: {item['exact']}, не на месте: {item['misplaced']}"
+        selected=[RECOVERY_SYMBOLS[i] for i in guess]+['_']*(RECOVERY_CODE_LENGTH-len(guess))
+        text+='\n\nТекущая комбинация: '+' · '.join(selected)+'\nТретий символ проверяет комбинацию автоматически.'
+        choices=[button(symbol,f"rec:{row['id']}:{row['revision']}:{i}") for i,symbol in enumerate(RECOVERY_SYMBOLS)]
+        rows=[choices[:3],choices[3:]]
+        if guess:rows.append([button('⌫ Последний',f"rec:{row['id']}:{row['revision']}:undo"),button('Очистить',f"rec:{row['id']}:{row['revision']}:clear")])
+        return text,keyboard(rows+[refresh])
     result={'returned':'✅ Раб возвращён. Назначение на предприятии сохранено.',
             'lost':'❌ Поиски провалены. Раб освобождён от этого владельца в этом чате и снят с работы.',
             'cancelled':'Событие отменено: владение изменилось, модуль выключен или сообщение игры недоступно.'}.get(status,'Событие завершено.')
+    if status=='cancelled' and row['game_type']!='code':
+        result='Маршрут заменён новой мини-игрой. Старое событие отменено без потери раба.'
     return tag+'\n'+result,keyboard([])
 
 
@@ -208,9 +231,15 @@ def create_enterprise_router(db):
             _,event_id,revision,action=callback.data.split(':');event_id=int(event_id)
             row=await db.recovery_get(event_id)
             if not row or row['owner_id']!=callback.from_user.id:raise ValueError('Играть может только владелец.')
-            if not await present(db,bot,row['chat_id'],callback.from_user.id):raise ValueError('Чат недоступен.')
+            try:available=await present(db,bot,row['chat_id'],callback.from_user.id,raise_delivery_error=True)
+            except (TelegramAPIError,asyncio.TimeoutError):
+                await db.recovery_cancel_delivery(event_id,callback.from_user.id,row['revision'])
+                try:await callback.answer('Telegram недоступен. Активный поиск отменён без потери раба.',show_alert=True)
+                except (TelegramAPIError,asyncio.TimeoutError):pass
+                return
+            if not available:raise ValueError('Чат недоступен.')
             if callback.message.chat.type!='private' and callback.message.chat.id!=row['chat_id']:raise ValueError('Кнопка относится к другому чату.')
-            if action!='view':row=await db.recovery_action(event_id,callback.from_user.id,int(revision),action)
+            row=await db.recovery_action(event_id,callback.from_user.id,int(revision),action)
             view=await recovery_view(db,row)
             try:
                 await callback.message.edit_text(view[0],reply_markup=view[1],parse_mode='HTML')
@@ -218,7 +247,7 @@ def create_enterprise_router(db):
                 if not isinstance(error,TelegramBadRequest) or 'message is not modified' not in str(error).lower():
                     await db.recovery_cancel_delivery(event_id,callback.from_user.id,row['revision'])
                     notice=('Не удалось показать игру. Активный поиск отменён без потери раба.'
-                            if row['status']=='playing' else 'Не удалось обновить сообщение. Результат уже сохранён.')
+                            if row['status'] in ('pending','playing') else 'Не удалось обновить сообщение. Результат уже сохранён.')
                     try:await callback.answer(notice,show_alert=True)
                     except TelegramAPIError:pass
                     return
