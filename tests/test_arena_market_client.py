@@ -250,7 +250,7 @@ process.stdout.write(c.out||app.innerHTML);
             "page='skillReplace';skillUsePending={item:43,user:10,personal:true};menuScreen(input);",
             data,
         )
-        self.assertIn("Какой навык заменить?", body)
+        self.assertIn("Текущие навыки", body)
         self.assertIn("Новый навык", body)
         self.assertIn('data-do="replaceitem:humiliate"', body)
         self.assertNotIn('data-do="replaceitem:bum_punch"', body)

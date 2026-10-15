@@ -82,8 +82,6 @@ def variant(skill, actor, target, key):
         if sid == 'arch_hunter_moon' and m.get('moon_mark') and m.get('visceral_ready') and actor.get('own_turns', 0) < m.get('visceral_until', 0) and not m.get('moon_used'):
             change.update(name='Луна не прощает', power=44, cost=60, pierce=.60,
                           tags=skill.tags + ('two_strike', 'rpg_white_moon'))
-    if change:
-        change['description']=PATHS[key][5 if final else 1]
     return replace(skill, **change) if change else skill
 
 

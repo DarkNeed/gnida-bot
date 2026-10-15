@@ -1062,6 +1062,7 @@ async def challenge_text(database: Database, challenge) -> str:
         f"КНБ: {plain_name(challenger)} против {plain_name(opponent)}\n"
         f"{first_state} {plain_name(challenger)} · {second_state} {plain_name(opponent)}\n"
         f"Выберите ход — соперник его не увидит. На ход даётся {deadline_text}."
+        " Если соперник сделал выбор, а ты не успел — поражение с обычными последствиями игры."
         f"{forced_text}{friendly_text}{await challenge_wager_text(database, challenge)}"
     )
 
@@ -1109,6 +1110,7 @@ async def challenge_offer_text(database: Database, challenge) -> str:
         f"на {game_name}.\n"
         f"{plain_name(opponent)}, прими или отклони вызов. "
         f"На ответ даётся {deadline_text}."
+        " После принятия бездействие до тайм-аута считается поражением, а не отменой."
         f"{forced_text}{newcomer_text}{friendly_text}"
         f"{await challenge_wager_text(database, challenge)}"
         f"{await blackjack_beginner_guide(database, challenge)}"
@@ -1160,6 +1162,7 @@ async def blackjack_text(database: Database, challenge, game) -> str:
         f"{plain_name(opponent)}: {visible_hand(opponent_hand)} · "
         f"{state(int(challenge['opponent_id']), bool(game['opponent_stood']))}\n\n"
         f"Свою скрытую карту можно посмотреть кнопкой. На игру даётся {deadline_text}."
+        " Если время истечёт, проиграет тот, чья очередь ходить."
         f"{forced_text}{friendly_text}{await challenge_wager_text(database, challenge)}"
         f"{await blackjack_beginner_guide(database, challenge)}"
     )
@@ -1190,7 +1193,7 @@ async def checkers_text(database: Database, challenge, game) -> str:
         "Шашки\n\n"
         f"Играют: {plain_name(challenger)} ⚫ · {plain_name(opponent)} ⚪\n"
         f"Ходит: {plain_name(turn)} {turn_symbol}\n"
-        "На ход даётся 3 часа."
+        "На ход даётся 3 часа. Не успел — поражение с обычными последствиями игры."
         f"{chain_text}{friendly_text}"
         f"{await challenge_wager_text(database, challenge)}"
     )
@@ -2673,6 +2676,14 @@ def create_router(
             if await database.get_challenge_wager(challenge_id):
                 text += " Взнос создателя возвращён."
             await edit_challenge(challenge, bot, text)
+            return
+        settled=await database.get_challenge(challenge_id)
+        if settled['winner_id'] is not None and settled['result_recorded']:
+            winner_id=int(settled['winner_id'])
+            loser_id=int(settled['opponent_id'] if winner_id==settled['challenger_id'] else settled['challenger_id'])
+            await database.finish_challenge_deadline(challenge_id)
+            await publish_game_win(await database.get_challenge(challenge_id),bot,winner_id,loser_id,
+                                   '⌛ Время на ход истекло. Не сделавшему ход засчитано поражение.')
             return
         if challenge["game_type"] == "blackjack":
             blackjack = await database.get_blackjack_game(challenge_id)

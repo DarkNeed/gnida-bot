@@ -148,13 +148,15 @@ class PlayerWagerTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await self.db.claim_expired_challenge(challenge_id))
         self.assertEqual(await self.db.franc_balance(-100, 1), 1000)
 
-    async def test_unfinished_game_timeout_refunds_both_players(self):
+    async def test_unfinished_game_timeout_pays_opponent_of_inactive_turn_owner(self):
         challenge_id = await self.create_offer(game="blackjack", stake=80)
         await self.db.accept_challenge(challenge_id, 2)
         challenge = await self.db.get_challenge(challenge_id)
+        game=await self.db.get_blackjack_game(challenge_id)
         with patch("database.utc_timestamp", return_value=int(challenge["deadline"])):
             self.assertIsNotNone(await self.db.claim_expired_challenge(challenge_id))
-        self.assertEqual((await self.db.franc_balance(-100, 1), await self.db.franc_balance(-100, 2)), (1000, 1000))
+        expected=(920,1080) if game['turn_user_id']==1 else (1080,920)
+        self.assertEqual((await self.db.franc_balance(-100, 1), await self.db.franc_balance(-100, 2)), expected)
 
     async def test_competition_acceptance_needs_opponent_funds(self):
         challenge_id = await self.create_offer(game="checkers", competition=True)

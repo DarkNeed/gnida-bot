@@ -172,6 +172,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
         self.connection.commit()
 
         for table in ("slave_profiles", "personal_profiles"):
+            self._ensure_column(table, 'skill_offers', "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(table, "archclass_id", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(table, "archclass_pending_at", "INTEGER")
             self._ensure_column(
@@ -1594,6 +1595,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     f"UPDATE {table} SET loadout=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?",
                     (json.dumps(loadout), chat, user),
                 )
+            elif action == 'skill_offer':
+                with self.connection:
+                    self._arena_resolve_skill_offer_locked(chat,user,personal,value)
             elif action == "passives":
                 if (
                     not isinstance(value, list)

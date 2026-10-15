@@ -6,6 +6,7 @@ import time
 
 from arena_engine import effective_stat, effective_skill, skill_restriction
 from arena_evolution import evolution_info
+from arena_rpg_descriptions import skill_description as rpg_skill_description
 from arena_archclasses import archclass_view, class_title
 from arena_progression import choice_avatar
 from arena_raid_engine import BOSSES, BOSS_SKILLS, pair_state
@@ -93,6 +94,7 @@ async def raid_view(db, row, actor):
             side["skill_details"].append(
                 dict(
                     asdict(variant),
+                    description=rpg_skill_description(variant,side),
                     cost=pet_cost(side, variant, gift_cost(side, variant)),
                     evolution=info,
                     unavailable_reason=skill_restriction(side, variant),

@@ -35,6 +35,7 @@ from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from arena_images import MAX_SPRITE_BYTES, normalize_sprite
 from arena_mirror_effects import GIFTS, gift_cost, gift_modifiers
 from arena_evolution import evolution_info
+from arena_rpg_descriptions import skill_description as rpg_skill_description
 from arena_archclasses import archclass_view, class_title, branch_options
 from arena_progression import pending_choice, choice_avatar
 from arena_raid_web import raid_view
@@ -154,11 +155,12 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                             name=variant.name,
                             cost=variant.cost,
                             power=variant.power,
-                            description=variant.description,
+                            description=rpg_skill_description(variant,side),
                         )
                 side["skill_details"].append(
                     dict(
                         asdict(variant),
+                        description=rpg_skill_description(variant,side),
                         cost=pet_cost(side, variant, gift_cost(side, variant)),
                         evolution=info,
                         unavailable_reason=skill_restriction(
@@ -332,10 +334,15 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
         profile['loadout']=[k for k in profile['loadout'] if k in skills and (skills[k].class_id in enabled_classes or skills[k].class_id not in classes)]
         async with db._lock:
             class_grants = db._granted_content_locked(chat, profile["user_id"], "class")
+        from arena_rpg import branch as rpg_branch, rpg_variant
+        def profile_skill(skill):
+            if rpg_branch(profile) and skill.class_id==profile['class_id']:
+                variant=rpg_variant(skill,dict(profile,effects=[],rpg_state={}),dict(hp=100,stats=dict(max_hp=100),effects=[]))
+                return dict(asdict(variant),description=rpg_skill_description(variant,profile),evolution=None)
+            return dict(asdict(skill),evolution=evolution_info(skill,profile['class_id'],profile))
         profile["skills"] = [
             dict(
-                asdict(skills[k]),
-                evolution=evolution_info(skills[k], profile["class_id"], profile),
+                profile_skill(skills[k]),
                 module_disabled=skills[k].class_id in classes and skills[k].class_id not in enabled_classes,
             )
             for k in unlocked_skill_ids(
@@ -347,6 +354,8 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
                 profile["archclass_id"],
             )
         ]
+        for entry in profile.get('skill_offers',[])+profile.get('available_skills',[]):
+            entry.update(profile_skill(skills[entry['skill_id']]))
         profile["classes"] = [
             dict(
                 id=k,
@@ -842,6 +851,7 @@ def create_arena_app(
             "forget_passive",
             "learn_skill",
             "learn_passive",
+            "skill_offer",
         }:
             personal = body.get("personal", True)
             if type(personal) is not bool:

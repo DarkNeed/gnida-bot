@@ -46,7 +46,7 @@ function clearSpriteDraft(){if(spriteDraft)URL.revokeObjectURL(spriteDraft.url);
 function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames,r)?r:"common")+'">'+esc(rarityNames[r]||r||"Обычный")+'</span>';}
 function describeEffect(e){
   if(e.description)return esc(e.description);
-  const kind=String(e.kind||'effect'),rpg={rpg_armor_break:'Раскол: −15% физ. защиты за применение, до −45%',rpg_counter:'Один ответный контрудар при попадании врага',rpg_parry:'Прерывание следующей атаки: открывает висцеральный удар. Босс не пропускает ход, его урон −35%',rpg_summon:'Скелет атакует после трёх следующих действий хозяина и даёт души',rpg_blood_bullets:'−10% максимального HP, +35 энергии; не может убить',burn:'Горение: '+esc(e.value)+' урона при любом собственном действии',damage_taken_pct:'Получаемый урон: +'+Math.round(e.value*100)+'%'};
+  const kind=String(e.kind||'effect'),rpg={rpg_armor_break:'Раскол: −15% физ. защиты за применение, до −45%',rpg_counter:'Один ответный контрудар при попадании врага',rpg_parry:'Прерывание следующей атаки: открывает висцеральный удар. Босс не пропускает ход, его урон −35%',rpg_summon:'Скелет атакует после каждого из трёх следующих действий хозяина и собирает Души',rpg_blood_bullets:'−10% максимального HP, +35 энергии; не может убить',burn:'Горение: '+esc(e.value)+' урона при любом собственном действии',damage_taken_pct:'Получаемый урон: +'+Math.round(e.value*100)+'%'};
   if(Object.hasOwn(rpg,kind))return rpg[kind];
   if(kind==='incoming_damage_multiplier')return 'Получаемый прямой урон: −'+Math.round((1-e.value)*100)+'%'+(e.turns?' · '+e.turns+' х.':'');
   if(kind==='dispel_buffs')return 'Снимает все временные усиления врага';
@@ -417,7 +417,7 @@ function forgePreview(operation,extra,summary){
 function characterSlot(){return current?.own_side?current[current.own_side+'_character_slot']||1:menu?.characters?.active_slot||1;}
 function charactersBody(data){
   const c=data.characters;if(!c)return '';
-  return '<div class="card"><h3>Твои персонажи · '+c.capacity+' / 5</h3><p class="muted">Отдельные билды и внешний вид. Инвентарь и лимиты наград общие.</p><div class="character-row">'+c.slots.map(s=>'<button class="character-option'+(s.active?' selected':'')+(s.locked?' locked':'')+'" data-do="'+(s.locked?'charactersbuy':'character:'+s.slot)+'" '+(!s.locked&&c.busy&&!s.active?'disabled':'')+'>'+(s.locked?'<span class="character-lock">🔒</span>':'<img src="'+esc(s.avatar_url)+'" class="'+(s.pixel_art?'pixel-art':'')+'" alt="'+esc(s.class_name)+'">')+'<b>№'+s.slot+(s.active?' · выбран':'')+'</b><span>'+esc(s.locked?'Закрыт':s.created?s.class_name:'Создать персонажа')+'</span><small>'+(s.locked?'Пакет всех 4 слотов':s.created?'Lv.'+s.level:'С 1 уровня')+'</small></button>').join('')+'</div>'+(!c.unlocked?button('Открыть все 4 слота · '+c.price+' Stars','charactersbuy','primary',c.payments_enabled===false):'')+(c.busy?'<p class="muted">Переключение доступно после завершения RPG-активности.</p>':'')+'</div>';
+  return '<div class="card"><h3>Твои персонажи · '+c.capacity+' / 5</h3><p class="muted">Отдельные билды и внешний вид. Инвентарь и лимиты наград общие.</p><div class="character-row">'+c.slots.map(s=>'<button class="character-option'+(s.active?' selected':'')+(s.locked?' locked':'')+'" data-do="'+(s.locked?'charactersbuy':'character:'+s.slot)+'" '+(!s.locked&&c.busy&&!s.active?'disabled':'')+'>'+(s.locked?'<span class="character-lock">🔒</span>':'<img src="'+esc(s.avatar_url)+'" class="'+(s.pixel_art?'pixel-art':'')+'" alt="'+esc(s.class_name)+'">')+'<b>№'+s.slot+(s.active?' · выбран':'')+'</b><span>'+esc(s.locked?'Закрыт':s.created?s.class_name:'Создать персонажа')+'</span><small>'+(s.locked?'Пакет всех 4 слотов':s.created?'Lv.'+s.level:'С 1 уровня')+'</small></button>').join('')+'</div>'+(!c.unlocked?button('Открыть все 4 слота · '+c.price+' ☆','charactersbuy','primary',c.payments_enabled===false):'')+(c.busy?'<p class="muted">Переключение доступно после завершения RPG-активности.</p>':'')+'</div>';
 }
 async function buyCharacters(){
   if(demo){toast('Демо: платежи не выполняются.');return;}
@@ -440,6 +440,18 @@ async function buyCharacters(){
     page='personal';await openMenu();
   }catch(error){toast(error.message);}finally{busy=false;}
 }
+function moveChoicePanel(p,newSkill,choices,caption,swapPrefix,extra){
+  return '<section class="move-choice"><header class="move-choice-header">'+fighterImage(p,'move-choice-avatar')+'<div><div class="eyebrow">НОВЫЙ НАВЫК</div><h2>'+esc(newSkill.name)+'</h2><p>'+esc(caption)+'</p></div></header><div class="move-choice-columns"><div class="move-new"><span class="type">НОВЫЙ</span><h3>'+esc(newSkill.name)+'</h3>'+rarityBadge(newSkill.rarity)+skillInfo(newSkill)+'</div><div><h3>Текущие навыки</h3><div class="move-choice-grid">'+choices.map(s=>button('<b>'+esc(s.name)+'</b>'+rarityBadge(s.rarity)+skillInfo(s),swapPrefix+s.skill_id,'move-old')).join('')+'</div></div></div><div class="move-dialogue">'+extra+'</div></section>';
+}
+function skillOfferScreen(data){
+  const p=data.personal,s=p.skill_offers[0],known=p.skills||[];
+  const full=!known.some(k=>k.skill_id===s.skill_id)&&known.length>=6;
+  const equipped=p.loadout.includes(s.skill_id);
+  const choices=(full?known:known.filter(k=>p.loadout.includes(k.skill_id)&&!equipped)).filter(k=>!full||k.skill_id!=='bum_punch');
+  const caption=full?'Память заполнена: 6 навыков. Выбери, какой забыть ради нового.':equipped?'Новый навык доступен в свободном боевом слоте. Оставить его или отказаться?':'В бою доступно 4 навыка. Выбери, какой заменить; прежний останется изученным.';
+  const extra=(!full?button(equipped?'Оставить в наборе':p.loadout.length<4?'Изучить и добавить в набор':'Изучить в резерв','offerlearn','primary'):'')+button('Не брать — оставить прежние','offerskip');
+  app.innerHTML='<section class="menu">'+top('Выбор навыка','РАЗВИТИЕ ПЕРСОНАЖА',button('Обновить','refresh','small'))+'<div class="content">'+moveChoicePanel(p,s,choices,caption,'offerswap:',extra)+'</div></section>';
+}
 function menuScreen(data){
   if(['slaves','owner','slaveProfile','admin'].includes(page))page='personal';
   audio.scene('menu');
@@ -447,6 +459,7 @@ function menuScreen(data){
   const selected=(page==='personalProfile'||page==='slaveProfile')?activeProfile():null;
   const required=(page==='personalProfile'||page==='slaveProfile')&&selected?.progression_choice?selected:[data.personal].find(p=>p?.progression_choice?.can_choose);
   if(required){progressionScreen(required);return;}
+  if(['personal','personalProfile'].includes(page)&&data.personal?.skill_offers?.length&&!data.characters?.busy&&!data.active?.length){skillOfferScreen(data);return;}
   if(page!=="appearance")clearSpriteDraft();
   let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+button("Рейды","tab:raids",page==="raids"?"selected":"")+'</div>';
   body+=button('⚒️ Кузница трактатов','tab:forge',page==='forge'||page==='forgeConfirm'?'primary':'');
@@ -471,13 +484,12 @@ function menuScreen(data){
     const target=[data.personal].filter(Boolean).find(p=>p.user_id===pending?.user&&p.personal===pending?.personal);
     if(!row||!target){page='inventory';menuScreen(data);return;}
     const known=row.kind==='skill'?target.skills:(target.passives||[]);
-    body+='<div class="card"><h2>Какой навык заменить?</h2><p>Новый: <b>'+esc(row.name)+'</b></p><p>Боец: '+esc(target.name||target.class_name)+'</p><p class="muted">Лимит изученных '+(row.kind==='skill'?'активных навыков — 6':'пассивных навыков — 4')+'. Выбери замену. До выбора трактат не тратится.</p><div class="stack">';
-    body+=known.filter(s=>s.skill_id!=='bum_punch').map(s=>button(esc(s.name)+' '+rarityBadge(s.rarity)+skillInfo(s),'replaceitem:'+s.skill_id)).join('');
-    body+=button('Отмена — ничего не менять','tab:inventory')+'</div></div>';
+    body+=moveChoicePanel(target,{...row.details,name:row.name,rarity:row.rarity},known.filter(s=>s.skill_id!=='bum_punch'),
+      'Выбери, какой изученный навык забыть. До выбора трактат не тратится.','replaceitem:',button('Отмена — ничего не менять','tab:inventory'));
   }else if(page==="charactersPurchase"){
     const c=data.characters;
     if(!c||c.unlocked){page='personal';menuScreen(data);return;}
-    body+='<div class="card"><h2>Четыре дополнительных персонажа</h2><p><b>'+c.price+' Stars · одна покупка без подписки</b></p><p>'+esc(c.terms)+'</p><p class="muted">Текущий персонаж сохранится в первом слоте. Новые начинают с 1 уровня. Поддержка: /paysupport.</p><label class="check"><input id="characters-agree" type="checkbox"> Принимаю условия покупки</label><div class="stack">'+button('Оплатить '+c.price+' Stars','characterinvoice','primary',true)+button('Назад','tab:personal')+'</div></div>';
+    body+='<div class="card"><h2>Четыре дополнительных персонажа</h2><p><b>'+c.price+' ☆ · одна покупка без подписки</b></p><p>'+esc(c.terms)+'</p><p class="muted">Текущий персонаж сохранится в первом слоте. Новые начинают с 1 уровня. Поддержка: /paysupport.</p><label class="check"><input id="characters-agree" type="checkbox"> Принимаю условия покупки</label><div class="stack">'+button('Оплатить '+c.price+' ☆','characterinvoice','primary',true)+button('Назад','tab:personal')+'</div></div>';
   }else if(page==="leaveConfirm"){
     if(!leavePending){page='personal';menuScreen(data);return;}
     body+='<div class="card"><h2>Выйти из боя?</h2><p>Непринятый вызов будет отменён с возвратом ставки. В начатом PvP это сдача и проигрыш ставки. Пустошь, зеркальный забег или рейд завершатся для тебя без награды за победу.</p><div class="row">'+button('Выйти / сдаться','confirmleave','danger')+button('Остаться','cancelleave')+'</div></div>';
@@ -627,6 +639,13 @@ app.addEventListener("click",async event=>{
   }
   if(cmd==="confirmitem"){const pending=classUsePending;if(!pending)return;page='inventory';await menuAction('use_item',{item:pending.item,user:pending.user,personal:pending.personal,confirm:true});return;}
   if(cmd==='replaceitem'){const pending=skillUsePending;if(!pending)return;if(await menuAction('use_item',{...pending,replace_skill:arg})){skillUsePending=null;page='inventory';menuScreen(menu);}return;}
+  if(['offerlearn','offerskip','offerswap'].includes(cmd)){
+    const p=menu.personal,s=p.skill_offers?.[0];if(!s)return;
+    const full=!p.skills.some(k=>k.skill_id===s.skill_id)&&p.skills.length>=6;
+    await menuAction('skill_offer',{user:p.user_id,personal:true,value:{skill:s.skill_id,decision:cmd==='offerskip'?'skip':'learn',
+      known:p.known_skills||p.skills.map(k=>k.skill_id),selected:p.loadout,
+      replace_memory:cmd==='offerswap'&&full?arg:null,equip_replace:cmd==='offerswap'&&p.loadout.includes(arg)?arg:null}});return;
+  }
   const p=activeProfile();
   if(cmd==='choiceback'){page='personal';menuScreen(menu);return;}
   if(cmd==='progression'){
@@ -681,6 +700,15 @@ function startDemo(){
 function startDemoMenu(){
   if(!current?.state)startDemo();
   const fighter={...current.state.sides.a,user_id:1,personal:true,progress:[7,12,76],loadout:['bum_punch','humiliate'],skills:current.state.sides.a.skill_details,passives:[],passive_loadout:[],classes:[],can_edit_sprite:true};
+  if(new URLSearchParams(location.search).has('skills_preview')){
+    const move=(skill_id,name,cost,power,description)=>({skill_id,name,cost,power,description,accuracy:95,cooldown:1,effects:[],rarity:'rare'});
+    Object.assign(fighter,{class_name:'Некромант',class_id:'mage',class_avatar_url:'/static/assets/archclasses/mage_necromancer.png',level:15});
+    fighter.skills=[move('bum_punch','Удар бомжа',0,10,'Обычная бесплатная атака.'),move('mana_shot','Костяной выстрел',10,12,'Магический снаряд. Не расходует Души.'),move('mana_blob','Похищение жизни',25,16,'Лечит 30% фактически снятого HP.'),move('mana_focus','Сосредоточиться',0,0,'Возвращает 40 маны за действие.')];
+    fighter.loadout=fighter.skills.map(s=>s.skill_id);
+    if(new URLSearchParams(location.search).get('skills_preview')==='full')fighter.skills.push(move('mana_barrier','Поднять мертвеца',25,0,'Скелет на три действия, собирает Души.'),move('mana_overload','Перегрузка',35,18,'Расходует Перенасыщение ради урона.'));
+    fighter.known_skills=fighter.skills.map(s=>s.skill_id);
+    fighter.skill_offers=[move('arch_mage_necromancer','Жатва душ',40,20,'+30% урона за Душу, до трёх. Лечит на 30% фактически снятого HP. Души тратятся только при попадании.')];
+  }
   const items=[
     {id:1,kind:'class',content_id:'cutie',name:'Милашка',rarity:'uncommon',details:{},quantity:1,price:750,remaining:1},
     {id:2,kind:'passive',name:'Каменная кожа',rarity:'uncommon',details:{effects:[{kind:'physical_defense_pct',value:.15}]},quantity:1,price:140,remaining:1},
@@ -703,6 +731,7 @@ function configureViewport(){
 async function boot(){
   configureViewport();
   if(demo){
+    if(new URLSearchParams(location.search).has('skills_preview')){startDemoMenu();return;}
     const raidPreview=new URLSearchParams(location.search).get('raid_preview');
     if(raidPreview){try{raidScreen(await api('/demo/raid/'+encodeURIComponent(raidPreview)));return;}catch{}}
     const mirrorPreview=new URLSearchParams(location.search).get('mirror_preview');

@@ -87,15 +87,10 @@ EVOLUTIONS = {
 
 def evolution_info(skill, class_id, source=None, target=None, own_turns=0):
     if source:
-        from arena_rpg import branch as rpg_branch, RPG_BRANCHES
-        from arena_rpg_paths import PATHS, is_final
-        key=rpg_branch(source)
-        if key and skill.class_id==class_id:
-            entry=PATHS[key]
-            return dict(name=entry[0] if is_final(source) else RPG_BRANCHES[key][1],
-                        min_level=10, condition='Выбран соответствующий архикласс; условия финальной атаки указаны в описании ветки.',
-                        description=' '.join(entry[1:5]) + (' '+entry[5] if is_final(source) else ''),
-                        cost=skill.cost,power=skill.power,active=False,specialization=True)
+        from arena_rpg_descriptions import branch_skill_info
+        if skill.class_id==class_id:
+            info=branch_skill_info(skill,source,target)
+            if info:return info
     specialization = arch_rule(skill, source) if source else None
     base_rule = EVOLUTIONS.get(skill.skill_id)
     rule = specialization or base_rule

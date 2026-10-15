@@ -1756,18 +1756,26 @@ class Database(EnterpriseMixin, ArenaMixin):
                     ),
                 )
                 self._refund_competition_locked(challenge_id)
-                if row["status"] == "active" and row["game_type"] == "rps":
-                    rps_winner = self._rps_winner_locked(row)
-                    if row["challenger_choice"] and row["opponent_choice"]:
-                        self.connection.execute(
-                            """UPDATE challenges SET winner_id=?, result_recorded=1
-                               WHERE id=?""",
-                            (rps_winner, challenge_id),
-                        )
-                    if rps_winner is not None:
-                        self._pay_wager_locked(challenge_id, rps_winner)
-                    else:
-                        self._refund_wager_locked(challenge_id)
+                winner = None
+                if row['status']=='active':
+                    if row['game_type']=='rps':
+                        first,second=bool(row['challenger_choice']),bool(row['opponent_choice'])
+                        if first and second:winner=self._rps_winner_locked(row)
+                        elif first!=second:winner=row['challenger_id'] if first else row['opponent_id']
+                    elif row['game_type'] in ('blackjack','checkers'):
+                        table='blackjack_games' if row['game_type']=='blackjack' else 'checkers_games'
+                        game=self.connection.execute(f'SELECT turn_user_id FROM {table} WHERE challenge_id=?',(challenge_id,)).fetchone()
+                        if game and game['turn_user_id'] in (row['challenger_id'],row['opponent_id']):
+                            winner=row['opponent_id'] if game['turn_user_id']==row['challenger_id'] else row['challenger_id']
+                if winner is not None:
+                    # Record money and ownership atomically, before notifying Telegram.
+                    self.connection.execute("UPDATE challenges SET winner_id=?,result_recorded=1,status='finished' WHERE id=?",(winner,challenge_id))
+                    self._pay_wager_locked(challenge_id,winner)
+                    if not row['friendly']:
+                        loser=row['opponent_id'] if winner==row['challenger_id'] else row['challenger_id']
+                        self._transfer_after_loss_locked(row['chat_id'],loser,winner,challenge_id=challenge_id)
+                    # Keep notification resumable after restart; consequences are idempotent.
+                    self.connection.execute("UPDATE challenges SET status='deadline' WHERE id=?",(challenge_id,))
                 else:
                     self._refund_wager_locked(challenge_id)
                 self.connection.execute(
@@ -1789,12 +1797,12 @@ class Database(EnterpriseMixin, ArenaMixin):
                         (outcome, row["opponent_id"], challenge_id),
                     )
                 self.connection.commit()
-                return row
+                return self.connection.execute('SELECT * FROM challenges WHERE id=?',(challenge_id,)).fetchone()
 
     async def finish_challenge_deadline(self, challenge_id: int) -> None:
         async with self._lock:
             self.connection.execute(
-                "UPDATE challenges SET status='expired' WHERE id=? AND status IN ('deadline','pending_deadline')",
+                "UPDATE challenges SET status=CASE WHEN winner_id IS NOT NULL AND result_recorded=1 THEN 'finished' ELSE 'expired' END WHERE id=? AND status IN ('deadline','pending_deadline')",
                 (challenge_id,),
             )
             self.connection.commit()
@@ -1907,107 +1915,109 @@ class Database(EnterpriseMixin, ArenaMixin):
     async def transfer_after_loss(
         self, chat_id: int, loser_id: int, winner_id: int, *, challenge_id: int | None = None
     ) -> tuple[str, int]:
-        """Apply slavery consequences while preserving the no-slave-owners rule."""
+        """Apply a persisted result and its consequences exactly once."""
         async with self._lock:
-            if not self._feature_enabled_locked(chat_id, 'slavery'):
-                return 'module_disabled', loser_id
             with self.connection:
-                if challenge_id is not None:
-                    challenge = self.connection.execute(
-                        "SELECT * FROM challenges WHERE id=?", (challenge_id,)
-                    ).fetchone()
-                    if (
-                        not challenge or int(challenge["chat_id"]) != chat_id
-                        or {int(challenge["challenger_id"]), int(challenge["opponent_id"])} != {loser_id, winner_id}
-                        or challenge["winner_id"] != winner_id
-                        or challenge["status"] != "finished" or challenge["friendly"]
-                    ):
-                        raise ValueError("Нельзя применить последствия этого вызова.")
-                    if challenge["slavery_outcome"] is not None:
-                        return challenge["slavery_outcome"], int(challenge["slavery_affected_id"] or loser_id)
+                return self._transfer_after_loss_locked(chat_id, loser_id, winner_id, challenge_id=challenge_id)
 
-                def finish(outcome: str, affected: int) -> tuple[str, int]:
-                    if challenge_id is not None:
-                        self.connection.execute(
-                            "UPDATE challenges SET slavery_outcome=?, slavery_affected_id=? WHERE id=?",
-                            (outcome, affected, challenge_id),
-                        )
-                    self.connection.commit()
-                    return outcome, affected
+    def _transfer_after_loss_locked(self, chat_id, loser_id, winner_id, *, challenge_id=None):
+        if not self._feature_enabled_locked(chat_id, 'slavery'):
+            return 'module_disabled', loser_id
+        if challenge_id is not None:
+            challenge = self.connection.execute(
+                "SELECT * FROM challenges WHERE id=?", (challenge_id,)
+            ).fetchone()
+            if (
+                not challenge or int(challenge["chat_id"]) != chat_id
+                or {int(challenge["challenger_id"]), int(challenge["opponent_id"])} != {loser_id, winner_id}
+                or challenge["winner_id"] != winner_id
+                or challenge["status"] != "finished" or challenge["friendly"]
+            ):
+                raise ValueError("Нельзя применить последствия этого вызова.")
+            if challenge["slavery_outcome"] is not None:
+                return challenge["slavery_outcome"], int(challenge["slavery_affected_id"] or loser_id)
 
-                winner_owner = self.connection.execute(
-                    "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
-                    (chat_id, winner_id),
-                ).fetchone()
-                if winner_owner:
-                    if int(winner_owner["owner_id"]) == loser_id:
-                        self._settle_materials_locked(chat_id, loser_id)
-                        self.connection.execute(
-                            "DELETE FROM ownership WHERE chat_id=? AND slave_id=?",
-                            (chat_id, winner_id),
-                        )
-                        self.connection.execute(
-                            "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
-                            (chat_id, winner_id),
-                        )
-                        return finish("freed", winner_id)
-                    return finish("no_reward", loser_id)
-                winner = self.connection.execute(
-                    "SELECT username FROM users WHERE chat_id=? AND user_id=?",
-                    (chat_id, winner_id),
-                ).fetchone()
-                if (
-                    winner
-                    and winner["username"]
-                    and winner["username"].casefold() == PIROJOK_USERNAME
-                ):
-                    return finish("pirojok_cannot_own", loser_id)
-                loser_owner = self.connection.execute(
-                    "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
-                    (chat_id, loser_id),
-                ).fetchone()
-                if loser_owner and int(loser_owner["owner_id"]) == winner_id:
-                    return finish("kept", loser_id)
-                if loser_owner:
-                    return finish("protected_slave", loser_id)
-                owned = self.connection.execute(
-                    """SELECT slave_id FROM ownership
-                       WHERE chat_id=? AND owner_id=? AND slave_id != ?
-                       ORDER BY transfer_priority ASC, RANDOM() LIMIT 1""",
-                    (chat_id, loser_id, winner_id),
-                ).fetchone()
-                self._settle_materials_locked(chat_id, winner_id)
+        def finish(outcome: str, affected: int) -> tuple[str, int]:
+            if challenge_id is not None:
+                self.connection.execute(
+                    "UPDATE challenges SET slavery_outcome=?, slavery_affected_id=? WHERE id=?",
+                    (outcome, affected, challenge_id),
+                )
+            return outcome, affected
+
+        winner_owner = self.connection.execute(
+            "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
+            (chat_id, winner_id),
+        ).fetchone()
+        if winner_owner:
+            if int(winner_owner["owner_id"]) == loser_id:
                 self._settle_materials_locked(chat_id, loser_id)
-                if owned:
-                    slave_id = int(owned["slave_id"])
-                    self.connection.execute(
-                        "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
-                        (chat_id, slave_id),
-                    )
-                    self.connection.execute(
-                        """UPDATE ownership SET owner_id=?, acquired_at=?, last_forced_at=NULL,
-                               transfer_priority=0
-                           WHERE chat_id=? AND slave_id=?""",
-                        (winner_id, utc_timestamp(), chat_id, slave_id),
-                    )
-                    outcome = "transferred"
-                else:
-                    slave_id = loser_id
-                    self.connection.execute(
-                        """INSERT INTO ownership(
-                               chat_id, slave_id, owner_id, acquired_at, last_forced_at
-                           ) VALUES (?, ?, ?, ?, NULL)
-                           ON CONFLICT(chat_id, slave_id) DO UPDATE SET
-                               owner_id=excluded.owner_id,
-                               acquired_at=excluded.acquired_at,
-                               last_forced_at=NULL,
-                               transfer_priority=0""",
-                        (chat_id, slave_id, winner_id, utc_timestamp()),
-                    )
-                    outcome = "enslaved"
-                self._ensure_slave_profile_locked(chat_id, slave_id)
-                self._refresh_owner_record_locked(chat_id, winner_id)
-                return finish(outcome, slave_id)
+                self.connection.execute(
+                    "DELETE FROM ownership WHERE chat_id=? AND slave_id=?",
+                    (chat_id, winner_id),
+                )
+                self.connection.execute(
+                    "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
+                    (chat_id, winner_id),
+                )
+                return finish("freed", winner_id)
+            return finish("no_reward", loser_id)
+        winner = self.connection.execute(
+            "SELECT username FROM users WHERE chat_id=? AND user_id=?",
+            (chat_id, winner_id),
+        ).fetchone()
+        if (
+            winner
+            and winner["username"]
+            and winner["username"].casefold() == PIROJOK_USERNAME
+        ):
+            return finish("pirojok_cannot_own", loser_id)
+        loser_owner = self.connection.execute(
+            "SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?",
+            (chat_id, loser_id),
+        ).fetchone()
+        if loser_owner and int(loser_owner["owner_id"]) == winner_id:
+            return finish("kept", loser_id)
+        if loser_owner:
+            return finish("protected_slave", loser_id)
+        owned = self.connection.execute(
+            """SELECT slave_id FROM ownership
+               WHERE chat_id=? AND owner_id=? AND slave_id != ?
+               ORDER BY transfer_priority ASC, RANDOM() LIMIT 1""",
+            (chat_id, loser_id, winner_id),
+        ).fetchone()
+        self._settle_materials_locked(chat_id, winner_id)
+        self._settle_materials_locked(chat_id, loser_id)
+        if owned:
+            slave_id = int(owned["slave_id"])
+            self.connection.execute(
+                "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
+                (chat_id, slave_id),
+            )
+            self.connection.execute(
+                """UPDATE ownership SET owner_id=?, acquired_at=?, last_forced_at=NULL,
+                       transfer_priority=0
+                   WHERE chat_id=? AND slave_id=?""",
+                (winner_id, utc_timestamp(), chat_id, slave_id),
+            )
+            outcome = "transferred"
+        else:
+            slave_id = loser_id
+            self.connection.execute(
+                """INSERT INTO ownership(
+                       chat_id, slave_id, owner_id, acquired_at, last_forced_at
+                   ) VALUES (?, ?, ?, ?, NULL)
+                   ON CONFLICT(chat_id, slave_id) DO UPDATE SET
+                       owner_id=excluded.owner_id,
+                       acquired_at=excluded.acquired_at,
+                       last_forced_at=NULL,
+                       transfer_priority=0""",
+                (chat_id, slave_id, winner_id, utc_timestamp()),
+            )
+            outcome = "enslaved"
+        self._ensure_slave_profile_locked(chat_id, slave_id)
+        self._refresh_owner_record_locked(chat_id, winner_id)
+        return finish(outcome, slave_id)
 
     async def get_owner(self, chat_id: int, slave_id: int) -> sqlite3.Row | None:
         async with self._lock:

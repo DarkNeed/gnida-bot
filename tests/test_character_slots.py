@@ -308,7 +308,7 @@ class CharacterClientTests(unittest.TestCase):
         body=self.run_client("page='personal';menuScreen(input);",self.data())
         self.assertEqual(body.count('class="character-option'),5)
         self.assertEqual(body.count('character-option locked'),4)
-        self.assertIn('Открыть все 4 слота · 200 Stars',body)
+        self.assertIn('Открыть все 4 слота · 200 ☆',body)
         self.assertNotIn('data-do="character:2"',body)
 
     def test_paid_empty_slots_can_be_created_but_busy_switch_disabled(self):

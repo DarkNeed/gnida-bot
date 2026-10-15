@@ -135,8 +135,10 @@ class ChallengeRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 self.age_challenge(challenge_id, expired=True)
                 await self.handler("challenge")(self.message(opponent=3), self.bot)
                 self.assertIn((await self.db.get_challenge(challenge_id))["status"], {"deadline", "pending_deadline"})
-                self.assertEqual(await self.db.franc_balance(-100, 1), 950)
-                self.assertEqual(await self.db.franc_balance(-100, 2), 1000)
+                result=await self.db.get_challenge(challenge_id)
+                delta=(50 if result['winner_id']==1 else -50) if active else 0
+                self.assertEqual(await self.db.franc_balance(-100, 1), 950+delta)
+                self.assertEqual(await self.db.franc_balance(-100, 2), 1000-delta)
                 rows = await self.db.blocking_challenges(-100, (1,))
                 self.assertEqual(len(rows), 1)
                 await self.db.cancel_challenge_offer(int(rows[0]["id"]), 1)

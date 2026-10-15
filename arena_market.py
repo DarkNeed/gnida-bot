@@ -289,6 +289,14 @@ class ArenaMarketMixin(ForgeMixin):
             for key in eligible:
                 if key not in seen and key not in memory and len(memory) < limit:
                     memory.append(key)
+        if kind=='skill':
+            offers=[k for k in json.loads(profile['skill_offers']) if k in eligible and k!='bum_punch']
+            # Preserve migrated builds. Prompt for discoveries after initialization,
+            # even if the library auto-filled a free slot; never silently replace a move.
+            if previous is not None:
+                offers+= [k for k in eligible if k not in seen and k not in offers and k!='bum_punch']
+            self.connection.execute(f'UPDATE {table} SET skill_offers=? WHERE chat_id=? AND user_id=?',
+                                    (json.dumps(offers),chat,user))
         seen.update(eligible)
         encoded, encoded_seen = json.dumps(memory), json.dumps(sorted(seen))
         if previous != encoded or profile[kind + "_seen"] != encoded_seen:
@@ -297,6 +305,44 @@ class ArenaMarketMixin(ForgeMixin):
                 (encoded, encoded_seen, chat, user),
             )
         return memory
+
+    def _arena_resolve_skill_offer_locked(self,chat,user,personal,value):
+        if not isinstance(value,dict) or value.get('decision') not in ('learn','skip'):
+            raise ValueError('Выбери новый навык или оставь прежние.')
+        self._arena_known_skills_locked(chat,user,personal)
+        profile=self._arena_profile_locked(chat,user,personal)
+        offers=json.loads(profile['skill_offers']);known=json.loads(profile['skill_memory'] or '[]')
+        _,skills=self._fighter_catalog_locked()
+        selected=normalize_loadout(profile['class_id'],profile['level'],json.loads(profile['loadout']),skills,
+            self._arena_grants_locked(chat,user,personal),known,profile['archclass_id'])
+        original_selected=list(selected)
+        if not offers or offers[0]!=value.get('skill'):
+            raise ValueError('Предложение навыка изменилось. Обнови меню.')
+        if value.get('known')!=known or value.get('selected')!=selected:
+            raise ValueError('Набор навыков изменился. Обнови меню.')
+        new=offers[0];remove=value.get('replace_memory');equip=value.get('equip_replace')
+        if value['decision']=='skip':
+            known=[k for k in known if k!=new]
+            selected=[k for k in selected if k!=new]
+        else:
+            if new not in known:
+                if len(known)>=MAX_LEARNED_ACTIVE_SKILLS:
+                    if remove not in known or remove=='bum_punch':raise ValueError('Выбери изученный навык, который забудешь. Обычный удар защищён.')
+                    if equip is not None and equip!=remove:raise ValueError('Замена боевого навыка должна совпадать с забываемым.')
+                    known.remove(remove)
+                    selected=[new if k==remove else k for k in selected]
+                elif remove is not None:raise ValueError('Есть свободное место в памяти; забывать навык не нужно.')
+                known.append(new)
+            elif remove is not None:raise ValueError('Новый навык уже изучен. Выбери только боевой слот.')
+            if equip is not None:
+                if equip not in original_selected:raise ValueError('Боевой слот изменился.')
+                selected=[new if k==equip else k for k in selected]
+            elif new not in selected and len(selected)<4:selected.append(new)
+        # A skipped skill remains available for manual learning later.
+        selected=normalize_loadout(profile['class_id'],profile['level'],selected,skills,
+            self._arena_grants_locked(chat,user,personal),known,profile['archclass_id'])
+        self.connection.execute('UPDATE personal_profiles SET skill_memory=?,loadout=?,skill_offers=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?',
+            (json.dumps(known),json.dumps(selected),json.dumps(offers[1:]),chat,user))
 
     def _arena_known_skills_locked(self, chat, user, personal, profile=None):
         chat = RPG_SCOPE if personal else chat
@@ -725,7 +771,7 @@ class ArenaMarketMixin(ForgeMixin):
             f"""UPDATE {table} SET class_id=?,archclass_id='',archclass_stage=10,progression_level=0,progression_pending_level=0,progression_pending_at=NULL,archclass_pending_at=NULL,level=?,xp=?,catchup_target_xp=?,loadout='["bum_punch"]',
                 passive_loadout='[]',skills_reset=1,class_choice_pending_at=NULL,
                 skills_pending_at=?,updated_at=?,skill_memory=NULL,passive_memory=NULL,
-                skill_seen='[]',passive_seen='[]' WHERE chat_id=? AND user_id=?""",
+                skill_seen='[]',passive_seen='[]',skill_offers='[]' WHERE chat_id=? AND user_id=?""",
             (class_id, reset_level, reset_xp, target, market_now(), market_now(), chat, user),
         )
 
@@ -954,6 +1000,7 @@ class ArenaMarketMixin(ForgeMixin):
             )
             result = dict(
                 passives=list(passives.values()),
+                skill_offers=[asdict(skills[k]) for k in json.loads(profile['skill_offers']) if k in eligible],
                 available_passives=[
                     v for k, v in all_passives.items() if k not in passives
                 ],

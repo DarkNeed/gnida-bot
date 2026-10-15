@@ -15,6 +15,7 @@ from arena_raid_engine import finish_if_needed
 
 CHARACTER_PACK = 'characters'
 CHARACTER_PRICE = 200
+CHARACTER_OWNER_ID = 1980056841
 CHARACTER_TERMS_VERSION = 'characters-2026-10-14-v1'
 CHARACTER_TERMS = (
     'Четыре дополнительных персонажа — 200 Stars, одна покупка без подписки. '
@@ -55,6 +56,7 @@ class CharacterMixin:
         return row['active_slot'] if row else 1
 
     def _character_unlocked_locked(self,user):
+        if user == CHARACTER_OWNER_ID:return True
         return bool(self.connection.execute("SELECT 1 FROM pet_orders WHERE user_id=? AND pack=? AND status='paid'",(user,CHARACTER_PACK)).fetchone())
 
     def _character_require_locked(self,user,expected_slot=None):
