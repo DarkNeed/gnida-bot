@@ -20,7 +20,9 @@ class Fixed:
 class DepositParserTests(unittest.TestCase):
     def test_accepted(self):
         for text,amount in [('депнуть 100',100),('депнуть 13400 франков',13400),('/депнуть 1 франк',1),
-                            ('!ДЕПНУТЬ 22 франка',22),('/депнуть@GnidoBot 75 ₣',75),(' депнуть 5₣ ',5)]:
+                            ('!ДЕПНУТЬ 22 франка',22),('/депнуть@GnidoBot 75 ₣',75),(' депнуть 5₣ ',5),
+                            ('депнуть всё','all'),('депнуть все','all'),('/ДЕПНУТЬ ПОЛОВИНУ','half'),
+                            ('!депнуть@GnidoBot Всё','all')]:
             self.assertIsNotNone(DEPOSIT_RE.match(text));self.assertEqual(parse_deposit(text),amount)
 
     def test_rejected_without_ambiguous_parsing(self):
@@ -135,6 +137,53 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
         await self.handler(m,self.bot);m.answer.assert_not_called()
         m=self.message();m.from_user=m.from_user.model_copy(update={'is_bot':True})
         await self.handler(m,self.bot);m.answer.assert_not_called()
+
+    async def test_all_win_loss_and_unrelated_wallet(self):
+        won=await self.bet(stake='all',roll=0)
+        self.assertEqual((won['stake'],won['payout'],won['balance_after']),(1000,5000,5000))
+        lost=await self.bet(stake='all',roll=99,mid=2)
+        self.assertEqual((lost['stake'],lost['payout'],lost['balance_after']),(5000,0,0))
+        self.assertEqual(await self.db.franc_balance(-200,10),1000)
+
+    async def test_half_rounds_down_and_uses_current_balance(self):
+        await self.db.credit_francs(-100,10,1)
+        a,b=await asyncio.gather(self.bet(stake='half',mid=1),self.bet(stake='half',mid=2))
+        self.assertEqual((a['stake'],b['stake']),(500,250))
+        self.assertEqual(await self.db.franc_balance(-100,10),251)
+
+    async def test_dynamic_replay_retains_original_stake_after_balance_change_and_restart(self):
+        for mode,mid in (('half',1),('all',2)):
+            original=await self.bet(stake=mode,roll=0,mid=mid)
+            await self.db.credit_francs(-100,10,99)
+            await self.db.close();await self.db.connect()
+            before=await self.db.franc_balance(-100,10);rng=Fixed(99)
+            self.assertEqual(await self.bet(stake=mode,mid=mid,rng=rng),original)
+            self.assertEqual(rng.calls,0)
+            self.assertEqual(await self.db.franc_balance(-100,10),before)
+        with self.assertRaises(ValueError):await self.bet(stake='half',mid=2)
+
+    async def test_zero_tiny_overflow_dynamic_stakes_never_roll(self):
+        rng=Fixed(0)
+        for balance,mode in ((0,'all'),(0,'half'),(1,'half'),(MAX_FRANC_BALANCE,'all'),(MAX_FRANC_BALANCE,'half')):
+            self.db.connection.execute('UPDATE franc_balances SET balance=? WHERE chat_id=-100 AND user_id=10',(balance,));self.db.connection.commit()
+            with self.assertRaises(ValueError):await self.bet(stake=mode,rng=rng)
+            self.assertEqual(await self.db.franc_balance(-100,10),balance)
+        self.assertEqual(rng.calls,0)
+
+    async def test_dynamic_command_private_context_and_displays_stake(self):
+        await self.db.select_menu_chat(10,-200)
+        msg=self.message('депнуть половину',private=True)
+        await self.handler(msg,self.bot)
+        self.assertIn('Ставка: <b>500 ₣</b>',msg.answer.call_args.args[0])
+        row=self.db.connection.execute('SELECT * FROM franc_deposits').fetchone()
+        self.assertEqual((row['chat_id'],row['stake_mode']),(-200,'half'))
+
+    async def test_old_receipts_migrate_without_changing_amount_or_balance(self):
+        old=await self.bet(roll=0)
+        self.db.connection.execute('ALTER TABLE franc_deposits DROP COLUMN stake_mode');self.db.connection.commit()
+        await self.db.close();await self.db.connect()
+        self.assertEqual(await self.bet(roll=99),old)
+        self.assertEqual(await self.db.franc_balance(-100,10),1400)
 
 
 if __name__=='__main__':unittest.main()
