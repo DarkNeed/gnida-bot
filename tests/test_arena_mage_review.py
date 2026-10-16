@@ -225,14 +225,15 @@ class MageReviewTests(unittest.TestCase):
         actor = state['sides']['a']
         actor['loadout'] = ['mana_barrier', 'mana_focus', 'mana_blob', 'arch_mage_necromancer']
         self.alternate(state, 'mana_barrier')
-        # An enemy hit consumes one action of the skeleton's lifetime at 12+.
-        self.assertEqual(actor['rpg_state']['summon'], 2)
-        self.assertNotIn('mana', actor['rpg_state'])  # A summon is not a mana barrier.
+        self.assertEqual(actor['rpg_state']['summon'], 3)
+        self.assertEqual(actor['rpg_state']['mana'], 1)
+        for attacks in (1, 2, 3):
+            self.alternate(state, 'mana_focus')
+            self.assertEqual(actor['rpg_state']['souls'], attacks)
+            self.assertEqual(actor['rpg_state']['summon'], 3 - attacks)
+        self.assertEqual(actor['rpg_state']['mana'], 3)
         self.alternate(state, 'mana_focus')
-        self.assertEqual(actor['rpg_state']['souls'], 1)
-        self.assertEqual(actor['rpg_state']['summon'], 0)
-        self.alternate(state, 'mana_focus')
-        self.assertEqual(actor['rpg_state']['souls'], 1)
+        self.assertEqual(actor['rpg_state']['souls'], 3)
         self.assertEqual(actor['rpg_state']['summon'], 0)
 
     def test_raid_missed_attack_and_support_prepare_echo_and_pay_once(self):

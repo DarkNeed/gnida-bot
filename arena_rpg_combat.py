@@ -98,7 +98,6 @@ def incoming(target, damage, key):
     m = target.setdefault('rpg_state', {})
     if key == 'mage_necromancer' and target['level'] >= 12 and m.get('summon', 0) > 0:
         damage = max(1, round(damage * .75))
-        m['summon'] -= 1
     return damage
 
 

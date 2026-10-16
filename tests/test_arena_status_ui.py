@@ -116,9 +116,16 @@ class StatusClientTests(unittest.TestCase):
         self.assertEqual(item['count'], '2')
         self.assertIn('действий жизни', item['detail'])
         self.assertIn('25%', item['detail'])
+        self.assertIn('без сокращения жизни', item['detail'])
+        self.assertIn('Упругая мана', item['detail'])
+        self.assertNotIn('теряя', item['detail'])
         self.assertNotIn('Осталось атак', item['detail'])
         side['rpg_state']['death_servants'] = True
         self.assertEqual(self.statuses(side)[0]['name'], 'Страж и Палач')
+        side['level'] = 10
+        detail = self.statuses(side)[0]['detail']
+        self.assertIn('Упругая мана', detail)
+        self.assertNotIn('25%', detail)
 
     def test_only_active_temporary_effects_appear(self):
         effects = [

@@ -110,7 +110,7 @@ class RPGPathTests(unittest.TestCase):
         self.assertEqual(actor['rpg_state']['steadfast'],0)
         self.assertTrue(any(e.get('id')=='bastion_guard' for e in ally['effects']))
 
-    def test_death_two_servants_replace_and_guard_has_cost(self):
+    def test_death_two_servants_replace_and_guard_preserves_lifetime(self):
         state=self.final('mage_necromancer');actor=state['sides']['a']
         actor['rpg_state']={'souls':3}
         event=self.use(state,'mana_barrier')
@@ -118,9 +118,12 @@ class RPGPathTests(unittest.TestCase):
         self.assertEqual(actor['rpg_state']['souls'],0)
         self.assertEqual(actor['rpg_state']['summon'],3)
         before=actor['hp'];self.use(state,'bum_punch','b')
-        self.assertEqual(actor['rpg_state']['summon'],2)
+        self.assertEqual(actor['rpg_state']['summon'],3)
+        self.assertEqual(actor['rpg_state']['mana'],1)
         state=json.loads(json.dumps(state));actor=state['sides']['a']
         self.use(state,'mana_focus')
+        self.use(state,'mana_focus')
+        self.assertEqual(actor['rpg_state']['summon'],1)
         self.use(state,'mana_focus')
         self.assertEqual(actor['rpg_state']['summon'],0)
         actor['rpg_state']['souls']=3

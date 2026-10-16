@@ -28,7 +28,7 @@ def build_rpg_catalog(FighterClass, Skill, effect):
           ('rpg_executioner','Довести до конца','Против цели с HP ≤30% физические атаки получают +20% урона.'))),
         ('mage','Маг','Мана',(41,4,16,6,12,9,5),(4,.3,1.8,.6,1.0,.7,.2),
          (('rpg_mana','Перенасыщение','Попавшие родные магические атаки дают заряд маны, до 3. Перегрузка расходует их ради +35% урона за заряд.'),
-          ('rpg_barrier_charge','Упругая мана','Попавшая атака врага по мановому барьеру даёт один заряд Перенасыщения, до 3.'))),
+          ('rpg_barrier_charge','Упругая мана','Попавшая атака врага при действующем Мановом барьере или активном призыве Некроманта даёт один заряд Перенасыщения, до 3. Не больше одного заряда за вражеское действие.'))),
         ('priest','Жрец','Мана',(48,8,13,9,12,7,5),(4.5,1.0,1.4,.9,1.0,.5,.2),
          (('rpg_faith','Вера','Успешные родные атаки и полезная поддержка дают Веру, до 3. Кара расходует её: +20% урона за заряд. Лечение полного HP не даёт Веру.'),
           ('rpg_merciful','Милосердие','При HP ≤40% родное лечение сильнее на 25%.'))),
@@ -171,7 +171,10 @@ def rpg_received_damage(target, damage, before_hp, action_id=None):
     if has_trait(target,'rpg_rally'):
         m['rally_ceiling']=max(m.get('rally_ceiling',0),before_hp)
         m['rally']=min(target['stats']['max_hp'],m.get('rally',0)+damage)
-    if fresh and has_trait(target,'rpg_barrier_charge') and any(e.get('id')=='mana_barrier' for e in target['effects']): m['mana']=min(3,m.get('mana',0)+1)
+    mana_guard = (any(e.get('id') == 'mana_barrier' for e in target['effects'])
+                  or branch(target) == 'mage_necromancer' and m.get('summon', 0) > 0)
+    if fresh and has_trait(target, 'rpg_barrier_charge') and mana_guard:
+        m['mana'] = min(3, m.get('mana', 0) + 1)
     if fresh and branch(target)=='priest_paladin' and any(e['kind']=='incoming_damage_multiplier' for e in target['effects']):
         m['retribution']=min(3,m.get('retribution',0)+1)
 
