@@ -260,6 +260,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             "b_accepted",
         )
     } | dict(
+        ranked=bool(row.get("ranked")),
         a_character_slot=row.get('a_character_slot',1),
         b_character_slot=row.get('b_character_slot',1),
         server_time=int(time.time()),
@@ -457,6 +458,7 @@ def create_arena_app(
     async def app_menu(chat,actor):
         result=await menu_view(db,chat,actor)
         result['characters']['payments_enabled']=pets_payments_enabled
+        result['leaderboard']=await db.arena_leaderboard(actor)
         return result
 
     async def read_member(chat: int, actor: int) -> None:
@@ -651,6 +653,13 @@ def create_arena_app(
         actor = request[ACTOR]
         await read_member(chat, actor)
         return web.json_response(await app_menu(chat, actor))
+
+    async def get_leaderboard(request):
+        chat = int(request.match_info["chat"])
+        await read_member(chat, request[ACTOR])
+        return web.json_response(await db.arena_leaderboard(request[ACTOR],
+            season=request.query.get("season"), page=int(request.query.get("page", "0")),
+            mine=request.query.get("mine") == "1"))
 
     async def get_raid(request):
         row = await db.arena_raid_get(request.match_info["token"])
@@ -945,6 +954,7 @@ def create_arena_app(
     app.router.add_get("/api/mirror/{token}", get_mirror)
     app.router.add_post("/api/mirror/{token}", post_mirror)
     app.router.add_get("/api/menu/{chat}", get_menu)
+    app.router.add_get("/api/leaderboard/{chat}", get_leaderboard)
     app.router.add_post("/api/menu/{chat}", post_menu)
     app.router.add_post("/api/menu/{chat}/sprite", upload_sprite)
     app.router.add_delete("/api/menu/{chat}/sprite", reset_sprite)

@@ -350,6 +350,7 @@ class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
                 ids=[w['worker_id'] for w in self._enterprise_workers_locked(site)]
                 for user in ids:
                     self.connection.execute('DELETE FROM business_workers WHERE chat_id=? AND owner_id=? AND worker_id=?',(chat,owner,user))
+                self._archive_enterprise_locked(site, now())
                 self.connection.execute('DELETE FROM businesses WHERE id=? AND chat_id=? AND owner_id=?',(site_id,chat,owner))
                 # Keep income ledgers and ownership, including active searches/trips.
                 return 'Предприятие закрыто. Работники сняты с должностей, но остаются твоими. Возврата стоимости нет.'

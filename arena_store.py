@@ -845,6 +845,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             for k in ("a", "b")
         ]
         state = create_battle_state(*sources, classes=classes, skills=skills)
+        if row.get("ranked"):
+            state.update(ranked=True, ranked_actions={"a": 0, "b": 0}, ranked_timeouts={"a": 0, "b": 0})
         state["turn_timer_seconds"] = ARENA_TURN_SECONDS
         a_speed, b_speed = (
             effective_stat(state["sides"][k], "speed") for k in ("a", "b")
@@ -864,17 +866,23 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
         )
 
     async def arena_offer(
-        self, chat: int, actor: int, target: int, mode="personal", stake=0
+        self, chat: int, actor: int, target: int, mode="personal", stake=0, *, ranked=False
     ) -> dict:
         if (
             mode != "personal"
             or actor == target
             or stake < 0
             or stake > 1000000
+            or type(ranked) is not bool
+            or (ranked and stake != 0)
         ):
             raise ValueError("Некорректный вызов.")
         async with self._lock:
             self._require_feature_locked(chat, 'arena')
+            if ranked:
+                reason = self._rating_block_locked(actor, target, utc_timestamp())
+                if reason:
+                    raise ValueError(reason)
             a_slot=self._character_require_locked(actor)
             b_slot=self._character_require_locked(target)
             self._arena_expire_locked()
@@ -930,6 +938,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     (stake, now, chat, actor),
                 )
             self.connection.execute("UPDATE arena_battles SET a_character_slot=?,b_character_slot=? WHERE token=?",(a_slot,b_slot,token))
+            if ranked:
+                self.connection.execute("UPDATE arena_battles SET ranked=1 WHERE token=?", (token,))
             self.connection.commit()
             return self._arena_row_locked(token)
 
@@ -986,6 +996,10 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             elif action == "accept":
                 if key != "b":
                     raise ValueError("Принять может соперник.")
+                if row.get("ranked"):
+                    reason = self._rating_block_locked(row["a_owner"], row["b_owner"], utc_timestamp())
+                    if reason:
+                        raise ValueError(reason)
                 if row["mode"] == "personal":
                     for user in (row["a_fighter"], row["b_fighter"]):
                         self._arena_require_choice_locked(row["chat_id"], user, True)
@@ -1048,6 +1062,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             self._mirror_finish_battle_locked(row, state)
             return
         winner = state["winner"]
+        self._rating_finish_locked(row, state, utc_timestamp())
         if winner and row["escrow_a"] and row["escrow_b"]:
             pot = row["escrow_a"] + row["escrow_b"]
             self._add_francs_locked(
@@ -1085,6 +1100,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 "had_player_action"
             ):
                 xp = 0  # Two idle players cannot farm XP by waiting out skips.
+            if row.get("ranked") and not all(state.get("ranked_actions", {}).get(side, 0) > 0 for side in ("a", "b")):
+                xp = 0  # Early ranked concessions/timeouts are not an XP farm.
             if row["mode"] == "wasteland":
                 xp = (
                     0
@@ -1211,6 +1228,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     use_healing_potion(state, key)
                 else:
                     resolve_skill(state, key, skill_id, skills)
+                    if row.get("ranked"):
+                        state.setdefault("ranked_actions", {"a": 0, "b": 0})[key] += 1
+                        state.setdefault("ranked_timeouts", {"a": 0, "b": 0})[key] = 0
                 while (
                     row["mode"] == "wasteland"
                     and not state["finished"]
@@ -1252,6 +1272,21 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             return self._arena_row_locked(token)
 
     def _arena_expire_locked(self) -> list[dict]:
+        # Expiry can finish a ranked duel, award XP and refund escrow. Keep
+        # these changes atomic even when triggered by a read/another offer.
+        if not self.connection.in_transaction:
+            self.connection.execute("BEGIN")
+        self.connection.execute("SAVEPOINT arena_expiry")
+        try:
+            result = self._arena_expire_rows_locked()
+        except Exception:
+            self.connection.execute("ROLLBACK TO arena_expiry")
+            self.connection.execute("RELEASE arena_expiry")
+            raise
+        self.connection.execute("RELEASE arena_expiry")
+        return result
+
+    def _arena_expire_rows_locked(self) -> list[dict]:
         expired = []
         now = utc_timestamp()
         for raw in self.connection.execute(
@@ -1272,7 +1307,13 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 self._arena_refund_locked(row, "cancelled")
             elif row["status"] == "active" and row["state_json"]:
                 state = json.loads(row["state_json"])
+                expired_side = state["active_side"]
                 skip_turn(state)
+                if row.get("ranked") and not state["finished"]:
+                    misses = state.setdefault("ranked_timeouts", {"a": 0, "b": 0})
+                    misses[expired_side] += 1
+                    if misses[expired_side] >= 3:
+                        state.update(finished=True, winner="b" if expired_side == "a" else "a", finish_reason="ranked_inactivity")
                 if state["finished"]:
                     self._arena_finish_locked(row, state)
                 self.connection.execute(

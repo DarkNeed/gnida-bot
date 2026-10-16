@@ -245,7 +245,7 @@ BUSINESS_SUMMARY_RE = re.compile(
     re.IGNORECASE,
 )
 ENTERPRISE_STATS_RE = re.compile(
-    r"^(?:[!/])?стата\s+предприятий[!?.\s]*$", re.IGNORECASE
+    r"^(?:[!/])?(?:стата\s+предприятий|топ(?:@\w+)?\s+предприятий)[!?.\s]*$", re.IGNORECASE
 )
 SLAVES_RE = re.compile(r"^/рабы(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 SLAVE_MENU_RE = re.compile(r"^/(?:меню|menu)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
@@ -256,7 +256,7 @@ TOP_DONORS_RE = re.compile(
     re.IGNORECASE,
 )
 CHAT_RE = re.compile(r"^/чат(?:@\w+)?(?:\s|$)", re.IGNORECASE)
-RELEASE_RE = re.compile(r"^(?:/отпустить(?:@\w+)?|отпустить\s+раба)(?:\s|$)", re.IGNORECASE)
+RELEASE_RE = re.compile(r"^(?:[!/]освободить(?:@\w+)?|/отпустить(?:@\w+)?|отпустить\s+раба)(?:\s|$)", re.IGNORECASE)
 CHALLENGE_RE = re.compile(
     r"^вызов(?:\s+(кнб|бл[еэ]кджек|шашки))?"
     r"(?:\s+(\d+)(?:\s+франк(?:ов|а)?)?)?[!?.\s]*$", re.IGNORECASE
@@ -1898,122 +1898,15 @@ def create_router(
         )
 
     async def enterprise_stats_list(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
-        businesses = await database.list_chat_businesses(chat_id)
-        for business in businesses:
-            await database.settle_business(chat_id, int(business["owner_id"]))
-        if not businesses:
-            return (
-                "<b>🏢 Стата предприятий</b>\nВ этом чате пока нет предприятий.",
-                InlineKeyboardMarkup(inline_keyboard=[]),
-            )
-        buttons: list[list[InlineKeyboardButton]] = []
-        for business in businesses:
-            meta = BUSINESS_META[str(business["business_type"])]
-            owner_name = (
-                "@" + str(business["username"])
-                if business["username"]
-                else str(business["display_name"] or business["owner_id"])
-            )
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"{meta['emoji']} {meta['name']} · {owner_name}"[:60],
-                        callback_data=f"es:{chat_id}:{business['owner_id']}",
-                    )
-                ]
-            )
-        return (
-            "<b>🏢 Стата предприятий</b>\n"
-            "Нажми на предприятие: покажу состав и доход владельца за вчера и 7 завершённых дней.",
-            InlineKeyboardMarkup(inline_keyboard=buttons),
-        )
-
-    async def enterprise_stats_list_for_user(
-        user_id: int,
-    ) -> tuple[str, InlineKeyboardMarkup]:
-        businesses = await database.list_visible_businesses(user_id)
-        for business in businesses:
-            await database.settle_business(
-                int(business["chat_id"]), int(business["owner_id"])
-            )
-        if not businesses:
-            return (
-                "<b>🏢 Стата предприятий</b>\n"
-                "Я пока не знаю предприятий из твоих чатов.",
-                InlineKeyboardMarkup(inline_keyboard=[]),
-            )
-        buttons: list[list[InlineKeyboardButton]] = []
-        for business in businesses:
-            meta = BUSINESS_META[str(business["business_type"])]
-            owner_name = (
-                "@" + str(business["username"])
-                if business["username"]
-                else str(business["display_name"] or business["owner_id"])
-            )
-            chat_title = str(business["chat_title"] or "Чат")
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"{meta['emoji']} {chat_title} · {owner_name}"[:60],
-                        callback_data=f"es:{business['chat_id']}:{business['owner_id']}",
-                    )
-                ]
-            )
-        return (
-            "<b>🏢 Стата предприятий</b>\n"
-            "Предприятия из чатов, где бот тебя видел. Нажми на любое для подробностей.",
-            InlineKeyboardMarkup(inline_keyboard=buttons),
-        )
+        from handlers.leaderboards import enterprise_top_view
+        return await enterprise_top_view(database, chat_id)
 
     async def enterprise_stats_detail(
         chat_id: int, owner_id: int
     ) -> tuple[str, InlineKeyboardMarkup] | None:
-        await database.settle_business(chat_id, owner_id)
-        business = await database.get_business(chat_id, owner_id)
-        if not business:
-            return None
-        workers, periods, tax_periods = await asyncio.gather(
-            database.list_business_slaves(chat_id, owner_id),
-            database.business_income_periods(chat_id, owner_id),
-            database.business_tax_periods(chat_id, owner_id),
-        )
-        yesterday_income, week_income = periods
-        yesterday_tax, week_tax = tax_periods
-        business_type = str(business["business_type"])
-        from enterprises import config,role_labels,title as enterprise_title
-        meta = dict(BUSINESS_META[business_type])
-        cfg=config(business)
-        producer_role,leader_role=cfg['producer_role'],cfg['leader_role']
-        meta['producer'],meta['leader']=role_labels(business)
-        meta['name']=enterprise_title(business)
-        sites=[s for s in await database.list_owned_businesses(owner_id) if s['chat_id']==chat_id]
-        producers = sum(worker["role"] == producer_role for worker in workers)
-        leaders = sum(worker["role"] == leader_role for worker in workers)
-        unassigned = len(workers) - producers - leaders
-        staff_text=f"{html.escape(meta['producer'])}: <b>{producers}</b> · {html.escape(meta['leader'])}: <b>{leaders}</b>\nНе назначены: {unassigned}\n\n"
-        if len(sites)>1:
-            meta.update(emoji='🏭',name='Все предприятия владельца')
-            staff_text='\n'.join('• '+html.escape(enterprise_title(s)) for s in sites)+'\n\nОбщий доход и налог всех предприятий в этом чате.\n\n'
-        owner_name = (
-            "@" + html.escape(str(business["username"]))
-            if business["username"]
-            else html.escape(str(business["display_name"] or owner_id))
-        )
-        return (
-            f"<b>{meta['emoji']} {html.escape(meta['name'])}</b>\n"
-            f"Владелец: {owner_name}\n"
-            f"{staff_text}"
-            f"💰 Доход после налога вчера: <b>{yesterday_income} ₣</b> "
-            f"(налог {yesterday_tax} ₣)\n"
-            f"📈 Доход после налога за 7 завершённых дней: <b>{week_income} ₣</b> "
-            f"(налог {week_tax} ₣)\n\n"
-            "История доходов считается с момента подключения этой статистики.",
-            InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="← Все предприятия", callback_data=f"es:{chat_id}:list")]
-                ]
-            ),
-        )
+        from handlers.leaderboards import enterprise_owner_view
+        return await enterprise_owner_view(database, chat_id, owner_id)
+
 
     async def slave_menu_business_workers(
         user_id: int, chat_id: int
@@ -3955,14 +3848,15 @@ def create_router(
 
     @router.message(text_or_caption_regexp(ENTERPRISE_STATS_RE))
     async def enterprise_stats(message: Message, bot: Bot) -> None:
+        from handlers.leaderboards import enterprise_top_view
         if message.chat.type in GROUP_TYPES:
-            body, keyboard = await enterprise_stats_list(message.chat.id)
+            body, keyboard = await enterprise_top_view(database, message.chat.id, message.from_user.id if message.from_user else None)
         elif message.chat.type == "private" and message.from_user:
             chat = await current_menu_chat(message.from_user.id, bot)
             if chat is None:
                 body, keyboard = await menu_chat_picker(message.from_user.id, bot)
             else:
-                body, keyboard = scoped_menu_view(await enterprise_stats_list(int(chat["chat_id"])), chat)
+                body, keyboard = scoped_menu_view(await enterprise_top_view(database, int(chat["chat_id"]), message.from_user.id), chat)
         else:
             return
         await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
@@ -4415,19 +4309,27 @@ def create_router(
         if is_private and not await menu_member(bot, chat_id, callback.from_user.id):
             await callback.answer("Этот чат недоступен в твоей статистике.", show_alert=True)
             return
-        if raw_owner_id == "list":
-            body, keyboard = await enterprise_stats_list(chat_id)
-        else:
-            try:
-                owner_id = int(raw_owner_id)
-            except ValueError:
-                await callback.answer("Некорректная кнопка.", show_alert=True)
-                return
-            result = await enterprise_stats_detail(chat_id, owner_id)
+        from handlers.leaderboards import enterprise_top_view, enterprise_owner_view, enterprise_site_view
+        try:
+            parts = raw_owner_id.split(":")
+            if raw_owner_id == "list":
+                result = await enterprise_top_view(database, chat_id, callback.from_user.id)
+            elif len(parts) == 4 and parts[0] == "top":
+                _, kind, period, number = parts
+                result = await enterprise_top_view(database, chat_id, callback.from_user.id,
+                    kind=kind, period=period, page=0 if number == "me" else int(number), mine=number == "me")
+            elif len(parts) == 3 and parts[0] in {"owner", "site"}:
+                view = enterprise_owner_view if parts[0] == "owner" else enterprise_site_view
+                result = await view(database, chat_id, int(parts[1]), parts[2])
+            else:
+                result = await enterprise_stats_detail(chat_id, int(raw_owner_id))
             if result is None:
                 await callback.answer("Предприятие больше не существует.", show_alert=True)
                 return
             body, keyboard = result
+        except (ValueError, KeyError):
+            await callback.answer("Некорректная кнопка.", show_alert=True)
+            return
         if is_private:
             chats = await database.list_menu_chats()
             chat = next((row for row in chats if int(row["chat_id"]) == chat_id), None)
@@ -5561,12 +5463,22 @@ def create_router(
     async def release(message: Message) -> None:
         if message.chat.type not in GROUP_TYPES or not message.from_user:
             return
+        if message.from_user.id == CUSTOM_COMMAND_OWNER_ID and ADMIN_SLAVE_RELEASE_RE.match(message_content(message)):
+            await admin_release_slave(message)
+            return
         payload = RELEASE_RE.sub("", message_content(message), count=1).strip()
         target = await resolve_target(message, database, payload)
         if not target:
             return
-        target_id, target_name, _ = target
-        released = await database.release_slave(message.chat.id, message.from_user.id, target_id)
+        target_id, target_name, remainder = target
+        if remainder:
+            await message.answer("Формат: /освободить @раб или ответом /освободить.")
+            return
+        try:
+            released = await database.release_slave(message.chat.id, message.from_user.id, target_id)
+        except ValueError as error:
+            await message.answer(str(error))
+            return
         if released:
             await message.answer(
                 f"🕊 {mention(target_id, target_name)} теперь свободен.", parse_mode="HTML"

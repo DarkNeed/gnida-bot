@@ -25,10 +25,11 @@ from handlers.routes import (
 )
 
 OFFER_RE = re.compile(
-    r"^\s*(?:(?P<slave>(?:/бой(?:@\w+)?|!бой|бой)\s+раб(?:ами|ы)|я\s+выбираю\s+тебя)|(?P<personal>/бой(?:@\w+)?|!бой|бой|/дуэль(?:@\w+)?|!дуэль|дуэль))\b\s*(?P<payload>.*)$",
+    r"^\s*(?:(?P<ranked>[/!]?рейт(?:@\w+)?|/рейтинговыйбой(?:@\w+)?)|(?P<slave>(?:/бой(?:@\w+)?|!бой|бой)\s+раб(?:ами|ы)|я\s+выбираю\s+тебя)|(?P<personal>/бой(?:@\w+)?|!бой|бой|/дуэль(?:@\w+)?|!дуэль|дуэль))\b\s*(?P<payload>.*)$",
     re.I | re.S,
 )
 MENU_RE = re.compile(r"^\s*/(?:арена|arena)(?:@\w+)?\s*$", re.I)
+ARENA_TOP_RE = re.compile(r"^\s*[/!]?топ(?:@\w+)?\s+арены\s*$", re.I)
 ITEM_TRANSFER_RE = re.compile(
     r"^\s*(?:[/!]?передать)(?:@\w+)?\s+(?:трактат(?:ы|ов)?|предмет(?:ы|ов)?)\b\s*(?P<payload>.*)$",
     re.I | re.S,
@@ -89,10 +90,14 @@ class ArenaPublisher:
                 else "Личная дуэль. Соперник должен принять вызов."
             )
             text += "\nНа подготовку — 3 часа. Зрители тоже могут открыть бой."
+            if row.get("ranked"):
+                text += "\n🏆 Рейтинговый бой: принятие означает согласие на изменение рейтинга. Без ставок; сдача — поражение. Три пропуска подряд — поражение."
         elif row["status"] == "active":
             text = f"⚔️ {names}\nБой идёт — откройте арену для игры или просмотра."
             if row["mode"] != "wasteland":
                 text += "\nНа ход — 2 минуты. Не успел — ход пропускается."
+                if row.get("ranked"):
+                    text += " Три пропуска подряд — поражение в рейтинговом бою."
         elif row["status"] == "finished" and state:
             winner = state.get("winner")
             text = f"🏁 {names}\n" + (
@@ -101,6 +106,9 @@ class ArenaPublisher:
             text += "\nБойцы получили опыт."
             if state.get("payout"):
                 text += f" Приз: {state['payout']} ₣."
+            if state.get("rating_result"):
+                rating = state["rating_result"]
+                text += f'\n🏆 {rating["reason"]}\n{an}: {rating["ratings"]["a"]} ({rating["deltas"]["a"]:+d}) · {bn}: {rating["ratings"]["b"]} ({rating["deltas"]["b"]:+d})'
         else:
             labels = {
                 "cancelled": "Вызов отменён.",
@@ -150,12 +158,12 @@ def create_arena_router(db, bot, username, enabled, publisher):
     router = Router(name="arena")
     router.message.outer_middleware(TrackingMiddleware(db))
 
-    async def offer(message, actor, target, mode, stake=0, fighter=0):
+    async def offer(message, actor, target, mode, stake=0, fighter=0, *, ranked=False):
         await require_member(bot, message.chat.id, actor)
         member = await require_member(bot, message.chat.id, target)
         if member.user.is_bot:
             raise ValueError("С ботом можно играть только в Пустоши.")
-        row = await db.arena_offer(message.chat.id, actor, target, mode, stake)
+        row = await db.arena_offer(message.chat.id, actor, target, mode, stake, ranked=ranked)
         try:
             if fighter:
                 row = await db.arena_setup(row["token"], actor, "select", fighter)
@@ -211,6 +219,48 @@ def create_arena_router(db, bot, username, enabled, publisher):
     async def transfer_arena_item(message: Message):
         await handle_transfers(message, db, bot)
 
+    @router.message(text_or_caption_regexp(ARENA_TOP_RE))
+    async def arena_top_command(message: Message):
+        if not message.from_user:
+            return
+        from handlers.leaderboards import arena_top_view
+        chat = message.chat.id
+        if message.chat.type == "private":
+            selected = await db.selected_menu_chat(message.from_user.id)
+            if not selected:
+                await message.answer("Сначала выбери чат в /menu.")
+                return
+            chat = int(selected if isinstance(selected, int) else selected["chat_id"])
+        try:
+            await require_member(bot, chat, message.from_user.id)
+            await db.arena_require_enabled(chat)
+            body, keyboard = arena_top_view(await db.arena_leaderboard(message.from_user.id), chat)
+            await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+        except ValueError as error:
+            await message.answer(str(error))
+
+    @router.callback_query(F.data.startswith("alt:"))
+    async def arena_top_callback(callback: CallbackQuery):
+        from handlers.leaderboards import arena_top_view
+        try:
+            _, raw_chat, season, number = callback.data.split(":")
+            chat = int(raw_chat)
+            if not callback.message or (callback.message.chat.type != "private" and callback.message.chat.id != chat):
+                raise ValueError("Эта кнопка относится к другому чату.")
+            await require_member(bot, chat, callback.from_user.id)
+            await db.arena_require_enabled(chat)
+            data = await db.arena_leaderboard(callback.from_user.id, season=season,
+                page=0 if number == "me" else int(number), mine=number == "me")
+            body, keyboard = arena_top_view(data, chat)
+            try:
+                await callback.message.edit_text(body, reply_markup=keyboard, parse_mode="HTML")
+            except TelegramAPIError as error:
+                if "message is not modified" not in str(error).casefold():
+                    raise
+            await callback.answer()
+        except ValueError as error:
+            await callback.answer(str(error), show_alert=True)
+
     @router.message(text_or_caption_regexp(OFFER_RE))
     async def battle_offer(message: Message):
         if not message.from_user or message.chat.type not in {"group", "supergroup"}:
@@ -229,6 +279,8 @@ def create_arena_router(db, bot, username, enabled, publisher):
         target_id, _, rest = target
         try:
             stake = 0
+            if match["ranked"] and rest:
+                raise ValueError("Рейтинговый бой без ставок: /рейт @участник или ответом /рейт.")
             if rest:
                 amount = re.fullmatch(r"(\d+)\s*(?:франк(?:ов|а)?|₣)?", rest, re.I)
                 if not amount:
@@ -236,7 +288,7 @@ def create_arena_router(db, bot, username, enabled, publisher):
                         "Личный бой: /бой @участник 50 франков или ответом /бой."
                     )
                 stake = int(amount[1])
-            await offer(message, message.from_user.id, target_id, mode, stake)
+            await offer(message, message.from_user.id, target_id, mode, stake, ranked=bool(match["ranked"]))
         except ValueError as error:
             await message.answer(str(error))
 

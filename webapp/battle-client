@@ -200,7 +200,7 @@ function battleScreen(data){
   if(!data.state||!["active","finished"].includes(data.status)){closeEffect();setupScreen(data);return;}
   near=(data.own_side==="b"||(!data.own_side&&(data.state.sides.b.controller_id===data.actor_id||data.consent_side==="b")))?"b":"a";
   const far=near==="a"?"b":"a",a=data.state.sides[near],b=data.state.sides[far];
-  app.innerHTML='<section class="battle">'+top("Арена",data.state.mirror_token?'ЗЕРКАЛО · '+(data.floor===5?'БОСС':'ЭТАЖ '+data.floor+' / 5'):data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":"БЕЗ СТАВКИ")+'</span>')+
+  app.innerHTML='<section class="battle">'+top("Арена",data.state.mirror_token?'ЗЕРКАЛО · '+(data.floor===5?'БОСС':'ЭТАЖ '+data.floor+' / 5'):data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":data.ranked?"РЕЙТИНГ":"БЕЗ СТАВКИ")+'</span>')+
     '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'<div class="status-row enemy" id="statuses-'+far+'" aria-label="Эффекты противника"></div><div class="status-row player" id="statuses-'+near+'" aria-label="Эффекты твоего бойца"></div></div><div class="turnbanner" id="turn"></div><div class="turn-timer" id="turn-timer" role="timer" hidden></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+(data.state.mirror_token&&data.actor_id===data.state.sides.a.controller_id?button("К забегу","mirror:"+data.state.mirror_token,"small"):"")+button("В меню","menu","small")+'</footer></section>';
   renderBattleStatuses();
   renderActions();
@@ -218,6 +218,7 @@ function renderActions(){
     panel.innerHTML='<div class="battlelog">'+(winner?"Победа: "+esc(winner):"Ничья")+'<div class="muted">Опыт: '+Object.values(st.rewards||{}).join(" / ")+' XP'+(st.payout?" · Приз "+st.payout+" ₣":"")+'</div></div>'+
       (st.mirror_token?(current.actor_id===st.sides.a.controller_id?button("Итоги / продолжить забег","mirror:"+st.mirror_token,"primary"):""):current.mode==="wasteland"&&st.winner==="a"?button("Следующий этаж","next","primary"):"");
     if(current.actor_id===st.sides.a.controller_id)panel.innerHTML+=petRewards(st.pet_rewards);
+    if(st.rating_result){const r=st.rating_result;panel.innerHTML+='<div class="note"><b>Рейтинг · '+esc(r.season)+'</b><p>'+esc(r.reason)+'</p>'+['a','b'].map(k=>'<p>'+esc(st.sides[k].name)+': <b>'+r.ratings[k]+'</b> ('+(r.deltas[k]>=0?'+':'')+r.deltas[k]+')</p>').join('')+'</div>';}
     for(const k of ["a","b"])document.getElementById("sprite-"+k).classList.toggle("defeated",st.sides[k].hp===0);
   }else if(mine){
     panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>battleSkillButton(skill,side)).join('')+'</div>';
@@ -245,6 +246,7 @@ function setupScreen(data){
   app.innerHTML='<section class="menu">'+top("Подготовка боя","АРЕНА",button("Меню","menu","small"))+'<div class="content"><div class="card"><h2>'+esc(data.names.a_owner)+' × '+esc(data.names.b_owner)+'</h2><p class="muted">'+(status[data.status]||"Личный бой. Ждём принятия вызова соперником.")+'</p><div id="setup" class="stack"></div></div></div></section>';
   audio.refresh();
   const box=document.getElementById("setup");if(data.status!=="pending")return;
+  if(data.ranked)box.innerHTML+='<div class="note"><b>Рейтинговая дуэль</b><p>Принятие вызова означает согласие на изменение рейтинга аккаунта. Без ставок. Сдача — поражение; три пропуска подряд — поражение. Обычный выход в меню бой не отменяет.</p></div>';
   if(data.own_side==="b"&&!data.b_accepted)box.innerHTML+=button("Принять"+(data.stake?" · "+data.stake+" ₣":""),"accept","primary")+button("Отклонить","refuse");
   if(data.own_side==="a")box.innerHTML+=button("Отменить вызов","cancel","danger");
   box.innerHTML+='<div class="muted">'+"Бой начнётся сразу после принятия вызова."+' Никаких подтверждений навыков в бою.</div>';
@@ -452,6 +454,19 @@ function skillOfferScreen(data){
   const extra=(!full?button(equipped?'Оставить в наборе':p.loadout.length<4?'Изучить и добавить в набор':'Изучить в резерв','offerlearn','primary'):'')+button('Не брать — оставить прежние','offerskip');
   app.innerHTML='<section class="menu">'+top('Выбор навыка','РАЗВИТИЕ ПЕРСОНАЖА',button('Обновить','refresh','small'))+'<div class="content">'+moveChoicePanel(p,s,choices,caption,'offerswap:',extra)+'</div></section>';
 }
+function arenaLeaderboardBody(data){
+  if(!data)return '<div class="note">Рейтинг пока пуст. Начни рейтинговый бой командой <b>/рейт @участник</b>. Пять учтённых боёв открывают место в топе.</div>';
+  const own=data.own,nav=[];
+  if(data.page)nav.push(button('←','rankpage:'+data.season+':'+(data.page-1),'small'));
+  nav.push(button('Моё место','rankpage:'+data.season+':me','small'));
+  if(data.page+1<data.pages)nav.push(button('→','rankpage:'+data.season+':'+(data.page+1),'small'));
+  const index=data.seasons.indexOf(data.season);
+  if(index+1<data.seasons.length)nav.push(button('Прошлый сезон','rankpage:'+data.seasons[index+1]+':0','small'));
+  if(data.archived)nav.push(button('Текущий сезон','rankpage:'+data.current_season+':0','small'));
+  return '<div class="card"><h2>Рейтинг дуэлянтов · '+esc(data.season)+'</h2><p class="muted">Все чаты · один рейтинг на аккаунт'+(data.archived?' · сезон завершён':'')+'</p><p><b>Твой рейтинг: '+own.rating+'</b> · '+(own.place?'место '+own.place:'калибровка '+Math.min(own.games,5)+'/5')+'</p></div>'+
+    (data.entries.map(row=>'<div class="card"><b>#'+row.place+' · '+esc(row.name)+'</b><p>'+row.rating+' очков · '+row.wins+' побед / '+row.losses+' поражений / '+row.draws+' ничьих</p>'+(row.title?'<span class="pill">'+esc(row.title)+'</span>':'')+'</div>').join('')||'<div class="note">Пока никто не завершил пять учтённых боёв.</div>')+
+    '<div class="stack">'+nav.join('')+'</div><p class="muted">Страница '+(data.page+1)+'/'+data.pages+'</p><div class="note">Вызов: <b>/рейт @участник</b> или ответом <b>/рейт</b>. Обычные бои и ставки рейтинг не меняют. Старт — 1000; победа над сильным соперником ценнее. Пять учтённых боёв для места в топе. Одна встреча пары за 24 часа и до 10 учтённых боёв в сутки (МСК), общие для всех персонажей. Сдача — поражение; три пропуска подряд — поражение. За соперника без действий победитель не получает очков. Каждый месяц новый сезон; титулы тройки лидеров сохраняются в архиве, не дают боевых бонусов или предметов.</div>';
+}
 function menuScreen(data){
   globalThis.HoldingsApp?.stop();
   if(['slaves','owner','slaveProfile','admin'].includes(page))page='personal';
@@ -464,7 +479,9 @@ function menuScreen(data){
   if(page!=="appearance")clearSpriteDraft();
   let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+button("Рейды","tab:raids",page==="raids"?"selected":"")+'</div>';
   body+=button('⚒️ Кузница трактатов','tab:forge',page==='forge'||page==='forgeConfirm'?'primary':'');
+  body+=button('🏆 Топ арены','tab:rankings',page==='rankings'?'primary':'');
   if(page==='forge'||page==='forgeConfirm')body+=forgeBody(data);
+  else if(page==='rankings')body+=arenaLeaderboardBody(data.leaderboard);
   else if(page==="personal")body+=charactersBody(data)+profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Персонаж и инвентарь общие для всех чатов. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
   else if(page==="raids"){
     body+='<div class="note">Выбери босса и создай тихий рейд — сообщение в группу не отправляется. В рейд отправляется твой общий персонаж. Можно сразу начать соло. На сбор — 10 минут.</div>';
@@ -613,6 +630,11 @@ app.addEventListener("click",async event=>{
     forgePreview('rewrite',{items:s.items},'<p>Отдать:</p><ul>'+s.items.map(i=>'<li>'+esc(s.rows.find(r=>r.id===i.id).name)+' × '+i.quantity+'</li>').join('')+'</ul><p>Списать: '+s.price+' ₣. Получить: один случайный трактат того же типа.</p>'+forgeOdds(s.odds)+forgeChoices(f,forgePool,s.odds));return;
   }
   if(cmd==="tab"){page=arg;menuScreen(menu);return;}
+  if(cmd==='rankpage'){
+    if(demo){toast('Архив и другие страницы доступны в игре.');return;}
+    const [season,number]=arg.split(':');
+    try{menu.leaderboard=await api('/api/leaderboard/'+chat+'?season='+encodeURIComponent(season)+(number==='me'?'&mine=1':'&page='+Number(number)));page='rankings';menuScreen(menu);}catch(error){toast(error.message);}return;
+  }
   if(cmd==="appearance"){clearSpriteDraft();page="appearance";menuScreen(menu);return;}
   if(cmd==="choose_sprite"){document.getElementById("sprite-file").click();return;}
   if(cmd==="upload_sprite"||cmd==="reset_sprite"){await saveSprite(cmd==="reset_sprite");return;}
