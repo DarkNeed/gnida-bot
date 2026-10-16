@@ -210,12 +210,15 @@ def post_action(actor, target, skill, hit, damage, key, before, allies=None):
         if hit and skill.damage_type and skill.cost > 0 and before.get('echo_ready'):
             m['echo_ready'] = False
             m['echo_steps'] = [skill.skill_id] if actor['level'] >= 18 and skill.skill_id == 'arch_mage_archmage' else []
-        elif hit and not m.get('echo_ready'):
-            steps = m.get('echo_steps', [])
-            steps = [skill.skill_id] if skill.skill_id in steps else steps + [skill.skill_id]
+        elif not m.get('echo_ready'):
+            # A cast counts even when it misses. Repeating a spell neither
+            # advances nor destroys the chain; support alone cannot ready it.
+            steps = list(dict.fromkeys(m.get('echo_steps', [])))
+            if skill.skill_id not in steps:
+                steps = steps + [skill.skill_id]
             m['echo_steps'] = steps[-3:]
             attacks = sum(k != 'mana_focus' and k != 'mana_barrier' for k in m['echo_steps'])
-            if len(m['echo_steps']) == 3 and attacks >= 2:
+            if len(m['echo_steps']) >= 2 and attacks >= 1:
                 m['echo_ready'] = True
                 notes.append('Мановое эхо подготовлено')
         if hit and 'rpg_void' in skill.tags:

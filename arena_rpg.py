@@ -47,8 +47,8 @@ def build_rpg_catalog(FighterClass, Skill, effect):
         s('warrior','steel_charge','Стальной натиск',5,'physical',14,20,1,description='Против расколотой брони становится двумя ударами с суммарной силой 22 и отдельной проверкой каждого попадания.'),
         s('warrior','counter_lunge','Ответный выпад',6,None,0,20,3,(effect('counter_lunge','rpg_counter',8,1,target='self'),),description='Готовит один контрудар на следующую прямую атаку врага до своего следующего действия. Не срабатывает после смерти.'),
         s('warrior','warrior_execute','Казнь',8,'physical',18,35,3,description='При HP цели ≤30% сила повышается до 30; при расколотой броне дополнительно игнорирует 35% защиты.'),
-        s('mage','mana_shot','Мановый выстрел',5,'magic',10,10),
-        s('mage','mana_blob','Сгусток маны',5,'magic',16,25,1),
+        s('mage','mana_shot','Мановый выстрел',5,'magic',10,10,description='Недорогая магическая атака. При попадании с пассивкой Перенасыщение даёт заряд маны.'),
+        s('mage','mana_blob','Сгусток маны',5,'magic',16,25,1,description='Усиленная магическая атака. При попадании с пассивкой Перенасыщение даёт заряд маны.'),
         s('mage','mana_barrier','Мановый барьер',6,None,0,25,3,(effect('mana_barrier','incoming_damage_multiplier',.70,2,target='self'),),description='Прямой урон −30% на два собственных действия; попадания врага подготавливают Перенасыщение.'),
         s('mage','mana_focus','Сосредоточиться',5,None,0,0,0,(effect('mana_focus','resource',40,target='self'),),description='Возвращает 40 маны, расходуя действие.'),
         s('mage','mana_overload','Перегрузка',8,'magic',18,35,3,tags=('rpg_mana_spend',),description='Расходует до 3 зарядов Перенасыщения: +35% урона за заряд. При промахе заряды сохраняются.'),
@@ -144,7 +144,7 @@ def rpg_modifiers(actor,target,skill):
         if 'rpg_soul_spend' in skill.tags: multiplier*=1+.30*m.get('souls',0)
         if 'rpg_beast_spend' in skill.tags: multiplier*=1+.25*m.get('beast',0)
         if 'rpg_meteor' in skill.tags and any(e['kind']=='burn' for e in target['effects']): multiplier*=1.50
-        if key=='mage_archmage' and skill.class_id=='mage' and skill.cost>0 and m.get('echo_ready'): multiplier*=1.35
+        if key=='mage_archmage' and skill.class_id=='mage' and skill.cost>0 and m.get('echo_ready'): multiplier*=1.60
         if key=='hunter_beast': multiplier*=1+.10*m.get('beast',0)
         if key=='priest_paladin' and 'rpg_faith_spend' in skill.tags: multiplier*=1+.15*m.get('retribution',0)
     return accuracy,multiplier*path_modifiers(actor,target,skill,key)

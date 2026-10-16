@@ -87,6 +87,39 @@ class StatusClientTests(unittest.TestCase):
     def test_empty_legacy_side_has_no_icons(self):
         self.assertEqual(self.statuses({}), [])
 
+    def test_archmage_echo_progress_and_ready_tooltip(self):
+        side = dict(class_id='mage', archclass_id='mage_archmage', level=10)
+        for memory, count, name in (
+            ({}, '0/2', 'Подготовка'),
+            (dict(echo_steps=['mana_shot']), '1/2', 'Подготовка'),
+            (dict(echo_steps=['mana_focus', 'mana_barrier']), '1/2', 'Подготовка'),
+            (dict(echo_steps=['mana_shot', 'mana_focus'], echo_ready=True), '2/2', 'готово'),
+        ):
+            with self.subTest(memory=memory):
+                item = next(e for e in self.statuses(dict(side, rpg_state=memory)) if e['id'] == 'rpg:echo')
+                self.assertEqual(item['count'], count)
+                self.assertIn(name, item['name'])
+                if memory.get('echo_ready'):
+                    self.assertIn('+60%', item['detail'])
+                    self.assertIn('12 уровня', item['detail'])
+                    self.assertNotIn('35%', item['detail'])
+                else:
+                    self.assertIn('Промахи тоже дают шаг', item['detail'])
+        self.assertEqual(self.statuses(dict(side, level=9)), [])
+        self.assertEqual(self.statuses(dict(side, archclass_id='mage_necromancer')), [])
+
+    def test_summon_tooltip_counts_lifetime_not_guaranteed_attacks(self):
+        side = dict(class_id='mage', archclass_id='mage_necromancer', level=18,
+                    rpg_state=dict(summon=2))
+        item = self.statuses(side)[0]
+        self.assertEqual(item['name'], 'Скелет')
+        self.assertEqual(item['count'], '2')
+        self.assertIn('действий жизни', item['detail'])
+        self.assertIn('25%', item['detail'])
+        self.assertNotIn('Осталось атак', item['detail'])
+        side['rpg_state']['death_servants'] = True
+        self.assertEqual(self.statuses(side)[0]['name'], 'Страж и Палач')
+
     def test_only_active_temporary_effects_appear(self):
         effects = [
             dict(id="x", kind="damage_pct", value=-0.4, duration=d)
