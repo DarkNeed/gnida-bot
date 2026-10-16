@@ -16,6 +16,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from arena_links import arena_link
 from arena_web import require_member
 from handlers.raids import RaidPublisher, create_raid_router
+from handlers.transfers import handle_transfers
 from handlers.routes import (
     message_content,
     text_or_caption_regexp,
@@ -29,7 +30,7 @@ OFFER_RE = re.compile(
 )
 MENU_RE = re.compile(r"^\s*/(?:арена|arena)(?:@\w+)?\s*$", re.I)
 ITEM_TRANSFER_RE = re.compile(
-    r"^\s*(?:[/!]?передать)(?:@\w+)?\s+(?:трактат|предмет)\s+(?P<item>\d+)\s*(?P<payload>.*)$",
+    r"^\s*(?:[/!]?передать)(?:@\w+)?\s+(?:трактат(?:ы|ов)?|предмет(?:ы|ов)?)\b\s*(?P<payload>.*)$",
     re.I | re.S,
 )
 
@@ -208,60 +209,7 @@ def create_arena_router(db, bot, username, enabled, publisher):
 
     @router.message(text_or_caption_regexp(ITEM_TRANSFER_RE))
     async def transfer_arena_item(message: Message):
-        if not message.from_user:
-            return
-        actor = message.from_user.id
-        chat = message.chat.id
-        if message.chat.type == "private":
-            selected = await db.selected_menu_chat(actor)
-            if not selected:
-                await message.answer("Сначала выбери чат в /menu.")
-                return
-            chat = (
-                int(selected["chat_id"]) if not isinstance(selected, int) else selected
-            )
-        match = ITEM_TRANSFER_RE.match(message_content(message))
-        # Resolve tags against the selected group, not the private-chat users table.
-        payload = match["payload"].strip()
-        try:
-            await require_member(bot, chat, actor)
-            if message.chat.type == "private":
-                if re.fullmatch(r"@\w+", payload):
-                    user = await db.resolve_user(chat, payload)
-                    if not user:
-                        raise ValueError("Участник не найден в выбранном чате.")
-                    target = user["user_id"]
-                elif payload.isdigit():
-                    target = int(payload)
-                else:
-                    raise ValueError("Передача: /передать предмет НОМЕР @участник.")
-            else:
-                result = await resolve_target(message, db, payload)
-                if not result:
-                    return
-                target, _, rest = result
-                if rest:
-                    raise ValueError(
-                        "Передача: /передать предмет НОМЕР @участник или ответом /передать предмет НОМЕР."
-                    )
-            member = await require_member(bot, chat, target)
-            if (
-                payload.startswith("@")
-                and (member.user.username or "").casefold() != payload[1:].casefold()
-            ):
-                raise ValueError(
-                    "Тег участника изменился. Используй его ID или обновлённый тег."
-                )
-            if member.user.is_bot:
-                raise ValueError("Ботам нельзя передавать предметы.")
-            name = await db.arena_transfer_item(chat, actor, int(match["item"]), target)
-            label = html.escape(member.user.full_name)
-            await message.answer(
-                f'📦 {html.escape(name)} передан <a href="tg://user?id={target}">{label}</a>.',
-                parse_mode="HTML",
-            )
-        except ValueError as error:
-            await message.answer(str(error))
+        await handle_transfers(message, db, bot)
 
     @router.message(text_or_caption_regexp(OFFER_RE))
     async def battle_offer(message: Message):

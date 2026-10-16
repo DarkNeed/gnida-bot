@@ -13,6 +13,7 @@ from blackjack import compare_stood_hands, hand_total, shuffled_deck
 from arena_store import ArenaMixin
 from enterprises import EnterpriseMixin, NEW_CONFIG
 from franc_deposit import DepositMixin
+from transfer_batch import TransferBatchMixin
 from checkers import (
     BLACK,
     WHITE,
@@ -95,7 +96,7 @@ def utc_timestamp() -> int:
 BUSINESS_CONFIG.update(NEW_CONFIG)
 
 
-class Database(DepositMixin, EnterpriseMixin, ArenaMixin):
+class Database(TransferBatchMixin, DepositMixin, EnterpriseMixin, ArenaMixin):
     """Small async-friendly SQLite repository for one aiogram process."""
 
     def __init__(self, path: str | Path) -> None:
@@ -172,6 +173,13 @@ class Database(DepositMixin, EnterpriseMixin, ArenaMixin):
 
             CREATE INDEX IF NOT EXISTS idx_ownership_owner
                 ON ownership(chat_id, owner_id);
+
+            CREATE TABLE IF NOT EXISTS transfer_batches (
+                source_chat INTEGER NOT NULL, message_id INTEGER NOT NULL,
+                actor_id INTEGER NOT NULL, request_json TEXT NOT NULL,
+                receipt_json TEXT NOT NULL,
+                PRIMARY KEY(source_chat, message_id, actor_id)
+            );
 
             CREATE TABLE IF NOT EXISTS challenges (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2049,50 +2057,44 @@ class Database(DepositMixin, EnterpriseMixin, ArenaMixin):
         self, chat_id: int, current_owner_id: int, slave_id: int, new_owner_id: int
     ) -> str:
         async with self._lock:
-            self._require_feature_locked(chat_id, 'slavery')
             with self.connection:
-                if slave_id == new_owner_id:
-                    return "self"
-                owned = self.connection.execute(
-                    """SELECT 1 FROM ownership
-                       WHERE chat_id=? AND slave_id=? AND owner_id=?""",
-                    (chat_id, slave_id, current_owner_id),
-                ).fetchone()
-                if not owned:
-                    return "not_owned"
-                if current_owner_id == new_owner_id:
-                    return "same_owner"
-                recipient = self.connection.execute(
-                    "SELECT username FROM users WHERE chat_id=? AND user_id=?",
-                    (chat_id, new_owner_id),
-                ).fetchone()
-                if (
-                    recipient
-                    and recipient["username"]
-                    and recipient["username"].casefold() == PIROJOK_USERNAME
-                ):
-                    return "pirojok_cannot_own"
-                recipient_is_slave = self.connection.execute(
-                    "SELECT 1 FROM ownership WHERE chat_id=? AND slave_id=?",
-                    (chat_id, new_owner_id),
-                ).fetchone()
-                if recipient_is_slave:
-                    return "recipient_is_slave"
-                self._settle_materials_locked(chat_id, current_owner_id)
-                self._settle_materials_locked(chat_id, new_owner_id)
-                self.connection.execute(
-                    "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?",
-                    (chat_id, slave_id),
-                )
-                self.connection.execute(
-                    """UPDATE ownership
-                       SET owner_id=?, acquired_at=?, last_forced_at=NULL, transfer_priority=0
-                       WHERE chat_id=? AND slave_id=?""",
-                    (new_owner_id, utc_timestamp(), chat_id, slave_id),
-                )
-                self._refresh_owner_record_locked(chat_id, new_owner_id)
-                self.connection.commit()
-                return "transferred"
+                return self._transfer_slave_locked(chat_id, current_owner_id, slave_id, new_owner_id)
+
+    def _transfer_slave_locked(self, chat_id, current_owner_id, slave_id, new_owner_id):
+        """Shared transfer primitive; caller owns the lock and transaction."""
+        self._require_feature_locked(chat_id, 'slavery')
+        if slave_id == new_owner_id:
+            return "self"
+        owned = self.connection.execute(
+            "SELECT 1 FROM ownership WHERE chat_id=? AND slave_id=? AND owner_id=?",
+            (chat_id, slave_id, current_owner_id),
+        ).fetchone()
+        if not owned:
+            return "not_owned"
+        if current_owner_id == new_owner_id:
+            return "same_owner"
+        recipient = self.connection.execute(
+            "SELECT username FROM users WHERE chat_id=? AND user_id=?",
+            (chat_id, new_owner_id),
+        ).fetchone()
+        if recipient and recipient["username"] and recipient["username"].casefold() == PIROJOK_USERNAME:
+            return "pirojok_cannot_own"
+        if self.connection.execute(
+            "SELECT 1 FROM ownership WHERE chat_id=? AND slave_id=?", (chat_id, new_owner_id),
+        ).fetchone():
+            return "recipient_is_slave"
+        self._settle_materials_locked(chat_id, current_owner_id)
+        self._settle_materials_locked(chat_id, new_owner_id)
+        self.connection.execute(
+            "DELETE FROM business_workers WHERE chat_id=? AND worker_id=?", (chat_id, slave_id),
+        )
+        self.connection.execute(
+            """UPDATE ownership SET owner_id=?, acquired_at=?, last_forced_at=NULL, transfer_priority=0
+               WHERE chat_id=? AND slave_id=?""",
+            (new_owner_id, utc_timestamp(), chat_id, slave_id),
+        )
+        self._refresh_owner_record_locked(chat_id, new_owner_id)
+        return "transferred"
 
     async def force_enslave(self, chat_id: int, slave_id: int, owner_id: int) -> str:
         async with self._lock:

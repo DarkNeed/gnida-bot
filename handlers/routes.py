@@ -339,7 +339,7 @@ KARGASTAN_RE = re.compile(
     r"выеби\s+эту\s+ньюху\s+за\s+каргастан[!?.\s]*$",
     re.IGNORECASE,
 )
-TRANSFER_RE = re.compile(r"^[!/]передать(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+TRANSFER_RE = re.compile(r"^\s*[!/]передать(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 SLAVE_PRIORITY_RE = re.compile(
     r"^[!/](приоритет|снять\s+приоритет)(?:@\w+)?(?:\s|$)", re.IGNORECASE
 )
@@ -5695,81 +5695,10 @@ def create_router(
             )
 
     @router.message(text_or_caption_regexp(TRANSFER_RE))
-    async def transfer_slave(message: Message) -> None:
-        if message.chat.type not in GROUP_TYPES or not message.from_user:
-            return
-        payload = command_payload(message_content(message))
-        replied = message.reply_to_message
-        if replied and replied.sender_chat:
-            await message.answer("Нельзя определить автора сообщения от имени канала.")
-            return
-        if replied and replied.from_user:
-            recipient_user = replied.from_user
-            slave_token, extra = split_first(payload)
-            if not slave_token or extra:
-                await message.answer(
-                    "Формат ответом: /передать @раб — ответьте на сообщение нового владельца."
-                )
-                return
-            if recipient_user.is_bot:
-                await message.answer("Нельзя передать раба боту.")
-                return
-            await database.upsert_user(
-                message.chat.id,
-                recipient_user.id,
-                recipient_user.username,
-                display_name(recipient_user),
-                touch=False,
-            )
-            slave = await resolve_user_token(message, database, slave_token)
-            if not slave:
-                return
-            slave_id, slave_name = slave
-            recipient = (recipient_user.id, display_name(recipient_user))
-        else:
-            slave_token, remainder = split_first(payload)
-            recipient_token, extra = split_first(remainder)
-            if not slave_token or not recipient_token or extra:
-                await message.answer("Формат: /передать @раб @получатель")
-                return
-            slave = await resolve_user_token(message, database, slave_token)
-            if not slave:
-                return
-            slave_id, slave_name = slave
-            if recipient_token.casefold() in {"мне", "себе"}:
-                recipient = (message.from_user.id, display_name(message.from_user))
-            else:
-                recipient = await resolve_user_token(message, database, recipient_token)
-            if not recipient:
-                return
-        recipient_id, recipient_name = recipient
-        if await stored_sleepy_attack_is_blocked(
-            database, message.chat.id, message.from_user, slave_id
-        ):
-            await message.answer(SLEEPY_PROTECTION_TEXT)
-            return
-        if await target_is_immune(database, message.chat.id, slave_id):
-            await message.answer(IMMUNITY_TEXT)
-            return
-        result = await database.transfer_slave(
-            message.chat.id, message.from_user.id, slave_id, recipient_id
-        )
-        if result == "not_owned":
-            await message.answer("Этот участник не ваш раб.")
-        elif result == "recipient_is_slave":
-            await message.answer("Раб не может владеть другими рабами.")
-        elif result == "self":
-            await message.answer("Нельзя передать человека самому себе.")
-        elif result == "same_owner":
-            await message.answer("Этот участник уже принадлежит вам.")
-        elif result == "pirojok_cannot_own":
-            await message.answer("Этот кувшин слишком тесен для вас двоих")
-        else:
-            await message.answer(
-                f"🤝 {mention(slave_id, slave_name)} передан владельцу "
-                f"{mention(recipient_id, recipient_name)}.",
-                parse_mode="HTML",
-            )
+    async def transfer_slave(message: Message, bot: Bot) -> None:
+        from handlers.transfers import handle_transfers
+
+        await handle_transfers(message, database, bot)
 
     @router.message(text_or_caption_regexp(SLAVE_PRIORITY_RE))
     async def set_slave_priority(message: Message, bot: Bot) -> None:

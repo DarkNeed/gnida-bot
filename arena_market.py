@@ -729,22 +729,27 @@ class ArenaMarketMixin(ForgeMixin):
                 raise
 
     async def arena_transfer_item(self, chat, actor, item, target):
+        async with self._lock:
+            with self.connection:
+                return self._arena_transfer_item_locked(chat, actor, item, target)
+
+    def _arena_transfer_item_locked(self, chat, actor, item, target, quantity=1):
+        """No commit: a batch can roll back every item and ownership change."""
         if actor == target or target <= 0:
             raise ValueError("Выбери другого участника.")
-        async with self._lock:
-            try:
-                self._require_feature_locked(chat, 'arena')
-                row = self._arena_item_locked(chat, actor, item)
-                description = self._arena_describe_item_locked(row)
-                self._arena_consume_item_locked(row)
-                self._arena_add_item_locked(
-                    chat, target, row["kind"], row["content_id"], row["rarity"]
-                )
-                self.connection.commit()
-                return description["name"]
-            except Exception:
-                self.connection.rollback()
-                raise
+        if type(quantity) is not int or quantity < 1:
+            raise ValueError("Количество должно быть положительным целым числом.")
+        self._require_feature_locked(chat, 'arena')
+        row = self._arena_item_locked(chat, actor, item)
+        if row["quantity"] < quantity:
+            raise ValueError(f"Не хватает предмета №{item}: есть {row['quantity']}, нужно {quantity}.")
+        description = self._arena_describe_item_locked(row)
+        if row["quantity"] == quantity:
+            self.connection.execute("DELETE FROM arena_inventory WHERE id=?", (row["id"],))
+        else:
+            self.connection.execute("UPDATE arena_inventory SET quantity=quantity-? WHERE id=?", (quantity, row["id"]))
+        self._arena_add_item_locked(chat, target, row["kind"], row["content_id"], row["rarity"], quantity)
+        return description["name"]
 
     def _arena_reset_profile_locked(self, chat, user, personal, class_id="ragamuffin", *, preserve_archives=False):
         chat = RPG_SCOPE if personal else chat
