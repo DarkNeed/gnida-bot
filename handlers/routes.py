@@ -74,6 +74,7 @@ from database import (
     utc_timestamp,
 )
 from menu_context import choose_chat_view, selected_chat, verified_selected_chat, verified_constructor_chat, manages_chat
+from franc_deposit import DEPOSIT_RE, parse_deposit
 from parsing import (
     command_payload,
     format_duration,
@@ -3732,6 +3733,36 @@ def create_router(
             return
         body, keyboard = await private_menu_view(message.from_user, bot)
         await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
+
+    @router.message(text_or_caption_regexp(DEPOSIT_RE))
+    async def deposit(message: Message, bot: Bot) -> None:
+        sender=message.from_user
+        if not sender or sender.is_bot or message.sender_chat:
+            return
+        if message.chat.type not in GROUP_TYPES and message.chat.type!='private':
+            return
+        try:
+            amount=parse_deposit(message_content(message))
+            context=''
+            if message.chat.type=='private':
+                selected=await verified_selected_chat(database,bot,sender.id)
+                if selected is None:
+                    await message.answer('Сначала выбери чат через /menu. В личке ставка берётся из кошелька выбранного чата.')
+                    return
+                scope=int(selected['chat_id'])
+                context='📍 Чат: '+html.escape(selected['title'])+'\n'
+            else:
+                scope=message.chat.id
+            await database.settle_businesses_for_user(sender.id)
+            result=await database.deposit_francs(scope,sender.id,amount,message.chat.id,message.message_id)
+        except ValueError as error:
+            await message.answer(str(error))
+            return
+        phrase=html.escape(result['phrase']).format(user=mention(sender.id,display_name(sender)),
+            stake=result['stake'],payout=result['payout'])
+        await message.answer(context+phrase+'\n\n'+
+            (f"Выплата: <b>{result['payout']} ₣</b> · чистый выигрыш: <b>+{result['payout']-result['stake']} ₣</b>." if result['won'] else f"Проиграно: <b>{result['stake']} ₣</b>.")+
+            f"\nБаланс после ставки: <b>{result['balance_after']} ₣</b>.",parse_mode='HTML')
 
     @router.message(text_or_caption_regexp(FRANCS_RE))
     async def francs(message: Message, bot: Bot) -> None:

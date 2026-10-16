@@ -12,6 +12,7 @@ from typing import Any
 from blackjack import compare_stood_hands, hand_total, shuffled_deck
 from arena_store import ArenaMixin
 from enterprises import EnterpriseMixin, NEW_CONFIG
+from franc_deposit import DepositMixin
 from checkers import (
     BLACK,
     WHITE,
@@ -94,7 +95,7 @@ def utc_timestamp() -> int:
 BUSINESS_CONFIG.update(NEW_CONFIG)
 
 
-class Database(EnterpriseMixin, ArenaMixin):
+class Database(DepositMixin, EnterpriseMixin, ArenaMixin):
     """Small async-friendly SQLite repository for one aiogram process."""
 
     def __init__(self, path: str | Path) -> None:
@@ -529,6 +530,7 @@ class Database(EnterpriseMixin, ArenaMixin):
         self._ensure_column("business_workers", "wage_hours", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("businesses", "income_remainder", "INTEGER NOT NULL DEFAULT 0")
         self._init_enterprises()
+        self._init_deposits()
         self._ensure_column(
             "ownership", "transfer_priority", "INTEGER NOT NULL DEFAULT 0"
         )
