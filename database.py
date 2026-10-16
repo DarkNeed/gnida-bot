@@ -2995,6 +2995,8 @@ class Database(EnterpriseMixin, ArenaMixin):
             if owner_id == worker_id:
                 return "own_business", None, None, None
             now = utc_timestamp()
+            if self.connection.execute('SELECT 1 FROM slave_expedition_members WHERE user_id=? AND active=1',(worker_id,)).fetchone():
+                return 'away',None,None,None
             if self.connection.execute("SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND slave_id=? AND status IN ('pending','playing')",(chat_id,worker_id)).fetchone():
                 return 'away',None,None,None
             cooldown = self.connection.execute(

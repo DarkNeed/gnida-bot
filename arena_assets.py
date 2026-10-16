@@ -8,6 +8,8 @@ def render_arena_index(root: Path) -> str:
     revision = hashlib.sha256()
     for name in ("style.css", "battle-client", "arena-audio"):
         revision.update((root / name).read_bytes())
+    for name in ('holdings.css','holdings-client'):
+        if (root/name).exists():revision.update((root/name).read_bytes())
     version = revision.hexdigest()[:16]
     return (
         (root / "index.html")
@@ -15,4 +17,6 @@ def render_arena_index(root: Path) -> str:
         .replace('href="/static/style.css"', f'href="/static/style.css?v={version}"')
         .replace('src="/static/client.js"', f'src="/static/client.js?v={version}"')
         .replace('src="/static/audio.js"', f'src="/static/audio.js?v={version}"')
+        .replace('src="/static/holdings.js"', f'src="/static/holdings.js?v={version}"')
+        .replace('href="/static/holdings.css"', f'href="/static/holdings.css?v={version}"')
     )

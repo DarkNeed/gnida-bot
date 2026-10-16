@@ -100,6 +100,17 @@ async def main() -> None:
                 create=current-last_create>=60
                 if create:last_create=current
                 await sweep_recovery_events(database,bot,create=create)
+                for trip in await database.expedition_sweep():
+                    try:
+                        await bot.send_message(trip['owner_id'],
+                            '🧭 Экспедиция завершена. Итоги и добыча — в твоих владениях.',
+                            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                                text='Посмотреть итоги',url=arena_link(username,f"holdings_{trip['chat_id']}"))]]))
+                    except TelegramAPIError:
+                        # Results are already committed and remain in the app;
+                        # a blocked PM must never cause re-awards or group spam.
+                        logging.info('Expedition notification unavailable: %s',trip['id'])
+                    await database.expedition_notified(trip['id'])
             except Exception:
                 logging.exception('Enterprise event sweep failed')
             await asyncio.sleep(5)

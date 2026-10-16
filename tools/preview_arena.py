@@ -54,6 +54,10 @@ async def audio(request):
     )
 
 
+async def holdings_client(request):
+    return web.FileResponse(ROOT/'holdings-client',headers={'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-cache'})
+
+
 async def demo_fighter(request):
     """Real catalogs in a synthetic battle: no token, DB or Telegram requests."""
     cls = request.match_info["class_id"]
@@ -308,6 +312,7 @@ async def demo_raid(request):
 app.router.add_get("/", index)
 app.router.add_get("/static/client.js", client)
 app.router.add_get("/static/audio.js", audio)
+app.router.add_get('/static/holdings.js',holdings_client)
 app.router.add_get("/demo/fighter/{class_id}", demo_fighter)
 app.router.add_get("/demo/mirror/{phase}", demo_mirror)
 app.router.add_get("/demo/raid/{phase}", demo_raid)

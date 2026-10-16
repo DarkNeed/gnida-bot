@@ -931,6 +931,12 @@ def create_arena_app(
     app.router.add_get("/static/client.js", client)
     app.router.add_get("/static/audio.js", audio)
     app.router.add_get("/static/style.css", stylesheet)
+    async def holdings_client(request):
+        return web.FileResponse(ROOT/'holdings-client',headers={'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-cache'})
+    async def holdings_style(request):
+        return web.FileResponse(ROOT/'holdings.css',headers={'Cache-Control':'no-cache'})
+    app.router.add_get('/static/holdings.js',holdings_client)
+    app.router.add_get('/static/holdings.css',holdings_style)
     app.router.add_static("/static/", ROOT, show_index=False)
     app.router.add_get("/api/battle/{token}", get_battle)
     app.router.add_post("/api/battle/{token}", post_battle)
@@ -943,4 +949,6 @@ def create_arena_app(
     app.router.add_post("/api/menu/{chat}/sprite", upload_sprite)
     app.router.add_delete("/api/menu/{chat}/sprite", reset_sprite)
     app.router.add_get("/sprites/{key}.png", get_sprite)
+    from holdings_web import register_holdings
+    register_holdings(app,db,bot,ACTOR,require_member,int_field)
     return app

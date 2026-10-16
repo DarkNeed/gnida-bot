@@ -6,6 +6,7 @@ from contextlib import closing
 from datetime import datetime
 from uuid import uuid4
 from slave_recovery import RecoveryMixin
+from slave_expeditions import ExpeditionMixin, EXPEDITIONS, digest
 
 MAX_ENTERPRISES = 3
 CAPACITIES = {1: 10, 2: 15, 3: 20}
@@ -45,7 +46,7 @@ def role_labels(site):
     return (site['producer_title'] or defaults['producer'], site['leader_title'] or defaults['leader'])
 
 
-class EnterpriseMixin(RecoveryMixin):
+class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
     async def business_for_worker(self, chat, owner, worker):
         async with self._lock:
             return self._enterprise_locked(chat,owner,worker=worker)
@@ -98,6 +99,7 @@ class EnterpriseMixin(RecoveryMixin):
                 PRIMARY KEY(business_id,income_day));
         ''')
         self._init_recovery_events()
+        self._init_expeditions()
 
     def _enterprise_locked(self, chat, owner, site_id=None, worker=None):
         if site_id is None and worker is not None:
@@ -121,7 +123,7 @@ class EnterpriseMixin(RecoveryMixin):
             ORDER BY w.assigned_at,w.worker_id''',(site['chat_id'],site['owner_id'],site['id'],site['chat_id'],site['owner_id'])).fetchall()
 
     def _enterprise_away_locked(self, chat, owner, worker, begin, end):
-        return self.connection.execute('''SELECT 1 FROM slave_recovery_events WHERE chat_id=?
+        return self._expedition_away_locked(chat,owner,worker,begin,end) or self.connection.execute('''SELECT 1 FROM slave_recovery_events WHERE chat_id=?
             AND owner_id=? AND slave_id=? AND activated_at IS NOT NULL AND activated_at<?
             AND (ended_at IS NULL OR ended_at>?) LIMIT 1''',(chat,owner,worker,end,begin)).fetchone() is not None
 
@@ -213,6 +215,7 @@ class EnterpriseMixin(RecoveryMixin):
                 cfg=config(site)
                 if role is not None and role not in (cfg['producer_role'],cfg['leader_role']):return 'invalid_role'
                 if not self.connection.execute('SELECT 1 FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?',(chat,owner,worker)).fetchone():return 'not_owned'
+                if self._expedition_away_locked(chat,owner,worker,now(),now()+1):return 'away'
                 if self.connection.execute("SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND owner_id=? AND slave_id=? AND status IN ('pending','playing')",(chat,owner,worker)).fetchone():return 'away'
                 rows=self._enterprise_workers_locked(site)
                 others=[w for w in rows if w['worker_id']!=worker]
@@ -283,3 +286,114 @@ class EnterpriseMixin(RecoveryMixin):
             rows=[dict(r) for r in self.connection.execute('SELECT * FROM enterprise_income_daily WHERE business_id=? ORDER BY income_day DESC LIMIT 7',(site_id,))]
             self.connection.commit()
             return rows
+
+    def _holdings_revision_locked(self, chat, owner):
+        sites=[dict(r) for r in self.connection.execute('''SELECT id,business_type,level,name,description,
+            producer_title,leader_title FROM businesses WHERE chat_id=? AND owner_id=? ORDER BY id''',(chat,owner))]
+        owned=[tuple(r) for r in self.connection.execute('''SELECT o.slave_id,o.acquired_at,w.business_id,w.role,w.assigned_at
+            FROM ownership o LEFT JOIN business_workers w ON w.chat_id=o.chat_id AND w.owner_id=o.owner_id AND w.worker_id=o.slave_id
+            WHERE o.chat_id=? AND o.owner_id=? ORDER BY o.slave_id''',(chat,owner))]
+        absent=[tuple(r) for r in self.connection.execute('''SELECT slave_id,status,revision FROM slave_recovery_events
+            WHERE chat_id=? AND owner_id=? AND status IN ('announcing','pending','playing') ORDER BY id''',(chat,owner))]
+        trips=[tuple(r) for r in self.connection.execute('SELECT user_id,expedition_id FROM slave_expedition_members WHERE chat_id=? AND owner_id=? AND active=1 ORDER BY user_id',(chat,owner))]
+        return digest([sites,owned,absent,trips])
+
+    def _holdings_check_locked(self, chat, owner, revision):
+        self._require_feature_locked(chat,'slavery')
+        self._expedition_finish_due_locked()
+        if not isinstance(revision,str) or revision!=self._holdings_revision_locked(chat,owner):
+            raise ValueError('Владения изменились. Обнови список и подтверди заново.')
+
+    async def enterprise_batch(self, chat, owner, users, site_id, role, revision):
+        if (not isinstance(users,list) or not 1<=len(users)<=1000 or
+            any(type(u) is not int or u<=0 for u in users) or len(set(users))!=len(users)):
+            raise ValueError('Выбери разных работников (не более 1000).')
+        if role not in ('worker','leader','remove') or (role!='remove' and type(site_id) is not int):
+            raise ValueError('Некорректное назначение.')
+        async with self._lock:
+            with self.connection:
+                self._holdings_check_locked(chat,owner,revision)
+                site=self._enterprise_locked(chat,owner,site_id) if role!='remove' else None
+                if role!='remove' and not site:raise ValueError('Это не твоё предприятие в выбранном чате.')
+                selected=set(users)
+                for user in users:
+                    if not self._arena_owns_locked(chat,owner,user):raise ValueError('Один из работников больше не твой.')
+                    if self._enterprise_away_locked(chat,owner,user,now(),now()+1):raise ValueError('Пропавшего участника или участника экспедиции нельзя переназначить.')
+                if site:
+                    others=[w for w in self._enterprise_workers_locked(site) if w['worker_id'] not in selected]
+                    if len(others)+len(users)>CAPACITIES[site['level']]:raise ValueError('На предприятии не хватает мест. Никто не переназначен.')
+                    cfg=config(site)
+                    if role=='leader' and (len(users)!=1 or any(w['role']==cfg['leader_role'] for w in others)):
+                        raise ValueError('На предприятии может быть только один управляющий.')
+                stamp=now();self._enterprise_settle_owner_locked(chat,owner,stamp)
+                for user in users:
+                    current=self.connection.execute('SELECT * FROM business_workers WHERE chat_id=? AND owner_id=? AND worker_id=?',(chat,owner,user)).fetchone()
+                    if role=='remove':
+                        self.connection.execute('DELETE FROM business_workers WHERE chat_id=? AND owner_id=? AND worker_id=?',(chat,owner,user))
+                    else:
+                        actual=cfg['leader_role' if role=='leader' else 'producer_role']
+                        self.connection.execute('''INSERT INTO business_workers(chat_id,owner_id,worker_id,role,assigned_at,business_id,wage_hours)
+                            VALUES(?,?,?,?,?,?,?) ON CONFLICT(chat_id,owner_id,worker_id) DO UPDATE SET role=excluded.role,
+                            assigned_at=excluded.assigned_at,business_id=excluded.business_id,wage_hours=excluded.wage_hours''',
+                            (chat,owner,user,actual,stamp,site_id,current['wage_hours'] if current and current['role']==actual else 0))
+                return f'Назначения обновлены: {len(users)}.'
+
+    async def enterprise_close(self, chat, owner, site_id, revision):
+        if type(site_id) is not int:raise ValueError('Некорректное предприятие.')
+        async with self._lock:
+            with self.connection:
+                self._holdings_check_locked(chat,owner,revision)
+                site=self._enterprise_locked(chat,owner,site_id)
+                if not site:raise ValueError('Предприятие уже закрыто или принадлежит другому владельцу.')
+                self._enterprise_settle_owner_locked(chat,owner,now())
+                # Materialize nullable legacy assignments before deleting a site.
+                ids=[w['worker_id'] for w in self._enterprise_workers_locked(site)]
+                for user in ids:
+                    self.connection.execute('DELETE FROM business_workers WHERE chat_id=? AND owner_id=? AND worker_id=?',(chat,owner,user))
+                self.connection.execute('DELETE FROM businesses WHERE id=? AND chat_id=? AND owner_id=?',(site_id,chat,owner))
+                # Keep income ledgers and ownership, including active searches/trips.
+                return 'Предприятие закрыто. Работники сняты с должностей, но остаются твоими. Возврата стоимости нет.'
+
+    async def holdings_chat_candidates(self, owner):
+        async with self._lock:
+            return [dict(r) for r in self.connection.execute('''SELECT c.chat_id,c.title FROM chats c
+                JOIN users u ON u.chat_id=c.chat_id AND u.user_id=? WHERE c.chat_id<0 ORDER BY c.title,c.chat_id''',(owner,))]
+
+    async def holdings_view(self, chat, owner):
+        async with self._lock:
+            with self.connection:
+                self._require_feature_locked(chat,'slavery')
+                self._expedition_finish_due_locked()
+                self._enterprise_settle_owner_locked(chat,owner,now())
+                sites=[]
+                for row in self.connection.execute('SELECT * FROM businesses WHERE chat_id=? AND owner_id=? ORDER BY id',(chat,owner)):
+                    s=dict(row);cfg=config(s);producer,leader=role_labels(s)
+                    s.update(title=title(s),type_name=CATALOG[s['business_type']]['name'],emoji=CATALOG[s['business_type']]['emoji'],
+                        capacity=CAPACITIES[s['level']],producer_label=producer,leader_label=leader,
+                        upgrade_price=UPGRADE_PRICES.get(s['level']),active_rate=cfg['owner_per_producer'],inactive_rate=cfg['inactive_owner_per_producer'])
+                    s['workers']=[dict(w,away=self._enterprise_away_locked(chat,owner,w['worker_id'],now(),now()+1)) for w in self._enterprise_workers_locked(row)]
+                    s['income']=[dict(r) for r in self.connection.execute('SELECT * FROM enterprise_income_daily WHERE business_id=? ORDER BY income_day DESC LIMIT 7',(s['id'],))]
+                    sites.append(s)
+                people=[];catalog=self._fighter_catalog_locked()
+                for row in self.connection.execute('''SELECT o.slave_id AS user_id,u.display_name,u.username,w.business_id,w.role
+                    FROM ownership o LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.slave_id
+                    LEFT JOIN business_workers w ON w.chat_id=o.chat_id AND w.owner_id=o.owner_id AND w.worker_id=o.slave_id
+                    WHERE o.chat_id=? AND o.owner_id=? ORDER BY o.acquired_at DESC,o.slave_id''',(chat,owner)):
+                    p=dict(row);p.update(self._expedition_source_locked(chat,p['user_id'],catalog))
+                    p['name']=p['display_name'] or p['username'] or str(p['user_id'])
+                    p['away']=self._enterprise_away_locked(chat,owner,p['user_id'],now(),now()+1)
+                    last=self.connection.execute('SELECT MAX(started_at) AS stamp,MAX(active) AS active FROM slave_expedition_members WHERE user_id=?',(p['user_id'],)).fetchone()
+                    p['expedition_ready_at']=(last['stamp']+6*3600) if last['stamp'] is not None else 0
+                    p['expedition_active']=bool(last['active'])
+                    people.append(p)
+                balance=self.connection.execute('SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?',(chat,owner)).fetchone()
+                chat_row=self.connection.execute('SELECT title FROM chats WHERE chat_id=?',(chat,)).fetchone()
+                trips=self._expedition_public_locked(chat,owner)
+                other=self.connection.execute("SELECT chat_id FROM slave_expeditions WHERE owner_id=? AND status='active' AND chat_id<>?",(owner,chat)).fetchone()
+                recovery=[dict(id=r['id'],slave_id=r['slave_id'],deadline=r['deadline'],kind=r['kind']) for r in self.connection.execute("SELECT * FROM slave_recovery_events WHERE chat_id=? AND owner_id=? AND status IN ('pending','playing')",(chat,owner))]
+                return dict(chat_id=chat,chat_title=chat_row['title'] if chat_row else str(chat),actor_id=owner,
+                    server_time=now(),revision=self._holdings_revision_locked(chat,owner),balance=balance['balance'] if balance else 0,
+                    sites=sites,people=people,expeditions=trips,other_expedition_chat=other['chat_id'] if other else None,
+                    recoveries=recovery,arena_enabled=self._feature_enabled_locked(chat,'arena'),
+                    catalog=[dict(id=k,**v) for k,v in CATALOG.items()],max_enterprises=MAX_ENTERPRISES,
+                    missions=[dict(id=k,**v) for k,v in EXPEDITIONS.items()])

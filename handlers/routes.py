@@ -1248,6 +1248,7 @@ def create_router(
             ],
             [InlineKeyboardButton(text="💜 Поддержать", callback_data="sm:support")],
             [InlineKeyboardButton(text="⚔️ Арена", callback_data="sm:arena")],
+            [InlineKeyboardButton(text="🏰 Владения · мини-приложение", callback_data="sm:holdings")],
         ]
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -1825,7 +1826,11 @@ def create_router(
 
     async def slave_menu_businesses(user_id, chat_id):
         from handlers.enterprises import enterprise_menu
-        return await enterprise_menu(database,user_id,chat_id)
+        body,keyboard=await enterprise_menu(database,user_id,chat_id)
+        if arena_username:
+            from arena_links import arena_link
+            keyboard.inline_keyboard.insert(0,[InlineKeyboardButton(text='🏰 Управлять в мини-приложении',url=arena_link(arena_username,f'holdings_{chat_id}'))])
+        return body,keyboard
 
     async def slave_menu_business_type(
         user_id: int, chat_id: int
@@ -4115,7 +4120,7 @@ def create_router(
                     await callback.answer("Кнопка относится к другому чату. Открой его через «Сменить чат».", show_alert=True)
                     return
             base_action=action.split(':',1)[0]
-            if base_action in {'slaves','priority','business','work','buyout','bc','bn','bd','bw','bs','br','job','buy','p'} and not await database.feature_enabled(menu_chat_id,'slavery'):
+            if base_action in {'holdings','slaves','priority','business','work','buyout','bc','bn','bd','bw','bs','br','job','buy','p'} and not await database.feature_enabled(menu_chat_id,'slavery'):
                 await callback.answer('Рабовладение выключено в этом чате.',show_alert=True)
                 return
             if base_action=='arena' and not await database.feature_enabled(menu_chat_id,'arena'):
@@ -4129,6 +4134,14 @@ def create_router(
         notice: str | None = None
         if action == "home":
             body, keyboard = await slave_menu_home(user_id, menu_chat_id)
+        elif action == 'holdings':
+            from arena_links import arena_link
+            body='🏰 Владения\nРабы, массовое назначение на предприятия и экспедиции. Данные отдельные для каждого чата.'
+            buttons=[[InlineKeyboardButton(text='← Меню',callback_data='sm:home')]]
+            if arena_username:
+                buttons.insert(0,[InlineKeyboardButton(text='Открыть владения',url=arena_link(arena_username,f'holdings_{menu_chat_id}'))])
+            else:body+='\nМини-приложение отключено: WEBAPP_URL ещё не настроен.'
+            keyboard=InlineKeyboardMarkup(inline_keyboard=buttons)
         elif action == "arena":
             from arena_links import arena_link
             body = "⚔️ Арена\nЕдиный персонаж для всех чатов, Пустошь и рейды. Один навык — одно нажатие."

@@ -453,6 +453,7 @@ function skillOfferScreen(data){
   app.innerHTML='<section class="menu">'+top('Выбор навыка','РАЗВИТИЕ ПЕРСОНАЖА',button('Обновить','refresh','small'))+'<div class="content">'+moveChoicePanel(p,s,choices,caption,'offerswap:',extra)+'</div></section>';
 }
 function menuScreen(data){
+  globalThis.HoldingsApp?.stop();
   if(['slaves','owner','slaveProfile','admin'].includes(page))page='personal';
   audio.scene('menu');
   menu=data;chat=data.chat_id;token="";current=null;
@@ -524,14 +525,20 @@ function menuScreen(data){
   if(data.active?.length)body+='<div class="card"><h3>Твои бои во всех чатах</h3>'+data.active.map(b=>'<div class="row">'+button('Открыть бой','battle:'+b.token)+button(b.status==='pending'?'Отменить приглашение':'Сдаться / выйти','leavebattle:'+b.token,'small danger')+'</div>').join('')+'</div>';
   if(data.mirror_runs?.length)body+='<div class="card"><h3>Зеркальные забеги</h3><div class="stack">'+data.mirror_runs.map(r=>button((r.status==='active'?'Продолжить':'Итоги')+' · этаж '+r.floor+' / 5 · '+r.xp+' XP','mirror:'+r.token,r.status==='active'?'primary':'')+(r.status==='active'?button('Оставить забег','leavemirror:'+r.token,'small danger'):'' )).join('')+'</div></div>';
   if(data.raids?.length)body+='<div class="card"><h3>Командные рейды</h3><div class="stack">'+data.raids.map(r=>raidButton((r.status==='active'?'Продолжить':r.status==='lobby'?'Сбор отряда':'Итоги')+' · раунд '+r.round,'open:'+r.token)+(r.status==='active'||r.status==='lobby'?button('Выйти из рейда','leaveraid:'+r.token,'small danger'):'' )).join('')+'</div></div>';
-  app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content"><div class="stack">'+button('✦ Питомцы · посылки и коллекция','pets')+'</div>'+body+'</div></section>';
+  app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content"><div class="stack">'+button('🏰 Владения · рабы и предприятия','holdings')+button('✦ Питомцы · посылки и коллекция','pets')+'</div>'+body+'</div></section>';
   audio.refresh();
 }
 async function openMenu(){
+  globalThis.HoldingsApp?.stop();
   raidCurrent=null;closeRaidDetails();
   closeEffect();statusViews=null;
   if(!chat)return;lastSeq=0;current=null;token="";
   try{menuScreen(await api("/api/menu/"+chat));}catch(error){toast(error.message);}
+}
+async function openHoldings(selectedChat=chat){
+  closeEffect();closeStats();closeRaidDetails();current=null;raidCurrent=null;token='';page='holdings';
+  audio.scene('menu');
+  await window.HoldingsApp.open({app,api,chat:selectedChat,demo,onArena:async id=>{chat=id;page='personal';if(demo)startDemoMenu();else await openMenu();}});
 }
 async function menuAction(action,extra={}){
   if(demo){toast('Демо: покупки и изменения не сохраняются.');menuScreen(menu);return;}
@@ -580,6 +587,7 @@ app.addEventListener("click",async event=>{
   if(["accept","cancel","refuse","consent"].includes(cmd)){await action(cmd);return;}
   if(cmd==="select"||cmd==="selected"){await action("select",{fighter:Number(arg),controlled:document.getElementById("control").checked});return;}
   if(cmd==="potion"||cmd==="surrender"){await action("skill",{skill:cmd});return;}
+  if(cmd==='holdings'){await openHoldings();return;}
   if(cmd==="menu"||cmd==="refresh"){closeEffect();statusViews=null;closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
   if(cmd==='charactersbuy'){page='charactersPurchase';menuScreen(menu);return;}
   if(cmd==='characterinvoice'){await buyCharacters();return;}
@@ -731,6 +739,7 @@ function configureViewport(){
 async function boot(){
   configureViewport();
   if(demo){
+    if(new URLSearchParams(location.search).has('holdings')){await openHoldings(-1);return;}
     if(new URLSearchParams(location.search).has('skills_preview')){startDemoMenu();return;}
     const raidPreview=new URLSearchParams(location.search).get('raid_preview');
     if(raidPreview){try{raidScreen(await api('/demo/raid/'+encodeURIComponent(raidPreview)));return;}catch{}}
@@ -746,7 +755,8 @@ async function boot(){
   const start=new URLSearchParams(location.search).get("tgWebAppStartParam")||tg?.initDataUnsafe?.start_param||"";
   try{
     if(start==='pets'||/^pets_-?\d+$/.test(start)){location.replace('/pets'+(start==='pets'?'':'?chat='+start.slice(5))+location.hash);return;}
-    if(start.startsWith("r_")){raidScreen(await api('/api/raid/'+start.slice(2)));}
+    if(start==='holdings'||/^holdings_-?\d+$/.test(start)){await openHoldings(start==='holdings'?null:Number(start.slice(9)));}
+    else if(start.startsWith("r_")){raidScreen(await api('/api/raid/'+start.slice(2)));}
     else if(start.startsWith("b_")){token=start.slice(2);const data=await api("/api/battle/"+token);lastSeq=data.state?.log.at(-1)?.seq||0;battleScreen(data);}
     else if(/^(menu|shop)_-?\d+$/.test(start)){chat=Number(start.slice(5));if(start.startsWith('shop_'))page='merchant';await openMenu();}
     else app.innerHTML='<div class="loading"><h2>Открой арену из бота</h2><p class="muted">Кнопка «Арена» в /menu или «Открыть бой» под вызовом в чате.</p></div>';
