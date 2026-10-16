@@ -5,6 +5,8 @@ import re
 
 DEPOSIT_RE = re.compile(r'^\s*[!/]?депнуть(?:@\w+)?(?:\s|$)', re.IGNORECASE)
 AMOUNT_RE = re.compile(r'([0-9]{1,19})(?:(?:\s+(?:франк|франка|франков))|\s*₣)?', re.IGNORECASE)
+DEPOSIT_COOLDOWN = 60
+DEPOSIT_ERROR_INTERVAL = 30
 
 LOSS_PHRASES = (
     '🪦 {user}, твои {stake} ₣ похоронены без права на наследство. Денег нет, зато финансовый опыт бесценен.',
@@ -51,8 +53,69 @@ class DepositMixin:
             phrase TEXT NOT NULL,created_at INTEGER NOT NULL,
             PRIMARY KEY(message_chat_id,message_id))''')
         self._ensure_column('franc_deposits','stake_mode',"TEXT NOT NULL DEFAULT 'amount'")
+        self.connection.executescript('''
+            CREATE TABLE IF NOT EXISTS franc_deposit_limits(
+                user_id INTEGER PRIMARY KEY,cooldown_until INTEGER NOT NULL DEFAULT 0,
+                cooldown_warned INTEGER NOT NULL DEFAULT 0,error_next_at INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS franc_deposit_rejections(
+                message_chat_id INTEGER NOT NULL,message_id INTEGER NOT NULL,user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,PRIMARY KEY(message_chat_id,message_id));
+            CREATE INDEX IF NOT EXISTS idx_deposit_user_time ON franc_deposits(user_id,created_at);
+        ''')
+        self.connection.execute('''INSERT OR IGNORE INTO franc_deposit_limits(user_id,cooldown_until)
+            SELECT user_id,MAX(created_at)+? FROM franc_deposits GROUP BY user_id''',(DEPOSIT_COOLDOWN,))
 
-    async def deposit_francs(self,chat,user,stake,message_chat,message_id,rng=None):
+    def _deposit_seen_locked(self, user, source, message_id):
+        return bool(self.connection.execute('SELECT 1 FROM franc_deposits WHERE message_chat_id=? AND message_id=?',
+                     (source,message_id)).fetchone() or self.connection.execute(
+                     'SELECT 1 FROM franc_deposit_rejections WHERE message_chat_id=? AND message_id=?',
+                     (source,message_id)).fetchone())
+
+    def _deposit_limit_locked(self, user):
+        self.connection.execute('INSERT OR IGNORE INTO franc_deposit_limits(user_id) VALUES(?)',(user,))
+        return self.connection.execute('SELECT * FROM franc_deposit_limits WHERE user_id=?',(user,)).fetchone()
+
+    def _deposit_reject_locked(self, user, source, message_id, stamp):
+        self.connection.execute('INSERT OR IGNORE INTO franc_deposit_rejections VALUES(?,?,?,?)',
+                                (source,message_id,user,stamp))
+
+    def _deposit_cooldown_locked(self, user, source, message_id, stamp):
+        limit=self._deposit_limit_locked(user)
+        if limit['cooldown_until']<=stamp:
+            return None
+        self._deposit_reject_locked(user,source,message_id,stamp)
+        notify=not limit['cooldown_warned']
+        if notify:
+            self.connection.execute('UPDATE franc_deposit_limits SET cooldown_warned=1 WHERE user_id=?',(user,))
+        return dict(blocked=True,notify=notify,remaining=limit['cooldown_until']-stamp)
+
+    async def deposit_gate(self, user, source, message_id):
+        """Cheap preflight before parsing, membership requests or settlement."""
+        from database import utc_timestamp
+        async with self._lock:
+            with self.connection:
+                if self._deposit_seen_locked(user,source,message_id):
+                    return dict(blocked=True,notify=False,remaining=0)
+                return self._deposit_cooldown_locked(user,source,message_id,utc_timestamp())
+
+    async def deposit_error_gate(self, user, source, message_id):
+        from database import utc_timestamp
+        async with self._lock:
+            with self.connection:
+                if self._deposit_seen_locked(user,source,message_id):
+                    return dict(blocked=True,notify=False,remaining=0)
+                stamp=utc_timestamp()
+                cooldown=self._deposit_cooldown_locked(user,source,message_id,stamp)
+                if cooldown:return cooldown
+                limit=self._deposit_limit_locked(user)
+                self._deposit_reject_locked(user,source,message_id,stamp)
+                notify=stamp>=limit['error_next_at']
+                if notify:
+                    self.connection.execute('UPDATE franc_deposit_limits SET error_next_at=? WHERE user_id=?',
+                                            (stamp+DEPOSIT_ERROR_INTERVAL,user))
+                return dict(blocked=True,notify=notify,remaining=0)
+
+    async def deposit_francs(self,chat,user,stake,message_chat,message_id,rng=None,*,suppress_replay=False):
         from database import MAX_FRANC_BALANCE,utc_timestamp
         mode=stake if type(stake) is str and stake in ('all','half') else 'amount'
         if (any(type(v) is not int for v in (chat,user,message_chat,message_id))
@@ -67,7 +130,14 @@ class DepositMixin:
                     if (old['chat_id']!=chat or old['user_id']!=user or old['stake_mode']!=mode
                             or (mode=='amount' and old['stake']!=stake)):
                         raise ValueError('Это сообщение уже использовано для другой ставки.')
+                    if suppress_replay:return dict(blocked=True,notify=False,remaining=0)
                     return dict(old)
+                if self.connection.execute('SELECT 1 FROM franc_deposit_rejections WHERE message_chat_id=? AND message_id=?',
+                                           (message_chat,message_id)).fetchone():
+                    return dict(blocked=True,notify=False,remaining=0)
+                stamp=utc_timestamp()
+                blocked=self._deposit_cooldown_locked(user,message_chat,message_id,stamp)
+                if blocked:return blocked
                 row=self.connection.execute('SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?',(chat,user)).fetchone()
                 balance=row['balance'] if row else 0
                 if mode!='amount':
@@ -89,4 +159,6 @@ class DepositMixin:
                     (message_chat_id,message_id,chat_id,user_id,stake,won,payout,balance_after,phrase,created_at,stake_mode)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?)''',
                     (message_chat,message_id,chat,user,stake,int(won),payout,after,phrase,utc_timestamp(),mode))
+                self.connection.execute('UPDATE franc_deposit_limits SET cooldown_until=?,cooldown_warned=0 WHERE user_id=?',
+                                        (stamp+DEPOSIT_COOLDOWN,user))
                 return dict(self.connection.execute('SELECT * FROM franc_deposits WHERE message_chat_id=? AND message_id=?',(message_chat,message_id)).fetchone())

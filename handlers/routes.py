@@ -3741,22 +3741,33 @@ def create_router(
             return
         if message.chat.type not in GROUP_TYPES and message.chat.type!='private':
             return
+        async def show_deposit_block(blocked, error=None):
+            if blocked['notify']:
+                await message.answer(f"Казино ещё пересчитывает твои похоронные. Подожди {blocked['remaining']} сек."
+                                     if blocked['remaining'] else error)
+        blocked=await database.deposit_gate(sender.id,message.chat.id,message.message_id)
+        if blocked:
+            await show_deposit_block(blocked)
+            return
         try:
             amount=parse_deposit(message_content(message))
             context=''
             if message.chat.type=='private':
                 selected=await verified_selected_chat(database,bot,sender.id)
                 if selected is None:
-                    await message.answer('Сначала выбери чат через /menu. В личке ставка берётся из кошелька выбранного чата.')
-                    return
+                    raise ValueError('Сначала выбери чат через /menu. В личке ставка берётся из кошелька выбранного чата.')
                 scope=int(selected['chat_id'])
                 context='📍 Чат: '+html.escape(selected['title'])+'\n'
             else:
                 scope=message.chat.id
             await database.settle_businesses_for_user(sender.id)
-            result=await database.deposit_francs(scope,sender.id,amount,message.chat.id,message.message_id)
+            result=await database.deposit_francs(scope,sender.id,amount,message.chat.id,message.message_id,suppress_replay=True)
         except ValueError as error:
-            await message.answer(str(error))
+            blocked=await database.deposit_error_gate(sender.id,message.chat.id,message.message_id)
+            await show_deposit_block(blocked,str(error))
+            return
+        if result.get('blocked'):
+            await show_deposit_block(result)
             return
         phrase=html.escape(result['phrase']).format(user=mention(sender.id,display_name(sender)),
             stake=result['stake'],payout=result['payout'])
