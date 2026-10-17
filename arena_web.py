@@ -749,9 +749,12 @@ def create_arena_app(
         pixel_art = request.headers.get("X-Pixel-Art", "false")
         if pixel_art not in {"true", "false"}:
             raise ValueError("Некорректный режим пиксельного рисунка.")
+        flip = request.headers.get("X-Flip-Horizontal", "false")
+        if flip not in {"true", "false"}:
+            raise ValueError("Некорректный режим отражения спрайта.")
         async with image_slots:
             raw = await request.clone(client_max_size=MAX_SPRITE_BYTES + 1).read()
-            png = await asyncio.to_thread(normalize_sprite, raw)
+            png = await asyncio.to_thread(normalize_sprite, raw, flip == "true")
         await db.arena_set_sprite(chat, actor, png, pixel_art == "true",expected_slot=int(request.query.get('character_slot',1)))
         return web.json_response(
             {

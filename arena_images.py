@@ -7,7 +7,7 @@ MAX_SPRITE_BYTES = 2 * 1024 * 1024
 MAX_SPRITE_SIDE = 1024
 
 
-def normalize_sprite(raw: bytes) -> bytes:
+def normalize_sprite(raw: bytes, flip_horizontal: bool = False) -> bytes:
     if not raw or len(raw) > MAX_SPRITE_BYTES:
         raise ValueError("PNG должен весить не больше 2 МБ.")
     try:
@@ -26,6 +26,8 @@ def normalize_sprite(raw: bytes) -> bytes:
                 raise ValueError("Нужен PNG с прозрачным фоном, а не сплошным прямоугольником.")
             # A fresh image removes EXIF, text chunks and other caller-supplied metadata.
             clean = Image.frombytes("RGBA", rgba.size, rgba.tobytes())
+            if flip_horizontal:
+                clean = clean.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
             output = BytesIO()
             clean.save(output, format="PNG")
             result = output.getvalue()

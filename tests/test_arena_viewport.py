@@ -119,7 +119,7 @@ const context = {
   app, page: process.argv[3], menu: null, chat: null, token: '', tg: undefined,
   audio: {scene(){},refresh(){}},
   esc: value => String(value ?? ''), sprite: () => '', top: () => '',
-  fighterImage: () => '<img>', clearSpriteDraft: () => {},
+  fighterImage: () => '<img>', clearSpriteDraft: () => {}, spriteDraft: null, syncSpritePreview: () => {},
   button: (label, id, cls = '', disabled = false) => `<button data-do="${id}"${disabled ? ' disabled' : ''}>${label}</button>`
 };
 vm.runInNewContext(process.argv[2] + '\\nmenuScreen(' + JSON.stringify(data) + ');', context);
@@ -179,6 +179,8 @@ process.stdout.write(app.innerHTML);
         self.assertIn('id="sprite-pixels" checked', body)
         self.assertNotIn('data-do="reset_sprite"', body)
         self.assertIn("до 2 МБ", body)
+        self.assertIn('data-do="flip_sprite" disabled', body)
+        self.assertIn('Лучше, чтобы спрайт смотрел вправо', body)
 
 
 @unittest.skipUnless(shutil.which("node"), "Node is needed for client tests")

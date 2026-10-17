@@ -34,14 +34,35 @@ def png(size=(36, 36), color=(255, 255, 255, 255), opaque=False, metadata=False)
     return output.getvalue()
 
 
-def headers(user=10, pixels="true"):
+def asymmetric_png():
+    image=Image.new('RGBA',(36,24),(0,0,0,0))
+    image.putpixel((3,5),(255,20,30,255))
+    image.putpixel((30,10),(10,220,40,120))
+    output=BytesIO();image.save(output,format='PNG');return output.getvalue()
+
+
+def headers(user=10, pixels="true", flip=None):
     data = {"auth_date": str(int(time.time())), "user": json.dumps({"id": user})}
     secret = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
     data["hash"] = hmac.new(secret, "\n".join(f"{k}={v}" for k,v in sorted(data.items())).encode(), hashlib.sha256).hexdigest()
-    return {"X-Telegram-Init-Data": urlencode(data), "Content-Type": "image/png", "X-Pixel-Art": pixels}
+    result={"X-Telegram-Init-Data": urlencode(data), "Content-Type": "image/png", "X-Pixel-Art": pixels}
+    if flip is not None:result['X-Flip-Horizontal']=flip
+    return result
 
 
 class SpriteValidationTests(unittest.TestCase):
+    def test_horizontal_flip_preserves_dimensions_alpha_and_can_be_reversed(self):
+        raw=asymmetric_png()
+        result=normalize_sprite(raw,True)
+        with Image.open(BytesIO(result)) as image:
+            self.assertEqual(image.size,(36,24))
+            self.assertEqual(image.getpixel((32,5)),(255,20,30,255))
+            self.assertEqual(image.getpixel((5,10)),(10,220,40,120))
+            self.assertEqual(image.getpixel((3,5)),(0,0,0,0))
+            self.assertEqual(image.info,{})
+        self.assertEqual(normalize_sprite(result,True),normalize_sprite(raw))
+        self.assertEqual(normalize_sprite(raw,False),normalize_sprite(raw))
+
     def test_native_sizes_alpha_and_metadata(self):
         for size in (16, 36, 64, 128, 1024):
             with self.subTest(size=size):
@@ -114,10 +135,34 @@ class SpriteHTTPTests(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
         self.temp.cleanup()
 
-    async def upload(self, data=None, user=10, chat=1, pixels="true"):
-        response=await self.client.post(f"/api/menu/{chat}/sprite", data=png() if data is None else data, headers=headers(user,pixels))
+    async def upload(self, data=None, user=10, chat=1, pixels="true", flip=None):
+        response=await self.client.post(f"/api/menu/{chat}/sprite", data=png() if data is None else data, headers=headers(user,pixels,flip))
         self.assertEqual(response.status,200,await response.text())
         return await response.json()
+
+    async def test_flip_is_saved_in_image_and_shared_between_chats_and_battle_views(self):
+        original=asymmetric_png()
+        first=(await self.upload(original,pixels='false'))['menu']['personal']['sprite_url']
+        result=await self.upload(original,pixels='false',flip='true')
+        profile=result['menu']['personal']
+        self.assertNotEqual(profile['sprite_url'],first)
+        self.assertFalse(profile['pixel_art'])
+        response=await self.client.get(profile['sprite_url'])
+        saved=await response.read()
+        self.assertEqual(saved,normalize_sprite(original,True))
+        self.assertEqual((await menu_view(self.db,2,10))['personal']['sprite_url'],profile['sprite_url'])
+        row=await self.db.arena_wasteland(1,10,10,personal=True)
+        view=await battle_view(self.db,row,10)
+        self.assertEqual(view['state']['sides']['a']['sprite_url'],profile['sprite_url'])
+        restored=(await self.upload(saved,flip='true'))['menu']['personal']['sprite_url']
+        self.assertEqual(restored,first)
+
+    async def test_invalid_flip_header_does_not_replace_saved_sprite(self):
+        saved=(await self.upload())['menu']['personal']['sprite_url']
+        for value in ('TRUE','1','true,false','no'):
+            response=await self.client.post('/api/menu/1/sprite',data=asymmetric_png(),headers=headers(flip=value))
+            self.assertEqual(response.status,400)
+            self.assertEqual((await menu_view(self.db,1,10))['personal']['sprite_url'],saved)
 
     async def test_upload_menu_public_image_and_reset(self):
         result=await self.upload()

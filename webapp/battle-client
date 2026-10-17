@@ -42,7 +42,29 @@ function petRewards(reward){
   const text=Object.entries(reward||{}).filter(([k,v])=>v>0).map(([k,v])=>'+'+v+' '+({tickets:'билетов',food:'корма',essence:'эссенции'}[k]||k)).join(' · ');
   return text?'<p class="muted">Для питомцев: '+esc(text)+'</p>':'';
 }
-function clearSpriteDraft(){if(spriteDraft)URL.revokeObjectURL(spriteDraft.url);spriteDraft=null;}
+function clearSpriteDraft(){if(spriteDraft?.url?.startsWith('blob:'))URL.revokeObjectURL(spriteDraft.url);spriteDraft=null;}
+function syncSpritePreview(){
+  const preview=document.getElementById('upload-preview'),pixels=document.getElementById('sprite-pixels');
+  if(preview&&spriteDraft){
+    preview.src=spriteDraft.url;preview.style.transform=spriteDraft.flip?'scaleX(-1)':'none';
+    preview.classList.toggle('pixel-art',spriteDraft.pixelArt);
+    if(pixels)pixels.checked=spriteDraft.pixelArt;
+  }
+  const flip=document.querySelector('[data-do="flip_sprite"]'),save=document.querySelector('[data-do="upload_sprite"]');
+  if(flip){flip.disabled=busy||(!spriteDraft&&!menu?.personal?.sprite_url);flip.setAttribute('aria-pressed',String(!!spriteDraft?.flip));}
+  if(save)save.disabled=busy||!spriteDraft;
+  const name=document.getElementById('sprite-filename');
+  if(name)name.textContent=spriteDraft?(spriteDraft.file?.name||'Текущий спрайт')+(spriteDraft.flip?' · отражён по горизонтали':''):'Файл не выбран.';
+}
+function flipSpritePreview(){
+  if(busy)return;
+  if(!spriteDraft){
+    const url=menu?.personal?.sprite_url;
+    if(!/^\/sprites\/[0-9a-f]{64}\.png$/.test(url||''))return;
+    spriteDraft={file:null,url,flip:false,pixelArt:!!document.getElementById('sprite-pixels')?.checked,slot:characterSlot()};
+  }
+  spriteDraft.flip=!spriteDraft.flip;syncSpritePreview();
+}
 function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames,r)?r:"common")+'">'+esc(rarityNames[r]||r||"Обычный")+'</span>';}
 function describeEffect(e){
   if(e.description)return esc(e.description);
@@ -476,7 +498,7 @@ function menuScreen(data){
   const required=(page==='personalProfile'||page==='slaveProfile')&&selected?.progression_choice?selected:[data.personal].find(p=>p?.progression_choice?.can_choose);
   if(required){progressionScreen(required);return;}
   if(['personal','personalProfile'].includes(page)&&data.personal?.skill_offers?.length&&!data.characters?.busy&&!data.active?.length){skillOfferScreen(data);return;}
-  if(page!=="appearance")clearSpriteDraft();
+  if(page!=="appearance"||spriteDraft&&spriteDraft.slot!==characterSlot())clearSpriteDraft();
   let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+button("Рейды","tab:raids",page==="raids"?"selected":"")+'</div>';
   body+=button('⚒️ Кузница трактатов','tab:forge',page==='forge'||page==='forgeConfirm'?'primary':'');
   body+=button('🏆 Топ арены','tab:rankings',page==='rankings'?'primary':'');
@@ -521,7 +543,7 @@ function menuScreen(data){
     body+='<div class="card"><h2>Сменить класс на '+esc(row.name)+'?</h2><p>Боец: '+esc(classUsePending.name)+'</p><p class="danger-text">Уровень станет 5, прежние изученные активные и пассивные навыки исчезнут. Инвентарь, питомцы и спрайт сохранятся. Трактат будет потрачен.</p><p>Боевой опыт ×2 до возвращения прежнего уровня. Бонусы не складываются. Смена доступна с 5 уровня.</p><div class="stack">'+button('Сменить класс и сбросить развитие','confirmitem','danger')+button('Не менять','tab:inventory')+'</div></div>';
   }else if(page==="appearance"){
     const p=data.personal;
-    body+='<div class="card"><h2>Свой спрайт</h2><div class="sprite-preview">'+fighterImage(p,"", "upload-preview")+'</div><p class="muted">PNG с прозрачным фоном, до 2 МБ. Каждая сторона — от 16 до 1024 пикселей. Одна поза; пропорции сохраняются. Картинка общая для твоего персонажа во всех чатах. На характеристики она не влияет.</p><input type="file" id="sprite-file" accept="image/png,.png" hidden><label class="check"><input type="checkbox" id="sprite-pixels" checked> Пиксельный рисунок — без сглаживания</label><p class="muted" id="sprite-filename">Файл не выбран.</p><div class="stack">'+button("Выбрать PNG","choose_sprite")+button("Сохранить спрайт","upload_sprite","primary",true)+(p.sprite_url?button("Вернуть стандартный","reset_sprite"):"")+button("Назад","tab:personal")+'</div></div>';
+    body+='<div class="card"><h2>Свой спрайт</h2><div class="sprite-preview">'+fighterImage(p,"", "upload-preview")+'</div>'+button('↔ Отразить по горизонтали','flip_sprite','small',!p.sprite_url)+'<p class="note">Лучше, чтобы спрайт смотрел вправо →. В бою противник автоматически разворачивается к твоему персонажу. Кнопка отражения меняет только внешний вид; нажми «Сохранить спрайт», чтобы применить.</p><p class="muted">PNG с прозрачным фоном, до 2 МБ. Каждая сторона — от 16 до 1024 пикселей. Одна поза; пропорции сохраняются. Картинка общая для выбранного персонажа во всех чатах. На характеристики она не влияет.</p><input type="file" id="sprite-file" accept="image/png,.png" hidden><label class="check"><input type="checkbox" id="sprite-pixels"'+(!p.sprite_url||p.pixel_art?' checked':'')+'> Пиксельный рисунок — без сглаживания</label><p class="muted" id="sprite-filename">Файл не выбран.</p><div class="stack">'+button("Выбрать PNG","choose_sprite")+button("Сохранить спрайт","upload_sprite","primary",true)+(p.sprite_url?button("Вернуть стандартный","reset_sprite"):"")+button("Назад","tab:personal")+'</div></div>';
   }else {
     const p=activeProfile();
     if(!p){page="personal";menuScreen(data);return;}
@@ -545,6 +567,7 @@ function menuScreen(data){
   if(data.raids?.length)body+='<div class="card"><h3>Командные рейды</h3><div class="stack">'+data.raids.map(r=>raidButton((r.status==='active'?'Продолжить':r.status==='lobby'?'Сбор отряда':'Итоги')+' · раунд '+r.round,'open:'+r.token)+(r.status==='active'||r.status==='lobby'?button('Выйти из рейда','leaveraid:'+r.token,'small danger'):'' )).join('')+'</div></div>';
   app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content"><div class="stack">'+button('🏰 Владения · рабы и предприятия','holdings')+button('✦ Питомцы · посылки и коллекция','pets')+'</div>'+body+'</div></section>';
   audio.refresh();
+  if(page==='appearance')syncSpritePreview();
 }
 async function openMenu(){
   globalThis.HoldingsApp?.stop();
@@ -572,29 +595,37 @@ async function menuAction(action,extra={}){
 }
 async function saveSprite(reset=false){
   if(busy||(!reset&&!spriteDraft))return;
+  if(demo){toast('Демо: изменения спрайта не сохраняются.');return;}
   busy=true;
   document.querySelectorAll(".content button,.tabs button,#sprite-file").forEach(b=>b.disabled=true);
   try{
-    const response=await fetch("/api/menu/"+chat+"/sprite?character_slot="+characterSlot(),{method:reset?"DELETE":"POST",headers:{"X-Telegram-Init-Data":tg?.initData||"",...(!reset?{"Content-Type":"image/png","X-Pixel-Art":String(document.getElementById("sprite-pixels").checked)}:{})},body:reset?undefined:spriteDraft.file});
+    let file=spriteDraft?.file;
+    if(!reset&&!file){
+      if(!/^\/sprites\/[0-9a-f]{64}\.png$/.test(spriteDraft.url))throw new Error('Выбери свой PNG.');
+      const saved=await fetch(spriteDraft.url);
+      if(!saved.ok)throw new Error('Не удалось загрузить текущий спрайт. Выбери PNG заново.');
+      file=await saved.blob();
+    }
+    const slot=reset?characterSlot():spriteDraft.slot;
+    const response=await fetch("/api/menu/"+chat+"/sprite?character_slot="+slot,{method:reset?"DELETE":"POST",headers:{"X-Telegram-Init-Data":tg?.initData||"",...(!reset?{"Content-Type":"image/png","X-Pixel-Art":String(document.getElementById("sprite-pixels").checked),"X-Flip-Horizontal":String(!!spriteDraft.flip)}:{})},body:reset?undefined:file});
     const data=await response.json().catch(()=>({error:"Сервер недоступен. Попробуй ещё раз."}));
     if(!response.ok)throw new Error(data.error||"Не удалось сохранить спрайт.");
     clearSpriteDraft();page="personal";menuScreen(data.menu);toast(data.notice);
   }catch(error){toast(error.message);}finally{
     busy=false;document.querySelectorAll(".content button,.tabs button,#sprite-file").forEach(b=>b.disabled=false);
-    const upload=document.querySelector('[data-do="upload_sprite"]');if(upload)upload.disabled=!spriteDraft;
+    if(page==='appearance')syncSpritePreview();
   }
 }
 app.addEventListener("error",event=>{const img=event.target;if(img.tagName==="IMG"&&img.dataset.fallback){const fallback=img.dataset.fallback;delete img.dataset.fallback;img.classList.remove("pixel-art");img.src=fallback;}},true);
 app.addEventListener("change",event=>{
-  if(event.target.id==="sprite-pixels"){document.getElementById("upload-preview")?.classList.toggle("pixel-art",event.target.checked);return;}
+  if(event.target.id==="sprite-pixels"){if(spriteDraft)spriteDraft.pixelArt=event.target.checked;document.getElementById("upload-preview")?.classList.toggle("pixel-art",event.target.checked);return;}
   if(event.target.id!=="sprite-file"||busy)return;
   const file=event.target.files?.[0];if(!file)return;
   if(file.size>2*1024*1024||!file.size){toast("PNG должен весить не больше 2 МБ.");event.target.value="";return;}
   if(!/\.png$/i.test(file.name)){toast("Выбери PNG с прозрачным фоном.");event.target.value="";return;}
-  clearSpriteDraft();spriteDraft={file,url:URL.createObjectURL(file)};
+  clearSpriteDraft();spriteDraft={file,url:URL.createObjectURL(file),flip:false,pixelArt:document.getElementById("sprite-pixels").checked,slot:characterSlot()};
   const preview=document.getElementById("upload-preview");preview.dataset.fallback=sprite(menu.personal.sprite);preview.src=spriteDraft.url;preview.classList.toggle("pixel-art",document.getElementById("sprite-pixels").checked);
-  document.getElementById("sprite-filename").textContent=file.name;
-  document.querySelector('[data-do="upload_sprite"]').disabled=false;
+  syncSpritePreview();
 });
 app.addEventListener("click",async event=>{
   const effect=event.target.closest('[data-status-id]');if(effect){showEffect(effect.dataset.statusSide,effect.dataset.statusId);return;}
@@ -637,6 +668,7 @@ app.addEventListener("click",async event=>{
   }
   if(cmd==="appearance"){clearSpriteDraft();page="appearance";menuScreen(menu);return;}
   if(cmd==="choose_sprite"){document.getElementById("sprite-file").click();return;}
+  if(cmd==='flip_sprite'){flipSpritePreview();return;}
   if(cmd==="upload_sprite"||cmd==="reset_sprite"){await saveSprite(cmd==="reset_sprite");return;}
   if(cmd==="profile"){profileId=Number(arg);page=page==="personal"?"personalProfile":"slaveProfile";menuScreen(menu);return;}
   if(['leavebattle','leavemirror','leaveraid'].includes(cmd)){leavePending={kind:cmd.slice(5),token:arg};page='leaveConfirm';menuScreen(menu);return;}
@@ -984,7 +1016,7 @@ app.addEventListener('click',async event=>{
   if(cmd==='inspect'){showRaidDetails(arg);return;}
   if(cmd==='preview'&&demo){await receiveRaid(await api('/demo/raid/'+(raidCurrent.boss_id==='kit'?'kit_animation':raidCurrent.boss_id==='doofenshmirtz'?'doof_animation':raidCurrent.boss_id==='lei_heng'?'lei_heng_animation':'animation')));return;}
   if(cmd==='kitphase'&&demo&&['1','2','3'].includes(arg)){await receiveRaid(await api('/demo/raid/'+({1:'kit',2:'kit_phase2',3:'kit_phase3'})[arg]));return;}
-  if(cmd==='menu'){closeRaidDetails();raidCurrent=null;await openMenu();return;}
+  if(cmd==='menu'){closeRaidDetails();raidCurrent=null;if(demo){page='personal';startDemoMenu();}else await openMenu();return;}
   if(cmd==='open'||cmd==='refresh'){
     closeRaidDetails();const id=cmd==='open'?arg:raidCurrent.token;busy=true;
     try{const data=await api('/api/raid/'+id);if(cmd==='open')raidScreen(data);else if(raidCurrent?.token===id&&data.revision>=raidCurrent.revision)await receiveRaid(data);}
