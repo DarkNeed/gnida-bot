@@ -4,18 +4,19 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const code = fs.readFileSync(require('node:path').join(__dirname,'../webapp/arena-audio'),'utf8');
-function harness({saved=null,storageFails=false,available=true,rejected=false}={}) {
-  const handlers={},windowHandlers={},intervals=new Map(),contexts=[],sources=[],ramps=[];
+function harness({saved=null,storageFails=false,available=true,rejected=false,room=true}={}) {
+  const handlers={},windowHandlers={},intervals=new Map(),contexts=[],sources=[],ramps=[],nodes=[],delays=[],timeouts=[];
+  const sceneLabel={textContent:''};
   let serial=0,stored=saved;
   class Param {
-    constructor(){this.value=0;}
-    setValueAtTime(v){this.value=v;}
-    linearRampToValueAtTime(v,t){this.value=v;ramps.push([v,t]);}
-    exponentialRampToValueAtTime(v){this.value=v;}
+    constructor(){this.value=0;this.events=[];}
+    setValueAtTime(v,t){this.value=v;this.events.push(['set',v,t]);}
+    linearRampToValueAtTime(v,t){this.value=v;ramps.push([v,t]);this.events.push(['linear',v,t]);}
+    exponentialRampToValueAtTime(v,t){this.value=v;this.events.push(['exponential',v,t]);}
     cancelScheduledValues(){}
   }
   class Node {
-    constructor(){this.gain=new Param();this.frequency=new Param();this.detune=new Param();this.Q=new Param();this.connections=[];}
+    constructor(){this.gain=new Param();this.frequency=new Param();this.detune=new Param();this.Q=new Param();this.connections=[];nodes.push(this);}
     connect(n){this.connections.push(n);return n;}
     disconnect(){this.connections=[];}
   }
@@ -25,24 +26,25 @@ function harness({saved=null,storageFails=false,available=true,rejected=false}={
     stop(t){this.stopped=t??0;if(t===undefined)this.onended?.();}
   }
   class Context {
-    constructor(){this.currentTime=0;this.sampleRate=100;this.state='suspended';this.destination=new Node();contexts.push(this);}
+    constructor(){this.currentTime=0;this.sampleRate=100;this.state='suspended';this.destination=new Node();contexts.push(this);if(!room)this.createDelay=undefined;}
     createGain(){return new Node();}
     createDynamicsCompressor(){const n=new Node();for(const k of ['threshold','knee','ratio'])n[k]=new Param();return n;}
     createBiquadFilter(){return new Node();}
+    createDelay(){const n=new Node();n.delayTime=new Param();delays.push(n);return n;}
     createOscillator(){return new Source();}
     createBufferSource(){return new Source();}
     createBuffer(){return {getChannelData:()=>new Float32Array(100)};}
     async resume(){if(rejected)throw new Error('autoplay');this.state='running';}
     async suspend(){this.state='suspended';}
   }
-  const document={hidden:false,querySelectorAll:()=>[],querySelector:()=>null,getElementById:()=>null,addEventListener:(k,f)=>handlers[k]=f};
+  const document={hidden:false,querySelectorAll:()=>[],querySelector:()=>null,getElementById:id=>id==='audio-scene'?sceneLabel:null,addEventListener:(k,f)=>handlers[k]=f};
   const window={addEventListener:(k,f)=>windowHandlers[k]=f};
   if(available)window.AudioContext=Context;
-  const sandbox={window,document,localStorage:{getItem(){if(storageFails)throw Error('denied');return stored;},setItem(k,v){if(storageFails)throw Error('denied');stored=v;}},setInterval(f){const id=++serial;intervals.set(id,f);return id;},clearInterval(id){intervals.delete(id);},setTimeout(){},console};
+  const sandbox={window,document,localStorage:{getItem(){if(storageFails)throw Error('denied');return stored;},setItem(k,v){if(storageFails)throw Error('denied');stored=v;}},setInterval(f){const id=++serial;intervals.set(id,f);return id;},clearInterval(id){intervals.delete(id);},setTimeout(f){timeouts.push(f);},console};
   vm.runInNewContext(code,sandbox);
   const button=attrs=>({disabled:false,dataset:{audioTest:attrs['data-audio-test']},hasAttribute:k=>k in attrs});
   const click=async attrs=>{const b=button(attrs);await handlers.click({target:{closest:()=>b}});};
-  return {audio:window.ArenaAudio,document,handlers,windowHandlers,contexts,sources,intervals,ramps,click,get stored(){return stored;}};
+  return {audio:window.ArenaAudio,document,handlers,windowHandlers,contexts,sources,intervals,ramps,nodes,delays,timeouts,sceneLabel,click,get stored(){return stored;}};
 }
 test('fresh and corrupt preferences default to enabled after first gesture',async()=>{
   for(const saved of [null,'broken json']){
@@ -128,7 +130,7 @@ test('combat arrangement has detuned brass, driving percussion and varied bars',
 });
 test('all themes work and interrupted enable cannot restart after mute',async()=>{
   const h=harness();await h.click({});
-  for(const theme of ['menu','battle','raid','lei_heng','doofenshmirtz']){
+  for(const theme of ['menu','battle','raid','lei_heng','doofenshmirtz','kit_menace','kit_abyss']){
     h.audio.scene(theme);assert.equal(h.intervals.size,1);
     h.contexts[0].currentTime+=10;for(const fn of h.intervals.values())fn();
   }
@@ -136,4 +138,71 @@ test('all themes work and interrupted enable cannot restart after mute',async()=
   const race=harness({saved:JSON.stringify({muted:true})});const enable=race.click({'data-audio-toggle':''});
   await race.click({'data-audio-toggle':''});await enable;
   assert.equal(race.intervals.size,0);
+});
+
+test('Kit menace has low martial pulse; abyss replaces melody with long formant drones',async()=>{
+  const h=harness();await h.click({});h.audio.scene('');
+  let start=h.sources.length;h.audio.scene('kit_menace');
+  const menace=h.sources.slice(start);
+  assert.ok(menace.some(s=>s.type==='sawtooth'&&s.frequency.value<100));
+  assert.ok(menace.some(s=>s.buffer&&s.connections[0].frequency.value===260));
+  assert.match(h.sceneLabel.textContent,/II фаза/);
+  start=h.sources.length;h.audio.scene('kit_abyss');
+  const abyss=h.sources.slice(start),choir=abyss.filter(s=>s.type==='sawtooth'&&s.connections[0].Q.value===3.5);
+  assert.equal(choir.length,6);
+  assert.ok(choir.every(s=>s.stopped-s.started>4));
+  assert.ok(abyss.some(s=>s.buffer&&s.loop===true));
+  assert.ok(abyss.some(s=>s.type==='sine'&&s.stopped-s.started>5));
+  assert.ok(choir.every(s=>s.connections[0].connections[0].gain.events.some(([kind,,time])=>kind==='linear'&&time-s.started>.5)));
+  assert.match(h.sceneLabel.textContent,/III фаза/);
+  assert.ok(h.delays.some(d=>d.delayTime.value===.73));
+  assert.ok(h.sources.every(s=>s.stopped-s.started<7));
+  assert.ok(abyss.filter(s=>s.type).every(s=>s.frequency.value>=20&&s.frequency.value<2000));
+});
+
+test('Kit phase polling does not reset loops, fades scenes, and disposes echo graphs',async()=>{
+  const h=harness();await h.click({});h.audio.scene('kit_menace');
+  const count=h.sources.length,delays=h.delays.length;
+  for(let i=0;i<100;i++)h.audio.scene('kit_menace');
+  assert.equal(h.sources.length,count);assert.equal(h.delays.length,delays);assert.equal(h.intervals.size,1);
+  const old=h.delays.slice();h.audio.scene('kit_abyss');
+  assert.equal(h.intervals.size,1);assert.ok(h.sources.length>count);
+  assert.ok(h.ramps.some(([,time])=>time===.8));
+  for(const cleanup of h.timeouts.splice(0))cleanup();
+  assert.ok(old.every(d=>d.connections.length===0));
+  assert.ok(h.delays.slice(delays).every(d=>d.connections.length>0));
+  await h.click({'data-audio-toggle':''});
+  assert.equal(h.intervals.size,0);
+  assert.ok(h.sources.every(s=>s.stopped===0));
+  assert.ok(h.delays.every(d=>d.connections.length===0));
+});
+
+test('Kit ambience respects saved mute, independent music volume and old audio APIs',async()=>{
+  for(const theme of ['kit_menace','kit_abyss']){
+    const muted=harness({saved:JSON.stringify({muted:true})});muted.audio.scene(theme);await muted.click({});
+    assert.equal(muted.contexts.length,0);
+    const noMusic=harness({saved:JSON.stringify({music:0})});noMusic.audio.scene(theme);await noMusic.click({});
+    assert.equal(noMusic.intervals.size,0);assert.equal(noMusic.delays.length,0);
+    const fallback=harness({room:false});fallback.audio.scene(theme);await fallback.click({});
+    assert.equal(fallback.intervals.size,1);assert.ok(fallback.sources.length>0);
+    fallback.document.hidden=true;fallback.handlers.visibilitychange();
+    assert.equal(fallback.intervals.size,0);assert.ok(fallback.sources.every(s=>s.stopped===0));
+  }
+});
+
+test('Kit arrangements schedule complete evolving bars with bounded active voices',async()=>{
+  for(const theme of ['kit_menace','kit_abyss']){
+    const h=harness();h.audio.scene(theme);await h.click({});
+    let peak=0;
+    for(let i=1;i<=240;i++){
+      h.contexts[0].currentTime=i/10;
+      for(const fn of h.intervals.values())fn();
+      for(const s of h.sources)if(!s.ended&&s.stopped<=i/10){s.ended=true;s.onended?.();}
+      peak=Math.max(peak,h.sources.filter(s=>!s.ended).length);
+      assert.equal(h.intervals.size,1);
+    }
+    assert.ok(peak<80,theme+' active voices: '+peak);
+    assert.ok(h.sources.filter(s=>s.type).every(s=>Number.isFinite(s.frequency.value)&&s.frequency.value>=20));
+    assert.ok(h.sources.every(s=>Number.isFinite(s.started)&&s.stopped>s.started));
+  }
 });

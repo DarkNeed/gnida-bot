@@ -292,6 +292,23 @@ class KitStoreTests(unittest.IsolatedAsyncioTestCase):
 
 @unittest.skipUnless(shutil.which('node'), 'Node required')
 class KitClientTests(unittest.TestCase):
+    def test_soundtrack_follows_kit_phase_and_other_bosses_keep_their_themes(self):
+        run = client_helpers.ArenaMarketClientTests().run_client
+        for mode, expected in (('kit', 'raid'), ('kit_phase2', 'kit_menace'), ('kit_phase3', 'kit_abyss'), ('doof', 'doofenshmirtz'), ('lei_heng', 'lei_heng')):
+            data = raid_preview(mode)
+            self.assertEqual(run('out=raidSoundtrack(input);', data), expected)
+            data['status'] = 'lobby'
+            self.assertEqual(run('out=raidSoundtrack(input);', data), 'menu')
+            data['status'] = 'finished'
+            self.assertEqual(run('out=raidSoundtrack(input)||"silence";', data), 'silence')
+
+    def test_music_switches_with_replayed_phase_not_unseen_final_phase(self):
+        run = client_helpers.ArenaMarketClientTests().run_client
+        data = raid_preview('kit_phase3')
+        for phase, expected in ((1, 'raid'), (2, 'kit_menace'), (3, 'kit_abyss')):
+            code = 'out=raidSoundtrack(raidVisual(input,{boss:{mechanics:{kit_phase:'+str(phase)+'}}}));'
+            self.assertEqual(run(code, data), expected)
+
     def test_three_phase_views_show_sprite_background_controls_and_no_scaling_claim(self):
         run = client_helpers.ArenaMarketClientTests().run_client
         for mode, phase in (('kit', 1), ('kit_phase2', 2), ('kit_phase3', 3)):

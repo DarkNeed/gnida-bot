@@ -7,8 +7,12 @@
     battle: {bpm: 138, roots: [45, 41, 48, 43], motif: [0, 7, 12, 10, 7, 12, 15, 14], lead: [12, 10, 7, 15]},
     raid: {bpm: 128, roots: [38, 41, 36, 37], motif: [0, 7, 12, 15, 12, 10, 7, 3], lead: [7, 12, 15, 10]},
     lei_heng: {bpm: 152, roots: [40, 40, 43, 38], motif: [0, 7, 12, 15, 12, 7, 5, 7], lead: [12, 15, 19, 17]},
-    doofenshmirtz: {bpm: 144, roots: [42, 45, 40, 41], motif: [0, 12, 3, 11, 7, 3, 12, 6], lead: [12, 11, 15, 6]}
+    doofenshmirtz: {bpm: 144, roots: [42, 45, 40, 41], motif: [0, 12, 3, 11, 7, 3, 12, 6], lead: [12, 11, 15, 6]},
+    kit_menace: {bpm: 112, roots: [29, 28, 29, 25], motif: [0, 1, 7, 6, 0, -1, 7, 6], style: 'menace'},
+    kit_abyss: {bpm: 64, roots: [26, 25, 22, 23], style: 'abyss'}
   };
+  const THEME_LABELS = {menu:'Меню',battle:'Бой',raid:'Рейд',lei_heng:'Лей Хенг',doofenshmirtz:'Фуфелшмерц',
+    kit_menace:'Кит · II фаза · Надвигающаяся угроза',kit_abyss:'Кит · III фаза · Бездна смотрит в ответ'};
   let prefs = {muted: false, music: 22, effects: 50};
   try {
     const p = JSON.parse(localStorage.getItem(KEY));
@@ -19,7 +23,8 @@
   } catch {}
   let ctx, master, fx, musicBus, noiseBuffer, timer, scene = 'menu', playing = '', step = 0, next = 0;
   let generation = 0, opener = null, unavailable = false;
-  const voices = new Set();
+  let roomNodes = [];
+  const voices = new Set(), tails = new Set();
   const hz = note => 440 * 2 ** ((note - 69) / 12);
   function save() { try { localStorage.setItem(KEY,JSON.stringify(prefs)); } catch {} }
   function labels() {
@@ -31,6 +36,8 @@
     if(toggle) { toggle.textContent = prefs.muted ? 'Включить звук' : 'Выключить звук'; toggle.setAttribute('aria-pressed',String(!prefs.muted)); }
     const status = document.getElementById('audio-status');
     if(status) status.textContent = unavailable ? 'Звук недоступен в этом браузере.' : !prefs.muted && ctx?.state !== 'running' ? 'Нажми «Включить / проверить», чтобы запустить звук.' : 'Настройки сохраняются на этом устройстве.';
+    const soundtrack = document.getElementById('audio-scene');
+    if(soundtrack) soundtrack.textContent = 'Музыка: '+(THEME_LABELS[scene]||'пауза');
   }
   function gain(node,value,duration=.06) {
     if(!ctx || !node) return;
@@ -66,10 +73,10 @@
     } catch { unavailable = true; }
     labels();
   }
-  function voice(source,filter,bus,at,duration,volume,sustain=false) {
+  function voice(source,filter,bus,at,duration,volume,sustain=false,attack=.012) {
     const envelope = ctx.createGain();
     envelope.gain.setValueAtTime(0,at);
-    envelope.gain.linearRampToValueAtTime(volume,at+.012);
+    envelope.gain.linearRampToValueAtTime(volume,at+Math.min(attack,duration*.3));
     if(sustain) envelope.gain.linearRampToValueAtTime(volume*.7,at+duration*.65);
     envelope.gain.exponentialRampToValueAtTime(.0001,at+duration);
     source.connect(filter); filter.connect(envelope); envelope.connect(bus);
@@ -77,14 +84,14 @@
     source.onended = () => { voices.delete(source); source.disconnect(); filter.disconnect(); envelope.disconnect(); };
     source.start(at); source.stop(at+duration+.02);
   }
-  function tone(note,at,duration,volume,bus,type='triangle',endNote=null,cents=0,sustain=false) {
+  function tone(note,at,duration,volume,bus,type='triangle',endNote=null,cents=0,sustain=false,attack=.012) {
     const osc = ctx.createOscillator(), filter = ctx.createBiquadFilter();
     osc.type = type; osc.frequency.setValueAtTime(hz(note),at);
     osc.detune.setValueAtTime(cents,at);
     if(endNote !== null) osc.frequency.exponentialRampToValueAtTime(hz(endNote),at+duration);
     filter.type = 'lowpass'; filter.frequency.setValueAtTime(type === 'sawtooth' ? 2600 : 4200,at);
     if(type === 'sawtooth') filter.frequency.exponentialRampToValueAtTime(sustain?1200:600,at+duration);
-    voice(osc,filter,bus,at,duration,volume,sustain);
+    voice(osc,filter,bus,at,duration,volume,sustain,attack);
   }
   function brass(note,at,duration,volume,bus) {
     for(const cents of [-8,8]) tone(note,at,duration,volume/2,bus,'sawtooth',null,cents,true);
@@ -94,20 +101,46 @@
     tone(heavy?43:39,at,heavy?.28:.2,heavy?.24:.18,bus,'sine',19);
     noise(at,.045,.07,bus,900);
   }
-  function noise(at,duration,volume,bus,frequency=1500) {
+  function noise(at,duration,volume,bus,frequency=1500,attack=.012) {
     const source = ctx.createBufferSource(), filter = ctx.createBiquadFilter();
-    source.buffer = noiseBuffer; filter.type = 'bandpass'; filter.frequency.value = frequency; filter.Q.value = .7;
-    voice(source,filter,bus,at,duration,volume);
+    source.buffer = noiseBuffer; source.loop=duration>1;filter.type = 'bandpass'; filter.frequency.value = frequency; filter.Q.value = .7;
+    voice(source,filter,bus,at,duration,volume,false,attack);
+  }
+  function abyssChoir(note,at,duration,volume,bus) {
+    // Synthetic vowel-like resonances, not speech samples. Quiet close pitches
+    // beat against one another; no loud jumps or sub-audible oscillators.
+    for(const [i,formant] of [280,600,1150].entries()) {
+      const osc=ctx.createOscillator(),filter=ctx.createBiquadFilter();
+      osc.type='sawtooth';osc.frequency.setValueAtTime(hz(note),at);
+      osc.frequency.exponentialRampToValueAtTime(hz(note-.7),at+duration);
+      osc.detune.setValueAtTime(i===1?-9:7,at);
+      filter.type='bandpass';filter.Q.value=3.5;
+      filter.frequency.setValueAtTime(formant,at);
+      filter.frequency.linearRampToValueAtTime(formant*.78,at+duration);
+      voice(osc,filter,bus,at,duration,volume*[.55,.30,.15][i],true,.55);
+    }
+  }
+  function createRoom(theme) {
+    if(!theme.style || !ctx.createDelay) return;
+    // Feed-forward echoes only: no feedback loop can survive mute/pagehide.
+    for(const [seconds,level] of theme.style==='abyss'?[[.37,.24],[.73,.13]]:[[.17,.14],[.31,.08]]) {
+      const delay=ctx.createDelay(1),filter=ctx.createBiquadFilter(),wet=ctx.createGain();
+      delay.delayTime.value=seconds;filter.type='lowpass';filter.frequency.value=theme.style==='abyss'?950:1500;
+      wet.gain.value=level;musicBus.connect(delay);delay.connect(filter);filter.connect(wet);wet.connect(master);
+      roomNodes.push(delay,filter,wet);
+    }
   }
   function stopMusic() {
     clearInterval(timer); timer = null; playing = '';
     if(musicBus) {
-      const old = musicBus; gain(old,0,.25); musicBus = null;
-      setTimeout(() => old.disconnect(),1000);
+      const old = musicBus,nodes=roomNodes; roomNodes=[];gain(old,0,.35); musicBus = null;
+      const dispose=()=>{if(!tails.delete(dispose))return;old.disconnect();for(const node of nodes)node.disconnect();};
+      tails.add(dispose);setTimeout(dispose,1500);
     }
   }
   function stopAll() {
     generation++; stopMusic();
+    for(const dispose of [...tails])dispose();
     for(const source of voices) { try { source.stop(); } catch {} }
     voices.clear();
   }
@@ -118,7 +151,45 @@
     if(next < ctx.currentTime) next = ctx.currentTime+.02;
     while(next < ctx.currentTime+.18) {
       const bar=Math.floor(step/16),root=theme.roots[bar%4],within=step%16;
-      if(theme.soft) {
+      if(theme.style==='menace') {
+        // Half-time martial pulse, semitone/tritone pressure, low brass swells.
+        if(within===0) {
+          brass(root+12,next,beat*2.6,.12,musicBus);
+          brass(root+19,next,beat*2.1,.055,musicBus);
+          noise(next,beat*2.5,.05,musicBus,260);
+        }
+        if(within%2===0) {
+          tone(root+theme.motif[(within/2+bar)%8],next,tick*1.7,.11,musicBus,'sawtooth');
+          tone(root,next,tick*1.8,.075,musicBus,'sine');
+        }
+        if([0,7,8,14].includes(within)) {drum(next,musicBus,true);noise(next,.14,.045,musicBus,420);}
+        if(within===6||within===14) brass(root+18,next,beat*.8,.045,musicBus);
+        if(within===4||within===12) {
+          noise(next,.20,.085,musicBus,950);noise(next,.06,.035,musicBus,3400);
+        }
+        if(within%4===2) tone(root+31,next,.2,.022,musicBus,'sine',root+18);
+      } else if(theme.style==='abyss') {
+        // No heroic melody: slow breathing void, dissonant choir and distant
+        // metal resonances. All layers use the music volume and master limiter.
+        if(within===0) {
+          tone(root,next,5.2,.12,musicBus,'sine',root-.4,0,true,.6);
+          tone(root+12,next,4.8,.055,musicBus,'triangle',root+11.5,0,true,.6);
+          abyssChoir(root+12,next,4.6,.09,musicBus);
+          abyssChoir(root+12.4,next,4.4,.065,musicBus);
+          noise(next,3.6,.085,musicBus,140,.6);
+          noise(next,2.4,.03,musicBus,720,.5);
+        }
+        if(within===8) {
+          abyssChoir(root+13,next,3.5,.065,musicBus);
+          tone(root+36,next,3.1,.035,musicBus,'sine',root+35.4);
+          tone(root+42.15,next,2.7,.018,musicBus,'sine');
+        }
+        if(within===4||within===12) noise(next,1.2,.045,musicBus,420+(bar%3)*70,.35);
+        if([0,3,8,11].includes(within)) {
+          tone(31,next,.65,.085,musicBus,'sine',20);
+          noise(next,.17,.025,musicBus,190);
+        }
+      } else if(theme.soft) {
         if(within===0) for(const n of [0,3,7]) tone(root+12+n,next,beat*7,.038,musicBus,'sine');
         if(step%2===0) {
           tone(root,next,beat*.85,.12,musicBus,'triangle');
@@ -161,7 +232,8 @@
     if(playing === scene && timer) return;
     stopMusic(); playing = scene; step = 0; next = ctx.currentTime+.03;
     musicBus = ctx.createGain(); musicBus.gain.value = 0; musicBus.connect(master);
-    gain(musicBus,prefs.music/100,.5);
+    createRoom(THEMES[scene]);
+    gain(musicBus,prefs.music/100,THEMES[scene].style ? .8 : .5);
     schedule(); timer = setInterval(() => { try { schedule(); } catch { stopMusic(); } },100);
   }
   function setScene(value) {
@@ -217,6 +289,8 @@
       dialog = document.createElement('dialog'); dialog.id = 'audio-settings'; dialog.className = 'audio-dialog';
       dialog.setAttribute('aria-label','Звук арены');
       dialog.innerHTML = '<header class="stats-header"><b>Звук арены</b><button class="small" data-audio-close aria-label="Закрыть настройки звука">✕</button></header><p class="muted">Собственная синтезированная музыка и эффекты. Без загрузки аудиофайлов.</p><button data-audio-toggle></button><button class="small" data-audio-test="heal">Включить / проверить</button><label>Музыка <output id="audio-music-value"></output><input aria-label="Громкость музыки" data-audio-volume="music" type="range" min="0" max="100"></label><label>Эффекты <output id="audio-effects-value"></output><input aria-label="Громкость эффектов" data-audio-volume="effects" type="range" min="0" max="100"></label><div class="audio-samples"><button class="small" data-audio-test="hit">Удар</button><button class="small" data-audio-test="cast">Магия</button><button class="small" data-audio-test="miss">Промах</button><button class="small" data-audio-test="heal">Лечение</button><button class="small" data-audio-test="victory">Победа</button><button class="small" data-audio-test="defeat">Поражение</button></div><p id="audio-status" class="muted" aria-live="polite"></p>';
+      const soundtrack=document.createElement('p');soundtrack.id='audio-scene';soundtrack.className='muted';soundtrack.setAttribute('aria-live','polite');
+      dialog.querySelector('#audio-status').before(soundtrack);
       dialog.addEventListener('cancel',e=>{e.preventDefault();closePanel();});
       dialog.addEventListener('click',e=>{if(e.target.closest('[data-audio-close]')) closePanel();});
       document.body.append(dialog);
