@@ -77,6 +77,20 @@ class CharacterMixin:
                 if changed:self._character_license_changed_locked(user)
                 return changed
 
+    async def arena_revoke_character_slots(self,user,revoked_by):
+        """Remove only the owner's gift; a paid license still grants access."""
+        if type(revoked_by) is not int or revoked_by != CHARACTER_OWNER_ID:
+            raise ValueError('Забирать анлок может только владелец бота.')
+        if type(user) is not int or not 0 < user <= 2**63-1:
+            raise ValueError('Некорректный Telegram ID.')
+        async with self._lock:
+            with self.connection:
+                changed=self.connection.execute(
+                    'DELETE FROM arena_character_grants WHERE user_id=?',(user,)).rowcount > 0
+                if changed:self._character_license_changed_locked(
+                    user,'Дополнительный слот закрыт: владелец бота отменил подаренный анлок.')
+                return dict(changed=changed,unlocked=self._character_unlocked_locked(user))
+
     def _character_require_locked(self,user,expected_slot=None):
         slot=self._character_active_locked(user)
         if expected_slot is not None and (type(expected_slot) is not int or expected_slot!=slot):
@@ -121,12 +135,12 @@ class CharacterMixin:
             self._arena_profile_locked(0,user,True)
         self._character_save_locked(user)
 
-    def _character_cancel_locked(self,user):
+    def _character_cancel_locked(self,user,reason='Дополнительный слот закрыт при возврате оплаты.'):
         # No XP or daily claim for cancelled activity; other raid members stay.
         for raw in self.connection.execute("SELECT * FROM arena_battles WHERE status IN ('pending','active') AND (a_owner=? OR b_owner=?)",(user,user)).fetchall():
             self._arena_refund_locked(dict(raw),'cancelled')
         for raw in self.connection.execute("SELECT * FROM arena_mirror_runs WHERE status='active' AND actor_id=?",(user,)).fetchall():
-            self._mirror_close_locked(dict(raw),'Дополнительный слот закрыт при возврате оплаты.')
+            self._mirror_close_locked(dict(raw),reason)
         raids=self.connection.execute("SELECT DISTINCT r.token FROM arena_raids r JOIN arena_raid_players p ON p.token=r.token WHERE r.status IN ('lobby','active') AND p.actor_id=?",(user,)).fetchall()
         for raw in raids:
             row=self._raid_row_locked(raw['token'])
@@ -145,10 +159,10 @@ class CharacterMixin:
                         self._raid_save_locked(row,data)
                         self.connection.execute('UPDATE arena_raids SET deadline=? WHERE token=?',(row['deadline'],row['token']))
 
-    def _character_license_changed_locked(self,user):
+    def _character_license_changed_locked(self,user,reason='Дополнительный слот закрыт при возврате оплаты.'):
         account=self._character_account_locked(user)
         if account['active_slot']>1 and not self._character_unlocked_locked(user):
-            self._character_cancel_locked(user)
+            self._character_cancel_locked(user,reason)
             self._character_switch_locked(user,1)
         else:
             self.connection.execute('UPDATE arena_character_accounts SET revision=revision+1 WHERE user_id=?',(user,))

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from aiogram.types import User
 
@@ -148,6 +148,103 @@ class CharacterGrantTests(unittest.IsolatedAsyncioTestCase):
             await self.dispatch(msg)
             msg.answer.assert_awaited_once()
         self.assertEqual(self.db.connection.execute('SELECT COUNT(*) FROM arena_character_grants').fetchone()[0],0)
+
+    async def test_revoke_locks_extras_preserves_profile_and_can_be_regranted(self):
+        await self.gift()
+        view = await self.db.arena_characters(10)
+        await self.db.arena_select_character(-100,10,2,view['revision'])
+        self.db._grant_profile_xp_locked('personal_profiles',-100,10,15)
+        self.db.connection.commit()
+        before = await self.db.arena_characters(10)
+        results = await asyncio.gather(*(self.db.arena_revoke_character_slots(10,self.owner.id) for _ in range(3)))
+        self.assertEqual(sum(r['changed'] for r in results),1)
+        view = await self.db.arena_characters(10)
+        self.assertEqual((view['capacity'],view['active_slot']),(1,1))
+        self.assertEqual(view['revision'],before['revision']+1)
+        self.assertEqual(view['slots'][1]['level'],before['slots'][1]['level'])
+        with self.assertRaises(ValueError):
+            await self.db.arena_select_character(-100,10,2,before['revision'])
+        await self.db.close()
+        self.db = Database(self.path)
+        await self.db.connect()
+        self.assertEqual((await self.db.arena_characters(10))['capacity'],1)
+        await self.gift()
+        view = await self.db.arena_characters(10)
+        await self.db.arena_select_character(-100,10,2,view['revision'])
+        profile = self.db._arena_profile_locked(-100,10,True)
+        self.assertEqual(profile['xp'],15)
+
+    async def test_revoke_gift_keeps_paid_license_and_active_slot(self):
+        order = await self.db.pet_create_order(10,CHARACTER_PACK,CHARACTER_TERMS_VERSION)
+        await self.db.pet_payment(10,order['payload'],'XTR',200,'paid')
+        await self.gift()
+        view = await self.db.arena_characters(10)
+        await self.db.arena_select_character(-100,10,2,view['revision'])
+        msg = self.message('/забрать анлок 10')
+        await self.dispatch(msg)
+        self.assertIn('по оплаченной покупке',msg.answer.await_args.args[0])
+        view = await self.db.arena_characters(10)
+        self.assertEqual((view['capacity'],view['active_slot']),(5,2))
+        self.assertEqual(self.db.connection.execute('SELECT status FROM pet_orders').fetchone()[0],'paid')
+
+    async def test_revoke_permission_and_invalid_id_checks(self):
+        await self.gift()
+        for actor in (10,None,True):
+            with self.assertRaises(ValueError):
+                await self.db.arena_revoke_character_slots(10,actor)
+        for target in (0,-1,True,'10',None,2**63):
+            with self.assertRaises(ValueError):
+                await self.db.arena_revoke_character_slots(target,self.owner.id)
+        self.assertEqual((await self.db.arena_characters(10))['capacity'],5)
+
+    async def test_revoke_id_reply_username_and_repeat(self):
+        await self.db.upsert_user(-100,10,'player',self.player.full_name)
+        for msg in (self.message('/забрать@GnidoBot анлок 10',private=True),
+                    self.message('/забрать анлок',reply=SimpleNamespace(from_user=self.player,sender_chat=None)),
+                    self.message('/ЗАБРАТЬ АНЛОК @PLAYER',private=True)):
+            await self.gift()
+            await self.dispatch(msg)
+            self.assertIn('подаренный анлок отменён',msg.answer.await_args.args[0])
+            self.assertEqual((await self.db.arena_characters(10))['capacity'],1)
+        await self.dispatch(msg)
+        self.assertIn('подаренного анлока нет',msg.answer.await_args.args[0])
+
+    async def test_revoke_help_denied_senders_and_stale_username(self):
+        await self.gift()
+        await self.db.upsert_user(-100,10,'old_name','Player')
+        help_msg = self.message('/забрать анлок')
+        await self.dispatch(help_msg)
+        self.assertIn('/забрать анлок',help_msg.answer.await_args.args[0])
+        stale = self.message('/забрать анлок @old_name')
+        await self.dispatch(stale)
+        self.assertIn('Не удалось',stale.answer.await_args.args[0])
+        for text, sender, anonymous in (
+                ('/забрать анлок 10',self.player,False),
+                ('/забрать анлок 10',self.owner,True),
+                ('/забрать@OtherBot анлок 10',self.owner,False)):
+            msg = self.message(text,sender=sender)
+            if anonymous:msg.sender_chat = SimpleNamespace(id=-100)
+            await self.dispatch(msg)
+            msg.answer.assert_not_awaited()
+        self.assertEqual((await self.db.arena_characters(10))['capacity'],5)
+
+    async def test_revoke_unknown_user_is_noop_and_owner_privilege_remains(self):
+        result = await self.db.arena_revoke_character_slots(12345,self.owner.id)
+        self.assertEqual(result,dict(changed=False,unlocked=False))
+        self.assertIsNone(self.db.connection.execute('SELECT * FROM arena_character_accounts WHERE user_id=12345').fetchone())
+        await self.gift(self.owner.id)
+        result = await self.db.arena_revoke_character_slots(self.owner.id,self.owner.id)
+        self.assertEqual(result,dict(changed=True,unlocked=True))
+
+    async def test_revoke_switch_failure_rolls_back_gift_and_slot(self):
+        await self.gift()
+        view = await self.db.arena_characters(10)
+        await self.db.arena_select_character(-100,10,2,view['revision'])
+        before = await self.db.arena_characters(10)
+        with patch.object(self.db,'_character_switch_locked',side_effect=RuntimeError('storage fail')):
+            with self.assertRaises(RuntimeError):
+                await self.db.arena_revoke_character_slots(10,self.owner.id)
+        self.assertEqual(await self.db.arena_characters(10),before)
 
 
 if __name__ == '__main__':unittest.main()

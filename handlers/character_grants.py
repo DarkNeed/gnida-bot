@@ -1,4 +1,4 @@
-"""Owner-only gifts of the permanent four-character-slot unlock."""
+"""Owner-only granting and revocation of gifted character-slot unlocks."""
 import html
 import re
 
@@ -9,12 +9,17 @@ from arena_characters import CHARACTER_OWNER_ID
 
 
 GRANT_COMMAND = re.compile(
-    r'^/выдать(?:@(?P<bot>\w+))?\s+анлок(?:\s+(?P<target>\S+))?\s*$', re.I
+    r'^/(?P<action>выдать|забрать)(?:@(?P<bot>\w+))?\s+анлок(?:\s+(?P<target>\S+))?\s*$', re.I
 )
 GRANT_HELP = (
     'Ответь на сообщение игрока командой /выдать анлок '
     'или напиши /выдать анлок @ник либо /выдать анлок Telegram_ID. '
     'Откроются все 4 дополнительных слота во всех чатах.'
+)
+REVOKE_HELP = (
+    'Ответь на сообщение игрока командой /забрать анлок '
+    'или напиши /забрать анлок @ник либо /забрать анлок Telegram_ID. '
+    'Отменится только подаренный доступ; купленные слоты и персонажи сохраняются.'
 )
 
 
@@ -29,6 +34,8 @@ def create_character_grant_router(db, username):
         match = GRANT_COMMAND.fullmatch(message.text or '')
         if not match or (match['bot'] and match['bot'].casefold() != username.casefold()):
             return
+        revoke = match['action'].casefold() == 'забрать'
+        help_text = REVOKE_HELP if revoke else GRANT_HELP
         token = match['target']
         target_id, label = None, None
         if token:
@@ -52,7 +59,7 @@ def create_character_grant_router(db, username):
                 user = next(iter(matches.values()))
                 target_id, label = user.id, '@'+user.username
             else:
-                await message.answer(GRANT_HELP)
+                await message.answer(help_text)
                 return
         elif message.reply_to_message:
             reply = message.reply_to_message
@@ -61,17 +68,33 @@ def create_character_grant_router(db, username):
                 return
             target_id, label = reply.from_user.id, reply.from_user.full_name
         else:
-            await message.answer(GRANT_HELP)
+            await message.answer(help_text)
             return
         if target_id == bot.id:
             await message.answer('Боту слоты персонажей не нужны.')
             return
         try:
-            changed = await db.arena_grant_character_slots(target_id, message.from_user.id)
+            if revoke:
+                result = await db.arena_revoke_character_slots(target_id, message.from_user.id)
+            else:
+                changed = await db.arena_grant_character_slots(target_id, message.from_user.id)
         except ValueError as error:
             await message.answer(str(error))
             return
         recipient = f'<a href="tg://user?id={target_id}">{html.escape(label)}</a>'
+        if revoke:
+            text = (f'✅ {recipient}: подаренный анлок отменён. ' if result['changed']
+                    else f'{recipient}: подаренного анлока нет. ')
+            if result['unlocked']:
+                text += ('Все 5 слотов остаются доступны по привилегии владельца бота.'
+                         if target_id == CHARACTER_OWNER_ID else
+                         'Все 5 слотов остаются доступны по оплаченной покупке.')
+            else:
+                text += ('Доступен только первый слот. Остальные персонажи сохранены. '
+                         'Если был выбран дополнительный персонаж, активным стал первый; '
+                         'активность дополнительного персонажа закрыта без награды, ставки возвращены.')
+            await message.answer(text+' Обнови меню арены.',parse_mode='HTML')
+            return
         await message.answer(
             (f'✅ {recipient}: выдан постоянный анлок всех 4 дополнительных слотов. '
              if changed else f'{recipient}: постоянный анлок уже выдавался. ')

@@ -12,7 +12,7 @@ import test_account_rpg as account
 import test_arena_daily_balance as daily
 import test_arena
 import test_arena_market_client as client_tests
-from arena_characters import CHARACTER_PACK, CHARACTER_PRICE, CHARACTER_TERMS_VERSION
+from arena_characters import CHARACTER_OWNER_ID, CHARACTER_PACK, CHARACTER_PRICE, CHARACTER_TERMS_VERSION
 from arena_web import menu_view, create_arena_app, battle_view
 from handlers.pets import create_pet_router
 
@@ -217,6 +217,39 @@ class SlotTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(json.loads(row['data_json'])['players']['20']['withdrawn'])
         self.assertTrue(self.db._arena_busy_locked(1,20))
         self.assertFalse(self.db._arena_busy_locked(1,10))
+
+    async def test_revoke_gift_withdraws_only_owner_from_team_raid(self):
+        await self.db.arena_grant_character_slots(10,CHARACTER_OWNER_ID)
+        await self.select(2)
+        row=await self.db.arena_raid_create(1,10)
+        await self.db.arena_raid_setup(row['token'],20,'join')
+        await self.db.arena_raid_setup(row['token'],10,'start')
+        await self.db.arena_revoke_character_slots(10,CHARACTER_OWNER_ID)
+        row=await self.db.arena_raid_get(row['token'])
+        self.assertEqual(row['status'],'active')
+        players=json.loads(row['data_json'])['players']
+        self.assertTrue(players['10']['withdrawn'])
+        self.assertTrue(players['10']['reward_blocked'])
+        self.assertFalse(players['20']['withdrawn'])
+        self.assertEqual((await self.db.arena_characters(10))['active_slot'],1)
+
+    async def test_revoke_gift_refunds_extra_slot_duel(self):
+        await self.db.arena_grant_character_slots(10,CHARACTER_OWNER_ID)
+        await self.select(2)
+        for user in (10,20):await self.db.credit_francs(1,user,100)
+        row=await self.db.arena_offer(1,10,20,'personal',50)
+        await self.db.arena_setup(row['token'],20,'accept')
+        await self.db.arena_revoke_character_slots(10,CHARACTER_OWNER_ID)
+        self.assertEqual((await self.db.arena_get(row['token']))['status'],'cancelled')
+        for user in (10,20):self.assertEqual(await self.db.franc_balance(1,user),100)
+        self.assertEqual(self.profile()['xp'],0)
+
+    async def test_revoke_gift_does_not_cancel_first_slot_battle(self):
+        await self.db.arena_grant_character_slots(10,CHARACTER_OWNER_ID)
+        row=await self.db.arena_wasteland(1,10)
+        await self.db.arena_revoke_character_slots(10,CHARACTER_OWNER_ID)
+        self.assertEqual((await self.db.arena_get(row['token']))['status'],'active')
+        self.assertEqual((await self.db.arena_characters(10))['capacity'],1)
 
     async def test_refund_closes_extra_slot_battle_refunds_stakes_preserves_character(self):
         order=await self.unlock();await self.select(2)
