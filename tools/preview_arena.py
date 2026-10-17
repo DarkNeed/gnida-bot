@@ -163,7 +163,7 @@ def raid_preview(phase="active"):
             slave_id=i,
             owner_id=i,
             class_id=cls,
-            level=18 if phase.startswith(("lei_heng", "doof")) else 12,
+            level=20 if phase.startswith('kit') else 18 if phase.startswith(("lei_heng", "doof")) else 12,
             archclass_id=branch,
             archclass_stage=10,
             loadout={
@@ -181,7 +181,7 @@ def raid_preview(phase="active"):
     boss_id = (
         "doofenshmirtz"
         if phase.startswith("doof")
-        else "lei_heng" if phase.startswith("lei_heng") else "iron"
+        else 'kit' if phase.startswith('kit') else "lei_heng" if phase.startswith("lei_heng") else "iron"
     )
     boss_info = BOSSES[boss_id]
     data = create_raid_state(
@@ -189,6 +189,14 @@ def raid_preview(phase="active"):
     )
     if boss_id == "lei_heng":
         data["round"] = 3
+        set_intent(data)
+    if boss_id == 'kit':
+        if phase == 'kit_phase2':
+            data['boss']['hp'] = round(data['boss']['stats']['max_hp'] * .65)
+            data['round'] = 4
+        elif phase in ('kit_phase3', 'kit_animation'):
+            data['boss']['hp'] = round(data['boss']['stats']['max_hp'] * .34)
+            data['round'] = 7
         set_intent(data)
     names = {"1": "Хакер", "2": "Мге-браток", "3": "Принцесса"}
     for p in participants:
@@ -235,8 +243,11 @@ def raid_preview(phase="active"):
     data["players"]["1"]["fighter"]["effects"].append(
         dict(id="guard", kind="physical_defense_pct", value=0.35, duration=1)
     )
-    if boss_id in {"lei_heng", "doofenshmirtz"}:
+    if boss_id in {"lei_heng", "doofenshmirtz", 'kit'}:
         data["log"] = []
+        if boss_id == 'kit':
+            data['boss']['effects'] = []
+            data['players']['1']['fighter']['effects'] = []
         if boss_id == "lei_heng":
             data["boss"]["effects"] = []
             data["players"]["1"]["fighter"]["effects"] = [
@@ -252,13 +263,13 @@ def raid_preview(phase="active"):
             rewards={str(i): dict(xp=58, francs=76, loot="") for i in (1, 2, 3)},
         )
         data["boss"]["hp"] = 0
-    if phase in {"animation", "lei_heng_animation", "doof_animation"}:
+    if phase in {"animation", "lei_heng_animation", "doof_animation", 'kit_animation'}:
         import random
 
         data["log"] = []
         for key, sid in (("1", "humiliate"), ("2", "smack"), ("3", "meow")):
             data["players"][key]["selected"] = (
-                "defend" if boss_id == "lei_heng" and key == "1" else sid
+                "defend" if boss_id == 'kit' or boss_id == "lei_heng" and key == "1" else sid
             )
         resolve_round(data, BUILTIN_SKILLS, random.Random(7))
         for player in data["players"].values():
@@ -280,6 +291,8 @@ def raid_preview(phase="active"):
         boss_name=boss_info["name"],
         boss_id=boss_id,
         recommended_level=boss_info.get("recommended_level", 1),
+        fixed_level=boss_info.get('fixed_level'), phase_count=boss_info.get('phase_count', 2),
+        difficulty=boss_info.get('difficulty', ''),
         ally_sprite=boss_info.get("ally_sprite", ""),
         loot_name=(
             BUILTIN_SKILLS[boss_info["loot_skill"]].name
@@ -304,6 +317,7 @@ async def demo_raid(request):
         "lei_heng_animation",
         "doof",
         "doof_animation",
+        'kit', 'kit_phase2', 'kit_phase3', 'kit_animation',
     }:
         raise web.HTTPNotFound()
     return web.json_response(raid_preview(phase))

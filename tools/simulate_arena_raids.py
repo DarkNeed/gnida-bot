@@ -107,7 +107,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=int, default=30)
     parser.add_argument(
-        "--boss", choices=("iron", "lei_heng", "doofenshmirtz"), default="iron"
+        "--boss", choices=("iron", "lei_heng", "doofenshmirtz", 'kit'), default="iron"
     )
     args = parser.parse_args()
     results = []

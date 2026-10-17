@@ -13,7 +13,7 @@ let serverClockOffset=0;
 let mirrorRun=null,mirrorAbandonConfirm=false;
 let raidCurrent=null,raidInspect=null,raidPlaying=false;
 let forgeMode='dismantle',forgePool='',forgePending=null;
-const rarityNames={common:"Обычный",uncommon:"Необычный",rare:"Редкий",epic:"Эпический"};
+const rarityNames={common:"Обычный",uncommon:"Необычный",rare:"Редкий",epic:"Эпический",legendary:"Легендарный"};
 const statNames={max_hp:"Макс. HP",resource_max:"Макс. энергия",physical_attack:"Физ. атака",magic_attack:"Маг. атака",physical_defense:"Физ. защита",magic_defense:"Маг. защита",speed:"Скорость",evasion:"Уклонение"};
 const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",physical_attack_pct:"Физ. атака",magic_attack_pct:"Маг. атака",evasion_flat:"Уклонение",resource:"Энергия",resource_leech:"Похищение энергии (возврат половины)",next_magic_damage:"Следующая магическая атака",next_physical_damage:"Следующая физическая атака",prepared_attack:"Подготовленная атака",stun:"Ошеломление",bleed:"Кровотечение"};
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -485,8 +485,8 @@ function menuScreen(data){
   else if(page==="personal")body+=charactersBody(data)+profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Персонаж и инвентарь общие для всех чатов. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
   else if(page==="raids"){
     body+='<div class="note">Выбери босса и создай тихий рейд — сообщение в группу не отправляется. В рейд отправляется твой общий персонаж. Можно сразу начать соло. На сбор — 10 минут.</div>';
-    body+='<div class="note">Босс сильнее отряда: уровень равен большему из среднего уровня (вверх) +2 и уровня самого сильного бойца +1. Полная награда раз в час на каждого босса, общая для всех чатов и бойцов. Повторы: 20% франков и XP, без трактатов и ресурсов питомцев. Час отсчитывается от получения полной награды; повторы не продлевают кулдаун.</div>';
-    body+=(data.raid_bosses||[]).map(b=>'<div class="card"><div class="profile">'+(b.sprite?'<img class="portrait" src="'+esc(b.sprite)+'" alt="">':'')+'<div><h2>'+esc(b.name)+'</h2><p class="muted">'+esc(raidRewardStatus(b))+'</p></div></div>'+button('Создать тихий рейд','raidcreate:'+b.id,'primary')+'</div>').join('');
+    body+='<div class="note">Лей Хенг и Фуфелшмерц подстраиваются под отряд: уровень равен большему из среднего уровня (вверх) +2 и уровня самого сильного бойца +1. У Кита фиксированный 25 уровень, без подстройки. Полная награда раз в час на каждого босса, общая для всех чатов и бойцов. Повторы: 20% франков и XP, без трактатов и ресурсов питомцев. Час отсчитывается от получения полной награды; повторы не продлевают кулдаун.</div>';
+    body+=(data.raid_bosses||[]).map(b=>'<div class="card"><div class="profile">'+(b.sprite?'<img class="portrait" src="'+esc(b.sprite)+'" alt="">':'')+'<div><h2>'+esc(b.name)+'</h2>'+(b.fixed_level?'<p class="muted">'+esc(b.difficulty)+' · фиксированный Lv.'+esc(b.fixed_level)+' · без подстройки. Рекомендуется тройка подготовленных бойцов 20 уровня.</p>':'')+'<p class="muted">'+esc(raidRewardStatus(b))+'</p></div></div>'+button('Создать тихий рейд','raidcreate:'+b.id,'primary')+'</div>').join('');
   }else if(page==="merchant"){
     const m=data.merchant||{offers:[]};
     body+='<div class="card"><h2>Странствующий торговец</h2><p>Баланс: '+(data.balance||0)+' ₣</p><p class="muted">'+(m.visit_id?'Уходит: '+esc(new Date(m.ends*1000).toLocaleString('ru-RU')):'Сейчас торговца нет. Следующее появление: '+esc(m.next_starts?new Date(m.next_starts*1000).toLocaleString('ru-RU'):'скоро'))+'</p>'+button('Обновить товары','refresh','small')+'</div>';
@@ -797,7 +797,7 @@ function raidButton(label,action,cls='',disabled=false){return '<button data-rai
 function raidBar(value,max,label,cls=''){return '<div class="barline"><span>'+esc(label)+'</span><span>'+value+' / '+max+'</span></div><div class="bar '+cls+'"><i style="width:'+Math.max(0,Math.min(100,100*value/max))+'%"></i></div>';}
 function raidDialogue(data){
   const d=data.data?.dialogue;if(!d||data.status!=='active')return '';
-  return '<div class="raid-dialogue" role="status" aria-live="polite"><div class="raid-dialogue-portrait"></div><div><b>'+esc(d.speaker||'ФУФЕЛШМЕРЦ')+'</b><p>'+esc(d.text)+'</p><small>'+esc(d.warning||'')+'</small></div></div>';
+  return '<div class="raid-dialogue" data-boss="'+esc(data.boss_id)+'" role="status" aria-live="polite"><div class="raid-dialogue-portrait"></div><div><b>'+esc(d.speaker||'ФУФЕЛШМЕРЦ')+'</b><p>'+esc(d.text)+'</p><small>'+esc(d.warning||'')+'</small></div></div>';
 }
 function raidSupport(data){
   if(data.boss_id!=='doofenshmirtz')return '';
@@ -815,14 +815,15 @@ function raidScreen(data){
   const me=data.participants.find(p=>p.actor_id===data.actor_id);
   let body='';
   if(data.status==='lobby'){
-    body='<div class="card"><h2>'+esc(data.boss_name)+'</h2>'+(['lei_heng','doofenshmirtz'].includes(data.boss_id)?'<p class="muted">'+esc(data.loot_name||(data.boss_id==='doofenshmirtz'?'Депортатор-инатор':'Трактат поступи тигробоя'))+': 20% при полной награде; пятая такая победа без выпадения гарантирует трактат. Уровень босса подстраивается под отряд и выше самого сильного бойца.</p>':'')+'<p>Отряд: '+data.participants.length+' / 3</p><div class="stack">'+data.participants.map(p=>'<div>'+esc(p.name)+' · '+(p.personal?'личный персонаж':'раб: '+esc(p.fighter_name))+'</div>').join('')+'</div><p class="muted">От 1 до 3 игроков против одного босса. Можно начать в одиночку или вдвоём. Вход бесплатный. Каждый выбирает одно действие за раунд одновременно с остальными.</p><p class="muted">На сбор — 10 минут. На выбор в бою — 2 минуты. После трёх пропусков подряд награды отключаются; для награды нужны минимум два ручных действия.</p><p>'+esc(raidRewardStatus(data.reward_status))+'</p><p class="muted">Кулдаун полной награды — 1 час на аккаунт и босса, общий для всех чатов и бойцов. Поражение и повторные победы не продлевают его.</p></div>';
+    body='<div class="card"><h2>'+esc(data.boss_name)+'</h2>'+(['lei_heng','doofenshmirtz','kit'].includes(data.boss_id)?'<p class="muted">'+esc(data.loot_name||(data.boss_id==='kit'?'Солнечное затмение':data.boss_id==='doofenshmirtz'?'Депортатор-инатор':'Трактат поступи тигробоя'))+': 20% при полной награде; пятая такая победа без выпадения гарантирует трактат. '+(data.fixed_level?'Кошмар: фиксированный уровень '+esc(data.fixed_level)+', без подстройки характеристик под отряд. Рекомендуются три подготовленных бойца 20 уровня.':'Уровень босса подстраивается под отряд и выше самого сильного бойца.')+'</p>':'')+'<p>Отряд: '+data.participants.length+' / 3</p><div class="stack">'+data.participants.map(p=>'<div>'+esc(p.name)+' · '+(p.personal?'личный персонаж':'раб: '+esc(p.fighter_name))+'</div>').join('')+'</div><p class="muted">От 1 до 3 игроков против одного босса. Можно начать в одиночку или вдвоём. Вход бесплатный. Каждый выбирает одно действие за раунд одновременно с остальными.</p><p class="muted">На сбор — 10 минут. На выбор в бою — 2 минуты. После трёх пропусков подряд награды отключаются; для награды нужны минимум два ручных действия.</p><p>'+esc(raidRewardStatus(data.reward_status))+'</p><p class="muted">Кулдаун полной награды — 1 час на аккаунт и босса, общий для всех чатов и бойцов. Поражение и повторные победы не продлевают его.</p></div>';
     body+='<div class="card"><h3>'+(me?'Твой боец':'Присоединиться')+'</h3><div class="stack">'+data.choices.map(c=>raidButton(esc(c.name),'join:'+(c.personal?'p':'s')+':'+c.fighter_id,me?.fighter_id===c.fighter_id&&me?.personal===c.personal?'primary':'',!me&&data.participants.length>=3)).join('')+'</div><p class="muted">Перед стартом заверши обязательный выбор класса в меню арены. В рейде участвует твой личный персонаж.</p></div>';
     if(data.actor_id===data.creator_id)body+='<div class="row">'+raidButton('Начать рейд','start','primary',data.participants.length<1||data.participants.length>3)+raidButton('Отменить сбор','cancel','danger')+'</div>';
     else if(me)body+=raidButton('Выйти из отряда','leave');
   }else if(data.data){
     const d=data.data,own=d.players[String(data.actor_id)];
     const targets=d.intent.targets.map(k=>d.players[k]?.fighter.name).filter(Boolean).map(esc).join(', ');
-    body='<div class="raid-intent"><span class="eyebrow">ФАЗА '+d.phase+' / 2 · РАУНД '+d.round+'</span><h3>'+esc(d.intent.text)+'</h3>'+(targets?'<p class="muted">Цель: '+targets+'</p>':'')+'</div><div class="raid-field'+(data.boss_id==='doofenshmirtz'?' doof-field':'')+'" aria-label="Поле боя: отряд слева внизу, босс справа вверху">'+raidPortrait(d.boss,'boss')+raidSupport(data)+raidDialogue(data)+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
+    const prediction=d.kit_prediction?'<p class="muted">Эхо-взор: '+esc(d.players[d.kit_prediction.target]?.fighter.name||'Боец')+' → '+esc(({physical:'физическая атака',magic:'магия',support:'поддержка'})[d.kit_prediction.action]||'действие')+'. Смените тип действия или защищайтесь.</p>':'';
+    body='<div class="raid-intent"><span class="eyebrow">ФАЗА '+d.phase+' / '+(data.phase_count||d.phase_count||2)+' · РАУНД '+d.round+'</span><h3>'+esc(d.intent.text)+'</h3>'+(targets?'<p class="muted">Цель: '+targets+'</p>':'')+prediction+'</div><div class="raid-field'+(data.boss_id==='doofenshmirtz'?' doof-field':data.boss_id==='kit'?' kit-field':'')+'" data-boss="'+esc(data.boss_id)+'" data-phase="'+esc(d.phase)+'" aria-label="Поле боя: отряд слева внизу, босс справа вверху">'+raidPortrait(d.boss,'boss')+raidSupport(data)+raidDialogue(data)+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
     if(data.status==='active'){
       body+='<div id="raid-timer" class="turn-timer"></div><div class="card raid-actions">';
       if(own&&!own.withdrawn&&own.fighter.hp>0){
@@ -838,6 +839,7 @@ function raidScreen(data){
       body+='<div class="card"><h2>'+esc(d.result)+'</h2>'+Object.entries(d.rewards).map(([key,r])=>'<p>'+esc(d.players[key].fighter.name)+': +'+r.francs+' ₣ · +'+r.xp+' XP'+(r.full_reward===false?' · повторная награда 20%':r.full_reward?' · полная награда':'')+(r.loot?' · 📜 '+esc(r.loot):'')+(r.forge_seal?' · ⚒️ '+esc(r.forge_seal)+' +1':'')+'</p>').join('')+'</div>';
     }
     body+=(demo&&data.status==='active'?raidButton('Показать атаки · демо','preview','small'):'')+'<div class="card raid-log"><h3>Ход рейда</h3>'+d.log.slice(-12).map(e=>'<p><small>Раунд '+e.round+'</small> <b>'+esc(e.actor==='boss'?data.boss_name:d.players[e.actor]?.fighter.name||'Участник')+'</b>: '+esc(e.text)+(e.target&&e.target!==e.actor?' → '+esc(e.target==='boss'?data.boss_name:d.players[e.target]?.fighter.name||'Боец'):'')+'</p>').join('')+'</div>';
+    if(demo&&data.boss_id==='kit')body+='<div class="row">'+[1,2,3].map(n=>raidButton('Фаза '+n+' · демо','kitphase:'+n,'small')).join('')+'</div>';
   }else body='<div class="card"><h2>Сбор рейда закрыт</h2><p>Новый отряд можно собрать командой /рейд в чате.</p></div>';
   if(data.status==='finished')body+=petRewards(data.data?.rewards?.[String(data.actor_id)]?.pet_rewards);
   app.innerHTML='<section class="menu raid-screen">'+top(data.silent?'Тихий рейд':'Командный рейд','ГНИДА · ЧАТ '+chat,raidButton('Обновить','refresh','small'))+'<div class="content">'+body+'<div class="row">'+raidButton('В меню арены','menu','small')+'</div></div></section>';
@@ -858,6 +860,7 @@ function raidVisual(data,snapshot){
     const f=key==='boss'?view.data.boss:view.data.players[key]?.fighter;
     if(f)Object.assign(f,values);
   }
+  if(view.boss_id==='kit'&&view.data.boss.mechanics?.kit_phase)view.data.phase=view.data.boss.mechanics.kit_phase;
   return view;
 }
 function raidPopup(key,value){
@@ -965,7 +968,8 @@ app.addEventListener('click',async event=>{
   const b=event.target.closest('[data-raid]');if(!b||b.disabled||busy||raidPlaying)return;
   const [cmd,...parts]=b.dataset.raid.split(':'),arg=parts.join(':');
   if(cmd==='inspect'){showRaidDetails(arg);return;}
-  if(cmd==='preview'&&demo){await receiveRaid(await api('/demo/raid/'+(raidCurrent.boss_id==='doofenshmirtz'?'doof_animation':raidCurrent.boss_id==='lei_heng'?'lei_heng_animation':'animation')));return;}
+  if(cmd==='preview'&&demo){await receiveRaid(await api('/demo/raid/'+(raidCurrent.boss_id==='kit'?'kit_animation':raidCurrent.boss_id==='doofenshmirtz'?'doof_animation':raidCurrent.boss_id==='lei_heng'?'lei_heng_animation':'animation')));return;}
+  if(cmd==='kitphase'&&demo&&['1','2','3'].includes(arg)){await receiveRaid(await api('/demo/raid/'+({1:'kit',2:'kit_phase2',3:'kit_phase3'})[arg]));return;}
   if(cmd==='menu'){closeRaidDetails();raidCurrent=null;await openMenu();return;}
   if(cmd==='open'||cmd==='refresh'){
     closeRaidDetails();const id=cmd==='open'?arg:raidCurrent.token;busy=true;

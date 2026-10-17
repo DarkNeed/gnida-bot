@@ -51,6 +51,7 @@ RARITY_LABELS = {
     "uncommon": "Необычный",
     "rare": "Редкий",
     "epic": "Эпический",
+    "legendary": "Легендарный",
 }
 CLASS_SELECTION_LEVEL = 5
 SKILL_DELEGATION_SECONDS = 48 * 60 * 60
@@ -462,6 +463,15 @@ BUILTIN_SKILLS["deportator_inator"] = Skill(
     "При попадании цель пропускает ход; боссы иммунны к депортации. "
     "80 энергии, одно применение за бой. Трактат добывается у Фуфелшмерца.",
     tags=("raid_loot", "once_per_battle", "no_boss_control"),
+)
+BUILTIN_SKILLS['solar_eclipse'] = Skill(
+    'solar_eclipse', 'Солнечное затмение', 'raid', 15, 'magic', 40, 95, 80, 0,
+    rarity='legendary', pierce=.50,
+    description='Гибридная магическая атака: использует большую из физической и магической атак, '
+                'игнорирует 50% магической защиты. Доступна с четвёртого своего действия. '
+                '80 энергии; одно успешное применение за бой. Промах оплачивается, но сохраняет попытку. '
+                'Трофей Кита, не продаётся у торговца и не создаётся в кузнице.',
+    tags=('raid_loot', 'hybrid_attack', 'fourth_action', 'once_on_hit'),
 )
 VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _finger_classes.items()})
 # Old names remain valid input; stable IDs keep inventory and saved builds intact.
@@ -983,7 +993,7 @@ def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
         return "Два применения в этом бою уже потрачены."
     if "fourth_action" in skill.tags and (side.get("own_turns", 0) if own_turns is None else own_turns) < 3:
         return "Доступно с четвёртого собственного действия."
-    if "once_per_battle" in skill.tags and skill.skill_id in side.get(
+    if any(t in skill.tags for t in ('once_per_battle', 'once_on_hit')) and skill.skill_id in side.get(
         "used_skills", []
     ):
         return "Уже использован в этом бою."
@@ -1224,7 +1234,7 @@ def resolve_skill(
                 part.update(hit=False,dodged=False)
     actor["resource"] -= actual_cost
     horizon_note=rpg_paid_action(actor,target,actual_cost,raid_context)
-    if "once_per_battle" in skill.tags:
+    if "once_per_battle" in skill.tags or 'once_on_hit' in skill.tags and hit:
         actor.setdefault("used_skills", []).append(skill_id)
     order_note = obey_enemy_prescript(actor, skill_id)
     damage = 0

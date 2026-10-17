@@ -16,13 +16,15 @@ from arena_raid_engine import BOSSES
 from handlers.routes import text_or_caption_regexp
 
 RAID_RE = re.compile(
-    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng|фуфелшмерц|фуфел|doofenshmirtz|doof))?\s*$",
+    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng|фуфелшмерц|фуфел|doofenshmirtz|doof|кит|kit|маэль))?\s*$",
     re.I,
 )
 
 
 def raid_boss_id(match):
     name = match.group("boss").casefold() if match and match.group("boss") else ""
+    if name in ('кит', 'kit', 'маэль'):
+        return 'kit'
     return (
         "doofenshmirtz"
         if name.startswith(("фуфел", "doof"))
@@ -98,17 +100,18 @@ class RaidPublisher:
             return (
                 text
                 + (
-                    f"\n📜 {('Депортатор-инатор · 80 энергии, один раз за бой' if row.get('boss_id') == 'doofenshmirtz' else 'Трактат поступи тигробоя')}: шанс 20%, гарантия на пятой победе с полной наградой без выпадения."
+                    f"\n📜 {('Солнечное затмение · легендарный трактат' if row.get('boss_id') == 'kit' else 'Депортатор-инатор · 80 энергии, один раз за бой' if row.get('boss_id') == 'doofenshmirtz' else 'Трактат поступи тигробоя')}: шанс 20%, гарантия на пятой победе с полной наградой без выпадения."
                     if boss.get("loot_skill")
                     else ""
                 )
-                + "\nУровень босса подстраивается под отряд, выше самого сильного бойца. Полная награда раз в час на каждого босса; повторы: 20% франков и XP, без предметов. Час отсчитывается от получения полной награды, общий для всех чатов и персонажей аккаунта. Повторы не продлевают кулдаун.\n\nВыберите личного персонажа в «Открыть рейд».\nСоздатель может начать бой с 1–3 участниками, в том числе в одиночку. На сбор — 10 минут."
+                + ('\nКошмар: фиксированный уровень 25, без подстройки под уровни, состав и размер отряда. Рассчитан на трёх подготовленных бойцов 20 уровня.' if boss.get('fixed_level') else '\nУровень босса подстраивается под отряд, выше самого сильного бойца.')
+                + " Полная награда раз в час на каждого босса; повторы: 20% франков и XP, без предметов. Час отсчитывается от получения полной награды, общий для всех чатов и персонажей аккаунта. Повторы не продлевают кулдаун.\n\nВыберите личного персонажа в «Открыть рейд».\nСоздатель может начать бой с 1–3 участниками, в том числе в одиночку. На сбор — 10 минут."
             )
         if row["status"] == "cancelled":
             return text + "Сбор рейда отменён или время сбора истекло."
         data = json.loads(row["data_json"])
         if row["status"] == "active":
-            text += f"Раунд {data['round']} · фаза {data['phase']}/2 · босс Lv.{data['boss']['level']}\nHP босса: {data['boss']['hp']}/{data['boss']['stats']['max_hp']}\n"
+            text += f"Раунд {data['round']} · фаза {data['phase']}/{data.get('phase_count',2)} · босс Lv.{data['boss']['level']}\nHP босса: {data['boss']['hp']}/{data['boss']['stats']['max_hp']}\n"
             text += html.escape(data["intent"]["text"]) + "\n"
             if len(data["intent"]["targets"]) == 1:
                 text += "Цель: " + names[data["intent"]["targets"][0]] + "\n"

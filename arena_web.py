@@ -444,7 +444,9 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
     reward_status = await db.arena_raid_reward_status(actor)
     result["raid_bosses"] = [
         dict(id=boss_id, name=boss["name"], sprite=boss.get("sprite", ""),
-             recommended_level=boss.get("recommended_level", 1), **reward_status[boss_id])
+             recommended_level=boss.get("recommended_level", 1),
+             fixed_level=boss.get('fixed_level'), difficulty=boss.get('difficulty', ''),
+             **reward_status[boss_id])
         for boss_id, boss in BOSSES.items() if boss_id in AVAILABLE_BOSSES
     ]
     return result

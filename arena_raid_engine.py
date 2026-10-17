@@ -16,12 +16,18 @@ from arena_engine import (
     MAX_FIGHTER_LEVEL,
 )
 from arena_doof import DOOF_SKILLS, set_doof_intent, resolve_doof_action
+from arena_kit import (KIT_LEVEL, KIT_STATS, KIT_SKILLS, set_kit_intent,
+                       resolve_kit_action, kit_prepare_action, kit_finish_action,
+                       kit_react, kit_defend)
 
 RAID_SIZE = 3
 RAID_ROUND_SECONDS = 120
 RAID_MAX_ROUNDS = 40
 BOSS_NAME = "Железный сборщик"
 BOSSES = {
+    'kit': dict(name='Кит — Ангел чёрного солнца', sprite='/static/assets/kit.png',
+                skills=tuple(KIT_SKILLS), recommended_level=20, fixed_level=KIT_LEVEL,
+                phase_count=3, difficulty='Кошмар', loot_skill='solar_eclipse'),
     "doofenshmirtz": dict(
         name="Фуфелшмерц — Злоба-инкорпорейтед",
         sprite="/static/assets/doofenshmirtz.png",
@@ -74,6 +80,7 @@ BOSS_SKILLS = {
     )
 }
 BOSS_SKILLS.update(DOOF_SKILLS)
+BOSS_SKILLS.update(KIT_SKILLS)
 
 
 def alive_players(data):
@@ -115,6 +122,9 @@ def set_intent(data):
         return
     boss = data["boss"]
     boss["is_boss"] = True
+    if data.get('boss_id') == 'kit':
+        set_kit_intent(data)
+        return
     phase = 2 if boss["hp"] <= boss["stats"]["max_hp"] // 2 else 1
     data["phase"] = phase
     if data.get("boss_id") == "doofenshmirtz":
@@ -182,7 +192,7 @@ def set_intent(data):
     data["intent"] = intent
 
 
-AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz")
+AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz", "kit")
 
 
 def raid_boss_level(levels):
@@ -200,6 +210,8 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
     level = (raid_boss_level([s["level"] for s in sources])
              if boss_id in AVAILABLE_BOSSES
              else min(20, round(sum(s["level"] for s in sources) / len(sources))))
+    if boss_id == 'kit':
+        level = KIT_LEVEL
     enemy = dict(
         slave_id=0,
         owner_id=0,
@@ -239,6 +251,14 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
     for stat in ("physical_defense", "magic_defense"):
         boss["stats"][stat] *= 0.7
     boss["stats"]["physical_attack"] *= 0.85
+    if boss_id == 'kit':
+        # Fixed encounter: no player level, HP, party size or class enters these numbers.
+        boss['stats'] = dict(KIT_STATS)
+        boss['hp'] = KIT_STATS['max_hp']
+        boss['resource'] = KIT_STATS['resource_max']
+        boss['raid_damage_multiplier'] = 1.0
+        boss['passive_details'] = [dict(name='Эхо-щиты', rarity='legendary', effects=[
+            dict(kind='kit_echo_shields', value=.25, description='Первое успешное прямое атакующее действие отряда за раунд ослаблено на 25%. Эхо-взор также ослабляет предсказанную атаку; эти защиты не складываются. Питомцы, призывы и периодический урон не расходуют щит.')])]
     boss["loadout"] = list(BOSSES[boss_id]["skills"])
     boss["name"] = BOSSES[boss_id]["name"]
     boss["mechanics"] = {}
@@ -359,6 +379,8 @@ def resolve_round(data, skills, rng=None):
             continue
         if selected is None or selected == "defend":
             player["previous_skill"] = None
+            if data.get('boss_id') == 'kit':
+                kit_defend(data, key)
             defend(actor)
             log_event(
                 data,
@@ -371,15 +393,23 @@ def resolve_round(data, skills, rng=None):
         # Resource/cooldowns were validated at submission. Enemy disruption can
         # change the applicable variant before this fighter acts: do not charge
         # or execute an unaffordable ability, and never abort the whole round.
+        prepared = None
         try:
+            if data.get('boss_id') == 'kit':
+                prepared = kit_prepare_action(data, key, effective_skill(pair_state(actor, boss), 'a', selected, skills))
             event = native_attack(actor, boss, selected, skills, rng,
                                   allies=[p['fighter'] for p in data['players'].values()
                                           if not p.get('withdrawn') and not p.get('reward_blocked')],
                                   raid_context=data)
         except ValueError:
+            if prepared:
+                boss['effects'] = [e for e in boss['effects'] if e.get('id') != 'kit_action_shield']
+                kit_defend(data, key)
             defend(actor)
             log_event(data, key, key, "Навык недоступен после изменений в бою: защита.")
             continue
+        if prepared:
+            kit_finish_action(data, key, event, prepared)
         log_event(
             data,
             key,
@@ -423,6 +453,8 @@ def resolve_round(data, skills, rng=None):
                 stunned = True
             else:
                 log_event(data, "boss", "boss", "Босс сопротивляется ошеломлению.")
+        if prepared and not stunned:
+            kit_react(data, key, event, prepared, rng)
     if not finish_if_needed(data):
         if stunned:
             _tick(boss)
@@ -431,6 +463,9 @@ def resolve_round(data, skills, rng=None):
         elif data.get("boss_id") == "doofenshmirtz":
             resolve_doof_action(data, rng)
             data["control_lock"] = max(0, data["control_lock"] - 1)
+        elif data.get('boss_id') == 'kit':
+            resolve_kit_action(data, rng)
+            data['control_lock'] = max(0, data['control_lock'] - 1)
         else:
             intent = data["intent"]
             if intent["kind"] == "shield":

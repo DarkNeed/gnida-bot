@@ -142,6 +142,9 @@ async def raid_view(db, row, actor):
         boss_id=row.get("boss_id", "iron"),
         silent=bool(row.get("silent", False)),
         recommended_level=boss_info.get("recommended_level", 1),
+        fixed_level=boss_info.get('fixed_level'),
+        difficulty=boss_info.get('difficulty', ''),
+        phase_count=boss_info.get('phase_count', 2),
         ally_sprite=boss_info.get("ally_sprite", ""),
         loot_name=(
             skills[boss_info["loot_skill"]].name if boss_info.get("loot_skill") else ""
