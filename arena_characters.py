@@ -41,6 +41,9 @@ class CharacterMixin:
                 sprite_key TEXT, png BLOB, pixel_art INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(user_id,slot));
             CREATE INDEX IF NOT EXISTS idx_character_sprite_key ON arena_character_slots(sprite_key);
+            CREATE TABLE IF NOT EXISTS arena_character_grants (
+                user_id INTEGER PRIMARY KEY, granted_by INTEGER NOT NULL,
+                granted_at INTEGER NOT NULL);
         ''')
         for column in ('a_character_slot','b_character_slot'):
             self._ensure_column('arena_battles',column,'INTEGER NOT NULL DEFAULT 1')
@@ -57,7 +60,22 @@ class CharacterMixin:
 
     def _character_unlocked_locked(self,user):
         if user == CHARACTER_OWNER_ID:return True
+        if self.connection.execute('SELECT 1 FROM arena_character_grants WHERE user_id=?',(user,)).fetchone():return True
         return bool(self.connection.execute("SELECT 1 FROM pet_orders WHERE user_id=? AND pack=? AND status='paid'",(user,CHARACTER_PACK)).fetchone())
+
+    async def arena_grant_character_slots(self,user,granted_by):
+        """Permanent owner gift, independent of Stars orders and their refunds."""
+        if type(granted_by) is not int or granted_by != CHARACTER_OWNER_ID:
+            raise ValueError('Выдавать анлок может только владелец бота.')
+        if type(user) is not int or not 0 < user <= 2**63-1:
+            raise ValueError('Некорректный Telegram ID.')
+        async with self._lock:
+            with self.connection:
+                changed=self.connection.execute(
+                    'INSERT OR IGNORE INTO arena_character_grants VALUES(?,?,?)',
+                    (user,granted_by,int(time.time()))).rowcount > 0
+                if changed:self._character_license_changed_locked(user)
+                return changed
 
     def _character_require_locked(self,user,expected_slot=None):
         slot=self._character_active_locked(user)

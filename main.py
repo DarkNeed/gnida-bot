@@ -20,6 +20,7 @@ from arena_web import create_arena_app
 from arena_links import arena_link
 from handlers.pets import create_pet_router
 from handlers.admin_menu import create_admin_menu_router
+from handlers.character_grants import create_character_grant_router
 from handlers.enterprises import create_enterprise_router, sweep_recovery_events
 
 
@@ -67,6 +68,7 @@ async def main() -> None:
     publisher = ArenaPublisher(database, bot, username)
     dispatcher = Dispatcher()
     dispatcher.include_router(create_admin_menu_router(database))
+    dispatcher.include_router(create_character_grant_router(database, username))
     pets_payments_enabled = pet_sales_enabled()
     logging.info("Pet Stars sales: %s", "ENABLED (live payments)" if pets_payments_enabled else "DISABLED")
     dispatcher.include_router(
