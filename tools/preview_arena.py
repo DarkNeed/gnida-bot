@@ -26,6 +26,7 @@ from arena_raid_engine import (
     resolve_round,
     BOSS_NAME,
     BOSS_SKILLS,
+    raid_boss_sprite,
 )
 from arena_engine import effective_skill
 from arena_archclasses import class_title, ARCHCLASSES
@@ -215,7 +216,7 @@ def raid_preview(phase="active"):
             effective_stats={k: effective_stat(f, k) for k in f["stats"]},
         )
         if key == "boss" and boss_info.get("sprite"):
-            f["class_avatar_url"] = boss_info["sprite"]
+            f["class_avatar_url"] = raid_boss_sprite(boss_id, data.get('phase', 1))
         if key == "boss" and boss_id == "doofenshmirtz":
             f["resource_name"] = "Заряд инатора"
         target = data["players"]["1"]["fighter"] if key == "boss" else data["boss"]
@@ -293,6 +294,7 @@ def raid_preview(phase="active"):
         recommended_level=boss_info.get("recommended_level", 1),
         fixed_level=boss_info.get('fixed_level'), phase_count=boss_info.get('phase_count', 2),
         difficulty=boss_info.get('difficulty', ''),
+        boss_sprites=dict(boss_info.get('phase_sprites', {})),
         ally_sprite=boss_info.get("ally_sprite", ""),
         loot_name=(
             BUILTIN_SKILLS[boss_info["loot_skill"]].name

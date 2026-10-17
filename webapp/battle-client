@@ -803,6 +803,10 @@ function raidSupport(data){
   if(data.boss_id!=='doofenshmirtz')return '';
   return '<div class="raid-support"><img src="/static/assets/perry.png" alt="Перри — союзник Фуфелшмерца"><span>Перри · союзник</span></div>';
 }
+function raidPhaseSprite(data){
+  const path=data.boss_sprites?.[String(data.data?.phase)];
+  if(data.data?.boss&&/^\/static\/assets\/[a-z_]+\.png$/.test(path||''))data.data.boss.class_avatar_url=path;
+}
 function raidPortrait(f,key,player=null,index=0){
   const disabled=player?.withdrawn||f.hp<=0;
   const effects=fighterStatuses(f).map(e=>'<span class="raid-effect" title="'+esc(e.name)+'">'+statusIcon(e.icon,e.direction)+'<span class="status-count">'+esc(e.count)+'</span></span>').join('');
@@ -810,6 +814,7 @@ function raidPortrait(f,key,player=null,index=0){
   return '<article id="raid-fighter-'+esc(key)+'" class="raid-fighter '+(boss?'raid-enemy':'raid-ally slot-'+index)+(own?' raid-own':'')+(disabled?' defeated':'')+(player?.deported_round===raidCurrent.data.round?' raid-deported':'')+'"><div class="raid-art">'+fighterImage(f,'raid-sprite')+'<div class="raid-ground"></div></div><div class="raid-effects">'+effects+'</div><div class="raid-hud"><div class="row"><strong title="'+esc(f.name)+'">'+esc(f.name)+'</strong>'+raidButton('ⓘ','inspect:'+key,'stat-button')+'</div><div class="muted">'+esc(f.class_name)+' · Lv.'+f.level+'</div>'+raidBar(f.hp,f.stats.max_hp,'HP')+(boss&&raidCurrent.boss_id!=='doofenshmirtz'?'':raidBar(f.resource,f.stats.resource_max,f.resource_name,'mana'))+(player?'<div class="raid-ready">'+(player.withdrawn?'Покинул рейд':f.hp<=0?'Боец повержен':player.deported_round===raidCurrent.data.round?'Вернётся в следующем раунде':player.ready?'✓ Готов':own?'Твой боец':'Выбирает навык')+'</div>':'')+'</div></article>';
 }
 function raidScreen(data){
+  raidPhaseSprite(data);
   audio.scene(data.status==='active'?(data.boss_id==='doofenshmirtz'?'doofenshmirtz':data.boss_id==='lei_heng'?'lei_heng':'raid'):data.status==='lobby'?'menu':'');
   raidCurrent=data;current=null;token='';chat=data.chat_id;
   const me=data.participants.find(p=>p.actor_id===data.actor_id);
@@ -861,6 +866,7 @@ function raidVisual(data,snapshot){
     if(f)Object.assign(f,values);
   }
   if(view.boss_id==='kit'&&view.data.boss.mechanics?.kit_phase)view.data.phase=view.data.boss.mechanics.kit_phase;
+  raidPhaseSprite(view);
   return view;
 }
 function raidPopup(key,value){

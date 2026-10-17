@@ -90,28 +90,38 @@ dialog.effect-dialog:not([open]){display:none}dialog.effect-dialog::backdrop{bac
 @media(max-width:550px){.raid-field{height:460px}.raid-enemy{left:69%;width:29%}.raid-enemy .raid-hud{width:160px;max-width:45vw;top:10px}.raid-art{height:130px}.raid-enemy .raid-art{height:165px}.raid-fighter.slot-0{bottom:18%}.raid-fighter.slot-1{bottom:13%}.raid-fighter.slot-2{bottom:8%}}
 .combat-slash{position:absolute;pointer-events:none;z-index:12;left:15%;top:35%;width:70%;height:5px;background:#fff0c2;box-shadow:0 0 9px 3px #ec6549;transform:rotate(-35deg);border-radius:50%;animation:combatSlash .19s ease-out both}
 .rarity.legendary{color:#ffe0a1;background:#ad78283b;border:1px solid #bd945a}
-/* Encounter backgrounds are CSS scenery, not part of the transparent sprites. */
+/* Encounter scenery stays separate from transparent character sprites. */
 .raid-field[data-boss="lei_heng"][data-phase="2"]{background:radial-gradient(ellipse at 80% 10%,#973d4266,transparent 55%),linear-gradient(#241c30,#50383f 67%,#424451)}
 .doof-field[data-phase="2"]{background:radial-gradient(ellipse at 80% 10%,#5a496e88,transparent 50%),radial-gradient(ellipse at 10% 95%,#526862,transparent 65%),linear-gradient(#191e39,#303c53 67%,#343f4c)}
 .kit-field{background:radial-gradient(ellipse at 76% 14%,#c2c7c649,transparent 44%),linear-gradient(#171e2b,#424853 67%,#353a45);border-color:#8b8b91}
 .kit-field:before{background:repeating-linear-gradient(90deg,transparent 0 17%,#b2b7c510 17% 18%,#070c1533 18% 20%),linear-gradient(0deg,#0d132166,transparent 60%);opacity:.8}
 .kit-field:after{content:"";position:absolute;pointer-events:none;z-index:0;right:10%;top:8%;width:110px;height:110px;border-radius:50%;background:radial-gradient(circle,#151923 48%,#e4e0cf80 50%,#aab1c126 58%,transparent 70%);opacity:.45}
-.kit-field[data-phase="2"]{background:radial-gradient(ellipse at 76% 20%,#8f3b4055,transparent 50%),repeating-linear-gradient(155deg,transparent 0 100px,#b24b4322 101px 103px,transparent 106px 140px),linear-gradient(#241b29,#49313c 67%,#302731);border-color:#a75c60}
-.kit-field[data-phase="3"]{background:radial-gradient(ellipse at 78% 16%,#a888403b,transparent 44%),linear-gradient(#090b14,#211d2c 67%,#181923);border-color:#b99761}
-.kit-field[data-phase="3"]:after{opacity:1;background:radial-gradient(circle,#02030a 0 46%,#f1d49a 48% 49%,#a88d643b 52%,transparent 69%);box-shadow:0 0 45px #c8a66b22}
+.kit-field[data-phase="2"]{background:radial-gradient(ellipse at 76% 14%,#aeb8bf24,transparent 44%),linear-gradient(#10151f,#242a35 67%,#191e28);border-color:#71717c}
+.kit-field[data-phase="2"]:before{inset:-7%;background:radial-gradient(ellipse at 14% 50%,#000d,transparent 53%),radial-gradient(ellipse at 52% 83%,#020308c9,transparent 59%),radial-gradient(ellipse at 88% 25%,#0009,transparent 39%),repeating-linear-gradient(90deg,transparent 0 17%,#b2b7c508 17% 18%,#070c1533 18% 20%);opacity:.85;animation:kit-fog 12s ease-in-out infinite alternate}
+.kit-field[data-phase="2"]:after{opacity:.2}
+.kit-field[data-phase="3"]{background:#020205 url('/static/assets/kit_eyes_background.png') center center/cover no-repeat;border-color:#85838c}
+.kit-field[data-phase="3"]:before{background:radial-gradient(ellipse at 78% 20%,#02020566,transparent 42%),linear-gradient(0deg,#02020599,transparent 45%);opacity:1}
+.kit-field[data-phase="3"]:after{inset:0;width:auto;height:auto;border-radius:0;opacity:1;background:linear-gradient(0deg,#02020555,transparent 35%);box-shadow:none}
 .kit-field .raid-enemy{left:65%;width:34%}.kit-field .raid-enemy .raid-art{height:245px}
+.kit-field[data-phase="3"] .raid-enemy .raid-art{height:285px}
+.kit-field[data-phase="3"] .raid-enemy .raid-ground{opacity:0}
+.kit-field[data-phase="3"] .raid-enemy .raid-hud{background:#05070dcc;border-radius:8px;padding:6px}
 .kit-field .raid-fighter.slot-1{left:27%}.kit-field .raid-fighter.slot-2{left:53%}
 .kit-field .raid-ally .barline{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:3px}
 .kit-field .raid-ally .barline span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kit-field .raid-enemy .raid-sprite:not(.raid-strike-left):not(.raid-cast):not(.raid-hit){transform:none;animation:kit-idle 3s ease-in-out infinite}
+.kit-field .raid-enemy .raid-sprite{scale:-1 1;transform:none}
+.kit-field .raid-enemy .raid-sprite:not(.raid-strike-left):not(.raid-cast):not(.raid-hit){animation:kit-idle 3s ease-in-out infinite}
 .kit-field .raid-strike-left{animation:kit-strike .35s ease}
 .kit-field .raid-dialogue{left:32%;top:100px;width:59%;grid-template-columns:35px 1fr;border-color:#b8b0a2;background:#10131eea}
 .kit-field .raid-dialogue-portrait{width:35px;background-image:url('/static/assets/kit.png');background-size:240%;background-position:50% 2%}
+.kit-field[data-phase="2"] .raid-dialogue-portrait{background-image:url('/static/assets/kit_phase_two.png')}
+.kit-field[data-phase="3"] .raid-dialogue-portrait{background-image:url('/static/assets/kit_phase_three.png')}
 .kit-field .raid-dialogue small{display:none}.kit-field .raid-dialogue p{font-size:11px}
-@keyframes kit-idle{50%{transform:translateY(-3px)}}@keyframes kit-strike{50%{transform:translateX(-20px)}}
+@keyframes kit-idle{50%{transform:translateY(-3px)}}@keyframes kit-strike{50%{transform:translateX(-20px)}}@keyframes kit-fog{to{transform:translate(3%,-2%);opacity:1}}
 @media(min-width:551px){.kit-field .raid-ally .raid-sprite{height:60%;width:60%}.kit-field .raid-fighter.slot-0{bottom:11%}.kit-field .raid-fighter.slot-1{bottom:7%}.kit-field .raid-fighter.slot-2{bottom:3%}}
 @media(max-width:550px){.kit-field .raid-enemy{left:62%;width:37%}.kit-field .raid-enemy .raid-art{height:190px}.kit-field .raid-dialogue{top:80px;left:31%;width:56%;grid-template-columns:25px 1fr;gap:5px;padding:6px}.kit-field .raid-dialogue-portrait{width:25px;height:36px}.kit-field .raid-dialogue p{font-size:9px}.kit-field:after{width:85px;height:85px;right:8%}}
-@media(prefers-reduced-motion:reduce){.kit-field .raid-enemy .raid-sprite{animation:none!important}}
+@media(max-width:550px){.kit-field[data-phase="3"] .raid-enemy .raid-art{height:225px}}
+@media(prefers-reduced-motion:reduce){.kit-field .raid-enemy .raid-sprite,.kit-field[data-phase="2"]:before{animation:none!important}}
 @keyframes combatSlash{from{opacity:0;transform:rotate(-35deg) scaleX(.1)}40%{opacity:1}to{opacity:0;transform:rotate(-35deg) scaleX(1.2)}}
 @media(prefers-reduced-motion:reduce){.combat-slash{animation:none}}
 .combat-pet{position:absolute;object-fit:contain;pointer-events:none;z-index:3;filter:drop-shadow(0 3px 3px #0004)}.field .combat-pet{width:10%;height:23%}.pet-player{left:36%;bottom:12%}.pet-enemy{right:12%;top:17%;transform:scaleX(-1)}.raid-art .raid-pet{width:43%;height:46%;right:-12%;bottom:0}.raid-enemy .raid-pet{transform:scaleX(-1)}

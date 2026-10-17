@@ -13,7 +13,7 @@ from PIL import Image
 from arena_engine import (BUILTIN_SKILLS, FIGHTER_CLASSES, create_battle_state,
                           resolve_skill, validate_skill)
 from arena_kit import KIT_STATS, KIT_LEVEL, kit_prepare_action, kit_finish_action
-from arena_raid_engine import create_raid_state, resolve_round, set_intent
+from arena_raid_engine import create_raid_state, resolve_round, set_intent, raid_boss_sprite
 from arena_raid_web import raid_view
 from handlers.raids import RAID_RE, raid_boss_id, RaidPublisher
 from test_arena_epic import FixedRoll
@@ -230,12 +230,38 @@ class KitEngineTests(unittest.TestCase):
             self.assertGreaterEqual(min(img.size), 512)
             self.assertEqual(img.getchannel('A').getextrema(), (0, 255))
 
+    def test_phase_assets_are_transparent_and_base_is_preserved(self):
+        root = Path(__file__).resolve().parents[1]
+        for phase, filename in ((1, 'kit.png'), (2, 'kit_phase_two.png'), (3, 'kit_phase_three.png')):
+            self.assertEqual(raid_boss_sprite('kit', phase), '/static/assets/'+filename)
+            with Image.open(root/'webapp/assets'/filename) as img:
+                self.assertEqual(img.mode, 'RGBA')
+                low, high = img.getchannel('A').getextrema()
+                self.assertEqual(low, 0)
+                self.assertGreaterEqual(high, 240)
+        self.assertEqual(raid_boss_sprite('kit', 99), '/static/assets/kit.png')
+        self.assertEqual(raid_boss_sprite('lei_heng', 2), '/static/assets/lei_heng.png')
+        with Image.open(root/'webapp/assets/kit_eyes_background.png') as img:
+            self.assertGreater(img.width, img.height)
+
 
 class KitStoreTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = store_helpers.LeiStoreTests.asyncSetUp
     asyncTearDown = store_helpers.LeiStoreTests.asyncTearDown
     start = store_helpers.LeiStoreTests.start
     win = store_helpers.LeiStoreTests.win
+
+    async def test_phase_sprites_are_decorated_without_changing_saved_combat_data(self):
+        row = await self.start('kit')
+        for phase in (1, 2, 3):
+            state = json.loads(row['data_json'])
+            state['phase'] = phase
+            record = dict(row, data_json=json.dumps(state))
+            before = record['data_json']
+            public = await raid_view(self.db, record, 10)
+            self.assertEqual(public['data']['boss']['class_avatar_url'], raid_boss_sprite('kit', phase))
+            self.assertEqual(public['boss_sprites'][str(phase)], raid_boss_sprite('kit', phase))
+            self.assertEqual(record['data_json'], before)
 
     async def test_legendary_loot_public_fixed_level_and_account_cooldown(self):
         row = await self.start('kit')
@@ -271,7 +297,7 @@ class KitClientTests(unittest.TestCase):
         for mode, phase in (('kit', 1), ('kit_phase2', 2), ('kit_phase3', 3)):
             data = raid_preview(mode)
             body = run('document.getElementById=()=>null;raidScreen(input);', data)
-            self.assertIn('/static/assets/kit.png', body)
+            self.assertIn(raid_boss_sprite('kit', phase), body)
             self.assertIn('data-boss="kit" data-phase="'+str(phase)+'"', body)
             self.assertIn('ФАЗА '+str(phase)+' / 3', body)
             self.assertIn('data-raid="skill:defend"', body)
@@ -280,3 +306,24 @@ class KitClientTests(unittest.TestCase):
         body = run('document.getElementById=()=>null;raidScreen(input);', data)
         self.assertIn('фиксированный уровень 25', body)
         self.assertNotIn('Уровень босса подстраивается', body)
+
+    def test_replay_uses_the_event_phase_not_the_latest_server_sprite(self):
+        run = client_helpers.ArenaMarketClientTests().run_client
+        data = raid_preview('kit_phase3')
+        result = json.loads(run("const view=raidVisual(input,{boss:{mechanics:{kit_phase:1}}});out=JSON.stringify({phase:view.data.phase,sprite:view.data.boss.class_avatar_url,original:input.data.boss.class_avatar_url});", data))
+        self.assertEqual(result, dict(phase=1, sprite='/static/assets/kit.png', original='/static/assets/kit_phase_three.png'))
+        result = json.loads(run("const view=raidVisual(input,{boss:{mechanics:{kit_phase:2}}});out=JSON.stringify({phase:view.data.phase,sprite:view.data.boss.class_avatar_url});", data))
+        self.assertEqual(result, dict(phase=2, sprite='/static/assets/kit_phase_two.png'))
+
+    def test_untrusted_sprite_metadata_cannot_be_used_as_an_image_url(self):
+        data = raid_preview('kit')
+        data['boss_sprites']['1'] = 'https://untrusted.example/spy.png'
+        body = client_helpers.ArenaMarketClientTests().run_client('document.getElementById=()=>null;raidScreen(input);', data)
+        self.assertNotIn('untrusted.example', body)
+        self.assertIn('/static/assets/kit.png', body)
+
+    def test_facing_is_independent_of_hit_cast_and_strike_transforms(self):
+        css = (Path(__file__).resolve().parents[1]/'webapp/style.css').read_text(encoding='utf-8')
+        self.assertIn('.kit-field .raid-enemy .raid-sprite{scale:-1 1;transform:none}', css)
+        self.assertIn('kit_eyes_background.png', css)
+        self.assertIn('.kit-field[data-phase="2"]:before', css)

@@ -26,6 +26,9 @@ RAID_MAX_ROUNDS = 40
 BOSS_NAME = "Железный сборщик"
 BOSSES = {
     'kit': dict(name='Кит — Ангел чёрного солнца', sprite='/static/assets/kit.png',
+                phase_sprites={'1': '/static/assets/kit.png',
+                               '2': '/static/assets/kit_phase_two.png',
+                               '3': '/static/assets/kit_phase_three.png'},
                 skills=tuple(KIT_SKILLS), recommended_level=20, fixed_level=KIT_LEVEL,
                 phase_count=3, difficulty='Кошмар', loot_skill='solar_eclipse'),
     "doofenshmirtz": dict(
@@ -81,6 +84,12 @@ BOSS_SKILLS = {
 }
 BOSS_SKILLS.update(DOOF_SKILLS)
 BOSS_SKILLS.update(KIT_SKILLS)
+
+
+def raid_boss_sprite(boss_id, phase=1):
+    """Presentation only; legacy saved raids receive phase art on the next read."""
+    boss = BOSSES.get(boss_id, BOSSES['iron'])
+    return boss.get('phase_sprites', {}).get(str(phase), boss.get('sprite', ''))
 
 
 def alive_players(data):

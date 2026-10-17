@@ -9,7 +9,7 @@ from arena_evolution import evolution_info
 from arena_rpg_descriptions import skill_description as rpg_skill_description
 from arena_archclasses import archclass_view, class_title
 from arena_progression import choice_avatar
-from arena_raid_engine import BOSSES, BOSS_SKILLS, pair_state
+from arena_raid_engine import BOSSES, BOSS_SKILLS, pair_state, raid_boss_sprite
 from arena_mirror_effects import gift_cost
 from arena_pets import pet_cost
 
@@ -53,7 +53,7 @@ async def raid_view(db, row, actor):
         if not boss:
             side.update(await db.arena_character_sprite_info(fighter,character_slot))
         elif boss_info.get("sprite"):
-            side["class_avatar_url"] = boss_info["sprite"]
+            side["class_avatar_url"] = raid_boss_sprite(row.get('boss_id', 'iron'), data.get('phase', 1))
         if boss and boss_info.get("ally_sprite"):
             side["resource_name"] = "Заряд инатора"
         side["skill_details"] = []
@@ -145,6 +145,7 @@ async def raid_view(db, row, actor):
         fixed_level=boss_info.get('fixed_level'),
         difficulty=boss_info.get('difficulty', ''),
         phase_count=boss_info.get('phase_count', 2),
+        boss_sprites=dict(boss_info.get('phase_sprites', {})),
         ally_sprite=boss_info.get("ally_sprite", ""),
         loot_name=(
             skills[boss_info["loot_skill"]].name if boss_info.get("loot_skill") else ""
