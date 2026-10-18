@@ -124,3 +124,87 @@ class HourlyRewardTests(unittest.IsolatedAsyncioTestCase):
         import json
         saved = json.loads((await self.db.arena_raid_get(row['token']))['data_json'])
         self.assertEqual(saved['rewards']['10']['reward_available_at'], reward['reward_available_at'])
+
+    async def test_seventy_percent_boundary_for_every_available_boss(self):
+        for boss in ('lei_heng','doofenshmirtz','kit'):
+            for roll,dropped in ((.699999,True),(.7,False)):
+                with self.subTest(boss=boss,roll=roll):
+                    self.now+=3600
+                    reward=self.finish(await self.raid(boss),roll=roll)
+                    self.assertEqual(bool(reward['loot']),dropped)
+                    self.assertTrue(reward['full_reward'])
+                    status=await self.status(boss)
+                    self.assertEqual(status['full_reward'],not dropped)
+                    self.assertEqual(status['cooldown_remaining'],3600 if dropped else 0)
+                    self.assertEqual(reward['reward_available_at'],self.now+3600 if dropped else 0)
+
+    async def test_no_drop_keeps_full_cash_xp_and_immediate_retry_after_restart(self):
+        first=self.finish(await self.raid(),roll=1)
+        self.assertFalse(first['loot'])
+        self.assertEqual(first['reward_available_at'],0)
+        self.assertTrue((await self.status())['full_reward'])
+        await self.db.close();await self.db.connect()
+        import json
+        retry_row=await self.raid()
+        level=json.loads(retry_row['data_json'])['boss']['level']
+        retry=self.finish(retry_row,roll=1)
+        self.assertEqual((retry['francs'],retry['xp']),(40+3*level,10+4*level))
+        self.assertTrue(retry['full_reward'])
+        self.assertTrue((await self.status())['full_reward'])
+        self.assertFalse(self.db.connection.execute('SELECT 1 FROM arena_raid_reward_cooldowns WHERE actor_id=10').fetchone())
+        dropped=self.finish(await self.raid())
+        self.assertTrue(dropped['loot'])
+        self.assertEqual((await self.status())['cooldown_remaining'],3600)
+        repeat_row=await self.raid()
+        level=json.loads(repeat_row['data_json'])['boss']['level']
+        repeat=self.finish(repeat_row,roll=0)
+        self.assertFalse(repeat['full_reward'])
+        self.assertFalse(repeat['loot'])
+        self.assertEqual(repeat['francs'],(40+3*level)//5)
+
+    async def test_no_drop_attempts_share_pity_across_chats_slots_and_restart(self):
+        self.finish(await self.raid(),roll=1)
+        await self.db.upsert_chat(2,'Other chat')
+        await self.db.upsert_user(2,10,'10','Player')
+        await self.unlock();await self.select(2,chat=2)
+        await self.db.close();await self.db.connect()
+        self.assertTrue((await self.status())['full_reward'])
+        reward=self.finish(await self.raid(chat=2),roll=1)
+        self.assertTrue(reward['full_reward'])
+        self.assertEqual(self.db.connection.execute('SELECT misses FROM arena_raid_global_pity WHERE actor_id=10 AND boss_id="lei_heng"').fetchone()[0],2)
+
+    async def test_no_drop_saved_result_cannot_be_paid_twice(self):
+        row=await self.raid();reward=self.finish(row,roll=1)
+        before=self.db.connection.execute('SELECT SUM(quantity) FROM arena_inventory').fetchone()[0]
+        with self.assertRaisesRegex(ValueError,'закрыт'):
+            self.finish(row,roll=0)
+        self.assertEqual(before,self.db.connection.execute('SELECT SUM(quantity) FROM arena_inventory').fetchone()[0])
+        self.assertEqual(reward['reward_available_at'],0)
+
+    async def test_failed_item_grant_rolls_back_claim_pity_and_cash(self):
+        row=await self.raid()
+        before=self.profile()['xp']
+        balance=await self.db.franc_balance(1,10)
+        with patch.object(self.db,'_arena_add_item_locked',side_effect=RuntimeError('fail')):
+            with self.assertRaises(RuntimeError):self.finish(row)
+            self.db.connection.rollback()
+        self.assertEqual(self.profile()['xp'],before)
+        self.assertEqual(await self.db.franc_balance(1,10),balance)
+        self.assertTrue((await self.status())['full_reward'])
+        self.assertIsNone(self.db.connection.execute('SELECT misses FROM arena_raid_global_pity WHERE actor_id=10 AND boss_id="lei_heng"').fetchone())
+        self.assertTrue(self.finish(row)['loot'])
+
+    async def test_upgrade_clears_only_known_failed_loot_claims_once(self):
+        miss_row=await self.raid()
+        self.finish(miss_row,roll=1)
+        hit=self.finish(await self.raid('doofenshmirtz'))
+        self.db.connection.execute('INSERT INTO arena_raid_reward_cooldowns VALUES(?,?,?,?)',(10,'lei_heng',self.now,miss_row['token']))
+        self.db.connection.execute("DELETE FROM arena_raid_migrations WHERE name='loot_reward_cooldowns_v1'")
+        self.db.connection.commit()
+        self.db._connect_raids()
+        self.assertTrue((await self.status())['full_reward'])
+        self.assertEqual((await self.status('doofenshmirtz'))['resets_at'],hit['reward_available_at'])
+        self.db.connection.execute('INSERT INTO arena_raid_reward_cooldowns VALUES(?,?,?,?)',(10,'lei_heng',self.now,'unknown-history'))
+        self.db.connection.commit()
+        self.db._connect_raids()
+        self.assertFalse((await self.status())['full_reward'])  # Migration is one-time.

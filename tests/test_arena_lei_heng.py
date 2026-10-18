@@ -377,7 +377,7 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.misses(chat=2), 0)
             self.assertEqual(self.misses(), 0)
 
-    async def test_twenty_percent_drop_and_transaction_rollback(self):
+    async def test_seventy_percent_drop_and_transaction_rollback(self):
         with patch("arena_raid.random.SystemRandom", return_value=Hit()):
             data = self.win(await self.start())
         self.assertIn("поступь", data["rewards"]["10"]["loot"])
@@ -422,14 +422,14 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_drop_threshold_and_native_inventory_transfer_replacement(self):
         with patch(
             "arena_raid.random.SystemRandom",
-            return_value=SimpleNamespace(random=lambda: 0.2),
+            return_value=SimpleNamespace(random=lambda: 0.7),
         ):
             data = self.win(await self.start())
         self.assertFalse(data["rewards"]["10"]["loot"])
         self.reward_time=int(time.time()) + 3600
         with patch(
             "arena_raid.random.SystemRandom",
-            return_value=SimpleNamespace(random=lambda: 0.1999),
+            return_value=SimpleNamespace(random=lambda: 0.6999),
         ):
             self.win(await self.start())
         item = self.db.connection.execute(

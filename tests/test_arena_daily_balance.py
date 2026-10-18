@@ -24,6 +24,15 @@ class NoLoot(random.Random):
         return 1
 
 
+class LootRoll(random.Random):
+    def __init__(self, roll):
+        super().__init__(0)
+        self.roll=roll
+
+    def random(self):
+        return self.roll
+
+
 class AdaptiveRaidTests(unittest.TestCase):
     def test_levels_and_actual_boss_growth_player_cap_unchanged(self):
         for levels, expected in (([18]*3,20),([19]*3,21),([20]*3,22),([1,1,20],21),([16,17,17],19),([1],3)):
@@ -70,12 +79,12 @@ class DailyBalanceStoreTests(unittest.IsolatedAsyncioTestCase):
             await self.db.arena_raid_setup(row['token'],10,'join',30,False)
         return await self.db.arena_raid_setup(row['token'],10,'start')
 
-    def finish(self,row,won=True,manual=2,withdrawn=False):
+    def finish(self,row,won=True,manual=2,withdrawn=False,roll=0):
         data=json.loads(row['data_json'])
         data.update(won=won,finished=True,result='done')
         player=data['players']['10']
         player.update(manual_turns=manual,withdrawn=withdrawn)
-        with patch('arena_raid.random.SystemRandom',return_value=NoLoot()):
+        with patch('arena_raid.random.SystemRandom',return_value=LootRoll(roll)):
             self.db._raid_finish_locked(row,data)
         self.db.connection.commit()
         return data['rewards'].get('10')
@@ -153,16 +162,20 @@ class DailyBalanceStoreTests(unittest.IsolatedAsyncioTestCase):
         with patch('arena_raid.raid_reward_now',return_value=now + 3600):
             self.assertTrue(self.finish(await self.raid(chat=2))['full_reward'])
 
-    async def test_repeats_pity_and_guarantee_only_full_cooldowns(self):
+    async def test_failed_rolls_retry_immediately_and_fifth_is_guaranteed(self):
         now = int(time.time())
         for attempt in range(1,6):
-            with patch('arena_raid.raid_reward_now',return_value=now + attempt * 3600):
-                reward=self.finish(await self.raid())
+            with patch('arena_raid.raid_reward_now',return_value=now):
+                reward=self.finish(await self.raid(),roll=1)
+                self.assertTrue(reward['full_reward'])
                 self.assertEqual(bool(reward['loot']),attempt==5)
                 expected=attempt if attempt<5 else 0
-                repeat=self.finish(await self.raid())
-                self.assertFalse(repeat['loot'])
-                self.assertFalse(repeat['full_reward'])
+                if attempt==5:
+                    repeat=self.finish(await self.raid())
+                    self.assertFalse(repeat['loot'])
+                    self.assertFalse(repeat['full_reward'])
+                else:
+                    self.assertTrue((await self.db.arena_raid_reward_status(10))['lei_heng']['full_reward'])
                 misses=self.db.connection.execute('SELECT misses FROM arena_raid_global_pity WHERE actor_id=10 AND boss_id="lei_heng"').fetchone()[0]
                 self.assertEqual(misses,expected)
 

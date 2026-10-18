@@ -203,9 +203,10 @@ process.stdout.write(c.out||app.innerHTML);
         body=self.run_client("page='raids';menuScreen(input);",data)
         self.assertIn('Повторная награда 20% · полная через 31 мин.',body)
         self.assertIn('Полная награда доступна',body)
-        self.assertIn('раз в час',body)
+        self.assertIn('Шанс трактата — 70%',body)
+        self.assertIn('кулдаун наград запускается только при выпадении трактата',body)
         self.assertNotIn('00:00 МСК',body)
-        self.assertIn('общая для всех чатов и бойцов',body)
+        self.assertIn('общий для всех чатов и бойцов',body)
         self.assertNotIn('Железный сборщик',body)
 
     def test_catchup_level_display_and_low_level_reset_disabled(self):

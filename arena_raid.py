@@ -22,6 +22,7 @@ from arena_archprogress import skill_branch
 
 RAID_LOBBY_SECONDS = 600
 RAID_REWARD_COOLDOWN = 3600
+RAID_TRACTATE_DROP_CHANCE = 0.70
 MSK = timezone(timedelta(hours=3))
 
 
@@ -130,6 +131,24 @@ class RaidMixin:
                             WHERE excluded.claimed_at>arena_raid_reward_cooldowns.claimed_at''',
                             (actor, row['boss_id'], row['finished_at'], row['token']))
                 self.connection.execute("INSERT INTO arena_raid_migrations VALUES('hourly_rewards_v1')")
+        if not self.connection.execute("SELECT 1 FROM arena_raid_migrations WHERE name='loot_reward_cooldowns_v1'").fetchone():
+            # A previous full payout without a tractate must not block the new
+            # policy. Remove only claims whose saved result explicitly has no
+            # loot; unknown/missing historical results are left untouched.
+            with self.connection:
+                claims=self.connection.execute('''SELECT c.actor_id,c.boss_id,c.raid_token,r.data_json
+                    FROM arena_raid_reward_cooldowns c JOIN arena_raids r ON r.token=c.raid_token''').fetchall()
+                for claim in claims:
+                    try:
+                        saved=json.loads(claim['data_json'])
+                        reward=saved.get('rewards',{}).get(str(claim['actor_id']),{})
+                    except (TypeError,ValueError,AttributeError):
+                        continue
+                    if isinstance(reward,dict) and 'loot' in reward and not reward['loot']:
+                        self.connection.execute('''DELETE FROM arena_raid_reward_cooldowns
+                            WHERE actor_id=? AND boss_id=? AND raid_token=?''',
+                            (claim['actor_id'],claim['boss_id'],claim['raid_token']))
+                self.connection.execute("INSERT INTO arena_raid_migrations VALUES('loot_reward_cooldowns_v1')")
 
     async def arena_raid_reward_status(self, actor):
         async with self._lock:
@@ -250,7 +269,8 @@ class RaidMixin:
                 table = "personal_profiles" if player["personal"] else "slave_profiles"
                 chat, fighter = row["chat_id"], player["fighter_id"]
                 boss_id = row.get("boss_id", "iron")
-                # Conditional claim and every payout belong to one transaction.
+                # Reserve eligibility and settle everything atomically. A failed
+                # loot roll releases this claim before the transaction commits.
                 full_reward = bool(self.connection.execute(
                     '''INSERT INTO arena_raid_reward_cooldowns VALUES(?,?,?,?)
                     ON CONFLICT(actor_id,boss_id) DO UPDATE SET claimed_at=excluded.claimed_at,raid_token=excluded.raid_token
@@ -282,7 +302,7 @@ class RaidMixin:
                         (player["actor_id"], boss_id),
                     ).fetchone()
                     misses = pity["misses"] if pity else 0
-                    dropped = misses >= 4 or rng.random() < 0.2
+                    dropped = misses >= 4 or rng.random() < RAID_TRACTATE_DROP_CHANCE
                     self.connection.execute(
                         """INSERT INTO arena_raid_global_pity VALUES(?,?,?)
                         ON CONFLICT(actor_id,boss_id) DO UPDATE SET misses=excluded.misses""",
@@ -302,15 +322,21 @@ class RaidMixin:
                             tractate.skill_id,
                             tractate.rarity,
                         )
-                elif full_reward and pool and rng.random() < 0.3:
+                elif full_reward and pool and rng.random() < RAID_TRACTATE_DROP_CHANCE:
                     kind, content, rarity, loot = rng.choice(pool)
                     self._arena_add_item_locked(
                         chat, player["actor_id"], kind, content, rarity
                     )
                 pet_rewards = self._pet_reward_locked(
                     player["actor_id"], "raid", "raid:" + row["token"]) if full_reward else {}
+                available_at=claimed_at + RAID_REWARD_COOLDOWN
+                if full_reward and not loot:
+                    self.connection.execute('''DELETE FROM arena_raid_reward_cooldowns
+                        WHERE actor_id=? AND boss_id=? AND raid_token=?''',
+                        (player['actor_id'],boss_id,row['token']))
+                    available_at=0
                 data["rewards"][key] = dict(xp=xp, francs=francs, loot=loot, pet_rewards=pet_rewards,
-                    full_reward=full_reward, reward_day=day, reward_available_at=claimed_at + RAID_REWARD_COOLDOWN)
+                    full_reward=full_reward, reward_day=day, reward_available_at=available_at)
         self._raid_save_locked(row, data, "finished")
 
     def _raid_player_valid_locked(self, row, player):
