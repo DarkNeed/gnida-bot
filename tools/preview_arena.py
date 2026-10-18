@@ -29,7 +29,7 @@ from arena_raid_engine import (
     raid_boss_sprite,
 )
 from arena_engine import effective_skill
-from arena_archclasses import class_title, ARCHCLASSES
+from arena_archclasses import class_title, ARCHCLASSES, archclass_view
 from arena_progression import choice_avatar
 
 app = web.Application()
@@ -68,8 +68,11 @@ async def demo_fighter(request):
     if arch and (arch not in ARCHCLASSES or ARCHCLASSES[arch]['class_id']!=cls):
         raise web.HTTPNotFound()
     stage=20 if request.query.get('stage','20')=='20' else 10
+    mastery=request.query.get('mastery')=='1'
+    resolved=20 if mastery else 0
+    if mastery and arch:stage=10
     owned = [
-        k for k in unlocked_skill_ids(cls, 20,archclass_id=arch) if BUILTIN_SKILLS[k].class_id == cls
+        k for k in unlocked_skill_ids(cls, 20,archclass_id=arch,progression_level=resolved) if BUILTIN_SKILLS[k].class_id == cls
     ]
     if arch:
         primary={'warrior':['armor_split','steel_charge','counter_lunge'],
@@ -84,10 +87,10 @@ async def demo_fighter(request):
             'ring':['first_stroke','red_etude','last_stroke'],
             'pinky':['calm_breath','moon_arc','falling_star']}
         owned=primary.get(cls,humour_fingers.get(cls,owned[:3]))+['arch_'+arch]
-    source = dict(slave_id=1, owner_id=1, class_id=cls, level=20, loadout=owned,archclass_id=arch,archclass_stage=stage)
+    source = dict(slave_id=1, owner_id=1, class_id=cls, level=20, loadout=owned,archclass_id=arch,archclass_stage=stage,progression_level=resolved)
     state = create_battle_state(
         source,
-        dict(source, slave_id=2, owner_id=2, class_id="ragamuffin", loadout=None),
+        dict(source, slave_id=2, owner_id=2, class_id="ragamuffin", loadout=None,archclass_id='',progression_level=0),
     )
     if arch:
         state['sides']['a']['rpg_state']={
@@ -112,11 +115,28 @@ async def demo_fighter(request):
                 middle_revenge=['blood_debt'],ring_pointillist=[],ring_fauvist=['beast'],
                 pinky_dihui=['counter_until'],pinky_tiansha=[])
             state['sides']['a']['final_state']={k:v for k,v in state['sides']['a']['final_state'].items() if k in names[arch]}
+    if mastery:
+        from arena_mastery import BRANCHES
+        a,b=state['sides'].values()
+        a['mastery_state']=dict(street_ready=True,combo=['a','b','c'],last_cute='uwu',theory_ready=True,executions=2,flow=3,prayers=3,hunt_ready=True)
+        relevant=dict(ragamuffin=['street_ready','combo'],cutie=['last_cute'],nerd=['theory_ready'],index=['executions'],mage=['flow'],priest=['prayers'],hunter=['hunt_ready'],warrior=['combo'])
+        a['mastery_state']={k:v for k,v in a['mastery_state'].items() if not arch and k in relevant.get(cls,[])}
+        a['mechanics']=dict(order=3,grudge=3,focus=3,last_attack='bum_punch',prescript=BRANCHES[arch][0] if arch else 'last_line')
+        a['mechanics']={k:v for k,v in a['mechanics'].items() if k in dict(thumb=['order'],middle=['grudge'],pinky=['focus'],index=['prescript'],jock=['last_attack']).get(cls,[])}
+        a['effects']=[dict(id='evolution_prepared',kind='prepared_attack',value=1,duration=2)]
+        if cls!='jock':a['effects']=[]
+        b['effects']=[dict(id='adoration',kind='damage_pct',value=-.4,duration=3),dict(id='doxxing_magic',kind='magic_defense_pct',value=-.2,duration=3),dict(id='rpg_burn',kind='burn',value=3,duration=3)]
+        if cls not in ('cutie','nerd','ring') and arch!='mage_elementalist':b['effects']=[]
+        if not arch:
+            primary=dict(ragamuffin=['bum_punch','dust_in_eyes','street_breath'],cutie=['uwu','meow','posing'],jock=['smack','clench','butt_peak'],nerd=['humiliate','doxxing','go_to_store'],thumb=['bayonet','warning_shot','senior_verdict'],index=['receive_prescript','first_line','last_line'],middle=['grit_teeth','answer_for_it','whole_family'],ring=['first_stroke','unfinished_portrait','last_stroke'],pinky=['calm_breath','moon_arc','falling_star'],warrior=['armor_split','steel_charge','warrior_execute'],mage=['mana_shot','mana_focus','mana_overload'],priest=['light_word','priest_heal','holy_judgment'],hunter=['hunter_cut','hunter_transform','hunter_visceral'])
+            a['loadout']=primary[cls]+['mastery_'+cls]
+            if cls=='hunter':a['rpg_state']=dict(visceral_ready=True,visceral_until=8)
     for key, side in state["sides"].items():
         c = FIGHTER_CLASSES[side["class_id"]]
         side.update(
             name=class_title(side,c.name),
             class_name=class_title(side,c.name),
+            archclass=archclass_view(side),
             class_avatar_url=choice_avatar(c.class_id,side.get('archclass_id',''),side.get('archclass_stage',10)),
             sprite=c.class_id,
             class_rarity=c.rarity,
@@ -124,6 +144,8 @@ async def demo_fighter(request):
             skill_details=[asdict(effective_skill(state,key,k)) for k in side["loadout"]],
             effective_stats={k: effective_stat(side, k) for k in side["stats"]},
         )
+        from arena_mastery import view as mastery_view
+        side['mastery']=mastery_view(side)
     return web.json_response(
         dict(
             token="demo",

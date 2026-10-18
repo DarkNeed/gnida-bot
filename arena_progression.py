@@ -9,7 +9,7 @@ def pending_choice(profile):
     resolved = int(profile.get("progression_level", 0))
     if level >= 5 and profile["class_id"] == "ragamuffin" and resolved < 5:
         return 5
-    if branch_options(profile["class_id"]):
+    if branch_options(profile["class_id"]) or profile["class_id"] == 'ragamuffin':
         if level >= 10 and resolved < 10 and not profile.get("archclass_id"):
             return 10
         if level >= 20 and resolved < 20:

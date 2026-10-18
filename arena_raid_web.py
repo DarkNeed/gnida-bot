@@ -9,6 +9,7 @@ from arena_evolution import evolution_info
 from arena_rpg_descriptions import skill_description as rpg_skill_description
 from arena_archclasses import archclass_view, class_title
 from arena_progression import choice_avatar
+from arena_mastery import view as mastery_view
 from arena_raid_engine import BOSSES, BOSS_SKILLS, pair_state, raid_boss_sprite
 from arena_mirror_effects import gift_cost
 from arena_pets import pet_cost
@@ -36,6 +37,7 @@ async def raid_view(db, row, actor):
             resource_name=cls.resource_name,
             class_rarity=cls.rarity,
             archclass=archclass_view(side),
+            mastery=mastery_view(side),
             effective_stats={k: effective_stat(side, k) for k in side["stats"]},
         )
         side["accuracy_bonus"] = sum(

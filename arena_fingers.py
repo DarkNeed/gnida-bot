@@ -390,7 +390,8 @@ def negative_kinds(side):
 
 def combat_modifiers(actor, target, skill, rng):
     memory = actor.setdefault("mechanics", {})
-    obeyed = memory.get("prescript") == skill.skill_id
+    from arena_mastery import obeys as mastery_obeys
+    obeyed = memory.get("prescript") == skill.skill_id or mastery_obeys(actor,skill)
     accuracy, boost, pierce = 0, 0, 0
     if (
         has_trait(actor, "blade_loyalty")

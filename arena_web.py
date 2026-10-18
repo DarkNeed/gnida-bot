@@ -38,6 +38,7 @@ from arena_evolution import evolution_info
 from arena_rpg_descriptions import skill_description as rpg_skill_description
 from arena_archclasses import archclass_view, class_title, branch_options
 from arena_progression import pending_choice, choice_avatar
+from arena_mastery import view as mastery_view, street_stats, variant as mastery_variant, BASE, BASE_FINAL, BRANCHES
 from arena_raid_web import raid_view
 from arena_raid_engine import BOSSES, AVAILABLE_BOSSES
 from arena_pets import pet_cost, PET_PACKS, PET_TERMS_VERSION
@@ -121,6 +122,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 side["name"] = f"{prefix} · {class_title(side, cls.name)}"
                 names["b_fighter"] = side["name"]
             side["archclass"] = archclass_view(side)
+            side['mastery'] = mastery_view(side)
             side["class_name"] = class_title(side, cls.name)
             side["class_avatar_url"] = choice_avatar(
                 side["class_id"], side.get("archclass_id", ""), 20 if side["archclass"] and side["archclass"]["stage"] == 20 else 10
@@ -298,6 +300,8 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
         profile["stats"] = stats_for(
             profile["class_id"], profile["level"], False, classes
         )
+        profile['stats'] = street_stats(profile, profile['stats'])
+        profile['mastery'] = mastery_view(profile)
         profile["class_name"] = classes.get(
             profile["class_id"], classes["ragamuffin"]
         ).name
@@ -339,7 +343,10 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
         def profile_skill(skill):
             if rpg_branch(profile) and skill.class_id==profile['class_id']:
                 variant=rpg_variant(skill,dict(profile,effects=[],rpg_state={}),dict(hp=100,stats=dict(max_hp=100),effects=[]))
-                return dict(asdict(variant),description=rpg_skill_description(variant,profile),evolution=None)
+                return dict(asdict(variant),description=rpg_skill_description(variant,profile),evolution=evolution_info(skill,profile['class_id'],profile) if profile['mastery'] else None)
+            variant=mastery_variant(skill,dict(profile,effects=[],mastery_state={}),dict(hp=100,stats=dict(max_hp=100),effects=[]))
+            if variant is not skill:
+                return dict(asdict(variant),evolution=evolution_info(skill,profile['class_id'],profile))
             return dict(asdict(skill),evolution=evolution_info(skill,profile['class_id'],profile))
         profile["skills"] = [
             dict(
@@ -353,6 +360,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
                 grants,
                 profile["known_skills"],
                 profile["archclass_id"],
+                profile['progression_level'],
             )
         ]
         for entry in profile.get('skill_offers',[])+profile.get('available_skills',[]):
@@ -399,11 +407,12 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
                     id="stay",
                     name=current_name,
                     avatar_url=profile["class_avatar_url"],
-                    description="Остаться в текущем классе без изменений.",
+                    description=('Совершенное владение ветвью: '+BRANCHES[profile['archclass_id']][5] if profile.get('archclass_id') in BRANCHES else
+                        'Путь мастерства: '+(BASE_FINAL[profile['class_id']] if stage==20 else BASE[profile['class_id']][1]) if profile['class_id'] in BASE else 'Сохранить текущий класс.'),
                     current=True,
                 )
             )
-            if stage == 5:
+            if stage == 5 or profile['class_id']=='ragamuffin':
                 options.extend(profile["classes"])
             elif stage == 20 and profile["archclass"]:
                 a = profile["archclass"]

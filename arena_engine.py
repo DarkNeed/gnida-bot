@@ -40,6 +40,9 @@ from arena_rpg_combat import context as rpg_action_context, incoming as rpg_inco
 from arena_finals import (context as final_context, modifiers as final_modifiers,
     incoming as final_incoming, received as final_received, after_action as final_after_action,
     break_grip as final_break_grip)
+from arena_mastery import (build_skills as build_mastery_skills, skill_allowed as mastery_allowed,
+    variant as mastery_variant, street_stats, context as mastery_context,
+    modifiers as mastery_modifiers, after_action as mastery_after_action)
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -587,6 +590,7 @@ BUILTIN_PASSIVES.update(_epic_passives)
 _rpg_classes, _rpg_skills = build_rpg_catalog(FighterClass, Skill, effect)
 FIGHTER_CLASSES.update(_rpg_classes)
 BUILTIN_SKILLS.update(_rpg_skills)
+BUILTIN_SKILLS.update(build_mastery_skills(Skill))
 VISIBLE_CLASS_ALIASES.update({c.name.casefold():k for k,c in _rpg_classes.items()})
 
 
@@ -783,6 +787,7 @@ def unlocked_skill_ids(
     granted: Iterable[str] = (),
     known: Iterable[str] | None = None,
     archclass_id: str = "",
+    progression_level: int = 0,
 ) -> list[str]:
     catalog = skills or BUILTIN_SKILLS
     allowed_classes = {"ragamuffin"}
@@ -800,6 +805,8 @@ def unlocked_skill_ids(
         )
         and skill.unlock_level <= level
         and branch_skill_allowed(skill, archclass_id, level)
+        and mastery_allowed(skill, dict(class_id=class_id, level=level,
+            archclass_id=archclass_id, progression_level=progression_level))
         and (known is None or skill.skill_id in known)
     ]
 
@@ -812,8 +819,9 @@ def normalize_loadout(
     granted: Iterable[str] = (),
     known: Iterable[str] | None = None,
     archclass_id: str = "",
+    progression_level: int = 0,
 ) -> list[str]:
-    unlocked = unlocked_skill_ids(class_id, level, skills, granted, known, archclass_id)
+    unlocked = unlocked_skill_ids(class_id, level, skills, granted, known, archclass_id, progression_level)
     selected: list[str] = []
     for skill_id in requested or ():
         if skill_id in unlocked and skill_id not in selected:
@@ -840,6 +848,7 @@ def create_battle_state(
         controlled = bool(source.get("controlled"))
         class_id = str(source["class_id"])
         stats = stats_for(class_id, int(source["level"]), controlled, class_catalog)
+        stats = street_stats(source, stats)
         fighter_class = class_catalog.get(class_id, FIGHTER_CLASSES["ragamuffin"])
         passive_limit = passive_skill_limit(int(source["level"]))
         passive_details = source.get("passive_details")
@@ -884,6 +893,7 @@ def create_battle_state(
                 source.get("archclass_id", "") if selected_branch(source) else ""
             ),
             "archclass_stage": source.get("archclass_stage", 20),
+            "progression_level": source.get("progression_level", 0),
             "level": min(MAX_FIGHTER_LEVEL, int(source["level"])),
             "stats": stats,
             "hp": stats["max_hp"],
@@ -896,6 +906,7 @@ def create_battle_state(
                 source.get("granted_skills", ()),
                 source.get("known_skills"),
                 source.get("archclass_id", ""),
+                source.get("progression_level", 0),
             ),
             "effects": starting_effects,
             "passive_details": passive_details,
@@ -951,12 +962,12 @@ def _initialize_turn_counts(state: dict) -> None:
 
 def effective_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Skill:
     skill = (skills or BUILTIN_SKILLS)[skill_id]
-    return adaptive_skill(rpg_variant(skill_variant(
-        skill,
-        state["sides"][side_key],
-        state["sides"]["b" if side_key == "a" else "a"],
-        completed_turns(state, side_key),
-    ), state["sides"][side_key], state["sides"]["b" if side_key == "a" else "a"]), state["sides"][side_key], effective_stat)
+    actor = state['sides'][side_key]
+    target = state['sides']['b' if side_key == 'a' else 'a']
+    skill = skill_variant(skill, actor, target, completed_turns(state, side_key))
+    skill = rpg_variant(skill, actor, target)
+    skill = mastery_variant(skill, actor, target)
+    return adaptive_skill(skill, actor, effective_stat)
 
 
 def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Skill:
@@ -978,6 +989,8 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
     ):
         raise ValueError("Навык недоступен этому архиклассу или уровню.")
     skill = effective_skill(state, side_key, skill_id, catalog)
+    if not mastery_allowed(skill, side):
+        raise ValueError("Навык доступен только на пути мастерства своего класса.")
     restriction = skill_restriction(side, skill, completed_turns(state, side_key))
     if restriction:
         raise ValueError(restriction)
@@ -1040,6 +1053,7 @@ def battle_status_snapshot(state: dict) -> dict:
             "epic_state": deepcopy(side.get("epic_state", {})),
             "rpg_state": deepcopy(side.get("rpg_state", {})),
             "final_state": deepcopy(side.get("final_state", {})),
+            "mastery_state": deepcopy(side.get("mastery_state", {})),
             **({"pet": deepcopy(side["pet"]), "pet_state": deepcopy(side.get("pet_state", {}))}
                if side.get("pet") else {}),
             "effects": deepcopy(
@@ -1161,6 +1175,8 @@ def resolve_skill(
     other = "b" if side_key == "a" else "a"
     target = state["sides"][other]
     final_before=final_context(actor,target)
+    mastery_before=mastery_context(actor,target)
+    mastery_allies = [dict(hp=p['hp']) for p in (allies or [])]
     rpg_context = rpg_action_context(actor,target)
     rpg_context['action_id']=[actor.get('controller_id'),actor.get('own_turns',0)]
     # Capture before _tick expires the last turn; utilities and misses without an
@@ -1183,6 +1199,8 @@ def resolve_skill(
     class_accuracy += epic_accuracy
     rpg_accuracy, rpg_multiplier = rpg_modifiers(actor,target,skill)
     class_accuracy += rpg_accuracy
+    mastery_accuracy, mastery_multiplier = mastery_modifiers(actor,target,skill)
+    class_accuracy += mastery_accuracy
     parried, parry_multiplier = rpg_parry(actor,target,skill)
     extra_accuracy, extra_boost, pierce, critical, obeyed = combat_modifiers(
         actor, target, skill, rng
@@ -1268,6 +1286,7 @@ def resolve_skill(
                 * mirror_multiplier
                 * epic_multiplier
                 * rpg_multiplier
+                * mastery_multiplier
                 * parry_multiplier
                 * actor.get("raid_damage_multiplier", 1)
                 * rpg_incoming_multiplier(target,rpg_branch(target))
@@ -1442,6 +1461,9 @@ def resolve_skill(
         actor, target, skill, hit, min(before[other]["hp"], damage), actual_cost,
         pet_context, effects_text, skills or BUILTIN_SKILLS)
     rpg_notes,reaction_damage = rpg_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),before[side_key]['hp'],rng,effective_stat,rpg_context,allies)
+    mastery_before['ally_healed'] = any(p['hp'] > mastery_allies[i]['hp'] for i,p in enumerate(allies or []))
+    mastery_notes=mastery_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),mastery_before,obeyed,allies)
+    arch_notes += mastery_notes
     if horizon_note: rpg_notes.append(horizon_note)
     follower_before=target['hp']
     final_notes=final_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),

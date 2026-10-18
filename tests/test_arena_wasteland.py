@@ -99,7 +99,7 @@ class EnemySourceTests(unittest.TestCase):
                 seen.update(enemy_source(20, rng=rng)["loadout"])
             native = {
                 s.skill_id for s in BUILTIN_SKILLS.values()
-                if s.class_id == cls and not skill_branch(s)
+                if s.class_id == cls and not skill_branch(s) and not any(t.startswith('mastery:') for t in s.tags)
             }
             self.assertTrue(native.issubset(seen), cls)
 
@@ -115,6 +115,8 @@ class WastelandStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_menu(1, 10)
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, fighter_xp_limit())
         self.db.connection.commit()
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
         await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
 
     async def asyncTearDown(self):
@@ -230,6 +232,8 @@ class WastelandRewardTests(unittest.IsolatedAsyncioTestCase):
     async def test_level_twenty_player_does_not_accumulate_more_xp(self):
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, fighter_xp_limit())
         self.db.connection.commit()
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
         await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
         row = await self.win(20)
         self.assertEqual(json.loads(row["state_json"])["rewards"], {"a": 0})

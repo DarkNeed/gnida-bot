@@ -65,7 +65,10 @@ class ProgressionTests(unittest.IsolatedAsyncioTestCase):
         before = (p["xp"], p["loadout"])
         await self.choose("stay")
         p = await self.profile()
-        self.assertEqual((p["xp"], p["loadout"]), before)
+        self.assertEqual(p['xp'],before[0])
+        self.assertEqual(p['loadout'][:len(before[1])],before[1])
+        self.assertIn('street_breath',p['loadout'])
+        self.assertEqual(p['mastery']['stage'],5)
         self.assertIsNone(p["progression_choice"])
         with self.assertRaises(ValueError):
             await self.db.arena_edit_profile(1, 10, 10, True, "class", "jock")

@@ -102,6 +102,26 @@ function fighterStatuses(side){
   const m=side.mechanics||{};
   const rpg=side.rpg_state||{};
   const f=side.final_state||{};
+  const mastery=side.mastery_state||{};
+  for(const [id,name,icon,max,detail] of [
+    ['flow','Поток маны',5,3,'Каждая родная магическая атака даёт шаг, даже при промахе. Перегрузка: +25% урона за шаг; барьер может потратить три шага на защиту.'],
+    ['executions','Личное толкование',14,2,'Два исполненных предписания усиливают Последнюю строку.'],
+    ['prayers','Чудо без сана',11,3,'Три полезных родных действия готовят сильную Кару или лечение на 20 уровне.'],
+    ['hunt_chain','Охота без конца',10,2,'Оставшиеся усиленные родные атаки; серия ограничена тремя собственными действиями.']]){
+    if(mastery[id]>0&&(id!=='hunt_chain'||mastery.hunt_until>(side.own_turns||0)))items.push({id:'mastery:'+id,name,icon,count:mastery[id]+'/'+max,detail});
+  }
+  for(const [id,name,icon,detail] of [
+    ['street_ready','Уличный ответ',10,'Подготовлен усиленный Удар бомжа.'],
+    ['theory_ready','Теория всего',3,'Следующая родная атака, Деанон или магазин получают усиление.'],
+    ['free_prescript','Написано мной',14,'Следующая родная атака считается исполнением предписания.'],
+    ['mercy_ready','Вера без сана: кара',11,'Следующая успешная Кара усилена полезной поддержкой.'],
+    ['healing_ready','Вера без сана: лечение',11,'Следующее лечение усилено успешной Карой.'],
+    ['hunt_ready','Верный след',10,'Следующий Рваный разрез усилен на 35%.']]){
+    if(mastery[id])items.push({id:'mastery:'+id,name,icon,count:'1',detail});
+  }
+  for(const [id,name,icon,max] of [['combo','Комбинация мастерства',10,3],['theory_steps','Теория всего',3,3]]){
+    if(mastery[id]?.length&&!mastery.theory_ready)items.push({id:'mastery:'+id,name,icon,count:mastery[id].length+'/'+max,detail:'Подготовка разными родными действиями. Это шаги комбинации, а не длительность.'});
+  }
   for(const [id,name,icon,max,detail] of [
     ['shame','Смущение',0,3,'Три заряда превращают поцелуй в финальную атаку; расход при попадании.'],
     ['whim','Капризы',0,3,'Два заряда можно потратить на приговор поцелуем или защиту позированием.'],
@@ -176,7 +196,7 @@ function showEffect(key,id){
   dialog.innerHTML='<button class="small" data-close-effect aria-label="Закрыть эффект">✕</button>'+statusIcon(item.icon,item.direction)+'<h2>'+esc(item.name)+'</h2><p class="muted">'+esc(side.name)+'</p><p>'+item.detail+'</p>';
   if(fresh){dialog.showModal();dialog.querySelector('[data-close-effect]').focus({preventScroll:true});}
 }
-function skillInfo(s){const e=s.evolution;return '<div class="muted">'+(s.cost!==undefined?'Энергия '+s.cost+' · точность '+s.accuracy+'% · сила '+s.power+' · перезарядка '+s.cooldown+' х.':'')+'</div>'+(s.description?'<div class="muted">'+esc(s.description)+'</div>':'')+((s.effects||[]).map(e=>'<div class="muted">'+describeEffect(e)+'</div>').join(''))+(e?'<div class="evolution-note"><b>'+(e.active?(e.specialization?'Навык архикласса':'Усиленная версия'):'Превращение с '+e.min_level+' уровня: '+esc(e.name))+'</b><div>'+esc(e.condition)+'</div>'+(!e.active?'<div>Энергия '+esc(e.cost)+' · сила '+esc(e.power)+'. '+esc(e.description)+'</div>':'')+'</div>':'');}
+function skillInfo(s){const e=s.evolution;return '<div class="muted">'+(s.cost!==undefined?'Энергия '+s.cost+' · точность '+s.accuracy+'% · сила '+s.power+' · перезарядка '+s.cooldown+' х.':'')+'</div>'+(s.description?'<div class="muted">'+esc(s.description)+'</div>':'')+((s.effects||[]).map(e=>'<div class="muted">'+describeEffect(e)+'</div>').join(''))+(e?'<div class="evolution-note"><b>'+(e.active?(e.mastery?'Путь мастерства':e.specialization?'Навык архикласса':'Усиленная версия'):'Превращение с '+e.min_level+' уровня: '+esc(e.name))+'</b><div>'+esc(e.condition)+'</div>'+(!e.active?'<div>Энергия '+esc(e.cost)+' · сила '+esc(e.power)+'. '+esc(e.description)+'</div>':'')+'</div>':'');}
 function battleSkillButton(skill,side){
   const evolved=skill.evolution?.active, prescribed=side.mechanics?.prescript===skill.skill_id, enemyOrder=(side.mechanics?.enemy_prescript?.allowed||[side.mechanics?.enemy_prescript?.skill_id]).includes(skill.skill_id);
   const label=prescribed?'ПРЕДПИСАНИЕ':enemyOrder?'ПРЕДПИСАНИЕ ВРАГА':skill.damage_type==='magic'?'МАГИЯ':skill.damage_type==='physical'?'АТАКА':'ЭФФЕКТ';
@@ -184,6 +204,9 @@ function battleSkillButton(skill,side){
 }
 function archInfo(p){
   const a=p.archclass;
+  const m=p.mastery;
+  const mastery=m?'<div class="note mastery-info"><b>Путь мастерства · '+esc(m.name)+'</b><p>'+esc(m.description)+'</p>'+m.milestones.map(s=>'<p class="muted">'+(s.unlocked?'✓ ':'🔒 ')+s.level+' уровень: '+esc(s.description)+'</p>').join('')+'</div>':'';
+  if(m)return mastery+(a?'<div class="note"><b>Сохранён архикласс: '+esc(a.name)+'</b>'+((a.progression||[]).map(s=>'<p class="muted">✓ '+s.level+' уровень: '+esc(s.description)+'</p>').join(''))+'<p class="muted">Финальная эволюция не активна.</p></div>':'');
   if(a)return '<div class="note"><b>'+esc(a.title)+' · ступень '+a.stage+'</b><p>'+esc(a.description)+'</p>'+((a.progression||[]).map(m=>'<p class="muted">'+(m.unlocked?'✓ ':'🔒 ')+m.level+' уровень: '+esc(m.description)+'</p>').join(''))+'<p class="muted">'+(a.stage===20?'Развитие 20 уровня: ':'На 20 уровне: ')+esc(a.final_description)+'</p></div>';
   const choices=p.archclass_options||[];
   if(!choices.length)return '';
@@ -824,7 +847,7 @@ async function boot(){
     const cls=new URLSearchParams(location.search).get('fighter');
     if(['cutie','jock','nerd','thumb','index','middle','ring','pinky','warrior','mage','priest','hunter'].includes(cls)){
       const previewParams=new URLSearchParams(location.search);
-      try{battleScreen(await api('/demo/fighter/'+cls+'?arch='+encodeURIComponent(previewParams.get('arch')||'')+'&stage='+encodeURIComponent(previewParams.get('stage')||'20')));return;}catch{}
+      try{battleScreen(await api('/demo/fighter/'+cls+'?arch='+encodeURIComponent(previewParams.get('arch')||'')+'&stage='+encodeURIComponent(previewParams.get('stage')||'20')+'&mastery='+encodeURIComponent(previewParams.get('mastery')||'0')));return;}catch{}
     }
     startDemo();return;
   }

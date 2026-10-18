@@ -72,5 +72,5 @@ def class_after_action(actor, target, skill, hit, dodged, adored, charmed):
         target["resource"] = min(
             target["stats"]["resource_max"], target["resource"] + 8
         )
-    if hit and adored and skill.skill_id == "meow":
+    if hit and adored and skill.skill_id == "meow" and 'keep_adoration' not in skill.tags:
         target["effects"] = [e for e in target["effects"] if e.get("id") != "adoration"]

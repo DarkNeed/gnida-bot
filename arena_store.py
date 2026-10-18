@@ -621,6 +621,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 granted_skills,
                 self._arena_known_skills_locked(chat_id, slave_id, False),
                 profile["archclass_id"],
+                profile['progression_level'],
             )
             self.connection.execute(
                 """UPDATE slave_profiles SET loadout=?, skills_pending_at=NULL, updated_at=?
@@ -810,6 +811,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             class_id=profile["class_id"],
             archclass_id=profile["archclass_id"],
             archclass_stage=profile["archclass_stage"],
+            progression_level=profile["progression_level"],
             level=profile["level"],
             loadout=[k for k in json.loads(profile["loadout"]) if self._arena_content_enabled_locked(chat,'skill',k)],
             granted_skills=[k for k in self._arena_grants_locked(chat, user, personal) if self._arena_content_enabled_locked(chat,'skill',k)],
@@ -1528,9 +1530,10 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     raise ValueError("Этот выбор уже сделан или ещё не открыт.")
                 if value == "stay":
                     pass
-                elif stage == 5:
+                elif stage == 5 or profile['class_id']=='ragamuffin':
                     # Reuse the existing class validation and initialization.
                     action = "class"
+                    progression_stage = 5
                 elif stage == 20 and profile["archclass_id"]:
                     if value != "advance":
                         raise ValueError(
@@ -1570,7 +1573,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 if (
                     profile["level"] < 5
                     or profile["class_id"] != "ragamuffin"
-                    or pending_choice(dict(profile)) != 5
+                    or (pending_choice(dict(profile)) != 5 and progression_stage != 5)
                 ):
                     raise ValueError("Класс выбирается один раз, с 5 уровня.")
                 allowed = set(
@@ -1598,7 +1601,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     skills,
                     self._arena_grants_locked(chat, user, personal),
                     self._arena_known_skills_locked(
-                        chat, user, personal, dict(profile, class_id=chosen)
+                        chat, user, personal, dict(profile, class_id=chosen, progression_level=5, archclass_id='')
                     ),
                 )
                 self.connection.execute(
@@ -1620,6 +1623,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     self._arena_grants_locked(chat, user, personal),
                     self._arena_known_skills_locked(chat, user, personal),
                     profile["archclass_id"],
+                    profile['progression_level'],
                 )
                 if any(k not in unlocked or not self._arena_content_enabled_locked(chat,'skill',k,skills) for k in value):
                     raise ValueError("Навык ещё не открыт.")
@@ -1631,6 +1635,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     self._arena_grants_locked(chat, user, personal),
                     self._arena_known_skills_locked(chat, user, personal),
                     profile["archclass_id"],
+                    profile['progression_level'],
                 )
                 self.connection.execute(
                     f"UPDATE {table} SET loadout=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?",
@@ -1672,6 +1677,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                         skills,
                         self._arena_grants_locked(chat, user, personal),
                         archclass_id=profile["archclass_id"],
+                        progression_level=profile['progression_level'],
                     )
                     known = self._arena_known_skills_locked(chat, user, personal)
                 else:
@@ -1710,6 +1716,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                         self._arena_grants_locked(chat, user, personal),
                         known,
                         profile["archclass_id"],
+                        profile['progression_level'],
                     )
                 self.connection.execute(
                     f"UPDATE {table} SET {column}=? WHERE chat_id=? AND user_id=?",

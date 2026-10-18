@@ -87,6 +87,10 @@ EVOLUTIONS = {
 
 def evolution_info(skill, class_id, source=None, target=None, own_turns=0):
     if source:
+        from arena_mastery import info as mastery_info
+        info=mastery_info(skill,source,target)
+        if info:return info
+    if source:
         from arena_finals import rule as final_rule
         info=final_rule(skill,source,target)
         if info:
@@ -149,7 +153,8 @@ def rule_active(rule, skill, actor, target, own_turns):
     if rule["trigger"] in {"order", "grudge", "focus"}:
         return memory.get(rule["trigger"], 0) >= 3
     if rule["trigger"] == "prescript":
-        return memory.get("prescript") == skill.skill_id
+        from arena_mastery import obeys as mastery_obeys
+        return memory.get("prescript") == skill.skill_id or mastery_obeys(actor,skill)
     if rule["trigger"] == "negatives":
         return len(negative_kinds(target)) >= 3
     if rule["trigger"] == "charging":

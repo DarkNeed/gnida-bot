@@ -311,6 +311,10 @@ class ArenaMarketTests(unittest.IsolatedAsyncioTestCase):
         self.db._grant_profile_xp_locked("personal_profiles", 1, 10, 10**6)
         self.db.connection.commit()
         await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
+        await self.db.arena_edit_profile(1, 10, 10, True, "progression", "stay")
+        await self.db.arena_edit_profile(1, 10, 10, True, "forget_skill", "street_breath")
+        await self.db.arena_edit_profile(1, 10, 10, True, "forget_skill", "mastery_ragamuffin")
         for key in ("smack", "humiliate", "uwu", "posing"):
             await self.db.arena_use_item(1, 10, self.add("skill", key), 10)
         view = (await menu_view(self.db, 1, 10))["personal"]

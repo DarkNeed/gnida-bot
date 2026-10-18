@@ -445,6 +445,10 @@ class LeiStoreTests(unittest.IsolatedAsyncioTestCase):
         self.db._grant_profile_xp_locked("personal_profiles", 1, 20, 10**6)
         self.db.connection.commit()
         await self.db.arena_edit_profile(1, 20, 20, True, "progression", "stay")
+        await self.db.arena_edit_profile(1, 20, 20, True, "progression", "stay")
+        await self.db.arena_edit_profile(1, 20, 20, True, "progression", "stay")
+        await self.db.arena_edit_profile(1, 20, 20, True, "forget_skill", "street_breath")
+        await self.db.arena_edit_profile(1, 20, 20, True, "forget_skill", "mastery_ragamuffin")
         for content in ("smack", "humiliate", "uwu", "posing"):
             self.db._arena_add_item_locked(1, 20, "skill", content, "common")
             self.db.connection.commit()

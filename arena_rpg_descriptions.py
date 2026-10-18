@@ -63,6 +63,7 @@ FINAL_SKILLS = {
 
 
 def skill_description(skill, source):
+    if any(t.startswith('mastery_') for t in skill.tags):return skill.description
     key=source.get('archclass_id')
     if (key not in BRANCH_SKILLS or skill.class_id!=source.get('class_id')
             or skill.skill_id not in BRANCH_SKILLS[key] and skill.skill_id!='arch_'+key):

@@ -314,7 +314,7 @@ class ArenaMarketMixin(ForgeMixin):
         offers=json.loads(profile['skill_offers']);known=json.loads(profile['skill_memory'] or '[]')
         _,skills=self._fighter_catalog_locked()
         selected=normalize_loadout(profile['class_id'],profile['level'],json.loads(profile['loadout']),skills,
-            self._arena_grants_locked(chat,user,personal),known,profile['archclass_id'])
+            self._arena_grants_locked(chat,user,personal),known,profile['archclass_id'],profile['progression_level'])
         original_selected=list(selected)
         if not offers or offers[0]!=value.get('skill'):
             raise ValueError('Предложение навыка изменилось. Обнови меню.')
@@ -340,7 +340,7 @@ class ArenaMarketMixin(ForgeMixin):
             elif new not in selected and len(selected)<4:selected.append(new)
         # A skipped skill remains available for manual learning later.
         selected=normalize_loadout(profile['class_id'],profile['level'],selected,skills,
-            self._arena_grants_locked(chat,user,personal),known,profile['archclass_id'])
+            self._arena_grants_locked(chat,user,personal),known,profile['archclass_id'],profile['progression_level'])
         self.connection.execute('UPDATE personal_profiles SET skill_memory=?,loadout=?,skill_offers=?,skills_pending_at=NULL WHERE chat_id=? AND user_id=?',
             (json.dumps(known),json.dumps(selected),json.dumps(offers[1:]),chat,user))
 
@@ -354,11 +354,12 @@ class ArenaMarketMixin(ForgeMixin):
             skills,
             self._arena_grants_locked(chat, user, personal),
             archclass_id=profile["archclass_id"],
+            progression_level=profile['progression_level'],
         )
         # An update may introduce a skill to an existing capped-level profile.
         # Start the normal delegation clock once, even when memory is full.
         seen = set(json.loads(profile["skill_seen"]))
-        if any(skill_branch(skills[key]) and key not in seen for key in eligible):
+        if any((skill_branch(skills[key]) or any(t.startswith('mastery:') for t in skills[key].tags)) and key not in seen for key in eligible):
             table = "personal_profiles" if personal else "slave_profiles"
             self.connection.execute(
                 f"UPDATE {table} SET skills_pending_at=COALESCE(skills_pending_at,?) WHERE chat_id=? AND user_id=?",
@@ -460,7 +461,7 @@ class ArenaMarketMixin(ForgeMixin):
         public_skills = {
             k
             for k, s in BUILTIN_SKILLS.items()
-            if not skill_branch(s) and "raid_loot" not in s.tags
+            if not skill_branch(s) and "raid_loot" not in s.tags and not any(t.startswith('mastery:') for t in s.tags)
         }
         for row in self.connection.execute(
             "SELECT skill_id,definition_json FROM custom_fighter_skills"
@@ -871,6 +872,9 @@ class ArenaMarketMixin(ForgeMixin):
                             raise ValueError(
                                 "Навык доступен только своей ветке с 15 уровня. Трактат не потрачен."
                             )
+                        from arena_mastery import skill_allowed as mastery_allowed
+                        if not mastery_allowed(catalog[content],dict(profile)):
+                            raise ValueError('Навык доступен только на своём пути мастерства. Трактат не потрачен.')
                         if catalog[content].unlock_level > profile["level"]:
                             raise ValueError(
                                 f"Для изучения нужен уровень {catalog[content].unlock_level}. Трактат не потрачен."
@@ -933,6 +937,7 @@ class ArenaMarketMixin(ForgeMixin):
                             self._arena_grants_locked(chat, user, personal),
                             self._arena_known_skills_locked(chat, user, personal),
                             profile["archclass_id"],
+                            profile['progression_level'],
                         )
                         self.connection.execute(
                             f"UPDATE {table} SET loadout=?,skills_pending_at=? WHERE chat_id=? AND user_id=?",
@@ -1002,6 +1007,7 @@ class ArenaMarketMixin(ForgeMixin):
                 skills,
                 self._arena_grants_locked(chat, user, personal),
                 archclass_id=profile["archclass_id"],
+                progression_level=profile['progression_level'],
             )
             result = dict(
                 passives=list(passives.values()),
@@ -1024,6 +1030,7 @@ class ArenaMarketMixin(ForgeMixin):
                     self._arena_grants_locked(chat, user, personal),
                     known,
                     profile["archclass_id"],
+                    profile['progression_level'],
                 ),
                 passive_loadout=[
                     k

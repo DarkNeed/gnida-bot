@@ -183,7 +183,7 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
     """Return None for ordinary engine effects, otherwise a log note."""
     kind=item['kind']; recipient=target if item.get('target')=='enemy' else actor
     if kind=='rpg_armor_break':
-        armor_break(target)
+        armor_break(target, item['value'])
         return 'броня расколота'
     if kind=='rpg_heal':
         candidates=[s for s in (allies or [actor]) if s['hp']>0]

@@ -3,6 +3,7 @@
 import random
 from arena_archclasses import branch_options, ARCHCLASS_LEVEL
 from arena_archprogress import branch_skill_allowed
+from arena_mastery import skill_allowed as mastery_allowed
 
 from arena_engine import (
     FIGHTER_CLASSES,
@@ -37,6 +38,7 @@ def enemy_source(level: int, previous_class: str | None = None, rng=None, *, ena
         if s.class_id == class_id
         and s.unlock_level <= level
         and branch_skill_allowed(s, archclass_id, level)
+        and mastery_allowed(s,dict(class_id=class_id,level=level,archclass_id=archclass_id))
     ]
     # At least one attack, then varied native skills rather than always the
     # first four low-level skills. Fill remaining slots with inherited skills.
@@ -50,6 +52,7 @@ def enemy_source(level: int, previous_class: str | None = None, rng=None, *, ena
         if s.class_id == "ragamuffin"
         and s.unlock_level <= level
         and s.skill_id not in loadout
+        and not any(t.startswith('mastery:') for t in s.tags)
     ]
     loadout += inherited[: MAX_ACTIVE_SKILLS - len(loadout)]
     return dict(

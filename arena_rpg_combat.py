@@ -10,9 +10,9 @@ def buff(side, key, kind, value, duration):
     side['effects'].append(dict(id=key, kind=kind, value=value, duration=duration))
 
 
-def armor_break(side):
+def armor_break(side, amount=.15):
     old = next((e['value'] for e in side['effects'] if e.get('id') == 'armor_split'), 0)
-    buff(side, 'armor_split', 'physical_defense_pct', max(-.45, old - .15), 3)
+    buff(side, 'armor_split', 'physical_defense_pct', max(-.45, old - amount), 3)
 
 
 def has_effect(side, key):

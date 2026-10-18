@@ -63,7 +63,7 @@ class FingerEngineTests(unittest.TestCase):
                 state = self.state(cls)
                 self.assertEqual(len(state["sides"]["a"]["passive_details"]), 2)
                 for skill in BUILTIN_SKILLS.values():
-                    if skill.class_id != cls or not skill.cost or skill_branch(skill):
+                    if skill.class_id != cls or not skill.cost or skill_branch(skill) or any(t.startswith('mastery:') for t in skill.tags):
                         continue
                     state = self.state(cls, passives=[])
                     self.tap(state, skill.skill_id)
