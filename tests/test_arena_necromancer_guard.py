@@ -25,7 +25,7 @@ class NecromancerGuardTests(unittest.TestCase):
                     actor['rpg_state'] = dict(summon=3, death_servants=final)
                     for _ in range(8):
                         self.assertEqual(incoming(actor, 100, 'mage_necromancer'),
-                                         75 if level >= 12 else 100)
+                                         65 if final and level==20 else 75 if level >= 12 else 100)
                         self.assertEqual(actor['rpg_state']['summon'], 3)
                     self.assertEqual(incoming(actor, 0, 'mage_necromancer'), 0)
                     actor['rpg_state']['summon'] = 0

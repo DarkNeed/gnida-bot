@@ -106,7 +106,7 @@ class FinalsEngineTests(unittest.TestCase):
         self.assertEqual(event['skill_name'],'Билет в паровозик')
         self.assertEqual([p['hit'] for p in event['hit_results']],[True,False,True])
         self.assertEqual(sum(event['hits']),event['damage'])
-        self.assertEqual((a['resource'],a['own_turns']),(50,1))
+        self.assertEqual((a['resource'],a['own_turns']),(55,1))
         self.assertEqual(a['final_state']['dominance'],0)
         self.assertAlmostEqual(effective_stat(a,'physical_defense'),a['stats']['physical_defense']*.8)
         pet.assert_called_once()
@@ -116,12 +116,12 @@ class FinalsEngineTests(unittest.TestCase):
         a['stats']['physical_attack']=0;b['stats']['physical_defense']=0
         a['final_state']=dict(dominance=3)
         event=self.tap(state,'butt_peak')
-        self.assertEqual(event['hits'],[8,10,18])
+        self.assertEqual(event['hits'],[8,12,20])
         state=self.state();a=state['sides']['a'];a['final_state']=dict(dominance=3)
         event=self.tap(state,'butt_peak',roll=.99)
         self.assertEqual(event['hits'],[0,0,0])
         self.assertEqual(a['final_state']['dominance'],3)
-        self.assertEqual(a['resource'],50)
+        self.assertEqual(a['resource'],55)
 
     def test_train_native_preparation_is_affordable_without_specific_pet_or_tractat(self):
         state=self.state();a=state['sides']['a']
@@ -130,7 +130,7 @@ class FinalsEngineTests(unittest.TestCase):
         self.assertEqual(a['resource'],50)
         self.assertEqual(a['final_state']['dominance'],3)
         self.assertEqual(self.tap(state,'butt_peak')['skill_name'],'Билет в паровозик')
-        self.assertEqual(a['resource'],0)
+        self.assertEqual(a['resource'],5)
 
     def test_dominance_misses_count_repetition_does_not(self):
         state=self.state();a=state['sides']['a']
@@ -144,7 +144,7 @@ class FinalsEngineTests(unittest.TestCase):
         a['final_state']=dict(dominance=3)
         with patch('arena_engine.pet_modifiers',return_value=(0,0,.20)):
             event=self.tap(state,'butt_peak')
-        self.assertEqual(event['hits'],[3,4,11])
+        self.assertEqual(event['hits'],[4,4,11])
 
     def test_femboy_different_hits_prepare_and_hit_spends(self):
         state=self.state('femboy');a,b=state['sides'].values()
@@ -165,7 +165,8 @@ class FinalsEngineTests(unittest.TestCase):
         a['final_state']['whim']=3
         self.tap(state,'posing')
         self.assertEqual(a['final_state']['whim'],1)
-        self.assertEqual(next(e['value'] for e in a['effects'] if e['id']=='final_royal_guard'),.6)
+        self.assertEqual(next(e['value'] for e in a['effects'] if e['id']=='final_royal_guard'),.75)
+        self.assertTrue(any(e['kind']=='evasion_flat' and e['value']==20 for e in a['effects']))
         a['final_state']['whim']=2;a['resource']=100
         self.assertEqual(self.tap(state,'air_kiss')['skill_name'],'Казнить нельзя помиловать')
 
@@ -183,7 +184,7 @@ class FinalsEngineTests(unittest.TestCase):
     def test_program_compilation_and_exactly_one_mode(self):
         for mode in ('humiliate','doxxing','go_to_store'):
             state=self.state('programmer');a=state['sides']['a']
-            for sid in ('humiliate','doxxing','charging'):
+            for sid in ('humiliate','doxxing'):
                 a['resource']=100;self.tap(state,sid)
             self.assertTrue(a['final_state']['compiled'])
             a['resource']=100
@@ -230,7 +231,7 @@ class FinalsEngineTests(unittest.TestCase):
             a.setdefault('mechanics',{})['prescript']='first_line';self.tap(state,'first_line')
         self.assertEqual(a['final_state']['execution'],2)
         a['resource']=100;self.tap(state,'last_line',roll=.99)
-        self.assertEqual(a['resource'],70)
+        self.assertEqual(a['resource'],75)
         self.assertEqual(a['final_state']['execution'],2)
         a['resource']=100;self.tap(state,'last_line')
         self.assertEqual(a['final_state']['execution'],0)
@@ -251,13 +252,13 @@ class FinalsEngineTests(unittest.TestCase):
         self.tap(state,'receive_prescript')
         self.assertEqual(len(b['mechanics']['enemy_prescript']['allowed']),2)
         state['active_side']='b';skip_turn(state)
-        self.assertEqual(a['final_state']['guilt'],1)
+        self.assertEqual(a['final_state']['guilt'],3)  # One obedience + one violation.
 
     def test_messenger_aoe_clones_do_not_multiply_guilt_or_refunds(self):
         from arena_archclasses import obey_enemy_prescript
         state=self.state('index_messenger');a,b=state['sides'].values()
         a['resource']=50
-        for skill,expected in ((None,1),('smack',0)):
+        for skill,expected in ((None,2),('smack',1)):
             a['final_state']={}
             b.setdefault('mechanics',{})['enemy_prescript']=dict(skill_id='smack',allowed=['smack'],source=10,penalty=12)
             for _ in range(3):obey_enemy_prescript(copy.deepcopy(b),skill,a)

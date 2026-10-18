@@ -139,7 +139,9 @@ def rpg_modifiers(actor,target,skill):
         if has_trait(actor,'rpg_weapon_master') and any(e.get('id')=='armor_split' for e in target['effects']): accuracy+=10
         if has_trait(actor,'rpg_executioner') and skill.damage_type=='physical' and target['hp']<=target['stats']['max_hp']*.30: multiplier*=1.20
         if has_trait(actor,'rpg_hunter_precision') and any(e['kind']=='bleed' for e in target['effects']): accuracy+=10
-        if 'rpg_mana_spend' in skill.tags: multiplier*=1+.35*m.get('mana',0)
+        if 'rpg_mana_spend' in skill.tags:
+            flow=.25*actor.get('mastery_state',{}).get('flow',0) if 'mastery_flow' in skill.tags else 0
+            multiplier*=1+.35*m.get('mana',0)+flow
         if 'rpg_faith_spend' in skill.tags: multiplier*=1+(.40 if skill.skill_id=='arch_priest_bishop' else .20)*m.get('faith',0)
         if 'rpg_soul_spend' in skill.tags: multiplier*=1+.30*m.get('souls',0)
         if 'rpg_beast_spend' in skill.tags: multiplier*=1+.25*m.get('beast',0)
@@ -160,12 +162,23 @@ def rpg_parry(actor,target,skill):
     return (False,.65) if actor.get('is_boss') else (True,1.0)
 
 
-def rpg_received_damage(target, damage, before_hp, action_id=None):
+def rpg_received_damage(target, damage, before_hp, action_id=None, raid_context=None):
     if damage<=0: return
     m=target.setdefault('rpg_state',{})
     fresh=action_id is None or m.get('received_action')!=action_id
     if action_id is not None: m['received_action']=action_id
     path_received(target,damage,branch(target),fresh)
+    # A shielded ally credits its living Paladin, once for the whole enemy
+    # action (including an AoE or a summon follow-up), not once per victim.
+    if raid_context is not None:
+        from arena_finals import owner
+        for shield in target['effects']:
+            source_id=shield.get('source_controller')
+            if (shield.get('id')!='paladin_ward' or source_id is None
+                    or shield.get('value',1)>=1):continue
+            source=owner(raid_context,target,source_id)
+            if source is not None and branch(source)=='priest_paladin':
+                _grant_retribution(source,action_id)
     if target['hp']<=0: return
     m=target.setdefault('rpg_state',{})
     if has_trait(target,'rpg_rally'):
@@ -175,8 +188,15 @@ def rpg_received_damage(target, damage, before_hp, action_id=None):
                   or branch(target) == 'mage_necromancer' and m.get('summon', 0) > 0)
     if fresh and has_trait(target, 'rpg_barrier_charge') and mana_guard:
         m['mana'] = min(3, m.get('mana', 0) + 1)
-    if fresh and branch(target)=='priest_paladin' and any(e['kind']=='incoming_damage_multiplier' for e in target['effects']):
-        m['retribution']=min(3,m.get('retribution',0)+1)
+    if fresh and branch(target)=='priest_paladin' and any(e['kind']=='incoming_damage_multiplier' and e.get('value',1)<1 for e in target['effects']):
+        _grant_retribution(target,action_id)
+
+
+def _grant_retribution(source, action_id):
+    memory=source.setdefault('rpg_state',{})
+    if action_id is not None and memory.get('retribution_action')==action_id:return
+    if action_id is not None:memory['retribution_action']=list(action_id)
+    memory['retribution']=min(3,memory.get('retribution',0)+1)
 
 
 def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
@@ -235,7 +255,9 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
         if actor['level']>=12 and actor.get('rpg_state',{}).get('faith',0)>0:
             live=[s for s in (allies or []) if s is not actor and s['hp']>0]
             if live:
-                buff(min(live,key=lambda s:s['hp']/s['stats']['max_hp']),'paladin_ward',kind,item['value'],1)
+                friend=min(live,key=lambda s:s['hp']/s['stats']['max_hp'])
+                buff(friend,'paladin_ward',kind,item['value'],1)
+                friend['effects'][-1]['source_controller']=actor.get('controller_id')
         return 'Святой заслон'
     if kind=='cleanse_one' and item.get('id')=='priest_cleanse':
         from arena_epic import cleanse_one
@@ -247,7 +269,7 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
     return None
 
 
-def rpg_after_action(actor,target,skill,hit,damage,before_hp,rng,effective_stat,context=None,allies=None):
+def rpg_after_action(actor,target,skill,hit,damage,before_hp,rng,effective_stat,context=None,allies=None,raid_context=None):
     m,key=actor.setdefault('rpg_state',{}),branch(actor)
     context=context or action_context(actor,target)
     m['actions']=actor.get('own_turns',0);notes=[]
@@ -273,9 +295,13 @@ def rpg_after_action(actor,target,skill,hit,damage,before_hp,rng,effective_stat,
             gain=min(actor['stats']['max_hp']-actor['hp'],round(damage*.30));actor['hp']+=gain
             if gain: notes.append(f'Похищение жизни: +{gain} HP')
         if m.get('summon',0)>0 and not m.pop('summon_fresh',False) and target['hp']>0:
-            dealt=min(target['hp'],max(1,round(m.get('summon_power',6)*(1+effective_stat(actor,'magic_attack')/20)*100/(100+effective_stat(target,'magic_defense')*4))))
+            guard=1
+            for shield in target['effects']:
+                if shield['kind']=='incoming_damage_multiplier':guard*=max(.1,shield.get('value',1))
+            dealt=max(1,round(m.get('summon_power',6)*(1+effective_stat(actor,'magic_attack')/20)*100/(100+effective_stat(target,'magic_defense')*4)*guard))
             dealt=incoming(target,dealt,branch(target))
-            old_hp=target['hp'];target['hp']=max(0,target['hp']-dealt);rpg_received_damage(target,dealt,old_hp,context.get('action_id'))
+            dealt=min(target['hp'],dealt)
+            old_hp=target['hp'];target['hp']=max(0,target['hp']-dealt);rpg_received_damage(target,dealt,old_hp,context.get('action_id'),raid_context)
             m['summon']-=1;m['souls']=min(3,m.get('souls',0)+1);notes.append(f'{"Палач" if m.get("death_servants") else "Скелет"}: −{dealt} HP, души {m["souls"]}/3')
     m.pop('rally',None);m.pop('rally_ceiling',None)
     if 'rpg_transform' in skill.tags: m['weapon_open']=not m.get('weapon_open',False);notes.append('оружие раскрыто' if m['weapon_open'] else 'оружие сложено')

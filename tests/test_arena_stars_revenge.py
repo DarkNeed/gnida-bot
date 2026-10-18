@@ -82,7 +82,7 @@ class StarsRevengeTests(unittest.TestCase):
 
     def test_star_prices_power_and_level_twelve_upgrade_at_both_stages(self):
         for level, stage, power, cost in ((10, 10, 21, 45), (11, 10, 21, 45), (12, 10, 22, 45),
-                                          (20, 10, 22, 45), (20, 20, 34, 60)):
+                                          (20, 10, 22, 45), (20, 20, 34, 50)):
             state = self.state(branch="pinky_tiansha", level=level, stage=stage)
             state["sides"]["a"]["mechanics"]["focus"] = 3
             skill = effective_skill(state, "a", "falling_star")

@@ -135,7 +135,7 @@ class RPGPathTests(unittest.TestCase):
         state=self.final('mage_elementalist');actor=state['sides']['a'];enemy=state['sides']['b']
         for sid in ('mana_shot','mana_blob','mana_overload'):self.use(state,sid)
         self.assertEqual(actor['rpg_state']['elements'],[])
-        self.assertEqual(actor['resource'],85) # 100-35+20
+        self.assertEqual(actor['resource'],95) # 100-35+30
         self.assertEqual(effective_skill(state,'a','arch_mage_elementalist').name,'Катаклизм')
         self.use(state,'arch_mage_elementalist',hit=False)
         self.assertTrue(any(e.get('id')=='rpg_frost' for e in enemy['effects']))
@@ -226,15 +226,15 @@ class RPGPathTests(unittest.TestCase):
         self.assertEqual(len(event['hit_results']),2)
         self.assertEqual(actor['rpg_state']['retribution'],1)
         self.assertEqual(actor['rpg_state']['faith'],0)
-        self.assertEqual(actor['resource'],40)
+        self.assertEqual(actor['resource'],55)
 
-    def test_beast_fury_three_actions_and_moon_miss_window(self):
+    def test_beast_fury_five_actions_and_moon_miss_window(self):
         state=self.final('hunter_beast');actor=state['sides']['a']
         actor['rpg_state']={'beast':3}
         event=self.use(state,'arch_hunter_beast')
         self.assertEqual(event['skill_name'],'Ярость первородного')
         self.assertEqual(effective_skill(state,'a','arch_hunter_beast').name,'Первобытный разрыв')
-        for _ in range(3):state['active_side']='a';skip_turn(state)
+        for _ in range(5):state['active_side']='a';skip_turn(state)
         actor['rpg_state']['beast']=3
         self.assertNotEqual(effective_skill(state,'a','arch_hunter_beast').name,'Ярость первородного')
         state=self.final('hunter_moon');actor=state['sides']['a']

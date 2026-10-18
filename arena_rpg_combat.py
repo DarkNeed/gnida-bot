@@ -40,14 +40,16 @@ def variant(skill, actor, target, key):
         if final and m.get('steadfast', 0) >= 3:
             change.update(name='Бастион отвечает', power=34, cost=50, cooldown=4, pierce=.50,
                           tags=skill.tags + ('rpg_bastion',))
+            # The final guard replaces this action's ordinary knight guard.
+            change['effects'] = skill.effects
     elif key == 'mage_necromancer' and final and sid == 'mana_barrier' and m.get('souls', 0) >= 3:
-        change.update(name='Мёртвые не знают усталости', cost=50, cooldown=4,
+        change.update(name='Мёртвые не знают усталости', cost=40, cooldown=4,
                       effects=(dict(id='death_servants', kind='rpg_death_servants', value=9, target='self', chance=1),))
     elif key == 'mage_elementalist':
         if sid == 'mana_overload':
             change['effects'] = skill.effects + (dict(id='rpg_conductivity', kind='magic_defense_pct', value=-.15, turns=4, target='enemy', chance=1),)
         if final and sid == 'arch_mage_elementalist' and all(has_effect(target, e) for e in ('rpg_burn', 'rpg_frost', 'rpg_conductivity')):
-            change.update(name='Катаклизм', power=42, cost=50, cooldown=4,
+            change.update(name='Катаклизм', power=42, cost=40, cooldown=4,
                           tags=skill.tags + ('three_strike', 'rpg_cataclysm'))
     elif key == 'mage_archmage':
         if m.get('echo_ready') and skill.damage_type and skill.cost > 0:
@@ -64,8 +66,8 @@ def variant(skill, actor, target, key):
                           tags=skill.tags + ('rpg_dawn',))
         if sid == 'arch_priest_bishop' and level >= 18 and any(e.get('value', 0) < 0 or e['kind'] in ('bleed', 'burn', 'stun') for e in target['effects']):
             change['pierce'] = .35
-    elif key == 'priest_paladin' and final and sid == 'arch_priest_paladin' and m.get('faith', 0) >= 3 and m.get('retribution', 0) >= 3:
-        change.update(name='Последний приговор', power=36, cost=60, cooldown=4, pierce=.50,
+    elif key == 'priest_paladin' and final and sid == 'arch_priest_paladin' and m.get('faith', 0) >= 3 and m.get('retribution', 0) >= 2:
+        change.update(name='Последний приговор', power=36, cost=45, cooldown=4, pierce=.50,
                       tags=skill.tags + ('two_strike', 'rpg_last_judgment'))
     elif key == 'hunter_beast' and final:
         if skill.damage_type and m.get('beast_fury_until', 0) > actor.get('own_turns', 0):
@@ -80,7 +82,7 @@ def variant(skill, actor, target, key):
         if sid == 'hunter_shot':
             change['name'] = 'Лунный осколок'
         if sid == 'arch_hunter_moon' and m.get('moon_mark') and m.get('visceral_ready') and actor.get('own_turns', 0) < m.get('visceral_until', 0) and not m.get('moon_used'):
-            change.update(name='Луна не прощает', power=44, cost=60, pierce=.60,
+            change.update(name='Луна не прощает', power=48, cost=50, pierce=.60,
                           tags=skill.tags + ('two_strike', 'rpg_white_moon'))
     return replace(skill, **change) if change else skill
 
@@ -97,7 +99,8 @@ def incoming(target, damage, key):
         return damage
     m = target.setdefault('rpg_state', {})
     if key == 'mage_necromancer' and target['level'] >= 12 and m.get('summon', 0) > 0:
-        damage = max(1, round(damage * .75))
+        guard = .65 if is_final(target) and m.get('death_servants') else .75
+        damage = max(1, round(damage * guard))
     return damage
 
 
@@ -189,21 +192,21 @@ def post_action(actor, target, skill, hit, damage, key, before, allies=None):
             buff(min(live, key=lambda s: s['hp']/s['stats']['max_hp']), 'bastion_guard', 'incoming_damage_multiplier', .55, 1)
     if key == 'mage_necromancer' and hit and 'rpg_soul_spend' in skill.tags and actor['level'] >= 18 and m.get('summon', 0) > 0:
         m['summon'] = min(3, m['summon'] + 1)
-    if key == 'mage_elementalist' and native and hit:
+    if key == 'mage_elementalist' and native:
         element = {'mana_shot': 'fire', 'mana_blob': 'ice', 'mana_overload': 'lightning'}.get(skill.skill_id)
         if element:
-            if actor['level'] >= 12 and element == 'fire' and before['frost'] and target['hp'] > 0:
+            if hit and actor['level'] >= 12 and element == 'fire' and before['frost'] and target['hp'] > 0:
                 for dtype in ('physical', 'magic'):
                     buff(target, 'thermal_' + dtype, dtype + '_defense_pct', -.20, 2)
             if actor['level'] >= 18:
                 seen = set(m.get('elements', [])) | {element}
                 if len(seen) == 3:
-                    gain = min(20, actor['stats']['resource_max'] - actor['resource'])
+                    gain = min(30, actor['stats']['resource_max'] - actor['resource'])
                     actor['resource'] += gain
                     notes.append(f'Стихийный цикл: +{gain} маны')
                     seen.clear()
                 m['elements'] = sorted(seen)
-        if 'rpg_cataclysm' in skill.tags:
+        if hit and 'rpg_cataclysm' in skill.tags:
             target['effects'] = [e for e in target['effects'] if e.get('id') not in ('rpg_burn', 'rpg_frost', 'rpg_conductivity')]
     if key == 'mage_archmage' and native:
         if hit and skill.damage_type and skill.cost > 0 and before.get('echo_ready'):
@@ -242,7 +245,7 @@ def post_action(actor, target, skill, hit, damage, key, before, allies=None):
         if actor['level'] >= 18 and (before['bleed'] or target['hp'] <= 0):
             m['beast'] = min(3, m.get('beast', 0) + 1)
         if 'rpg_beast_fury' in skill.tags:
-            m.update(beast_fury_used=True, beast_fury_until=actor.get('own_turns', 0) + 3)
+            m.update(beast_fury_used=True, beast_fury_until=actor.get('own_turns', 0) + 5)
     if key == 'hunter_moon' and 'rpg_visceral' in skill.tags:
         if hit:
             m['moon_mark'] = False

@@ -27,7 +27,7 @@ ARCHCLASSES = {
         "cutie",
         "Принцесса",
         "Принцесса",
-        "«Позирование» становится «Мне нельзя делать больно»: прежнее уклонение и +20% обеих защит на один свой ход, цена 25.",
+        "«Позирование» становится «Мне нельзя делать больно»: прежнее уклонение и +20% обеих защит на один свой ход, цена 25; возвращает 10 Любви.",
         "Защиты +30%, цена остаётся 25.",
     ),
     "gachi_actor": branch(
@@ -62,8 +62,8 @@ ARCHCLASSES = {
         "thumb",
         "Капо: Дисциплина",
         "Соттокапо: Дисциплина",
-        "«Предупредительный выстрел» становится «Соблюдай субординацию»: физическая атака цели −25% на 2 хода, цена 25.",
-        "Физическая атака цели −35%.",
+        "«Предупредительный выстрел» становится «Соблюдай субординацию»: физическая атака цели −25% на 2 хода; с 12 уровня подавляет весь урон на 25%, цена 25.",
+        "Подавление действует и на физический, и на магический урон.",
     ),
     "thumb_execution": branch(
         "thumb",
@@ -268,7 +268,7 @@ def arch_rule(skill, source):
             name="Соблюдай субординацию",
             cost=25,
             effects=(
-                e("warning", "physical_attack_pct", -0.35 if final else -0.25, 2),
+                e("warning", "damage_pct" if source['level']>=12 else "physical_attack_pct", -0.25, 2),
             ),
         )
     elif key == "thumb_execution" and skill.skill_id == "senior_verdict":
@@ -391,7 +391,7 @@ def obey_enemy_prescript(actor, skill_id, opponent=None, raid_context=None):
             if m.get('prescript_claim')!=claim:
                 m['prescript_claim']=claim
                 if obeyed:source['resource']=min(source['stats']['resource_max'],source['resource']+5)
-                else:m['guilt']=min(3,m.get('guilt',0)+1)
+                m['guilt']=min(3,m.get('guilt',0)+(1 if obeyed else 2))
     if obeyed:
         return "предписание противника исполнено"
     penalty = min(actor["resource"], order["penalty"])
@@ -401,6 +401,10 @@ def obey_enemy_prescript(actor, skill_id, opponent=None, raid_context=None):
 
 def arch_after_action(actor, target, skill, hit, skills, rng):
     notes = []
+    if hit and skill.skill_id=='posing' and actor.get('archclass_id')=='princess' and selected_branch(actor):
+        gained=min(10,actor['stats']['resource_max']-actor['resource'])
+        actor['resource']+=gained
+        notes.append(f'Королевская поза: +{gained} Любви')
     if "optimize" in skill.tags:
         actor["cooldowns"] = {
             k: v if k == skill.skill_id else v - 1

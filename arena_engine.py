@@ -1345,7 +1345,7 @@ def resolve_skill(
         actor["effects"] = [
             e for e in actor["effects"] if e["kind"] != "next_physical_damage"
         ]
-    rpg_received_damage(target,min(before[other]['hp'],damage),before[other]['hp'],rpg_context['action_id'])
+    rpg_received_damage(target,min(before[other]['hp'],damage),before[other]['hp'],rpg_context['action_id'],raid_context)
     _tick(actor,tick_dot=False,preserve_rally=True)
     effects_text = []
     charmed = False
@@ -1387,6 +1387,14 @@ def resolve_skill(
             else:
                 new = dict(effect)
                 new.setdefault("duration", max(1, new.get("turns", 1)))
+                if new['kind']=='bleed':
+                    previous=next((e for e in recipient['effects']
+                        if (e.get('id'),e['kind'])==(new.get('id'),new['kind'])),None)
+                    if previous:
+                        if previous['value']>new['value'] and 'mastery_owner' in previous:
+                            new['mastery_owner']=previous['mastery_owner']
+                        new['value']=max(new['value'],previous['value'])
+                        new['duration']=max(new['duration'],previous.get('duration',1))
                 recipient["effects"] = [
                     e
                     for e in recipient["effects"]
@@ -1460,7 +1468,7 @@ def resolve_skill(
     pet_notes = pet_after_action(
         actor, target, skill, hit, min(before[other]["hp"], damage), actual_cost,
         pet_context, effects_text, skills or BUILTIN_SKILLS)
-    rpg_notes,reaction_damage = rpg_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),before[side_key]['hp'],rng,effective_stat,rpg_context,allies)
+    rpg_notes,reaction_damage = rpg_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),before[side_key]['hp'],rng,effective_stat,rpg_context,allies,raid_context)
     mastery_before['ally_healed'] = any(p['hp'] > mastery_allies[i]['hp'] for i,p in enumerate(allies or []))
     mastery_notes=mastery_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),mastery_before,obeyed,allies)
     arch_notes += mastery_notes

@@ -287,7 +287,7 @@ def build_catalog(FighterClass, Skill, effect):
             92,
             0,
             0,
-            (effect("bleed", "bleed", 2, 2, chance=0.75),),
+            (effect("bleed", "bleed", 2, 3, chance=0.75),),
         ),
         s(
             "ring",
@@ -312,8 +312,8 @@ def build_catalog(FighterClass, Skill, effect):
             15,
             2,
             (
-                effect("portrait_accuracy", "accuracy_flat", -15, 2),
-                effect("portrait_defense", "magic_defense_pct", -0.20, 2),
+                effect("portrait_accuracy", "accuracy_flat", -15, 3),
+                effect("portrait_defense", "magic_defense_pct", -0.20, 3),
             ),
         ),
         s(

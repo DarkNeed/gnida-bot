@@ -14,29 +14,29 @@ BASE = {
     'cutie': ('Искусство умилять', 'Чередование Мяу и UWU усиливает следующую из этих атак на 35%, с 12 уровня на 45%.', 'Критическая милота', None),
     'jock': ('Идеальная техника', 'Подготовленный Въебать: сила 16, с 12 уровня 18; попадание оставляет защиту от прямого урона −20% на одно своё действие.', 'Без страховки', 'physical'),
     'nerd': ('Теория всего', 'Три разных типа родных действий готовят усиление следующей атаки, Деанона или магазина. Промахи тоже дают шаг.', 'Проверка гипотезы', 'magic'),
-    'thumb': ('Служба без повышения', 'Предупредительный выстрел усиливается; после попадания сохраняет один потраченный заряд Субординации, с 12 уровня — до двух.', 'Служебное взыскание', 'physical'),
+    'thumb': ('Служба без повышения', 'Предупредительный выстрел усиливается; после попадания сохраняет один потраченный заряд Субординации, с 12 уровня получает +5 точности.', 'Служебное взыскание', 'physical'),
     'index': ('Личное толкование', 'За каждое исполнение предписания дополнительно возвращает 8 Воли, с 12 уровня 12. Два исполнения готовят усиленную Последнюю строку.', 'Написано мной', None),
-    'middle': ('Семья помнит', 'Ответные удары при попадании сохраняют одну Обиду, с 12 уровня две; промах сохраняет накопленные обиды.', 'Семейный разбор', 'physical'),
+    'middle': ('Семья помнит', 'Ответные удары при попадании сохраняют одну Обиду; с 12 уровня Ответь за это сохраняет две. Промах сохраняет накопленные обиды.', 'Семейный разбор', 'physical'),
     'ring': ('Собственный почерк', 'После Последнего штриха сохраняет один собственный временный дебафф, с 12 уровня — два, с оставшимся до удара сроком.', 'Авторская подпись', 'magic'),
     'pinky': ('Свой небосвод', 'Чередование разных родных атак добавляет Созвездие при попадании, максимум 3; с 12 уровня атаки получают +5 точности.', 'Пересечение орбит', 'physical'),
     'warrior': ('Мастер оружия', 'Раскол брони за применение сильнее: 20% вместо 15%, с 12 уровня 25%, общий предел 45%. Три разных родных приёма собирают комбинацию.', 'Смена стойки', None),
-    'mage': ('Чистая мана', 'Родные магические атаки, включая промахи, собирают до 3 Потоков. Перегрузка получает +25% урона за Поток; барьер может потратить их на защиту.', 'Мановая спираль', 'magic'),
+    'mage': ('Чистая мана', 'Родные магические атаки, включая промахи, собирают до 3 Потоков. Перегрузка получает +25% урона за Поток; бонус складывается с Перенасыщением. Барьер может потратить Потоки на защиту.', 'Мановая спираль', 'magic'),
     'priest': ('Вера без сана', 'Полезная родная поддержка усиливает следующую Кару на 40%; успешная Кара усиливает следующее лечение на 30%.', 'Тихая молитва', None),
     'hunter': ('Ремесло охоты', 'Смена формы подготавливает следующий Рваный разрез: +35% урона; с 12 уровня также +10 точности.', 'След добычи', 'physical'),
 }
 
 BASE_FINAL = {
-    'ragamuffin': '«Последний из подворотни»: после трёх разных действий Удар бомжа — сила 34, 45% пробития, цена 20; попадание возвращает 20 энергии.',
+    'ragamuffin': '«Последний из подворотни»: после трёх разных действий Удар бомжа — сила 34, 45% пробития, цена 20; попадание возвращает 10 энергии.',
     'cutie': '«Милота массового поражения»: Мяу после UWU по умилённой цели — сила 30 за 35 Любви; умиление не снимается.',
-    'jock': '«Предел человеческой качалки»: подготовленный Въебать — три независимых попадания с суммарной силой 30 за 30 энергии.',
+    'jock': '«Предел человеческой качалки»: подготовленный Въебать — три независимых попадания с суммарной силой 27 за 30 энергии.',
     'nerd': '«Я просчитал этот бой»: подготовленная атака +14 к силе и дешевле на 10, Деанон снижает обе защиты на 35%, магазин дополнительно возвращает 30 энергии.',
     'thumb': '«По всем статьям»: при 3 Субординации Приговор — сила 30, цена 45, 50% пробития и ещё +10% урона за собственное ослабление, максимум 3.',
     'index': '«Предписание без подписи»: подготовленная Последняя строка — сила 30, цена 35 и 50% пробития; Написано мной позволяет исполнить предписание любой следующей родной атакой.',
-    'middle': '«За каждого из наших»: при 3 Обидах За всю семью — сила 28 за 40 энергии; попадание прикрывает на 25% до следующего своего действия.',
+    'middle': '«За каждого из наших»: при 3 Обидах За всю семью — сила 28 за 40 энергии; попадание сохраняет одну Обиду и прикрывает на 25% до следующего своего действия.',
     'ring': '«Дипломная работа»: при трёх ослаблениях Последний штрих — сила 28 за 40 энергии; сохраняются два собственных дебаффа.',
     'pinky': '«Собственное созвездие»: при 3 Созвездиях Лунная дуга — сила 24, пробитие 55%, цена 25; Падающая звезда — сила 30 за 45, сохраняет критический шанс. Обе тратят 2 заряда только при попадании.',
     'warrior': '«Совершенная техника»: готовая комбинация открывает Казнь силы 28 и пробития 35% выше порога добивания. По цели с HP ≤30% — сила 36 и пробитие 50%.',
-    'mage': '«Идеальный поток»: Перегрузка при 3 Потоках — сила 28 за 35 маны; попадание возвращает 20 маны. Барьер при 3 Потоках снижает прямой урон на 50%.',
+    'mage': '«Идеальный поток»: Перегрузка при 3 Потоках — сила 28 за 35 маны; попадание возвращает 10 маны. Бонусы Потоков и Перенасыщения складываются. Барьер при 3 Потоках снижает прямой урон на 50%.',
     'priest': '«Чудо без сана»: три полезных действия готовят Кару силы 28 за 40 маны или Исцеление на 50% max HP за 35. Одно из двух тратит подготовку.',
     'hunter': '«Охота без конца»: успешная висцеральная атака усиливает две следующие родные атаки на 45%; серия действует до трёх своих действий, не обновляется сама от себя.',
 }
@@ -58,8 +58,8 @@ BRANCHES = {
     'middle_revenge': ('arch_middle_revenge', 'Ничто не забыто', 'grudge', 30, 30, 'При 2 Обидах: Не забыто силы 30 за 30, обе защиты цели −25%; расход одной Обиды при попадании. Самоурон остаётся.'),
     'ring_pointillist': ('arch_ring_pointillist', 'Чистовая рана', 'negatives2', 20, 25, 'При двух ослаблениях: Пунктирная рана силы 20 за 25, кровотечение 7 на 3 действия и снижение физической защиты.'),
     'ring_fauvist': ('arch_ring_fauvist', 'Повадки хищника', 'negatives2', 27, 30, 'При двух ослаблениях: Чучело хищника силы 27 за 30, замедление и магическая защита −30% на 2 действия.'),
-    'pinky_dihui': ('arch_pinky_dihui', 'Безупречный заслон', 'focus', 26, 25, 'При 2 Созвездиях: Охраняющий клинок силы 26 за 25, пробитие 45%, обе защиты +35%; расход 1 Созвездия при попадании.'),
-    'pinky_tiansha': ('arch_pinky_tiansha', 'Разрез звёздной выучки', 'focus', 32, 35, 'При 2 Созвездиях: Небесная рассечка силы 32 за 35, пробитие 45%; расход 1 Созвездия при попадании.'),
+    'pinky_dihui': ('arch_pinky_dihui', 'Безупречный заслон', 'focus', 26, 30, 'При 2 Созвездиях: Охраняющий клинок силы 26 за 30, пробитие 45%, обе защиты +25%; расход 1 Созвездия при попадании.'),
+    'pinky_tiansha': ('arch_pinky_tiansha', 'Разрез звёздной выучки', 'focus', 30, 40, 'При 2 Созвездиях: Небесная рассечка силы 30 за 40, пробитие 45%; расход 1 Созвездия при попадании.'),
     'warrior_berserker': ('arch_warrior_berserker', 'Неудержимый натиск', 'momentum', 36, 40, 'При 3 Натиска: серия трёх ударов силы 36 за 40; сохраняет один Натиск при попадании и весь при промахе.'),
     'warrior_knight': ('arch_warrior_knight', 'Выверенный контрудар', 'steadfast', 30, 30, 'При 2 Стойкости: контрудар силы 30 за 30, защита от прямого урона −35%; тратит 1 Стойкость при попадании.'),
     'mage_necromancer': ('arch_mage_necromancer', 'Непрерывная жатва', 'souls', 28, 35, 'При 3 Душах: Жатва силы 28 за 35, прежние бонусы Душ, лечение 40% снятого HP; попадание оставляет 1 Душу и продлевает скелета до 3 действий.'),
@@ -119,9 +119,9 @@ TWELVE = {
     'cutie': 'Бонус чередования Мяу и UWU повышается с 35% до 45%.',
     'jock': 'Подготовленный Въебать получает силу 18 вместо 16.',
     'nerd': 'Подготовленная атака получает +10 силы вместо +8; магазин возвращает ещё 20 энергии вместо 15.',
-    'thumb': 'Попавший Предупредительный выстрел сохраняет до 2 потраченных зарядов вместо 1.',
+    'thumb': 'Предупредительный выстрел получает +5 точности; сохраняет один потраченный заряд.',
     'index': 'Исполнение дополнительно возвращает 12 Воли вместо 8.',
-    'middle': 'Ответ при попадании сохраняет до 2 Обид вместо 1.',
+    'middle': 'Ответь за это при попадании сохраняет до 2 Обид; За всю семью сохраняет одну.',
     'ring': 'Последний штрих сохраняет два собственных дебаффа вместо одного.',
     'pinky': 'Родные атаки получают +5 точности.',
     'warrior': 'Раскол брони снимает 25% за применение, общий предел 45%.',
@@ -130,7 +130,7 @@ TWELVE = {
     'hunter': 'Подготовленный Рваный разрез получает +10 точности.',
 }
 EIGHTEEN = {k: 'сила +4, цена прежняя.' for k in BASE}
-EIGHTEEN.update(cutie='умиление длится 3 действия вместо 2.', index='цена 10 вместо 15.',
+EIGHTEEN.update(ragamuffin='сила 20, цена прежняя.', cutie='умиление длится 3 действия вместо 2.', index='цена 10 вместо 15.',
     priest='лечение 25% max HP вместо 20%.', warrior='подготовка физической атаки +60% вместо +45%.')
 
 
@@ -147,7 +147,7 @@ def build_skills(Skill):
         elif cls == 'ring':
             effects = (dict(id='mastery_signature',kind='speed_pct',value=-.25,turns=3,target='enemy'),)
         result['mastery_' + cls] = Skill('mastery_' + cls, name, cls, 15, dtype,
-            20 if dtype else 0, 95 if dtype or cls == 'cutie' else 100,
+            (16 if cls=='ragamuffin' else 20) if dtype else 0, 95 if dtype or cls == 'cutie' else 100,
             15 if not dtype else 25, 3, effects, 'rare',
             'Путь мастерства. ' + SKILL_TEXT[cls] + ' С 18 уровня: ' + EIGHTEEN[cls], tags=tags)
     result['street_breath'] = Skill('street_breath','Перевести дух','ragamuffin',5,None,0,100,0,3,
@@ -249,7 +249,7 @@ def _branch_changes(skill, actor, target):
     elif key == 'ring_pointillist':
         effects = tuple(dict(e,value=7) if e['kind']=='bleed' else e for e in effects)
     elif key == 'pinky_dihui':
-        effects = tuple(dict(e,value=.35) if e['kind'].endswith('_defense_pct') else e for e in effects)
+        effects = tuple(dict(e,value=.25) if e['kind'].endswith('_defense_pct') else e for e in effects)
     if key in ('mge_bro','index_proxy','thumb_execution','pinky_dihui','pinky_tiansha','mage_archmage','priest_paladin','hunter_moon'):
         changes['pierce'] = .35 if key=='mge_bro' else .45 if key.startswith('pinky') else .60 if key=='hunter_moon' else .50
     if key == 'thumb_execution': changes['tags'] += ('two_strike','no_order_bonus')
@@ -273,6 +273,7 @@ def rule(skill, actor, target=None):
     tags = skill.tags + ('mastery_base',)
     if sid == 'mastery_'+cls:
         changes = dict(tags=tags, power=skill.power+(4 if level>=18 and skill.damage_type else 0))
+        if cls=='ragamuffin': changes['power']=20 if level>=18 else 16
         effects = tuple(deepcopy(skill.effects))
         if cls=='cutie' and level>=18: effects=tuple(dict(e,turns=3) for e in effects)
         if cls=='priest': effects=tuple(dict(e,value=.25 if level>=18 else .20) for e in effects)
@@ -296,6 +297,12 @@ def rule(skill, actor, target=None):
             changes=dict(name='Уличный ответ',power=22 if level>=12 else 20,cost=10)
             if final and len(m.get('combo',[]))>=3:
                 ready=True;changes=dict(name='Последний из подворотни',power=34,cost=20,pierce=.45,tags=tags+('mastery_street_final',))
+            # Never turn the emergency free attack into an unusable paid one.
+            if ready:
+                from arena_mirror_effects import gift_cost
+                from arena_pets import pet_cost
+                candidate=replace(skill,**changes)
+                ready=actor.get('resource',0)>=pet_cost(actor,candidate,gift_cost(actor,candidate))
     elif cls=='cutie' and sid in ('uwu','meow'):
         ready=m.get('last_cute') not in (None,sid)
         changes=dict(name=skill.name+' · очарование',tags=tags+('mastery_cute_combo',))
@@ -304,7 +311,7 @@ def rule(skill, actor, target=None):
     elif cls=='jock' and sid=='smack':
         ready=any(e.get('id')=='evolution_prepared' for e in actor.get('effects',[]))
         changes=dict(name='Идеальный подход',power=18 if level>=12 else 16,cost=15,tags=tags+('mastery_prepared',))
-        if final:changes.update(name='Предел человеческой качалки',power=30,cost=30,tags=tags+('mastery_prepared','three_strike'))
+        if final:changes.update(name='Предел человеческой качалки',power=27,cost=30,tags=tags+('mastery_prepared','three_strike'))
     elif cls=='nerd':
         ready=bool(m.get('theory_ready'))
         if skill.damage_type:
@@ -314,6 +321,7 @@ def rule(skill, actor, target=None):
         elif sid=='go_to_store':changes=dict(name='Закупка по списку',tags=tags+('mastery_theory',))
     elif cls=='thumb' and sid=='warning_shot':
         ready=True;changes=dict(power=skill.power+4,description=BASE[cls][1])
+        if level>=12: changes['accuracy']=min(100,skill.accuracy+5)
     elif cls=='thumb' and sid=='senior_verdict' and final:
         ready=mechanics.get('order',0)>=3
         changes=dict(name='По всем статьям',power=30,cost=45,pierce=.50,tags=tags+('no_order_bonus','mastery_articles'))
@@ -377,7 +385,8 @@ def modifiers(actor, target, skill):
     m, cls = actor.get('mastery_state',{}), actor['class_id']
     accuracy, multiplier = 0,1.0
     if 'mastery_cute_combo' in skill.tags:multiplier*=1.45 if actor['level']>=12 else 1.35
-    if 'mastery_flow' in skill.tags:multiplier*=1+.25*m.get('flow',0)
+    # Flow is combined additively with Mana in rpg_modifiers, not multiplied
+    # twice. Unrelated effects, pets and tractates keep their normal stacking.
     if 'mastery_articles' in skill.tags:
         multiplier*=1+.10*min(3,len({e['kind'] for e in target['effects'] if e.get('mastery_owner')==actor.get('controller_id') and e.get('value',0)<0}))
     if cls=='pinky' and actor['level']>=12 and skill.damage_type:accuracy+=5
@@ -431,9 +440,11 @@ def after_action(actor, target, skill, hit, damage, before, obeyed, allies=None)
     native=skill.class_id==cls
     # One source-owned marker per effect. Never counts another raider's setup.
     if hit and (native or cls in ('ring','thumb')):
-        applied={(e.get('id'),e['kind']) for e in skill.effects if e.get('target')=='enemy'}
+        applied={(e.get('id'),e['kind']):e for e in skill.effects if e.get('target')=='enemy'}
         for e in target['effects']:
-            if (e.get('id'),e['kind']) in applied:e['mastery_owner']=actor.get('controller_id')
+            source=applied.get((e.get('id'),e['kind']))
+            if source and not (e['kind']=='bleed' and e['value']>source['value']):
+                e['mastery_owner']=actor.get('controller_id')
     if cls in ('ragamuffin','warrior') and native:
         if 'mastery_street_final' in skill.tags or 'mastery_execute' in skill.tags:
             if hit:m['combo']=[]
@@ -441,7 +452,7 @@ def after_action(actor, target, skill, hit, damage, before, obeyed, allies=None)
     if cls=='ragamuffin':
         if native and not skill.damage_type and hit or sid=='mastery_ragamuffin' and hit:m['street_ready']=True
         elif native and skill.damage_type and hit:m['street_ready']=False
-        if 'mastery_street_final' in skill.tags and hit:refund(20)
+        if 'mastery_street_final' in skill.tags and hit:refund(10)
     elif cls=='cutie' and sid in ('uwu','meow'):m['last_cute']=sid
     elif cls=='jock':
         if 'mastery_prepared' in skill.tags and hit:buff(actor,'mastery_lift_guard','incoming_damage_multiplier',.8,1)
@@ -456,7 +467,7 @@ def after_action(actor, target, skill, hit, damage, before, obeyed, allies=None)
             if category not in steps:steps=steps+[category]
             m.update(theory_steps=steps,theory_ready=len(steps)>=3)
     elif cls=='thumb' and sid=='warning_shot':
-        actor.setdefault('mechanics',{})['order']=min(2 if level>=12 else 1,mechanics.get('order',0)) if hit else mechanics.get('order',0)
+        actor.setdefault('mechanics',{})['order']=min(1,mechanics.get('order',0)) if hit else mechanics.get('order',0)
     elif cls=='index':
         if sid=='mastery_index':m['free_prescript']=True
         elif native and skill.damage_type:m['free_prescript']=False
@@ -466,7 +477,8 @@ def after_action(actor, target, skill, hit, damage, before, obeyed, allies=None)
         if obeyed:refund(12 if level>=12 else 8)
     elif cls=='middle':
         if sid in ('answer_for_it','whole_family'):
-            actor.setdefault('mechanics',{})['grudge']=min(2 if level>=12 else 1,mechanics.get('grudge',0)) if hit else mechanics.get('grudge',0)
+            retained=2 if level>=12 and sid=='answer_for_it' else 1
+            actor.setdefault('mechanics',{})['grudge']=min(retained,mechanics.get('grudge',0)) if hit else mechanics.get('grudge',0)
         if sid=='mastery_middle' and hit:actor.setdefault('mechanics',{})['grudge']=min(3,mechanics.get('grudge',0)+1)
         if 'mastery_family' in skill.tags and hit:buff(actor,'mastery_family_guard','incoming_damage_multiplier',.75,1)
     elif cls=='ring' and sid=='last_stroke' and hit:
@@ -479,7 +491,7 @@ def after_action(actor, target, skill, hit, damage, before, obeyed, allies=None)
     elif cls=='mage':
         if 'mastery_flow' in skill.tags and hit:
             m['flow']=0
-            if 'mastery_flow_refund' in skill.tags:refund(20)
+            if 'mastery_flow_refund' in skill.tags:refund(10)
         elif 'mastery_flow_guard' in skill.tags:
             m['flow']=0
             if level>=12:refund(10)

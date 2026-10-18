@@ -135,6 +135,9 @@ class MasteryEngineTests(unittest.TestCase):
                 effective_skill(state,'a',sid)
                 info(BUILTIN_SKILLS[sid],a,b)
             self.assertEqual(before,state)
+            if cls=='ragamuffin':
+                self.assertEqual(effective_skill(state,'a',sid).cost,0)
+                continue  # The emergency attack deliberately remains usable.
             with self.assertRaises(ValueError):resolve_skill(state,'a',sid)
             self.assertEqual(before,state)
 
@@ -182,7 +185,7 @@ class MasteryEngineTests(unittest.TestCase):
         self.tap(state,'whole_family',roll=.99)
         self.assertEqual(a['mechanics']['grudge'],3)
         event=self.tap(state,'whole_family')
-        self.assertEqual(a['mechanics']['grudge'],2)
+        self.assertEqual(a['mechanics']['grudge'],1)
         self.assertEqual(event['self_damage'],0)
 
     def test_ring_retains_only_owned_effects_not_allied_setup(self):
@@ -230,7 +233,7 @@ class MasteryEngineTests(unittest.TestCase):
         self.assertEqual(a['resource'],65)
         self.assertEqual(a['mastery_state']['flow'],3)
         self.tap(state,'mana_overload')
-        self.assertEqual(a['resource'],50)
+        self.assertEqual(a['resource'],40)
         self.assertEqual(a['mastery_state']['flow'],0)
         a['mastery_state']['flow']=3
         self.tap(state,'mana_barrier')
