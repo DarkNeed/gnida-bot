@@ -68,6 +68,8 @@ function flipSpritePreview(){
 function rarityBadge(r){return '<span class="rarity '+(Object.hasOwn(rarityNames,r)?r:"common")+'">'+esc(rarityNames[r]||r||"Обычный")+'</span>';}
 function describeEffect(e){
   if(e.description)return esc(e.description);
+  if(e.kind==='skill_cost_flat')return 'Следующий платный навык дороже на '+esc(e.value)+' энергии; бесплатные навыки остаются бесплатными.';
+  if(e.kind==='family_cover')return 'Великий брат принимает 30% прямого урона. Кровотечение и самоурон не перенаправляются.';
   const kind=String(e.kind||'effect'),rpg={rpg_armor_break:'Раскол: −15% физ. защиты за применение, до −45%',rpg_counter:'Один ответный контрудар при попадании врага',rpg_parry:'Прерывание следующей атаки: открывает висцеральный удар. Босс не пропускает ход, его урон −35%',rpg_summon:'Скелет атакует после каждого из трёх следующих действий хозяина и собирает Души',rpg_blood_bullets:'−10% максимального HP, +35 энергии; не может убить',burn:'Горение: '+esc(e.value)+' урона при любом собственном действии',damage_taken_pct:'Получаемый урон: +'+Math.round(e.value*100)+'%'};
   if(Object.hasOwn(rpg,kind))return rpg[kind];
   if(kind==='incoming_damage_multiplier')return 'Получаемый прямой урон: −'+Math.round((1-e.value)*100)+'%'+(e.turns?' · '+e.turns+' х.':'');
@@ -99,6 +101,25 @@ function fighterStatuses(side){
   }
   const m=side.mechanics||{};
   const rpg=side.rpg_state||{};
+  const f=side.final_state||{};
+  for(const [id,name,icon,max,detail] of [
+    ['shame','Смущение',0,3,'Три заряда превращают поцелуй в финальную атаку; расход при попадании.'],
+    ['whim','Капризы',0,3,'Два заряда можно потратить на приговор поцелуем или защиту позированием.'],
+    ['grip','Захват',10,3,'Три заряда готовят бросок. Защита и очищение противника сбивают по одному.'],
+    ['dominance','Доминирование',4,3,'Разные родные атаки готовят «Билет в паровозик». Промах тоже даёт шаг; полный промах серии сохраняет заряды.'],
+    ['access','Уровень доступа',3,3,'Три заряда готовят окончательный взлом через «Отказ в обслуживании».'],
+    ['command','Приказ',14,1,'Следующий предупредительный выстрел подавляет врага и прикрывает владельца с союзником.'],
+    ['execution','Исполнение',14,2,'Два исполненных предписания усиливают «Последнюю строку».'],
+    ['guilt','Вина',14,3,'Две Вины усиливают «Непрошеный совет».'],
+    ['steadfast','Стойкость семьи',6,3,'Прямой урон даёт один заряд за действие противника; три усиливают «За всю семью».']]){
+    if(Number(f[id])>0)items.push({id:'final:'+id,name,icon,count:f[id]+'/'+max,detail});
+  }
+  if(f.zones?.length&&side.archclass_id==='thumb_execution')items.push({id:'final:zones',name:'Зоны поражения',icon:14,count:f.zones.length+'/3',detail:'Три разных родных приёма готовят финальный выстрел Расстрела. При полном промахе подготовка сохраняется.'});
+  if(f.compiled||f.compile_steps?.length)items.push({id:'final:compile',name:f.compiled?'Программа скомпилирована':'Компиляция',icon:3,count:f.compiled?'3/3':f.compile_steps.length+'/3',detail:'Три разных родных навыка превращают зарядку в «В продакшене разберёмся».'});
+  if(f.program_until>(side.own_turns||0))items.push({id:'final:program',name:'Программа запущена',icon:3,count:String(f.program_until-(side.own_turns||0)),detail:'Следующий родной навык выбирает один режим: урон, перезарядки или энергия. Число — оставшиеся собственные действия.'});
+  if(f.blood_debt>0)items.push({id:'final:blood',name:'Кровный долг',icon:1,count:String(f.blood_debt),detail:'Реально полученный прямой урон. От 25% max HP усиливает «За всю семью». Самоурон не учитывается; максимум — собственный max HP.'});
+  if(f.beast>0)items.push({id:'final:beast',name:'Чучело хищника',icon:12,count:String(f.beast),detail:'Осталось действий жизни слуги. Родная атака вызывает один укус, поддержка готовит защиту. Пассивки и питомец повторно не запускаются.'});
+  if(f.counter_until>(side.own_turns||0))items.push({id:'final:counter',name:'Контрстойка',icon:10,count:String(f.counter_until-(side.own_turns||0)),detail:'«Лунная дуга» превращена в «Луна уже за твоей спиной». Расход только при попадании; число — оставшиеся собственные действия.'});
   for(const [id,name,icon,detail] of [['mana','Перенасыщение',5,'Перегрузка: +35% урона за заряд.'],['faith','Вера',11,'Кара: +20% урона за заряд; Страшный суд: +40%.'],['souls','Души',12,'Жатва душ: +30% урона за душу.'],['beast','Зверство',4,'+10% своего и входящего урона за заряд.'],['retribution','Воздаяние',6,'Кара Паладина: +15% урона за заряд.']]){
     if(rpg[id]>0)items.push({id:'rpg:'+id,name,icon,count:rpg[id]+'/3',detail:detail+' Это заряды, не длительность.'});
   }
@@ -122,7 +143,7 @@ function fighterStatuses(side){
   }
   const skillName=id=>(side.skill_details||[]).find(s=>s.skill_id===id)?.name||id;
   if(m.prescript)items.push({id:'mechanic:prescript',name:'Предписание',icon:14,count:'1',detail:'Следующее действие: «'+esc(skillName(m.prescript))+'». Предписание действует на одно действие; выполнение активирует соответствующие бонусы бойца.'});
-  if(m.enemy_prescript?.skill_id)items.push({id:'mechanic:enemy_prescript',name:'Предписание противника',icon:14,count:'1',detail:'Используй «'+esc(skillName(m.enemy_prescript.skill_id))+'». Другое действие или пропуск: до '+esc(m.enemy_prescript.penalty)+' энергии штрафа. Зелье не расходует предписание.'});
+  if(m.enemy_prescript?.skill_id)items.push({id:'mechanic:enemy_prescript',name:'Предписание противника',icon:14,count:'1',detail:'Используй '+(m.enemy_prescript.allowed||[m.enemy_prescript.skill_id]).map(id=>'«'+esc(skillName(id))+'»').join(' или ')+'. Другое действие или пропуск: до '+esc(m.enemy_prescript.penalty)+' энергии штрафа. Зелье не расходует предписание.'});
   const pet=side.pet,p=side.pet_state||{};
   if(pet&&(p.ready||p.charge||p.incoming||p.used||p.task))items.push({id:'pet:'+pet.id,name:pet.name+(p.ready?' · бонус готов':''),icon:15,count:String(p.ready||p.used?1:p.charge||p.incoming||1),detail:esc(pet.description)+'<br>'+(p.used?'Уже использован в этом бою.':p.ready?'Бонус подготовлен к следующему подходящему навыку.':'Накопление: '+esc(p.charge||p.incoming||0)+'. Это не длительность.')+(p.task?'<br>Поручение: '+esc(({attack:'атаковать',restore:'восстановить энергию',support:'применить поддержку'})[p.task]||p.task):'')});
   return items;
@@ -157,7 +178,7 @@ function showEffect(key,id){
 }
 function skillInfo(s){const e=s.evolution;return '<div class="muted">'+(s.cost!==undefined?'Энергия '+s.cost+' · точность '+s.accuracy+'% · сила '+s.power+' · перезарядка '+s.cooldown+' х.':'')+'</div>'+(s.description?'<div class="muted">'+esc(s.description)+'</div>':'')+((s.effects||[]).map(e=>'<div class="muted">'+describeEffect(e)+'</div>').join(''))+(e?'<div class="evolution-note"><b>'+(e.active?(e.specialization?'Навык архикласса':'Усиленная версия'):'Превращение с '+e.min_level+' уровня: '+esc(e.name))+'</b><div>'+esc(e.condition)+'</div>'+(!e.active?'<div>Энергия '+esc(e.cost)+' · сила '+esc(e.power)+'. '+esc(e.description)+'</div>':'')+'</div>':'');}
 function battleSkillButton(skill,side){
-  const evolved=skill.evolution?.active, prescribed=side.mechanics?.prescript===skill.skill_id, enemyOrder=side.mechanics?.enemy_prescript?.skill_id===skill.skill_id;
+  const evolved=skill.evolution?.active, prescribed=side.mechanics?.prescript===skill.skill_id, enemyOrder=(side.mechanics?.enemy_prescript?.allowed||[side.mechanics?.enemy_prescript?.skill_id]).includes(skill.skill_id);
   const label=prescribed?'ПРЕДПИСАНИЕ':enemyOrder?'ПРЕДПИСАНИЕ ВРАГА':skill.damage_type==='magic'?'МАГИЯ':skill.damage_type==='physical'?'АТАКА':'ЭФФЕКТ';
   return '<button class="skill'+(evolved?' evolved':'')+((prescribed||enemyOrder)?' prescribed':'')+'" data-skill="'+esc(skill.skill_id)+'" '+(skill.evolution?'title="'+esc(skill.evolution.condition)+'" ':'')+(side.resource<skill.cost||side.cooldowns[skill.skill_id]||skill.unavailable_reason?'disabled':'')+'><span class="type">'+(evolved?(skill.evolution.specialization?'ВЕТКА · ':'УСИЛЕНО · '):'')+label+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?' · ещё '+side.cooldowns[skill.skill_id]+' х.':'')+(skill.unavailable_reason?' · '+esc(skill.unavailable_reason):'')+'</span></button>';
 }
@@ -245,7 +266,7 @@ function renderActions(){
   }else if(mine){
     panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>battleSkillButton(skill,side)).join('')+'</div>';
     const m=side.mechanics||{};
-    if(m.enemy_prescript)panel.innerHTML+='<p class="note">Предписание противника: <b>'+esc(side.enemy_prescript_name||m.enemy_prescript.skill_id)+'</b>. Другое действие или пропуск: до '+esc(m.enemy_prescript.penalty)+' энергии штрафа. Зелье не расходует предписание.</p>';
+    if(m.enemy_prescript)panel.innerHTML+='<p class="note">Предписание противника: <b>'+(m.enemy_prescript.allowed_names||[side.enemy_prescript_name||m.enemy_prescript.skill_id]).map(esc).join(' / ')+'</b>. Другое действие или пропуск: до '+esc(m.enemy_prescript.penalty)+' энергии штрафа. Зелье не расходует предписание.</p>';
     if(side.mirror_gift_details?.length)panel.innerHTML+='<details><summary>Дары зеркала · '+side.mirror_gift_details.length+'</summary>'+side.mirror_gift_details.map(g=>'<p class="muted"><b>'+esc(g.name)+'</b> · '+esc(g.description)+'</p>').join('')+'</details>';
     if(side.can_use_potion&&!side.potion_used)panel.innerHTML+='<div class="row" style="margin-top:8px">'+button("Зелье · 30% HP","potion","small")+'</div>';
   }else{
@@ -801,7 +822,7 @@ async function boot(){
     const mirrorPreview=new URLSearchParams(location.search).get('mirror_preview');
     if(mirrorPreview){try{mirrorScreen(await api('/demo/mirror/'+encodeURIComponent(mirrorPreview)));return;}catch{}}
     const cls=new URLSearchParams(location.search).get('fighter');
-    if(['thumb','index','middle','ring','pinky','warrior','mage','priest','hunter'].includes(cls)){
+    if(['cutie','jock','nerd','thumb','index','middle','ring','pinky','warrior','mage','priest','hunter'].includes(cls)){
       const previewParams=new URLSearchParams(location.search);
       try{battleScreen(await api('/demo/fighter/'+cls+'?arch='+encodeURIComponent(previewParams.get('arch')||'')+'&stage='+encodeURIComponent(previewParams.get('stage')||'20')));return;}catch{}
     }

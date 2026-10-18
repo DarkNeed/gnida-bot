@@ -87,6 +87,14 @@ EVOLUTIONS = {
 
 def evolution_info(skill, class_id, source=None, target=None, own_turns=0):
     if source:
+        from arena_finals import rule as final_rule
+        info=final_rule(skill,source,target)
+        if info:
+            return dict(name=info['name'],min_level=20,condition=info['condition'],
+                description=info['description'],cost=info['changes'].get('cost',skill.cost),
+                power=info['changes'].get('power',skill.power),active=False,
+                final_ready=info['ready'],specialization=True)
+    if source:
         from arena_rpg_descriptions import branch_skill_info
         if skill.class_id==class_id:
             info=branch_skill_info(skill,source,target)
@@ -181,6 +189,8 @@ def skill_variant(skill, actor, target, own_turns):
     rule = arch_rule(skill, actor)
     if rule_active(rule, skill, actor, target, own_turns):
         skill = apply_rule(skill, rule)
+    from arena_finals import variant as final_variant
+    skill=final_variant(skill,actor,target)
     return skill if skill != base else base
 
 

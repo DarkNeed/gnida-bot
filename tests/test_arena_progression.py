@@ -112,7 +112,7 @@ class ProgressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(p["progression_choice"]["options"]), 3)
         await self.choose("pinky_tiansha")
         p = await self.profile()
-        self.assertEqual(p["class_name"], "Звезда Тяньган")
+        self.assertEqual(p["class_name"], "Звезда Тяньган: Раскол небес")
         self.assertEqual(p["archclass"]["stage"], 20)
         self.assertIsNone(p["progression_choice"])
 

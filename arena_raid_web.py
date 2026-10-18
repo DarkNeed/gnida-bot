@@ -86,7 +86,7 @@ async def raid_view(db, row, actor):
                 catalog[sid], side["class_id"], side, target, side.get("own_turns", 0)
             )
             if info:
-                info["active"] = variant is not catalog[sid]
+                info["active"] = info.get('final_ready',variant is not catalog[sid])
                 if info["active"]:
                     info.update(
                         name=variant.name, cost=variant.cost, power=variant.power

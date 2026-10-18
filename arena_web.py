@@ -149,7 +149,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                     completed_turns(state, key),
                 )
                 if info:
-                    info["active"] = variant is not skills[s]
+                    info["active"] = info.get('final_ready',variant is not skills[s])
                     if info["active"]:
                         info.update(
                             name=variant.name,
@@ -204,7 +204,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 else ""
             )
             if "bum_punch" not in side["loadout"] and (
-                (order and order["skill_id"] == "bum_punch")
+                (order and 'bum_punch' in order.get('allowed',[order['skill_id']]))
                 or not any(
                     pet_cost(side, effective_skill(state, key, s, skills), gift_cost(side, effective_skill(state, key, s, skills)))
                     <= side["resource"]

@@ -66,7 +66,7 @@ def temporary_buff(e):
     if not 0 < e.get("duration", 0) < 10000:
         return False
     kind, value = e.get("kind"), e.get("value", 0)
-    if kind in {"prepared_attack", "rpg_counter", "rpg_parry"}:
+    if kind in {"prepared_attack", "rpg_counter", "rpg_parry", "family_cover"}:
         return True
     if kind == "incoming_damage_multiplier":
         return 0 < value < 1

@@ -133,6 +133,9 @@ from arena_rpg_paths import PATHS
 
 ARCHCLASSES.update({key:branch(cid,name,PATHS[key][0],PATHS[key][1],PATHS[key][5])
     for key,(cid,name,description) in RPG_BRANCHES.items()})
+from arena_finals import FINALS
+for _key, (_class, _title, _description) in FINALS.items():
+    ARCHCLASSES[_key].update(final_name=_title,final_description=_description)
 
 
 def selected_branch(source):
@@ -374,11 +377,22 @@ def revenge_recoil(actor, direct_damage):
     return loss
 
 
-def obey_enemy_prescript(actor, skill_id):
+def obey_enemy_prescript(actor, skill_id, opponent=None, raid_context=None):
     order = actor.get("mechanics", {}).pop("enemy_prescript", None)
     if not order:
         return ""
-    if order["skill_id"] == skill_id:
+    obeyed = skill_id in order.get('allowed',[order['skill_id']])
+    if 'source' in order and opponent is not None:
+        from arena_finals import owner, branch
+        source=owner(raid_context,opponent,order['source'])
+        if source is not None and branch(source)=='index_messenger':
+            m=source.setdefault('final_state',{})
+            claim=[actor.get('controller_id'),actor.get('own_turns',0),order['source']]
+            if m.get('prescript_claim')!=claim:
+                m['prescript_claim']=claim
+                if obeyed:source['resource']=min(source['stats']['resource_max'],source['resource']+5)
+                else:m['guilt']=min(3,m.get('guilt',0)+1)
+    if obeyed:
         return "предписание противника исполнено"
     penalty = min(actor["resource"], order["penalty"])
     actor["resource"] -= penalty
@@ -418,12 +432,23 @@ def arch_after_action(actor, target, skill, hit, skills, rng):
                 <= target["resource"]
             )
         )
+        from arena_engine import skill_restriction
+        choices=[k for k in choices if not skill_restriction(target,
+                 skill_variant(skills[k],target,actor,target.get('own_turns',0)))]
         if choices:
             from arena_archprogress import prescript_penalty
 
-            chosen = rng.choice(choices)
+            from arena_finals import branch
+            if branch(actor)=='index_messenger':
+                selected=[]
+                for _ in range(min(2,len(choices))):
+                    chosen=rng.choice(choices);choices.remove(chosen);selected.append(chosen)
+                chosen=selected[0]
+            else:selected=[rng.choice(choices)];chosen=selected[0]
             target.setdefault("mechanics", {})["enemy_prescript"] = dict(
                 skill_id=chosen, penalty=prescript_penalty(actor)
             )
-            notes.append("предписание врагу: «" + skills[chosen].name + "»")
+            if branch(actor)=='index_messenger':
+                target['mechanics']['enemy_prescript'].update(allowed=selected,allowed_names=[skills[k].name for k in selected],source=actor.get('controller_id'))
+            notes.append("предписание врагу: " + ' / '.join('«'+skills[k].name+'»' for k in selected))
     return notes

@@ -37,6 +37,9 @@ from arena_rpg import (
     rpg_received_damage, rpg_effect, rpg_after_action, branch as rpg_branch,
 )
 from arena_rpg_combat import context as rpg_action_context, incoming as rpg_incoming, incoming_multiplier as rpg_incoming_multiplier, paid_action as rpg_paid_action, revive as rpg_revive
+from arena_finals import (context as final_context, modifiers as final_modifiers,
+    incoming as final_incoming, received as final_received, after_action as final_after_action,
+    break_grip as final_break_grip)
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0
@@ -1036,6 +1039,7 @@ def battle_status_snapshot(state: dict) -> dict:
             "own_turns": side.get('own_turns',0),
             "epic_state": deepcopy(side.get("epic_state", {})),
             "rpg_state": deepcopy(side.get("rpg_state", {})),
+            "final_state": deepcopy(side.get("final_state", {})),
             **({"pet": deepcopy(side["pet"]), "pet_state": deepcopy(side.get("pet_state", {}))}
                if side.get("pet") else {}),
             "effects": deepcopy(
@@ -1079,7 +1083,7 @@ def _advance_turn(state: dict, side_key: str) -> None:
     elif state["turn"] > 200:
         state.update(finished=True, winner=None, finish_reason="turn_limit")
     elif any(e["kind"] == "stun" for e in target["effects"]):
-        order_note = obey_enemy_prescript(target, None)
+        order_note = obey_enemy_prescript(target, None, actor)
         _tick(target)
         if target['hp'] <= 0:
             state.update(finished=True,winner=side_key,finish_reason='burn')
@@ -1109,7 +1113,7 @@ def skip_turn(state: dict) -> None:
     before = {
         k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
     }
-    order_note = obey_enemy_prescript(actor, None)
+    order_note = obey_enemy_prescript(actor, None,state['sides']['b' if key=='a' else 'a'])
     _tick(actor)
     text = "Время вышло: ход пропущен (2 минуты)."
     if order_note:
@@ -1156,6 +1160,7 @@ def resolve_skill(
     actor = state["sides"][side_key]
     other = "b" if side_key == "a" else "a"
     target = state["sides"][other]
+    final_before=final_context(actor,target)
     rpg_context = rpg_action_context(actor,target)
     rpg_context['action_id']=[actor.get('controller_id'),actor.get('own_turns',0)]
     # Capture before _tick expires the last turn; utilities and misses without an
@@ -1173,6 +1178,7 @@ def resolve_skill(
     mirror_accuracy, mirror_multiplier = gift_modifiers(actor, target)
     actual_cost = pet_cost(actor, skill, gift_cost(actor, skill))
     class_accuracy, class_boost = class_modifiers(actor, target, skill)
+    class_boost += final_modifiers(actor,skill)
     epic_accuracy, epic_multiplier = epic_modifiers(actor, target, skill)
     class_accuracy += epic_accuracy
     rpg_accuracy, rpg_multiplier = rpg_modifiers(actor,target,skill)
@@ -1233,10 +1239,12 @@ def resolve_skill(
             for part in strike_results:
                 part.update(hit=False,dodged=False)
     actor["resource"] -= actual_cost
+    if skill.cost:
+        actor['effects']=[e for e in actor['effects'] if e.get('kind')!='skill_cost_flat']
     horizon_note=rpg_paid_action(actor,target,actual_cost,raid_context)
     if "once_per_battle" in skill.tags or 'once_on_hit' in skill.tags and hit:
         actor.setdefault("used_skills", []).append(skill_id)
-    order_note = obey_enemy_prescript(actor, skill_id)
+    order_note = obey_enemy_prescript(actor, skill_id,target,raid_context)
     damage = 0
     if hit and skill.damage_type:
         attack = effective_stat(actor, skill.damage_type + "_attack")
@@ -1287,15 +1295,28 @@ def resolve_skill(
             # Divide the same full-hit damage budget without rounding six
             # tiny hits up to an artificial minimum. Misses lose their share.
             full_damage = damage
+            weighted=any(t in skill.tags for t in ('final_train','final_execution'))
+            shares=[.20,.30,.50] if weighted else [1/strike_count]*strike_count
+            budget=[int(full_damage*s) for s in shares]
+            for i in range(full_damage-sum(budget)):budget[i%strike_count]+=1
+            if weighted:
+                last_pierce=.50 if 'final_train' in skill.tags else .60
+                base_defense=effective_stat(target,'physical_defense')
+                budget[-1]=round(budget[-1]*(100+4*defense)/(100+4*base_defense*(1-min(.9,last_pierce+pet_pierce))))
+            potential=sum(budget[i] for i,p in enumerate(strike_results) if p['hit'])
+            redirected=potential-final_incoming(target,potential,actor,raid_context)
             for i, part in enumerate(strike_results):
                 if part["hit"]:
+                    held=min(redirected,budget[i]);redirected-=held
                     part["damage"] = min(
-                        target["hp"], full_damage // strike_count + int(i < full_damage % strike_count)
+                        target["hp"], budget[i]-held
                     )
                     target["hp"] -= part["damage"]
             damage = sum(part["damage"] for part in strike_results)
         else:
+            damage=final_incoming(target,damage,actor,raid_context)
             target["hp"] = max(0, target["hp"] - damage)
+    final_received(target,actor,skill,hit,dodged,min(before[other]['hp'],damage))
     # Existing buffs expire after this action, before newly applied buffs are added.
     if skill.damage_type == "magic":
         actor["effects"] = [
@@ -1379,6 +1400,8 @@ def resolve_skill(
                     "cleanse_one": "снятие дебаффа",
                     "dispel_buffs": "временные усиления сняты",
                     "incoming_damage_multiplier": f"защита от прямого урона −{round((1-effect['value'])*100)}%",
+                    "damage_taken_pct": "уязвимость",
+                    "skill_cost_flat": "удорожание платного навыка",
                 }.get(effect["kind"], effect["kind"])
             )
             effects_text.append(label)
@@ -1420,6 +1443,14 @@ def resolve_skill(
         pet_context, effects_text, skills or BUILTIN_SKILLS)
     rpg_notes,reaction_damage = rpg_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),before[side_key]['hp'],rng,effective_stat,rpg_context,allies)
     if horizon_note: rpg_notes.append(horizon_note)
+    follower_before=target['hp']
+    final_notes=final_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),
+                                  final_before,rng,effective_stat,allies,skills or BUILTIN_SKILLS)
+    follower_damage=max(0,follower_before-target['hp'])
+    if not skill.damage_type and any(e['kind']=='cleanse_one' or
+            e.get('target')=='self' and e['kind'] in ('incoming_damage_multiplier','physical_defense_pct','magic_defense_pct') for e in skill.effects):
+        final_break_grip(actor,target)
+    arch_notes += final_notes
     pet_notes += rpg_notes
     pet_notes += epic_after_action(actor, target, skill, hit, rng)
     text = f"{skill.name}: " + (
@@ -1463,6 +1494,7 @@ def resolve_skill(
         "bleed_damage": bleed_damage,
         "self_damage": self_damage,
         "reaction_damage": reaction_damage,
+        "follower_damage": follower_damage,
         "text": text,
         "before": before,
         "after": {

@@ -76,7 +76,14 @@ async def demo_fighter(request):
                  'mage':['mana_shot','mana_blob','mana_focus' if arch=='mage_archmage' else 'mana_overload' if arch=='mage_elementalist' else 'mana_barrier'],
                  'priest':['light_word','priest_heal','priest_ward'],
                  'hunter':['hunter_cut','hunter_shot','blood_bullets']}
-        owned=primary[cls]+['arch_'+arch]
+        humour_fingers={
+            'cutie':['air_kiss','posing','meow'], 'jock':['smack','butt_peak','clench'],
+            'nerd':['humiliate','charging','doxxing'], 'thumb':['bayonet','warning_shot','senior_verdict'],
+            'index':['receive_prescript','last_line','first_line'],
+            'middle':['grit_teeth','whole_family','answer_for_it'],
+            'ring':['first_stroke','red_etude','last_stroke'],
+            'pinky':['calm_breath','moon_arc','falling_star']}
+        owned=primary.get(cls,humour_fingers.get(cls,owned[:3]))+['arch_'+arch]
     source = dict(slave_id=1, owner_id=1, class_id=cls, level=20, loadout=owned,archclass_id=arch,archclass_stage=stage)
     state = create_battle_state(
         source,
@@ -91,6 +98,20 @@ async def demo_fighter(request):
             'hunter_beast':dict(beast=3), 'hunter_moon':dict(visceral_ready=True,visceral_until=8,moon_mark=True),
         }.get(arch,{})
         state['sides']['a']['own_turns']=4
+        from arena_finals import FINALS
+        if arch in FINALS and stage==20:
+            state['sides']['a']['final_state']=dict(shame=3,whim=3,grip=3,dominance=3,
+                compiled=True,access=3,command=1,zones=['a','b','c'],execution=2,guilt=3,
+                steadfast=3,blood_debt=state['sides']['a']['stats']['max_hp'],beast=3,counter_until=6)
+            state['sides']['a']['mechanics']=dict(focus=3) if cls=='pinky' else {}
+            state['sides']['b']['effects']=[dict(id=k,kind=k,value=-.1,duration=3) for k in ('accuracy_flat','speed_pct','magic_defense_pct')]
+            # Only relevant counters should be visible in a single-path demo.
+            names=dict(femboy=['shame'],princess=['whim'],gachi_actor=['grip'],mge_bro=['dominance'],
+                programmer=['compiled'],hacker=['access'],thumb_discipline=['command'],thumb_execution=['zones'],
+                index_proxy=['execution'],index_messenger=['guilt'],middle_guardian=['steadfast'],
+                middle_revenge=['blood_debt'],ring_pointillist=[],ring_fauvist=['beast'],
+                pinky_dihui=['counter_until'],pinky_tiansha=[])
+            state['sides']['a']['final_state']={k:v for k,v in state['sides']['a']['final_state'].items() if k in names[arch]}
     for key, side in state["sides"].items():
         c = FIGHTER_CLASSES[side["class_id"]]
         side.update(

@@ -31,9 +31,11 @@ def has_gift(side, gift):
 
 
 def gift_cost(side, skill):
+    from arena_finals import cost_tax
+    cost=skill.cost
     if has_gift(side, "nerve") and side["hp"] <= side["stats"]["max_hp"] * 0.35:
-        return max(1, (skill.cost * 4 + 4) // 5) if skill.cost else 0
-    return skill.cost
+        cost=max(1, (skill.cost * 4 + 4) // 5) if skill.cost else 0
+    return cost+cost_tax(side,skill)
 
 
 def gift_modifiers(actor, target):

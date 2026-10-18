@@ -81,12 +81,12 @@ class StarsRevengeTests(unittest.TestCase):
                         self.assertFalse(event["critical"])
 
     def test_star_prices_power_and_level_twelve_upgrade_at_both_stages(self):
-        for level, stage, power in ((10, 10, 21), (11, 10, 21), (12, 10, 22),
-                                    (20, 10, 22), (20, 20, 22)):
+        for level, stage, power, cost in ((10, 10, 21, 45), (11, 10, 21, 45), (12, 10, 22, 45),
+                                          (20, 10, 22, 45), (20, 20, 34, 60)):
             state = self.state(branch="pinky_tiansha", level=level, stage=stage)
             state["sides"]["a"]["mechanics"]["focus"] = 3
             skill = effective_skill(state, "a", "falling_star")
-            self.assertEqual((skill.power, skill.cost), (power, 45))
+            self.assertEqual((skill.power, skill.cost), (power, cost))
             state["sides"]["a"]["archclass_id"] = "pinky_dihui"
             skill = effective_skill(state, "a", "moon_arc")
             self.assertEqual((skill.power, skill.cost), (13, 20))

@@ -299,7 +299,7 @@ def raid_snapshot(data):
         k: deepcopy(
             {
                 field: f.get(field, {})
-                for field in ("hp", "resource", "effects", "mechanics", "cooldowns", "epic_state", "rpg_state", "own_turns")
+                for field in ("hp", "resource", "effects", "mechanics", "cooldowns", "epic_state", "rpg_state", "final_state", "own_turns")
             }
         )
         for k, f in fighters.items()
@@ -323,7 +323,12 @@ def log_event(data, actor, target, text, **extra):
     )
 
 
-def defend(fighter):
+def defend(fighter,opponent=None,raid_context=None):
+    if opponent is not None:
+        from arena_archclasses import obey_enemy_prescript
+        from arena_finals import break_grip
+        obey_enemy_prescript(fighter,None,opponent,raid_context)
+        break_grip(fighter,opponent)
     _tick(fighter)
     fighter["effects"] = [
         e for e in fighter["effects"] if not e.get("id", "").startswith("raid_guard_")
@@ -390,7 +395,7 @@ def resolve_round(data, skills, rng=None):
             player["previous_skill"] = None
             if data.get('boss_id') == 'kit':
                 kit_defend(data, key)
-            defend(actor)
+            defend(actor,boss,data)
             log_event(
                 data,
                 key,
@@ -414,7 +419,7 @@ def resolve_round(data, skills, rng=None):
             if prepared:
                 boss['effects'] = [e for e in boss['effects'] if e.get('id') != 'kit_action_shield']
                 kit_defend(data, key)
-            defend(actor)
+            defend(actor,boss,data)
             log_event(data, key, key, "Навык недоступен после изменений в бою: защита.")
             continue
         if prepared:
@@ -466,6 +471,8 @@ def resolve_round(data, skills, rng=None):
             kit_react(data, key, event, prepared, rng)
     if not finish_if_needed(data):
         if stunned:
+            from arena_archclasses import obey_enemy_prescript
+            obey_enemy_prescript(boss,None,next(iter(living.values()))['fighter'],data)
             _tick(boss)
             data["control_lock"] = 2
             log_event(data, "boss", "boss", "Босс ошеломлён: намерение сорвано.")
@@ -478,6 +485,10 @@ def resolve_round(data, skills, rng=None):
         else:
             intent = data["intent"]
             if intent["kind"] == "shield":
+                from arena_archclasses import obey_enemy_prescript
+                from arena_finals import break_grip
+                obey_enemy_prescript(boss,None,next(iter(living.values()))['fighter'],data)
+                for p in living.values():break_grip(boss,p['fighter'])
                 _tick(boss)
                 boss["effects"] = [
                     e
@@ -589,6 +600,12 @@ def resolve_round(data, skills, rng=None):
                         "Перегрев: босс получает на 25% больше урона в следующем раунде.",
                     )
             data["control_lock"] = max(0, data["control_lock"] - 1)
+    if not data['finished'] and boss.get('mechanics',{}).get('enemy_prescript'):
+        # Dialogues, phase utilities and other non-native boss actions also
+        # consume an order. Native attacks already popped it, including AoE.
+        from arena_archclasses import obey_enemy_prescript
+        note=obey_enemy_prescript(boss,None,next(iter(data['players'].values()))['fighter'],data)
+        if note:log_event(data,'boss','boss',note)
     if not finish_if_needed(data) and data["round"] >= RAID_MAX_ROUNDS:
         data.update(
             finished=True,
