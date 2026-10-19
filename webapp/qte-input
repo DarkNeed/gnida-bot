@@ -2,6 +2,52 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.QTETouch=api;})(globalThis,function(){
   'use strict';
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const swipeLocks=new WeakMap();
+  function lockSwipes(){
+    const tg=globalThis.Telegram?.WebApp;
+    if(!tg||typeof tg.disableVerticalSwipes!=='function'||typeof tg.enableVerticalSwipes!=='function')return ()=>{};
+    let state=swipeLocks.get(tg);
+    if(!state){
+      try{
+        if(tg.isVersionAtLeast&&!tg.isVersionAtLeast('7.7'))return ()=>{};
+        state={count:0,restore:tg.isVerticalSwipesEnabled!==false};
+        if(state.restore)tg.disableVerticalSwipes();
+        swipeLocks.set(tg,state);
+      }catch{return ()=>{};}
+    }
+    state.count++;let released=false;
+    return ()=>{if(released)return;released=true;if(--state.count)return;swipeLocks.delete(tg);
+      if(state.restore)try{tg.enableVerticalSwipes();}catch{}
+    };
+  }
+  let viewportLock=null;
+  function lockViewport(container){
+    const releaseSwipes=lockSwipes();
+    if(viewportLock){viewportLock.count++;return release(viewportLock);}
+    const body=document.body,root=document.documentElement,x=window.scrollX,y=window.scrollY;
+    const saved=[...['position','top','left','width','overflow'].map(name=>[body,name,body.style.getPropertyValue(name),body.style.getPropertyPriority(name)]),
+      ...['overflow','overscroll-behavior','scroll-behavior'].map(name=>[root,name,root.style.getPropertyValue(name),root.style.getPropertyPriority(name)])];
+    const abort=new AbortController(),state={count:1,saved,x,y,abort,root};viewportLock=state;
+    // overflow:hidden alone does not reliably stop iOS rubber-banding.
+    body.style.position='fixed';body.style.top=-y+'px';body.style.left=-x+'px';body.style.width='100%';body.style.overflow='hidden';
+    root.style.overflow='hidden';root.style.overscrollBehavior='none';root.style.scrollBehavior='auto';
+    document.addEventListener('touchmove',e=>{
+      const target=e.target;
+      if(!container.contains(target)||target===container||target.closest?.('canvas,.qte-controls')){
+        if(e.cancelable)e.preventDefault();
+      }
+    },{passive:false,capture:true,signal:abort.signal});
+    return release(state);
+    function release(state){let released=false;return ()=>{
+      if(released)return;released=true;releaseSwipes();if(--state.count)return;
+      state.abort.abort();viewportLock=null;
+      for(const [node,name,value,priority] of state.saved){if(name==='scroll-behavior')continue;
+        if(value)node.style.setProperty(name,value,priority);else node.style.removeProperty(name);}
+      window.scrollTo(state.x,state.y);
+      const [,name,value,priority]=state.saved.find(([node,name])=>node===state.root&&name==='scroll-behavior');
+      if(value)state.root.style.setProperty(name,value,priority);else state.root.style.removeProperty(name);
+    };}
+  }
   function relativeStart(pointer,player){return {x:pointer.x,y:pointer.y,playerX:player.x,playerY:player.y};}
   function relativeTarget(origin,pointer,rect,width=720,height=320){
     return [Math.round(clamp(origin.playerX+(pointer.x-origin.x)*width/rect.width,0,width)*100)/100,
@@ -15,21 +61,28 @@
   }
   function attach({canvas,stick,getPlayer,isDefense=()=>true,enabled=()=>true,onTap=()=>{},onTouch=()=>{},width=720,height=320}){
     const abort=new AbortController(),on=(el,event,fn)=>el.addEventListener(event,fn,{signal:abort.signal});
-    let drag=null,origin=null,target=null,held=null,vector={x:0,y:0};
+    let drag=null,origin=null,target=null,held=null,vector={x:0,y:0},releaseGesture=null;
+    const beginGesture=e=>{if(e.pointerType==='touch'&&!releaseGesture)releaseGesture=lockSwipes();};
+    function endGesture(){if(drag===null&&held===null){releaseGesture?.();releaseGesture=null;}}
     const point=e=>({x:e.clientX,y:e.clientY});
     const capture=(el,id)=>{try{el.setPointerCapture(id);}catch{}};
     function resetStick(){vector={x:0,y:0};stick?.style.setProperty('--stick-x','0px');stick?.style.setProperty('--stick-y','0px');stick?.classList.remove('held');}
-    function clear(){drag=null;origin=null;target=null;held=null;resetStick();}
+    function clear(){drag=null;origin=null;target=null;held=null;resetStick();endGesture();}
+    // Pointer capture drives movement. These non-passive touch handlers only
+    // cancel Safari/WKWebView scrolling; they never create duplicate input.
+    for(const el of [canvas,stick].filter(Boolean))for(const name of ['touchstart','touchmove']){
+      el.addEventListener(name,e=>{if(enabled()&&e.cancelable)e.preventDefault();},{passive:false,capture:true,signal:abort.signal});
+    }
     on(canvas,'pointerdown',e=>{
       if(!enabled())return;e.preventDefault();if(e.pointerType==='touch')onTouch();
       if(!isDefense()){onTap();return;}
       if(drag!==null||held!==null)return;
-      drag=e.pointerId;capture(canvas,drag);origin=relativeStart(point(e),getPlayer());
+      drag=e.pointerId;beginGesture(e);capture(canvas,drag);origin=relativeStart(point(e),getPlayer());
       // Touching anywhere does not move the character towards the fingertip.
       target=[origin.playerX,origin.playerY];canvas.focus({preventScroll:true});
     });
     on(canvas,'pointermove',e=>{if(e.pointerId!==drag||!origin)return;e.preventDefault();target=relativeTarget(origin,point(e),canvas.getBoundingClientRect(),width,height);});
-    for(const event of ['pointerup','pointercancel','lostpointercapture'])on(canvas,event,e=>{if(e.pointerId===drag){drag=null;origin=null;target=null;}});
+    for(const event of ['pointerup','pointercancel','lostpointercapture'])on(canvas,event,e=>{if(e.pointerId===drag){drag=null;origin=null;target=null;endGesture();}});
     function updateStick(e){
       const r=stick.getBoundingClientRect(),x=e.clientX-r.left-r.width/2,y=e.clientY-r.top-r.height/2,radius=r.width*.38;
       vector=stickVector(x,y,radius);const length=Math.hypot(x,y)||1,travel=Math.min(length,radius*.7);
@@ -37,12 +90,12 @@
     }
     if(stick){
       on(stick,'pointerdown',e=>{if(!enabled()||!isDefense()||held!==null||drag!==null)return;
-        e.preventDefault();onTouch();held=e.pointerId;target=null;capture(stick,held);stick.classList.add('held');updateStick(e);});
+        e.preventDefault();onTouch();held=e.pointerId;beginGesture(e);target=null;capture(stick,held);stick.classList.add('held');updateStick(e);});
       on(stick,'pointermove',e=>{if(e.pointerId!==held)return;e.preventDefault();updateStick(e);});
-      for(const event of ['pointerup','pointercancel','lostpointercapture'])on(stick,event,e=>{if(e.pointerId===held){held=null;resetStick();}});
+      for(const event of ['pointerup','pointercancel','lostpointercapture'])on(stick,event,e=>{if(e.pointerId===held){held=null;resetStick();endGesture();}});
     }
-    if(typeof window!=='undefined')on(window,'resize',clear);
+    if(typeof window!=='undefined'){on(window,'resize',clear);on(window,'blur',clear);on(window,'pagehide',clear);}
     return {input(){return held!==null?{...vector}:target?{target:[...target]}:{x:0,y:0};},clear,destroy(){clear();abort.abort();}};
   }
-  return {relativeStart,relativeTarget,stickVector,attach};
+  return {relativeStart,relativeTarget,stickVector,attach,lockViewport};
 });

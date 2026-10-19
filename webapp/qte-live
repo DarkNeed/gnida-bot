@@ -7,7 +7,7 @@
   function playPatterns(challenge){
     if(active)return Promise.reject(new Error('Другая мини-игра уже открыта.'));
     const E=window.QTEUnique,V=window.QTEView;
-    if(!E||!V||!window.QTETouch?.attach)return Promise.reject(new Error('Обнови арену: новые мини-игры не загрузились.'));
+    if(!E||!V||!window.QTETouch?.attach||!window.QTETouch?.lockViewport)return Promise.reject(new Error('Обнови арену: новые мини-игры не загрузились.'));
     return new Promise(resolve=>{
       const defense=challenge.kind==='defense',p=E.profile(challenge.profile);
       const sim=(defense?E.defense:E.attack)(p,challenge.stats,challenge.seed,{damageBase:challenge.damage_base,hp:challenge.target_hp,endOnDeath:false,enabledStrikes:challenge.enabled_strikes,preparation:challenge.defense_preparation??0});
@@ -22,8 +22,8 @@
       find('.qte-abort').title=defense?'Пропуск или истечение времени засчитывают все снаряды как попадания.':'Пропуск расходует действие и не даёт попаданий.';
       for(const selector of ['.qte-live-pad','.qte-stick','.qte-touch-help'])find(selector).hidden=!defense;
       find('.qte-hit').hidden=defense;
-      const previousFocus=document.activeElement,overflow=document.body.style.overflow;
-      document.body.append(cover);document.body.style.overflow='hidden';canvas.focus({preventScroll:true});
+      const previousFocus=document.activeElement;
+      document.body.append(cover);const unlockViewport=window.QTETouch.lockViewport(cover);canvas.focus({preventScroll:true});
       const abort=new AbortController(),on=(el,name,fn)=>el.addEventListener(name,fn,{signal:abort.signal});
       let tick=0,accumulator=0,last=0,done=false,keys=new Set(),pointers=new Map(),lastInput='',raf,watch;
       const proof=defense?{ticks:Math.round(sim.duration*120),inputs:[]}:{ticks:0,clicks:[]};
@@ -32,7 +32,7 @@
       active={challenge:challenge.id};
       function finish(failed=false){
         if(done)return;done=true;cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();
-        document.body.style.overflow=overflow;cover.remove();active=null;previousFocus?.isConnected&&previousFocus.focus?.({preventScroll:true});
+        cover.remove();unlockViewport();active=null;previousFocus?.isConnected&&previousFocus.focus?.({preventScroll:true});
         if(!defense)proof.ticks=tick;resolve(failed?{abort:true}:proof);
       }
       function draw(){
@@ -80,7 +80,7 @@
   function playLegacy(challenge) {
     if(active) return Promise.reject(new Error('Другая мини-игра уже открыта.'));
     const E=window.QTELab;
-    if(!E||!window.QTETouch?.attach) return Promise.reject(new Error('Обнови арену: модуль мини-игр или управления не загрузился.'));
+    if(!E||!window.QTETouch?.attach||!window.QTETouch?.lockViewport) return Promise.reject(new Error('Обнови арену: модуль мини-игр или управления не загрузился.'));
     return new Promise(resolve=>{
       const cover=document.createElement('div');cover.className='qte-cover';
       cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Боевая мини-игра"><div class="qte-heading"><div><p class="qte-eyebrow"></p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"></p><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="320" tabindex="0" aria-label="Пробел для попадания, движение пальцем или WASD для уклонения"></canvas></div><div class="qte-live-status" role="status"></div><div class="qte-controls"><div class="qte-live-buttons"><button class="qte-hit">УДАР · ПРОБЕЛ / КАСАНИЕ</button><button class="qte-abort">Пропустить · неуспех</button></div><p class="qte-touch-help">Веди пальцем по полю или тяни джойстик.<small>Касание не переносит маркер под палец.</small></p><button class="qte-stick" aria-label="Джойстик уклонения: удерживай и тяни в нужную сторону"><span aria-hidden="true"></span></button><div class="qte-live-pad"><button data-direction="up" aria-label="Вверх">↑</button><button data-direction="left" aria-label="Влево">←</button><button data-direction="down" aria-label="Вниз">↓</button><button data-direction="right" aria-label="Вправо">→</button></div></div><p class="qte-info">Результат проверяет сервер. Закрытие или истечение времени не дают успешного попадания/уклонения.</p></section>';
@@ -96,8 +96,8 @@
       const n=challenge.strikes;
       const sim=defense?E.defense({pattern:challenge.pattern,stats:challenge.stats,seed:challenge.seed})
         :E.attack({spec:{name:challenge.name,hits:n,damage:0,slot:n>1?.95:2.8},stats:challenge.stats,seed:challenge.seed});
-      const previousFocus=document.activeElement,previousOverflow=document.body.style.overflow;
-      document.body.append(cover);document.body.style.overflow='hidden';canvas.focus({preventScroll:true});
+      const previousFocus=document.activeElement;
+      document.body.append(cover);const unlockViewport=window.QTETouch.lockViewport(cover);canvas.focus({preventScroll:true});
       const abort=new AbortController(),on=(el,name,fn)=>el.addEventListener(name,fn,{signal:abort.signal});
       let tick=0,accumulator=0,last=0,done=false,keys=new Set(),pointers=new Map(),lastInput='';
       const touch=window.QTETouch.attach({canvas,stick:find('.qte-stick'),getPlayer:()=>sim.player,
@@ -107,7 +107,7 @@
       let raf,watch;
       function finish(failed=false) {
         if(done)return;done=true;cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();
-        document.body.style.overflow=previousOverflow;cover.remove();active=null;
+        cover.remove();unlockViewport();active=null;
         previousFocus?.isConnected&&previousFocus.focus?.({preventScroll:true});
         if(!defense)proof.ticks=tick;
         resolve(failed?{abort:true}:proof);
