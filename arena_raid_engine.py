@@ -278,7 +278,7 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
         boss["stats"]["max_hp"] = round(boss["stats"]["max_hp"] * 1.25)
         boss["raid_damage_multiplier"] = 1.15
     boss["hp"] = boss["stats"]["max_hp"]
-    boss["stats"]["evasion"] = 0
+    # Keep the boss's native evasion for the post-QTE server roll.
     for stat in ("physical_defense", "magic_defense"):
         boss["stats"][stat] *= 0.7
     boss["stats"]["physical_attack"] *= 0.85

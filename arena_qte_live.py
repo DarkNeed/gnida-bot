@@ -136,7 +136,7 @@ def damage_preview(attacker, target, skill):
             random.Random(0),
             advance_turn=False,
             tick_actor_bleed=False,
-            qte=dict(attack=[True] * strike_count(skill)),
+            qte=dict(attack=[True] * strike_count(skill), luck_evasion=False),
         )
         return event["damage"]
     except ValueError:
@@ -327,9 +327,7 @@ class ArenaQteMixin:
             turn=state["turn"],
             stages=stages,
             result={},
-            luck_evasion=bool(
-                b["controller_id"] and not modes.get(str(b["controller_id"]))
-            ),
+            luck_evasion=not modes.get(str(b["controller_id"])),
             luck_accuracy=bool(
                 a["controller_id"] and not modes.get(str(a["controller_id"]))
             ),

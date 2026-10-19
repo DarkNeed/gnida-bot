@@ -7,7 +7,7 @@ from arena_engine import Skill, _tick, bleeding_damage
 KIT_LEVEL = 25
 KIT_STATS = dict(max_hp=1100, resource_max=100, physical_attack=48,
                  magic_attack=52, physical_defense=22, magic_defense=22,
-                 speed=18, evasion=0)
+                 speed=18, evasion=10)
 KIT_SKILLS = {s.skill_id: s for s in (
     Skill('kit_reflection', 'Отражение', 'raid', 1, 'physical', 7, 95, 0, 0,
           description='Два раздельных удара: физический и магический.'),

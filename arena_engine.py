@@ -1293,7 +1293,10 @@ def resolve_skill(
             if 'attack' in qte:
                 part['hit'] = bool(i<len(qte['attack']) and qte['attack'][i])
                 part['dodged'] = False
-                if part['hit'] and qte.get('luck_evasion'):
+                # NPCs cannot play a defensive QTE: their evasion remains a
+                # separate roll for every successful native strike. An explicit
+                # override is used by read-only damage forecasts, never proofs.
+                if part['hit'] and qte.get('luck_evasion', target.get('controller_id') == 0 or target.get('is_boss', False)):
                     part['dodged'] = rng.random()*100 < max(0,min(95,effective_stat(target,'evasion')))
                     part['hit'] = not part['dodged']
             elif 'dodge' in qte:
