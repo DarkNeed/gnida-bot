@@ -13,10 +13,50 @@ let serverClockOffset=0;
 let mirrorRun=null,mirrorAbandonConfirm=false;
 let raidCurrent=null,raidInspect=null,raidPlaying=false;
 let qtePlaying=false;
+let combatPreferences=null,combatSettingsRequest=0,combatSettingsSaving=false;
+function combatSettingsBody(enabled){
+  return '<h2>Боевые мини-игры</h2><div class="minigames-toggle"><b>'+(enabled?'Включены':'Выключены · обычные броски')+'</b><button data-combat-enabled="'+!enabled+'" class="'+(enabled?'enabled':'primary')+'">'+(enabled?'Выключить':'Включить')+'</button></div><p class="muted">Настройка общая для всех твоих персонажей и чатов. По умолчанию включена. Изменение действует со следующего боя.</p><p>Включены: попадание через QTE, уклонение через мини-арену. Характеристики меняют сложность. Успешное уклонение соперника имеет приоритет над успешным попаданием.</p><p>Выключены: выбираешь навык, а попадание и уклонение рассчитываются обычными бросками. В PvP соперник сохраняет свой режим; при выключенных мини-играх твоё уклонение остаётся случайным.</p><p class="muted">Лечение, поддержка и зелья — без QTE. Кровотечение, горение и ответные реакции не отменяются прохождением отдельной атаки. Закрытие или сворачивание мини-игры засчитывает неуспех; бой не ждёт бесконечно.</p>';
+}
+function closeCombatSettings(){document.getElementById('combat-settings')?.close();}
+async function openCombatSettings(){
+  if(qtePlaying||combatSettingsSaving){toast('Дождись окончания текущего действия.');return;}
+  let dialog=document.getElementById('combat-settings');
+  if(!dialog){
+    dialog=document.createElement('dialog');dialog.id='combat-settings';dialog.className='stats-dialog combat-settings-dialog';
+    dialog.setAttribute('aria-labelledby','combat-settings-title');
+    dialog.innerHTML='<header class="stats-header"><b id="combat-settings-title">Настройки боя</b><button class="small" data-combat-close aria-label="Закрыть настройки боя">✕</button></header><div data-combat-body></div>';
+    document.body.append(dialog);
+  }
+  if(dialog.open)return;
+  const request=++combatSettingsRequest,body=dialog.querySelector('[data-combat-body]');
+  body.innerHTML='<p class="muted" role="status">Загружаем настройки…</p>';dialog.showModal();
+  try{
+    const data=demo?menu:await api('/api/menu/'+chat);
+    if(request!==combatSettingsRequest)return;
+    combatPreferences=data?.combat_settings||combatPreferences||{minigames:true};
+    body.innerHTML=combatSettingsBody(combatPreferences.minigames!==false);
+  }catch(error){if(request===combatSettingsRequest)body.innerHTML='<p role="alert">'+esc(error.message)+'</p><p class="muted">Закрой настройки и попробуй ещё раз.</p>';}
+}
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('button');if(!button||button.disabled)return;
+  if(button.hasAttribute('data-combat-open')){await openCombatSettings();return;}
+  if(button.hasAttribute('data-combat-close')){closeCombatSettings();return;}
+  if(!button.hasAttribute('data-combat-enabled')||combatSettingsSaving)return;
+  const enabled=button.dataset.combatEnabled==='true',request=combatSettingsRequest;
+  combatSettingsSaving=true;button.disabled=true;
+  try{
+    const response=demo?null:await api('/api/menu/'+chat,{action:'combat_settings',enabled});
+    combatPreferences=response?.menu?.combat_settings||{minigames:enabled};
+    if(menu)menu.combat_settings=combatPreferences;
+    if(request===combatSettingsRequest)document.querySelector('[data-combat-body]').innerHTML=combatSettingsBody(combatPreferences.minigames!==false);
+    toast(demo?'Демо: настройка не сохраняется.':response.notice);
+  }catch(error){toast(error.message);}finally{combatSettingsSaving=false;button.disabled=false;}
+});
 async function runPendingMiniGames(){
   if(busy||qtePlaying||raidPlaying||demo)return;
   let data=raidCurrent||current;
   if(!data?.qte?.challenge)return;
+  closeCombatSettings();
   qtePlaying=true;busy=true;
   const raid=!!raidCurrent,id=data.token;
   try{
@@ -267,7 +307,7 @@ function showStats(key){
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(inspectEffect)closeEffect();else closeStats();}});
 function toast(text){const box=document.getElementById("toast");box.textContent=text;box.hidden=false;setTimeout(()=>box.hidden=true,3500);}
 function button(label,id,cls="",disabled=false){return '<button class="'+cls+'" data-do="'+id+'"'+(disabled?' disabled':'')+'>'+label+"</button>";}
-function top(title,tag,right){return '<header class="top"><div><div class="eyebrow">'+tag+'</div><h1>'+title+'</h1></div><div class="top-tools">'+(right||'')+'<button class="audio-button" data-audio-open aria-label="Настройки звука">♫</button></div></header>';}
+function top(title,tag,right){return '<header class="top"><div><div class="eyebrow">'+tag+'</div><h1>'+title+'</h1></div><div class="top-tools">'+(right||'')+'<button class="audio-button settings-button" data-combat-open aria-label="Настройки боя" title="Настройки боя">⚙</button><button class="audio-button" data-audio-open aria-label="Настройки звука" title="Настройки звука">♫</button></div></header>';}
 async function api(path,body){
   const response=await fetch(path,{method:body?"POST":"GET",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":tg?.initData||""},body:body?JSON.stringify(body):undefined,cache:"no-store"});
   const data=await response.json();
@@ -571,12 +611,7 @@ function menuScreen(data){
   let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+button("Рейды","tab:raids",page==="raids"?"selected":"")+'</div>';
   body+=button('⚒️ Кузница трактатов','tab:forge',page==='forge'||page==='forgeConfirm'?'primary':'');
   body+=button('🏆 Топ арены','tab:rankings',page==='rankings'?'primary':'');
-  body+=button('⚙ Настройки боя','tab:settings',page==='settings'?'primary':'');
   if(page==='forge'||page==='forgeConfirm')body+=forgeBody(data);
-  else if(page==='settings'){
-    const enabled=data.combat_settings?.minigames!==false;
-    body+='<div class="card"><h2>Боевые мини-игры</h2><div class="minigames-toggle"><b>'+(enabled?'Включены':'Выключены · обычные броски')+'</b>'+button(enabled?'Выключить':'Включить','minigames:'+(enabled?'off':'on'),enabled?'enabled':'primary')+'</div><p class="muted">Настройка общая для всех твоих персонажей и чатов. По умолчанию включена. Изменение действует со следующего боя.</p><p>Включены: попадание через QTE, уклонение через мини-арену. Характеристики меняют сложность. Успешное уклонение соперника имеет приоритет над успешным попаданием.</p><p>Выключены: выбираешь навык, а попадание и уклонение рассчитываются обычными бросками. В PvP соперник сохраняет свой режим; при выключенных мини-играх твоё уклонение остаётся случайным.</p><p class="muted">Лечение, поддержка и зелья — без QTE. Кровотечение, горение и ответные реакции не отменяются прохождением отдельной атаки. Закрытие или сворачивание мини-игры засчитывает неуспех; бой не ждёт бесконечно.</p></div>';
-  }
   else if(page==='rankings')body+=arenaLeaderboardBody(data.leaderboard);
   else if(page==="personal")body+=charactersBody(data)+profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Персонаж и инвентарь общие для всех чатов. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
   else if(page==="raids"){
@@ -713,11 +748,6 @@ app.addEventListener("click",async event=>{
   if(cmd==='holdings'){await openHoldings();return;}
   if(cmd==="menu"||cmd==="refresh"){closeEffect();statusViews=null;closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
   if(cmd==='charactersbuy'){page='charactersPurchase';menuScreen(menu);return;}
-  if(cmd==='minigames'){
-    if(demo){menu.combat_settings={minigames:arg==='on'};menuScreen(menu);toast('Демо: настройка не сохраняется.');}
-    else await menuAction('combat_settings',{enabled:arg==='on'});
-    return;
-  }
   if(cmd==='characterinvoice'){await buyCharacters();return;}
   if(cmd==='character'){page='personal';classUsePending=null;skillUsePending=null;resetPending=null;await menuAction('select_character',{slot:Number(arg),character_revision:menu.characters.revision});return;}
   if(cmd==='pets'){location.assign('/pets?chat='+chat+location.hash);return;}
@@ -861,6 +891,21 @@ function startDemoMenu(){
 }
 function configureViewport(){
   tg?.ready();tg?.expand();
+  const syncInsets=()=>{
+    const root=document.documentElement;
+    for(const [prefix,insets] of [['system',tg?.safeAreaInset],['content',tg?.contentSafeAreaInset]]){
+      for(const side of ['top','right','bottom','left']){
+        const value=insets?.[side],property='--app-'+prefix+'-'+side;
+        if(Number.isFinite(value)&&value>=0)root.style.setProperty(property,value+'px');
+        else root.style.removeProperty(property);
+      }
+    }
+    // Older clients may report fullscreen before sending their content insets.
+    root.style.setProperty('--app-fs-top',tg?.isFullscreen?'44px':'0px');
+  };
+  syncInsets();
+  for(const event of ['safeAreaChanged','contentSafeAreaChanged','fullscreenChanged','viewportChanged'])tg?.onEvent?.(event,syncInsets);
+  window.addEventListener('resize',syncInsets);
   try{
     if(tg?.isVersionAtLeast?.("8.0")){
       const mobile=tg.platform==="android"||tg.platform==="ios";

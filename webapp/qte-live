@@ -13,8 +13,11 @@
       const find=s=>cover.querySelector(s),canvas=find('canvas'),ctx=canvas.getContext('2d');
       find('h2').textContent=challenge.name;
       const defense=challenge.kind==='defense';
+      cover.classList.add(defense?'qte-defense':'qte-attack');
       find('.qte-eyebrow').textContent=defense?'ЗАЩИТА · УВЕРНИСЬ ОТ АТАКИ':'ТВОЯ АТАКА · ПОЙМАЙ МОМЕНТ';
-      find('.qte-help').textContent=defense?'WASD / стрелки, движение пальцем или экранные кнопки. Зелёный пунктир обозначает проходы. Чистое прохождение — полное уклонение.':'Нажми в золотой зоне. На каждую отметку — одно нажатие. Повторного броска точности нет.';
+      find('.qte-help').innerHTML='<span class="qte-help-full"></span><span class="qte-help-compact"></span>';
+      find('.qte-help-full').textContent=defense?'WASD / стрелки, движение пальцем или экранные кнопки. Зелёный пунктир обозначает проходы. Чистое прохождение — полное уклонение.':'Нажми в золотой зоне. На каждую отметку — одно нажатие. Повторного броска точности нет.';
+      find('.qte-help-compact').textContent=defense?'Уклоняйся пальцем или стрелками. Зелёный пунктир — проход.':'Нажми в золотой зоне: одно нажатие на каждую отметку.';
       find('.qte-hit').hidden=defense;find('.qte-live-pad').hidden=!defense;
       const n=challenge.strikes;
       const sim=defense?E.defense({pattern:challenge.pattern,stats:challenge.stats,seed:challenge.seed})
