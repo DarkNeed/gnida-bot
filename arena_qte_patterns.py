@@ -226,6 +226,14 @@ def impact(p, i):
     return dict(tier="heavy", weight=0.6)
 
 
+def attack_weights(p):
+    """Native timing marks share the full skill, unlike defensive projectiles."""
+    tags = p["skill"].get("tags", ())
+    if p["strikes"] == 3 and any(t in tags for t in ("final_train", "final_execution")):
+        return [0.2, 0.3, 0.5]
+    return [1 / p["strikes"]] * p["strikes"]
+
+
 def attack(p, stats, seed):
     d, r = difficulty(stats), random_values(seed ^ p["seed"])
     n = p["strikes"]
@@ -911,7 +919,7 @@ def replay(challenge, proof, elapsed):
         mask = [bool(v) for v in s["results"]]
         return dict(
             mask=mask,
-            weights=[impact(p, i)["weight"] if v else 0 for i, v in enumerate(mask)],
+            weights=[attack_weights(p)[i] if v else 0 for i, v in enumerate(mask)],
         )
     if ticks != total:
         raise ValueError("Защиту нужно пройти полностью.")

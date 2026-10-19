@@ -45,7 +45,7 @@ from arena_mastery import (build_skills as build_mastery_skills, skill_allowed a
     modifiers as mastery_modifiers, after_action as mastery_after_action)
 
 BASE_RESOURCE = 100
-BASE_RESOURCE_REGEN = 0
+BASE_RESOURCE_REGEN = 0.08
 CONTROL_PENALTY = 0.8
 MAX_ACTIVE_SKILLS = 4
 MAX_PASSIVE_SKILLS = 3
@@ -772,11 +772,11 @@ def stats_for(
         for key, value in fighter_class.base_stats.items()
     }
     stats["resource_max"] = BASE_RESOURCE
-    stats["resource_regen"] = BASE_RESOURCE_REGEN
     if controlled:
         stats = {key: round(value * CONTROL_PENALTY, 2) for key, value in stats.items()}
     for key in ("max_hp", "resource_max"):
         stats[key] = max(1, round(stats[key]))
+    stats["resource_regen"] = max(1, round(stats["resource_max"] * BASE_RESOURCE_REGEN))
     return stats
 
 
@@ -1040,8 +1040,35 @@ def _tick(side: dict, *, tick_dot=True, preserve_rally=False) -> None:
         if e["duration"] > 1
     ]
     side["cooldowns"] = {k: v - 1 for k, v in side["cooldowns"].items() if v > 1}
-    # No automatic refund after a skill, including battles saved by older code.
-    # Resource can still be restored by skills with an explicit resource effect.
+    # Regeneration belongs to the next turn's start, not to paid actions/ticks.
+
+
+def restore_turn_resource(side: dict) -> int:
+    """Once per own turn after the first; never a projectile/action refund.
+
+    Ignore old persisted resource_regen values and leave boss resources alone.
+    The saved turn marker makes repeated start hooks/readbacks idempotent.
+    """
+    turn = side.get("own_turns", 0)
+    if side.get("is_boss") or side["hp"] <= 0 or turn <= 0:
+        return 0
+    if side.get("resource_regen_turn", -1) >= turn:
+        return 0
+    side["resource_regen_turn"] = turn
+    maximum = side["stats"]["resource_max"]
+    gain = min(maximum - side["resource"], max(1, round(maximum * BASE_RESOURCE_REGEN)))
+    gain = max(0, gain)
+    side["resource"] += gain
+    return gain
+
+
+def _begin_resource_turn(state: dict, key: str) -> None:
+    gain = restore_turn_resource(state["sides"][key])
+    if gain and state["log"]:
+        event = state["log"][-1]
+        event.setdefault("resource_regen", {})[key] = gain
+        if event.get("after"):
+            event["after"][key]["resource"] = state["sides"][key]["resource"]
 
 
 def battle_status_snapshot(state: dict) -> dict:
@@ -1096,24 +1123,28 @@ def _advance_turn(state: dict, side_key: str) -> None:
         state.update(finished=True, winner=side_key)
     elif state["turn"] > 200:
         state.update(finished=True, winner=None, finish_reason="turn_limit")
-    elif any(e["kind"] == "stun" for e in target["effects"]):
-        order_note = obey_enemy_prescript(target, None, actor)
-        _tick(target)
-        if target['hp'] <= 0:
-            state.update(finished=True,winner=side_key,finish_reason='burn')
-        state["log"].append(
-            {
-                "seq": state["turn"],
-                "side": other,
-                "text": "Ошеломление: ход пропущен."
-                + (" · " + order_note if order_note else ""),
-                "damage": 0,
-                "hit": False,
-                "status_after": battle_status_snapshot(state),
-            }
-        )
-        state["turn"] += 1
-        state["active_side"] = side_key
+    else:
+        _begin_resource_turn(state, other)
+        if any(e["kind"] == "stun" for e in target["effects"]):
+            order_note = obey_enemy_prescript(target, None, actor)
+            _tick(target)
+            if target['hp'] <= 0:
+                state.update(finished=True,winner=side_key,finish_reason='burn')
+            state["log"].append(
+                {
+                    "seq": state["turn"],
+                    "side": other,
+                    "text": "Ошеломление: ход пропущен."
+                    + (" · " + order_note if order_note else ""),
+                    "damage": 0,
+                    "hit": False,
+                    "status_after": battle_status_snapshot(state),
+                }
+            )
+            state["turn"] += 1
+            state["active_side"] = side_key
+            if not state["finished"]:
+                _begin_resource_turn(state, side_key)
 
 
 def skip_turn(state: dict) -> None:
@@ -1271,17 +1302,18 @@ def resolve_skill(
                 if avoided:part.update(hit=False,dodged=True)
         hit = any(p['hit'] for p in parts)
         dodged = not hit and any(p['dodged'] for p in parts)
-        if 'pattern_dodge' in qte or 'pattern_attack' in qte:
+        if 'pattern_attack' in qte:
+            # A timing mark represents a native strike, not a small projectile.
+            # Use the native integer damage budget below, including finishers.
+            # Ignore old saved attack weights that reduced complete hits to 30/60%.
+            strike_results = parts
+            strike_count = len(parts)
+        if 'pattern_dodge' in qte:
             # Keep the native strike groups for effects, accuracy and animation,
             # but damage every physical projectile independently. Never normalize
             # their weights to a single skill-wide damage budget.
-            if 'pattern_dodge' in qte:
-                pattern_contacts = [dict(c) for c in qte['pattern_dodge']['contacts']
-                                    if 0 <= c['strike'] < len(parts) and parts[c['strike']]['hit']]
-            else:
-                pattern_contacts = [dict(id=f'strike:{i}',strike=i,weight=w)
-                                    for i,w in enumerate(qte['pattern_attack']['weights'])
-                                    if i<len(parts) and parts[i]['hit'] and w>0]
+            pattern_contacts = [dict(c) for c in qte['pattern_dodge']['contacts']
+                                if 0 <= c['strike'] < len(parts) and parts[c['strike']]['hit']]
             strike_results=parts
             strike_count=len(parts)
     if parried:

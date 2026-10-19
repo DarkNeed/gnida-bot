@@ -300,7 +300,7 @@ class PatternReplayTests(unittest.TestCase):
             self.assertGreater(events[group]["damage"], 0, (group, events))
             self.assertEqual(events[1 - group]["damage"], 0)
 
-    def test_attack_only_weights_are_used_but_disabled_combat_is_unchanged(self):
+    def test_attack_marks_keep_native_damage_even_with_old_saved_weights(self):
         import random
 
         state = create_battle_state(
@@ -321,10 +321,8 @@ class PatternReplayTests(unittest.TestCase):
             rng=random.Random(2),
             qte=dict(attack=[True], pattern_attack=dict(weights=[0.6])),
         )
-        self.assertEqual(
-            active["damage"], max(1, math.floor(normal["damage"] * 0.6 + 0.5))
-        )
-        self.assertEqual(len(active["qte_projectiles"]), 1)
+        self.assertEqual(active["damage"], normal["damage"])
+        self.assertNotIn("qte_projectiles", active)
         self.assertNotIn("qte_projectiles", normal)
 
     def test_weighted_finisher_keeps_native_armor_piercing(self):

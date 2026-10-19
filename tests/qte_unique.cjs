@@ -50,6 +50,8 @@ process.stdin.on('end',()=>{
       const s=E.attack(p,stats,17);let guard=0;
       while(!s.ended){assert(++guard<4000);const f=E.attackFrame(s);if(f.canHit&&Math.abs(f.cursor-f.center)<=f.width/2)E.hit(s);else E.attackStep(s,1/120);}
       assert.equal(E.attackResult(s).hits,p.strikes,'perfect timing is reachable '+p.skill.name);
+      assert.equal(s.damage,s.damageBase,'all attack marks preserve full native damage '+p.skill.name);
+      assert(Math.abs(E.attackWeights(p).reduce((a,b)=>a+b,0)-1)<1e-9);
       const missed=E.attack(p,stats,17);E.attackStep(missed,100);assert.equal(E.attackResult(missed).hits,0);
       const a=E.defense(p,stats,17),b=copyDefense(a);
       while(!a.ended)E.defenseStep(a,1/30,{x:1,y:0});

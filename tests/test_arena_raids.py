@@ -250,7 +250,7 @@ class RaidEngineTests(unittest.TestCase):
         data["players"]["10"]["selected"] = "dust_in_eyes"
         for _ in range(3):
             resolve_round(data, BUILTIN_SKILLS, Roll())
-        self.assertEqual(data["players"]["10"]["fighter"]["resource"], 80)
+        self.assertEqual(data["players"]["10"]["fighter"]["resource"], 100)
         self.assertTrue(data["players"]["20"]["reward_blocked"])
         self.assertFalse(data["players"]["10"]["reward_blocked"])
         self.assertEqual(data["players"]["10"]["manual_turns"], 1)

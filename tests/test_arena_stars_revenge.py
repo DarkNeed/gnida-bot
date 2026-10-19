@@ -171,7 +171,7 @@ class StarsRevengeTests(unittest.TestCase):
         self.tap(state, "bum_punch", side="b")
         self.assertTrue(has_adoration(b))
         self.tap(state, "uwu")
-        self.assertEqual(a["resource"], 65)
+        self.assertEqual(a["resource"], 73)  # 15 cost after +8 turn-start regeneration.
         self.assertEqual(next(e for e in b["effects"] if e["id"] == "adoration")["duration"], 1)
         self.tap(state, "bum_punch", side="b")
         self.assertFalse(has_adoration(b))

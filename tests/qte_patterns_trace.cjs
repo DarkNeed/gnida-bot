@@ -31,7 +31,7 @@ function record(c){
       if(s.ended){proof.ticks=tick;break;}
     }
     const mask=s.results.map(Boolean);
-    return {proof,result:{mask,weights:mask.map((v,i)=>v?E.impact(p,i).weight:0)}};
+    return {proof,result:{mask,weights:mask.map((v,i)=>v?E.attackWeights(p)[i]:0)}};
   }
   let route;if(c.perfect){route=safeRoute(s)||safeRoute(s,110);if(!route)throw new Error('No safe route '+p.skill.name);}
   const proof={ticks:Math.round(s.duration*120),inputs:[]},readyTicks=Math.round(s.preparation*120);let last='';

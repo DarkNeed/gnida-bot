@@ -10,6 +10,7 @@ from arena_engine import (
     effective_stat,
     effective_skill,
     resolve_skill,
+    restore_turn_resource,
     _tick,
     bleeding_damage,
     stats_for,
@@ -652,5 +653,12 @@ def resolve_round(data, skills, rng=None):
         data["round"] += 1
         for player in data["players"].values():
             player["selected"] = None
+            if not player.get("withdrawn"):
+                gain = restore_turn_resource(player["fighter"])
+                if gain and data["log"]:
+                    event = data["log"][-1]
+                    key = str(player["actor_id"])
+                    event.setdefault("resource_regen", {})[key] = gain
+                    event["after"][key]["resource"] = player["fighter"]["resource"]
         set_intent(data)
     return data

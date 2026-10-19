@@ -104,6 +104,16 @@
       duration:preparation+slots.reduce((a,b)=>a+b,0),time:0,ended:false,attempts:slots.map(()=>0),lastAttempt:slots.map(()=>-1),
       centers:slots.map(()=>.28+r()*.44),results:slots.map(()=>null)};
   }
+  function attackWeights(p){
+    const tags=p.skill.tags||[];
+    return p.strikes===3&&tags.some(t=>['final_train','final_execution'].includes(t))?[.2,.3,.5]:Array(p.strikes).fill(1/p.strikes);
+  }
+  function attackDamage(s,index){
+    const base=Math.round(s.damageBase),budget=attackWeights(s.p).map(w=>Math.floor(base*w));
+    const remainder=base-budget.reduce((a,b)=>a+b,0);
+    for(let i=0;i<remainder;i++)budget[i%budget.length]++;
+    return budget[index];
+  }
   function attackFrame(s){
     let index=0,start=s.preparation;while(index<s.slots.length-1&&s.time>=start+s.slots[index]-1e-8){start+=s.slots[index++];}
     const local=s.time-start,phase=s.time<s.preparation?'ready':local<s.strikeReady?'cue':'active';
@@ -119,7 +129,7 @@
   function hit(s){if(s.ended)return null;const f=attackFrame(s);if(!f.canHit)return null;
     const i=f.index,ok=Math.abs(f.cursor-f.center)<=f.width/2;s.attempts[i]++;s.lastAttempt[i]=s.time;
     if(ok){
-      s.results[i]=true;const force=impact(s.p,i),raw=damageValue(s.damageBase,force.weight),damage=Math.min(s.hp,raw);
+      s.results[i]=true;const force={...impact(s.p,i),weight:attackWeights(s.p)[i]},raw=attackDamage(s,i),damage=Math.min(s.hp,raw);
       s.hp-=damage;s.damage+=damage;s.contacts.push({id:'strike:'+i,time:s.time,damage,raw,...force,x:360,y:160});
     }else if(s.attempts[i]>=2)s.results[i]=false;
     if(s.hp<=0&&s.endOnDeath||i===s.results.length-1&&s.results[i]!==null)s.ended=true;return ok;}
@@ -308,5 +318,5 @@
     if(s.time>=s.duration-1e-7){s.time=s.duration;s.ended=true;}
   }
   function defenseResult(s){return {hits:s.contacts.length,total:s.projectileCount,dodged:s.projectileCount-s.contacts.length,damage:s.damage,hp:s.hp,mask:Array.from({length:s.p.strikes},(_,i)=>!s.received.includes(i))};}
-  return {W,H,FAMILIES,DAMAGE_TIERS,impact,damageValue,hash,rng,clamp,family,profile,difficulty,defenseDifficulty,attack,attackStep,attackFrame,attackResult,hit,defense,defenseStep,defenseResult,geometry,distance,segmentDistance,touches};
+  return {W,H,FAMILIES,DAMAGE_TIERS,impact,attackWeights,damageValue,hash,rng,clamp,family,profile,difficulty,defenseDifficulty,attack,attackStep,attackFrame,attackResult,hit,defense,defenseStep,defenseResult,geometry,distance,segmentDistance,touches};
 });

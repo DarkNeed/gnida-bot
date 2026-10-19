@@ -255,7 +255,8 @@ class EvolutionStoreTests(unittest.IsolatedAsyncioTestCase):
         with patch("arena_engine.random.SystemRandom", return_value=FixedRoll()):
             row = await self.db.arena_action(row["token"], 10, row["revision"], "uwu")
         saved = json.loads(row["state_json"])
-        self.assertEqual(saved["sides"]["a"]["resource"], 85)
+        self.assertEqual(saved["sides"]["a"]["resource"], 93)  # 15 cost, +8 next turn.
+        self.assertEqual(saved["log"][0]["after"]["a"]["resource"], 85)
         self.assertEqual(saved["log"][0]["skill_name"], "Ты уже мой")
         with self.assertRaises(ValueError):
             await self.db.arena_action(row["token"], 10, row["revision"] - 1, "uwu")

@@ -155,14 +155,15 @@ class ArenaEngineTests(unittest.TestCase):
             BUILTIN_SKILLS,
             dust_in_eyes=replace(BUILTIN_SKILLS["dust_in_eyes"], cooldown=0),
         )
-        for expected in (80, 60, 40, 20, 0):
+        for expected in (80, 68, 56, 44, 32, 20, 8):
             resolve_skill(state, "a", "dust_in_eyes", skills, rng=random.Random(1))
             self.assertEqual(state["sides"]["a"]["resource"], expected)
             resolve_skill(state, "b", "dust_in_eyes", skills, rng=random.Random(1))
         with self.assertRaises(ValueError):
             resolve_skill(state, "a", "dust_in_eyes", skills)
+        self.assertEqual(state["sides"]["a"]["resource"], 16)
         resolve_skill(state, "a", "go_to_store", skills, rng=random.Random(1))
-        self.assertEqual(state["sides"]["a"]["resource"], 55)
+        self.assertEqual(state["sides"]["a"]["resource"], 71)
 
     def test_miss_still_consumes_full_energy(self):
         state = self.state(level=3)

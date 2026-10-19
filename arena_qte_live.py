@@ -56,6 +56,7 @@ def challenge(kind, attacker, target, skill, actor):
         branch=attacker.get("archclass_id", ""),
         damage_type=skill.damage_type,
         strikes=n,
+        tags=list(skill.tags),
     )
     # Kit's announced reflection/coins consist of two different native actions.
     # One pattern, two groups: do not apply the same collisions to both actions.
