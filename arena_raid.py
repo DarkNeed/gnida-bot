@@ -394,6 +394,7 @@ class RaidMixin:
             self._raid_save_locked(row, data)
 
     def _raid_expire_locked(self):
+        self._qte_expire_locked('raid')
         changed = []
         now = int(time.time())
         rows = self.connection.execute(
@@ -566,6 +567,7 @@ class RaidMixin:
                         )
                         for player in data['players'].values():
                             player['character_slot']=self._character_active_locked(player['actor_id'])
+                        data['qte_modes']={str(p['actor_id']):self._qte_enabled_locked(p['actor_id']) for p in data['players'].values()}
                         self._raid_save_locked(row, data, "active")
                 else:
                     raise ValueError("Действие недоступно.")
@@ -582,6 +584,10 @@ class RaidMixin:
 
     async def arena_raid_action(self, token, actor, round_number, skill):
         async with self._lock:
+            return self._arena_raid_action_locked(token,actor,round_number,skill)
+
+    def _arena_raid_action_locked(self,token,actor,round_number,skill,*,_qte=None):
+        with self.connection:
             try:
                 row = self._raid_cleanup_locked(self._raid_row_locked(token))
                 # Commit external ownership cleanup even if the queued click is stale.
@@ -622,6 +628,8 @@ class RaidMixin:
                             skills,
                         )
                     player["selected"] = skill
+                    if _qte:
+                        player['qte_result'] = _qte
                 if finish_if_needed(data):
                     self._raid_finish_locked(row, data)
                 elif all(

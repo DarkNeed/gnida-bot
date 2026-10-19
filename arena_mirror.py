@@ -187,6 +187,7 @@ class MirrorMixin:
         )
         classes, skills = self._fighter_catalog_locked()
         state = create_battle_state(source, enemy, classes=classes, skills=skills)
+        state['qte_modes']={str(s['controller_id']):self._qte_enabled_locked(s['controller_id']) for s in state['sides'].values()}
         a, b = state["sides"].values()
         if not first:
             a["hp"] = min(a["stats"]["max_hp"], data["hp"])

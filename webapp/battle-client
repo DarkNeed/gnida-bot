@@ -12,6 +12,26 @@ let inspectEffect=null,statusViews=null;
 let serverClockOffset=0;
 let mirrorRun=null,mirrorAbandonConfirm=false;
 let raidCurrent=null,raidInspect=null,raidPlaying=false;
+let qtePlaying=false;
+async function runPendingMiniGames(){
+  if(busy||qtePlaying||raidPlaying||demo)return;
+  let data=raidCurrent||current;
+  if(!data?.qte?.challenge)return;
+  qtePlaying=true;busy=true;
+  const raid=!!raidCurrent,id=data.token;
+  try{
+    while(data?.qte?.challenge){
+      const challenge=data.qte.challenge;
+      const proof=await window.ArenaMiniGames.play(challenge);
+      data=await api('/api/'+(raid?'raid/':'battle/')+id,{action:'qte',challenge_id:challenge.id,proof,revision:data.revision,round:data.data?.round||0});
+      if(raid){if(raidCurrent?.token!==id)break;await receiveRaid(data);}
+      else{if(token!==id)break;await applyBattle(data);}
+    }
+  }catch(error){
+    toast(error.message);
+    try{data=await api('/api/'+(raid?'raid/':'battle/')+id);if(raid)raidScreen(data);else await applyBattle(data,false);}catch{}
+  }finally{qtePlaying=false;busy=false;if(!raid)renderActions();}
+}
 let forgeMode='dismantle',forgePool='',forgePending=null;
 const rarityNames={common:"Обычный",uncommon:"Необычный",rare:"Редкий",epic:"Эпический",legendary:"Легендарный"};
 const statNames={max_hp:"Макс. HP",resource_max:"Макс. энергия",physical_attack:"Физ. атака",magic_attack:"Маг. атака",physical_defense:"Физ. защита",magic_defense:"Маг. защита",speed:"Скорость",evasion:"Уклонение"};
@@ -259,6 +279,7 @@ function hud(s,key){
   return '<div class="hud '+(key===near?"player":"enemy")+'"><div class="row"><div class="name">'+esc(s.name)+'</div><span class="badge">Lv.'+s.level+'</span><button class="stat-button" data-inspect="'+key+'" aria-label="Статистика '+esc(s.name)+'">ⓘ</button></div><div class="meta">'+esc(s.class_name)+(s.controlled?" · контроль −20%":"")+'</div><div class="barline"><span>HP</span><span id="hp-'+key+'">'+s.hp+" / "+s.stats.max_hp+'</span></div><div class="bar" id="health-'+key+'"><i style="width:'+100*s.hp/s.stats.max_hp+'%"></i></div><div class="barline"><span>'+esc(s.resource_name)+'</span><span id="mp-'+key+'">'+s.resource+" / "+s.stats.resource_max+'</span></div><div class="bar mana" id="mana-'+key+'"><i style="width:'+100*s.resource/s.stats.resource_max+'%"></i></div></div>';
 }
 function battleScreen(data){
+  if(data.qte?.challenge)setTimeout(runPendingMiniGames,0);
   audio.scene(data.state?.finished?'':data.state?.mirror_token?'raid':'battle');
   if(current?.token!==data.token||!data.state)closeEffect();
   current=data; token=data.token; chat=data.chat_id;
@@ -286,6 +307,10 @@ function renderActions(){
     if(current.actor_id===st.sides.a.controller_id)panel.innerHTML+=petRewards(st.pet_rewards);
     if(st.rating_result){const r=st.rating_result;panel.innerHTML+='<div class="note"><b>Рейтинг · '+esc(r.season)+'</b><p>'+esc(r.reason)+'</p>'+['a','b'].map(k=>'<p>'+esc(st.sides[k].name)+': <b>'+r.ratings[k]+'</b> ('+(r.deltas[k]>=0?'+':'')+r.deltas[k]+')</p>').join('')+'</div>';}
     for(const k of ["a","b"])document.getElementById("sprite-"+k).classList.toggle("defeated",st.sides[k].hp===0);
+  }else if(current.qte?.waiting){
+    const own=current.qte.actor===current.actor_id;
+    document.getElementById('turn').textContent=own?'Мини-игра: '+(current.qte.kind==='attack'?'попадание':'уклонение'):'Соперник проходит мини-игру';
+    panel.innerHTML='<div class="note">'+(own?'Мини-игра открывается…':'Ждём результат соперника. При отсутствии ответа мини-игра завершится неуспехом.')+'</div>';
   }else if(mine){
     panel.innerHTML='<div class="skills">'+side.skill_details.map(skill=>battleSkillButton(skill,side)).join('')+'</div>';
     const m=side.mechanics||{};
@@ -546,7 +571,12 @@ function menuScreen(data){
   let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+button("Рейды","tab:raids",page==="raids"?"selected":"")+'</div>';
   body+=button('⚒️ Кузница трактатов','tab:forge',page==='forge'||page==='forgeConfirm'?'primary':'');
   body+=button('🏆 Топ арены','tab:rankings',page==='rankings'?'primary':'');
+  body+=button('⚙ Настройки боя','tab:settings',page==='settings'?'primary':'');
   if(page==='forge'||page==='forgeConfirm')body+=forgeBody(data);
+  else if(page==='settings'){
+    const enabled=data.combat_settings?.minigames!==false;
+    body+='<div class="card"><h2>Боевые мини-игры</h2><div class="minigames-toggle"><b>'+(enabled?'Включены':'Выключены · обычные броски')+'</b>'+button(enabled?'Выключить':'Включить','minigames:'+(enabled?'off':'on'),enabled?'enabled':'primary')+'</div><p class="muted">Настройка общая для всех твоих персонажей и чатов. По умолчанию включена. Изменение действует со следующего боя.</p><p>Включены: попадание через QTE, уклонение через мини-арену. Характеристики меняют сложность. Успешное уклонение соперника имеет приоритет над успешным попаданием.</p><p>Выключены: выбираешь навык, а попадание и уклонение рассчитываются обычными бросками. В PvP соперник сохраняет свой режим; при выключенных мини-играх твоё уклонение остаётся случайным.</p><p class="muted">Лечение, поддержка и зелья — без QTE. Кровотечение, горение и ответные реакции не отменяются прохождением отдельной атаки. Закрытие или сворачивание мини-игры засчитывает неуспех; бой не ждёт бесконечно.</p></div>';
+  }
   else if(page==='rankings')body+=arenaLeaderboardBody(data.leaderboard);
   else if(page==="personal")body+=charactersBody(data)+profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Персонаж и инвентарь общие для всех чатов. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
   else if(page==="raids"){
@@ -683,6 +713,11 @@ app.addEventListener("click",async event=>{
   if(cmd==='holdings'){await openHoldings();return;}
   if(cmd==="menu"||cmd==="refresh"){closeEffect();statusViews=null;closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
   if(cmd==='charactersbuy'){page='charactersPurchase';menuScreen(menu);return;}
+  if(cmd==='minigames'){
+    if(demo){menu.combat_settings={minigames:arg==='on'};menuScreen(menu);toast('Демо: настройка не сохраняется.');}
+    else await menuAction('combat_settings',{enabled:arg==='on'});
+    return;
+  }
   if(cmd==='characterinvoice'){await buyCharacters();return;}
   if(cmd==='character'){page='personal';classUsePending=null;skillUsePending=null;resetPending=null;await menuAction('select_character',{slot:Number(arg),character_revision:menu.characters.revision});return;}
   if(cmd==='pets'){location.assign('/pets?chat='+chat+location.hash);return;}
@@ -898,6 +933,7 @@ function raidPortrait(f,key,player=null,index=0){
   return '<article id="raid-fighter-'+esc(key)+'" class="raid-fighter '+(boss?'raid-enemy':'raid-ally slot-'+index)+(own?' raid-own':'')+(disabled?' defeated':'')+(player?.deported_round===raidCurrent.data.round?' raid-deported':'')+'"><div class="raid-art">'+fighterImage(f,'raid-sprite')+'<div class="raid-ground"></div></div><div class="raid-effects">'+effects+'</div><div class="raid-hud"><div class="row"><strong title="'+esc(f.name)+'">'+esc(f.name)+'</strong>'+raidButton('ⓘ','inspect:'+key,'stat-button')+'</div><div class="muted">'+esc(f.class_name)+' · Lv.'+f.level+'</div>'+raidBar(f.hp,f.stats.max_hp,'HP')+(boss&&raidCurrent.boss_id!=='doofenshmirtz'?'':raidBar(f.resource,f.stats.resource_max,f.resource_name,'mana'))+(player?'<div class="raid-ready">'+(player.withdrawn?'Покинул рейд':f.hp<=0?'Боец повержен':player.deported_round===raidCurrent.data.round?'Вернётся в следующем раунде':player.ready?'✓ Готов':own?'Твой боец':'Выбирает навык')+'</div>':'')+'</div></article>';
 }
 function raidScreen(data){
+  if(data.qte?.challenge)setTimeout(runPendingMiniGames,0);
   raidPhaseSprite(data);
   audio.scene(raidSoundtrack(data));
   raidCurrent=data;current=null;token='';chat=data.chat_id;
@@ -916,7 +952,8 @@ function raidScreen(data){
     if(data.status==='active'){
       body+='<div id="raid-timer" class="turn-timer"></div><div class="card raid-actions">';
       if(own&&!own.withdrawn&&own.fighter.hp>0){
-        if(own.ready)body+='<h3>Действие принято — ждём отряд</h3><p class="muted">Когда все выберут навыки, раунд разыграется по скорости.</p>';
+        if(data.qte?.waiting)body+='<h3>Заверши мини-игру</h3><p class="muted">После неё действие будет принято. По истечении времени — неуспех.</p>';
+        else if(own.ready)body+='<h3>Действие принято — ждём отряд</h3><p class="muted">Когда все выберут навыки, раунд разыграется по скорости.</p>';
         else{
           const f=own.fighter;
           body+='<h3>Выбери действие</h3><div class="raid-skillgrid">'+f.skill_details.map(s=>raidButton('<span class="skill-type">'+(s.damage_type==='physical'?'АТАКА':s.damage_type==='magic'?'МАГИЯ':'ЭФФЕКТ')+'</span><strong>'+esc(s.name)+'</strong><small>'+s.cost+' '+esc(f.resource_name)+(f.cooldowns[s.skill_id]?' · ещё '+f.cooldowns[s.skill_id]+' х.':'')+(s.unavailable_reason?' · '+esc(s.unavailable_reason):'')+'</small>','skill:'+s.skill_id,'skill'+(s.evolution?.active?' evolved':''),s.cost>f.resource||!!f.cooldowns[s.skill_id]||!!s.unavailable_reason)).join('')+'</div>'+raidButton('Защищаться · +35% защит','skill:defend');

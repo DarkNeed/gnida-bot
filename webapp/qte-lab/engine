@@ -1,0 +1,182 @@
+/* Pure simulation shared by the browser and Node tests. No network or saved state. */
+(function(root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.QTELab = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function() {
+  'use strict';
+  const W = 720, H = 320;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const SKILLS = {
+    strike: {name: 'Прицельный удар', hits: 1, damage: 40, slot: 2.8},
+    tiger: {name: 'Тигриный удар', hits: 6, damage: 12, slot: .95},
+    mana: {name: 'Мановый выстрел', hits: 1, damage: 32, slot: 2.8},
+  };
+  const PATTERNS = {
+    slashes: {name: 'Тигриные рассечения', hits: 6, damage: 10, speed: 1.55},
+    rain: {name: 'Дождь клинков', hits: 3, damage: 20, speed: 1.6},
+    cross: {name: 'Перекрёстный удар', hits: 4, damage: 15, speed: 1},
+  };
+  function params(stats, pattern) {
+    const attack = clamp((stats.accuracy - stats.enemyEvasion) / 100, -1, 1);
+    const defense = clamp((stats.enemyAccuracy - stats.evasion) / 100, -1, 1);
+    const curtains = pattern === 'slashes' || pattern === 'rain';
+    return {
+      zone: clamp(.13 + attack * .16, .075, .29),
+      cursor: clamp(.85 - attack * .28, .57, 1.13),
+      bulletSpeed: (340 + defense * 75) * (PATTERNS[pattern]?.speed || 1),
+      radius: 5.5 + defense * 1.5,
+      warning: curtains ? .58 - defense * .24 : .8 - defense * .2,
+      count: defense > .65 ? 4 : defense < -.25 ? 2 : 3,
+      moveSpeed: 240,
+      ...(curtains ? {gap: pattern === 'rain' ? 152 - defense * 52 : 110 - defense * 32} : {}),
+    };
+  }
+  function rng(seed) {
+    let x = seed >>> 0;
+    return () => { x = (Math.imul(x, 1664525) + 1013904223) >>> 0; return x / 4294967296; };
+  }
+  function attack(options) {
+    const skill = options.spec || SKILLS[options.skill] || SKILLS.strike, p = params(options.stats);
+    const random = rng(options.seed || 1);
+    const zones = Array.from({length: skill.hits}, () => .3 + random() * .4);
+    return {kind: 'attack', skill, p, time: 0, duration: skill.hits * skill.slot,
+      zones, results: Array(skill.hits).fill(null), ended: false};
+  }
+  function attackFrame(s) {
+    const index = Math.min(s.skill.hits - 1, Math.floor(s.time / s.skill.slot));
+    const local = s.time - index * s.skill.slot;
+    const phase = local * s.p.cursor * 2;
+    const cursor = 1 - Math.abs(phase % 2 - 1);
+    return {index, cursor, center: s.zones[index], width: s.p.zone,
+      remaining: Math.max(0, s.skill.slot - local)};
+  }
+  function hit(s) {
+    if (s.kind !== 'attack' || s.ended) return null;
+    const f = attackFrame(s);
+    if (s.results[f.index] !== null) return null;
+    const success = Math.abs(f.cursor - f.center) <= f.width / 2;
+    s.results[f.index] = success;
+    if (f.index === s.skill.hits - 1) s.ended = true;
+    return success;
+  }
+  function attackStep(s, dt) {
+    if (s.ended) return;
+    s.time = Math.min(s.duration, s.time + dt);
+    for (let i = 0; i < s.skill.hits; i++) {
+      if (s.time >= (i + 1) * s.skill.slot && s.results[i] === null) s.results[i] = false;
+    }
+    if (s.time >= s.duration) s.ended = true;
+  }
+  function attackResult(s) {
+    const hits = s.results.filter(v => v === true).length;
+    return {hits, total: s.skill.hits, damage: hits * s.skill.damage};
+  }
+  function defense(options) {
+    const id = PATTERNS[options.pattern] ? options.pattern : 'slashes';
+    const pattern = PATTERNS[id], p = params(options.stats, id), random = rng(options.seed || 1);
+    const curtains = id !== 'cross', pulses = id === 'rain' ? 3 : id === 'slashes' ? 2 : 1;
+    const axis = id === 'rain' ? W : H;
+    let center = id === 'rain' ? W * .32 : H * .5, direction = 1;
+    if (curtains) {random(); direction = random() < .5 ? -1 : 1;}
+    const advance = id === 'rain' ? 55 + (options.stats.enemyAccuracy - options.stats.evasion) * .18
+      : 26 + (options.stats.enemyAccuracy - options.stats.evasion) * .08;
+    const waves = Array.from({length: pattern.hits * pulses}, (_, i) => {
+      if (curtains) {
+        center += direction * advance * (.85 + random() * .3);
+        const lo = p.gap / 2 + 14, hi = axis - lo;
+        if (center > hi) {center = hi - (center - hi); direction = -1;}
+        if (center < lo) {center = lo + (lo - center); direction = 1;}
+      }
+      return {
+        strike: Math.floor(i / pulses), at: .2 + i * (id === 'slashes' ? .28 : id === 'rain' ? .5 : .6),
+        lane: curtains ? center / axis : .17 + random() * .66,
+        reverse: curtains && i % 3 === 2, curtain: curtains,
+        spawned: false, warned: false,
+      };
+    });
+    return {kind: 'defense', id, pattern, p, time: 0, duration: 6, waves,
+      player: {x: W * .32, y: H * .5, r: 6}, bullets: [],
+      received: [], ended: false};
+  }
+  function spawn(s, wave) {
+    const p = s.p, n = p.count;
+    if (wave.curtain) {
+      const vertical = s.id === 'rain', axis = vertical ? W : H, center = wave.lane * axis;
+      const sign = wave.reverse ? 1 : -1;
+      // A solid curtain with one deliberate opening, rather than a small aimed cluster.
+      // Spacing never leaves accidental player-sized holes outside the opening.
+      for (let coordinate = 0; coordinate <= axis; coordinate += 16) {
+        if (Math.abs(coordinate - center) < p.gap / 2) continue;
+        s.bullets.push(vertical
+          ? {x:coordinate, y:wave.reverse ? H + 15 : -15, vx:0,
+              vy:-sign * p.bulletSpeed, strike:wave.strike, r:p.radius}
+          : {x:wave.reverse ? -15 : W + 15, y:coordinate, vx:sign * p.bulletSpeed,
+              vy:0, strike:wave.strike, r:p.radius});
+      }
+      return;
+    }
+    for (let j = 0; j < n; j++) {
+      const offset = (j - (n - 1) / 2) * 27;
+      if (s.id === 'rain') s.bullets.push({
+        x: clamp(wave.lane * W + offset, 15, W - 15), y: -15,
+        vx: 0, vy: p.bulletSpeed, strike: wave.strike, r: p.radius,
+      });
+      else if (s.id === 'cross') {
+        s.bullets.push({x: W + 15, y: wave.lane * H + offset,
+          vx: -p.bulletSpeed, vy: 0,
+          strike: wave.strike, r: p.radius});
+        s.bullets.push({x: (wave.crossLane ?? wave.lane) * W + offset, y: -15,
+          vx: 0, vy: p.bulletSpeed, strike: wave.strike, r: p.radius});
+      } else s.bullets.push({x: W + 15, y: wave.lane * H + offset,
+        vx: -p.bulletSpeed, vy: 0, strike: wave.strike, r: p.radius});
+    }
+  }
+  function segmentDistance(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const t = clamp(((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy || 1), 0, 1);
+    return Math.hypot(px - x1 - dx * t, py - y1 - dy * t);
+  }
+  function defenseStep(s, dt, input = {}) {
+    if (s.ended) return;
+    // Fixed small steps, swept relative collisions: identical behavior on fast/slow displays.
+    let remaining = Math.min(dt, s.duration - s.time);
+    while (remaining > 1e-8) {
+      const step = Math.min(remaining, 1 / 120); remaining -= step;
+      s.time += step;
+      const oldX = s.player.x, oldY = s.player.y;
+      let dx = input.x || 0, dy = input.y || 0;
+      if (input.target) {dx = input.target.x - oldX; dy = input.target.y - oldY;}
+      const length = Math.hypot(dx, dy);
+      const travel = input.target ? Math.min(length, s.p.moveSpeed * step) : s.p.moveSpeed * step * Math.min(length, 1);
+      if (length > 0) {s.player.x += dx / length * travel; s.player.y += dy / length * travel;}
+      s.player.x = clamp(s.player.x, 12, W - 12); s.player.y = clamp(s.player.y, 12, H - 12);
+      for (const wave of s.waves) {
+        // Lock aim when the warning appears, not at launch: movement can always evade it.
+        // Alternating aimed volleys prevent waiting safely against one edge forever.
+        if (!wave.warned && s.time >= wave.at) {
+          wave.warned = true;
+          if (!wave.curtain && wave.strike % 2 === 0) {
+            wave.lane = s.id === 'rain' ? s.player.x / W : s.player.y / H;
+            if (s.id === 'cross') wave.crossLane = s.player.x / W;
+          }
+        }
+        if (!wave.spawned && s.time >= wave.at + s.p.warning) {wave.spawned = true; spawn(s, wave);}
+      }
+      for (const b of s.bullets) {
+        const previousX = b.x, previousY = b.y;
+        b.x += b.vx * step; b.y += b.vy * step;
+        const distance = segmentDistance(0, 0, previousX - oldX, previousY - oldY, b.x - s.player.x, b.y - s.player.y);
+        if (distance <= b.r + s.player.r && !s.received.includes(b.strike)) s.received.push(b.strike);
+      }
+      s.bullets = s.bullets.filter(b => b.x > -40 && b.x < W + 40 && b.y > -40 && b.y < H + 40);
+    }
+    if (s.time >= s.duration - 1e-7) {s.time = s.duration; s.ended = true;}
+  }
+  function defenseResult(s) {
+    return {hits: s.received.length, total: s.pattern.hits,
+      dodged: s.pattern.hits - s.received.length, damage: s.received.length * s.pattern.damage};
+  }
+  return {W, H, SKILLS, PATTERNS, clamp, params, attack, attackFrame, hit, attackStep,
+    attackResult, defense, defenseStep, defenseResult, segmentDistance};
+});

@@ -42,6 +42,7 @@ from arena_progression import pending_choice
 from arena_pet_store import PetMixin
 from arena_global import GlobalArenaMixin, RPG_SCOPE
 from arena_characters import CharacterMixin
+from arena_qte_live import ArenaQteMixin
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -54,8 +55,9 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin):
+class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin, ArenaQteMixin):
     def _connect_arena(self) -> None:
+        self._connect_qte()
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (
                 chat_id INTEGER NOT NULL,
@@ -847,6 +849,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             for k in ("a", "b")
         ]
         state = create_battle_state(*sources, classes=classes, skills=skills)
+        state['qte_modes']={str(s['controller_id']):self._qte_enabled_locked(s['controller_id']) for s in state['sides'].values()}
         if row.get("ranked"):
             state.update(ranked=True, ranked_actions={"a": 0, "b": 0}, ranked_timeouts={"a": 0, "b": 0})
         state["turn_timer_seconds"] = ARENA_TURN_SECONDS
@@ -1167,6 +1170,10 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
         self, token: str, actor: int, revision: int, skill_id: str
     ) -> dict:
         async with self._lock:
+            return self._arena_action_locked(token,actor,revision,skill_id)
+
+    def _arena_action_locked(self,token,actor,revision,skill_id,*,_qte=None,_interactive=False):
+        with self.connection:
             row = self._arena_row_locked(token)
             if row["status"] == "active" and json.loads(row["state_json"] or "{}").get(
                 "mirror_token"
@@ -1229,12 +1236,12 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     self._arena_consume_item_locked(item)
                     use_healing_potion(state, key)
                 else:
-                    resolve_skill(state, key, skill_id, skills)
+                    resolve_skill(state, key, skill_id, skills,qte=_qte)
                     if row.get("ranked"):
                         state.setdefault("ranked_actions", {"a": 0, "b": 0})[key] += 1
                         state.setdefault("ranked_timeouts", {"a": 0, "b": 0})[key] = 0
                 while (
-                    row["mode"] == "wasteland"
+                    not _interactive and row["mode"] == "wasteland"
                     and not state["finished"]
                     and state["active_side"] == "b"
                 ):
@@ -1289,6 +1296,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
         return result
 
     def _arena_expire_rows_locked(self) -> list[dict]:
+        self._qte_expire_locked('battle')
         expired = []
         now = utc_timestamp()
         for raw in self.connection.execute(
@@ -1409,6 +1417,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             token = secrets.token_urlsafe(16)
             now = utc_timestamp()
             state["turn_timer_seconds"] = 0
+            state['qte_modes']={str(s['controller_id']):self._qte_enabled_locked(s['controller_id']) for s in state['sides'].values()}
             self.connection.execute(
                 """INSERT INTO arena_battles(token,chat_id,mode,a_owner,b_owner,a_fighter,b_fighter,a_control,b_accepted,status,state_json,floor,created_at,deadline)
                    VALUES(?,?,'wasteland',?,0,?,0,?,1,'active',?,?,?,?)""",

@@ -10,6 +10,7 @@ from aiohttp import web
 ROOT = Path(__file__).resolve().parents[1] / "webapp"
 sys.path.insert(0, str(ROOT.parent))
 from arena_assets import render_arena_index
+from arena_qte import add_qte_lab_routes
 from arena_engine import (
     FIGHTER_CLASSES,
     BUILTIN_SKILLS,
@@ -368,6 +369,7 @@ async def demo_raid(request):
     return web.json_response(raid_preview(phase))
 
 
+add_qte_lab_routes(app, ROOT)
 app.router.add_get("/", index)
 app.router.add_get("/static/client.js", client)
 app.router.add_get("/static/audio.js", audio)

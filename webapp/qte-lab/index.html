@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b111c">
+  <title>Полигон реакции · Гнида-бот</title>
+  <link rel="stylesheet" href="/static/qte-lab/style.css?v=__REV__">
+  <script defer src="/qte-lab/engine.js?v=__REV__"></script>
+  <script defer src="/qte-lab/client.js?v=__REV__"></script>
+</head>
+<body>
+<main class="lab">
+  <header class="masthead">
+    <div><p class="eyebrow">ГНИДА-БОТ / БОЕВАЯ ЛАБОРАТОРИЯ</p><h1>Полигон реакции<span>01</span></h1></div>
+    <span class="test-tag">ТЕСТ · УЗОРЫ V3</span>
+  </header>
+  <p class="intro">Характеристики задают сложность. Результат решаешь ты.</p>
+  <div class="layout">
+    <section class="combat" aria-label="Тестовая арена">
+      <div class="arena" id="arena">
+        <div class="arena-grid"></div><div class="arena-moon"></div>
+        <div class="health player-health"><div><strong>Испытатель</strong><span id="player-hp">240 / 240</span></div><div class="bar"><i id="player-bar"></i></div><small>ОХОТНИК · ТЕСТОВЫЙ БОЕЦ</small></div>
+        <div class="health boss-health"><div><strong>Лей Хенг</strong><span id="boss-hp">320 / 320</span></div><div class="bar boss"><i id="boss-bar"></i></div><small>СПАРРИНГ · БЕЗ НАГРАД</small></div>
+        <div class="platform player-platform"></div><div class="platform boss-platform"></div>
+        <img class="fighter player" src="/static/assets/rpg/hunter.png" alt="Охотник">
+        <img class="fighter boss-sprite" src="/static/assets/lei_heng.png" alt="Лей Хенг">
+        <div class="arena-caption"><span id="round">ТРЕНИРОВОЧНЫЙ ПОЛИГОН</span><strong id="arena-status">Точность — это твой выбор момента</strong></div>
+      </div>
+      <div class="workbench">
+        <div class="mode-tabs" role="group" aria-label="Режим тренировки">
+          <button data-mode="attack" class="active" aria-pressed="true">01 <span>Попадание</span></button>
+          <button data-mode="dodge" aria-pressed="false">02 <span>Уклонение</span></button>
+          <button data-mode="duel" aria-pressed="false">03 <span>Тестовый бой</span></button>
+        </div>
+        <div class="trial-header"><div><p class="eyebrow" id="phase-label">АТАКУЮЩИЙ QTE</p><h2 id="trial-title">Поймай момент</h2></div><span class="phase-time" id="phase-time">ГОТОВ</span></div>
+        <p class="instruction" id="instruction">Останови указатель в золотой зоне. Успех — попадание, без броска вероятности.</p>
+        <div class="game-surface" id="game-surface">
+          <canvas id="game" width="720" height="320" tabindex="0" aria-label="Игровое поле. Пробел для атаки; стрелки или WASD для уклонения."></canvas>
+          <div class="idle-copy" id="idle-copy"><span class="crosshair">⌖</span><strong>Никаких случайных промахов</strong><small>Нажми «Начать испытание»</small></div>
+          <button id="resume" class="resume" hidden>Продолжить испытание</button>
+        </div>
+        <div class="feedback" id="feedback" role="status" aria-live="polite"><span class="feedback-dot"></span><span>Тренировка не расходует энергию и не меняет персонажа.</span></div>
+        <div class="action-row"><button class="primary" id="start">Начать испытание <span>↗</span></button><button id="hit" class="hit" hidden>УДАР · ПРОБЕЛ / НАЖАТИЕ</button><button id="stop" hidden>Прервать</button></div>
+        <div class="pad" id="pad" hidden aria-label="Кнопки движения"><button data-move="up" aria-label="Вверх">↑</button><button data-move="left" aria-label="Влево">←</button><button data-move="down" aria-label="Вниз">↓</button><button data-move="right" aria-label="Вправо">→</button><small>Можно также вести маркер пальцем по полю</small></div>
+        <p class="controls" id="controls">Пробел, кнопка «Удар» или касание поля · Esc — прервать</p>
+      </div>
+      <section class="journal"><div class="journal-heading"><p class="eyebrow">ЖУРНАЛ ИСПЫТАНИЙ</p><button id="clear-log">Очистить</button></div><ol id="log"><li class="muted">Здесь появятся результаты. В обычную арену они не передаются.</li></ol></section>
+    </section>
+    <aside class="settings">
+      <div class="settings-heading"><p class="eyebrow">ПАРАМЕТРЫ ЭКСПЕРИМЕНТА</p><span>↗</span></div>
+      <h2>Почувствуй разницу</h2><p class="muted">Меняй характеристики между попытками. Они влияют на размер цели и сложность узора, а не на случайный исход.</p>
+      <div class="presets" role="group" aria-label="Пресеты характеристик"><button data-preset="equal" class="active">Равные</button><button data-preset="strong">Преимущество</button><button data-preset="weak">Слабее врага</button></div>
+      <div class="stat-group"><h3><i></i>Твой персонаж</h3><label for="accuracy">Точность <output id="accuracy-value">75%</output></label><input id="accuracy" type="range" min="0" max="100" value="75"><label for="evasion">Уклонение <output id="evasion-value">25%</output></label><input id="evasion" type="range" min="0" max="100" value="25"></div>
+      <div class="stat-group enemy-stats"><h3><i></i>Противник</h3><label for="enemy-accuracy">Точность <output id="enemy-accuracy-value">75%</output></label><input id="enemy-accuracy" type="range" min="0" max="100" value="75"><label for="enemy-evasion">Уклонение <output id="enemy-evasion-value">25%</output></label><input id="enemy-evasion" type="range" min="0" max="100" value="25"></div>
+      <label class="select-label" for="skill">Твоя атака</label><select id="skill"><option value="strike">Прицельный удар · 40 урона</option><option value="tiger">Тигриный удар · 6 × 12 урона</option><option value="mana">Мановый выстрел · 32 урона</option></select>
+      <label class="select-label" for="pattern">Атака Лей Хенга</label><select id="pattern"><option value="slashes">Тигриные рассечения · 6 × 10</option><option value="rain">Дождь клинков · 3 × 20</option><option value="cross">Перекрёстный удар · 4 × 15</option></select>
+      <div class="difficulty"><div><span>Зона попадания</span><strong id="zone-value"></strong></div><div><span>Скорость снарядов</span><strong id="speed-value"></strong></div><div><span>Длительность защиты</span><strong>6 секунд</strong></div></div>
+      <details><summary>Как считается результат</summary><p>Успешная отметка QTE — один попавший удар. Повторной проверки точности нет. В защите каждый залп соответствует одному удару: касание наносит его урон только один раз. Увернулся от всех — получил 0 урона.</p><p>Бой локальный, без характеристик настоящего персонажа. У бота нет дополнительного случайного уклонения. Это ещё не правила PvP.</p></details>
+      <label class="sound-toggle"><input type="checkbox" id="sound" checked> Звуки попаданий</label>
+    </aside>
+  </div>
+  <footer>ЭКСПЕРИМЕНТАЛЬНАЯ МЕХАНИКА <span>Обычная арена не изменена · PvE-прототип</span></footer>
+</main>
+</body>
+</html>

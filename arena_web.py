@@ -14,6 +14,7 @@ from urllib.parse import parse_qsl
 from aiohttp import web
 from aiogram.exceptions import TelegramAPIError
 from arena_assets import render_arena_index
+from arena_qte import add_qte_lab_routes
 from arena_engine import (
     level_progress,
     level_from_total_xp,
@@ -272,6 +273,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
         consent_side=consent,
         available=available,
         actor_id=actor,
+        qte=await db.arena_qte_view('battle',row['token'],actor),
     )
 
 
@@ -289,6 +291,7 @@ async def menu_view(db, chat: int, actor: int) -> dict:
 async def _menu_view(db, chat: int, actor: int) -> dict:
     mirror_runs = await db.arena_mirror_list(chat, actor)
     result = await db.arena_menu(chat, actor)
+    result['combat_settings']=await db.arena_combat_settings(actor)
     classes, skills = await db.get_fighter_catalog()
     enabled_classes=set(classes)
     profiles = [(result["personal"], True), *((p, False) for p in result["slaves"])]
@@ -620,6 +623,7 @@ def create_arena_app(
         return web.json_response(dict(invoice=link,order_id=order['id']))
 
     async def get_battle(request):
+        await db.arena_qte_refresh('battle',request.match_info['token'])
         row = await db.arena_get(request.match_info["token"])
         await read_member(row["chat_id"], request[ACTOR])
         return web.json_response(await battle_view(db, row, request[ACTOR]))
@@ -633,7 +637,7 @@ def create_arena_app(
             raise ValueError("Некорректный запрос.")
         action = body.get("action")
         # Controllers/fighters must still be in the group, even for offers created earlier.
-        if action in {"accept", "select", "consent", "skill"}:
+        if action in {"accept", "select", "consent", "skill", "qte"}:
             for k in ("a", "b"):
                 if row[k + "_owner"]:
                     await require_member(bot, row["chat_id"], row[k + "_owner"])
@@ -641,12 +645,13 @@ def create_arena_app(
                     await require_member(bot, row["chat_id"], row[k + "_fighter"])
         if action == "select":
             await require_member(bot, row["chat_id"], int_field(body, "fighter"))
-        if action == "skill":
-            row = await db.arena_action(
+        if action in {"skill","qte"}:
+            row = await db.arena_interactive_action(
                 row["token"],
                 actor,
                 int_field(body, "revision"),
-                str(body.get("skill", "")),
+                str(action),str(body.get("skill", "")),
+                proof=body.get('proof'),challenge_id=body.get('challenge_id'),
             )
         else:
             controlled = body.get("controlled", True)
@@ -673,6 +678,7 @@ def create_arena_app(
             mine=request.query.get("mine") == "1"))
 
     async def get_raid(request):
+        await db.arena_qte_refresh('raid',request.match_info['token'])
         row = await db.arena_raid_get(request.match_info["token"])
         await read_member(row["chat_id"], request[ACTOR])
         return web.json_response(await raid_view(db, row, request[ACTOR]))
@@ -687,14 +693,15 @@ def create_arena_app(
         if not isinstance(body, dict) or not isinstance(body.get("action"), str):
             raise ValueError("Некорректный запрос.")
         action = body["action"]
-        if action == "skill":
+        if action in {"skill","qte"}:
             participant = next(
                 (p for p in row["participants"] if p["actor_id"] == actor), None
             )
             if participant:
                 await require_member(bot, row["chat_id"], participant["fighter_id"])
-            row = await db.arena_raid_action(
-                row["token"], actor, int_field(body, "round"), body.get("skill")
+            row = await db.arena_interactive_raid(
+                row["token"], actor, int_field(body, "round"), body.get("skill"),
+                proof=body.get('proof'),challenge_id=body.get('challenge_id') if action=='qte' else None,
             )
         else:
             personal = body.get("personal", True)
@@ -807,6 +814,10 @@ def create_arena_app(
             raise ValueError("Некорректный запрос.")
         action = body.get("action")
         expected_slot=int_field(body,'character_slot',1)
+        if action=='combat_settings':
+            if type(body.get('enabled')) is not bool:raise ValueError('Некорректная настройка мини-игр.')
+            await db.arena_combat_settings(actor,body['enabled'])
+            return web.json_response(dict(notice='Настройка сохранена. Применится со следующего боя.',menu=await app_menu(chat,actor)))
         if action=='select_character':
             notice=await db.arena_select_character(chat,actor,int_field(body,'slot'),int_field(body,'character_revision'))
             return web.json_response(dict(notice=notice,menu=await app_menu(chat,actor)))
@@ -943,6 +954,7 @@ def create_arena_app(
             {"notice": notice, "menu": await app_menu(chat, actor)}
         )
 
+    add_qte_lab_routes(app, ROOT)
     app.router.add_get("/", index)
     app.router.add_get("/pets", pets_page)
     app.router.add_get("/static/pet-client.js", pets_client)

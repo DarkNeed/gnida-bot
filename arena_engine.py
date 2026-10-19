@@ -1164,8 +1164,9 @@ def resolve_skill(
     tick_actor_bleed=True,
     allies=None,
     raid_context=None,
+    qte=None,
 ) -> dict:
-    """Resolve one tap entirely on the server. No directional/confirmation phase."""
+    """Resolve a paid action; QTE masks, if any, come from server-side replay."""
     rng = rng or random.SystemRandom()
     skill = validate_skill(state, side_key, skill_id, skills)
     _initialize_turn_counts(state)
@@ -1251,6 +1252,23 @@ def resolve_skill(
         ]
         hit = any(part["hit"] for part in strike_results)
         dodged = not hit and any(part["dodged"] for part in strike_results)
+    if qte and skill.hostile:
+        parts = strike_results if strike_results is not None else [dict(hit=hit,dodged=dodged,damage=0)]
+        for i, part in enumerate(parts):
+            if 'attack' in qte:
+                part['hit'] = bool(i<len(qte['attack']) and qte['attack'][i])
+                part['dodged'] = False
+                if part['hit'] and qte.get('luck_evasion'):
+                    part['dodged'] = rng.random()*100 < max(0,min(95,effective_stat(target,'evasion')))
+                    part['hit'] = not part['dodged']
+            elif 'dodge' in qte:
+                r = rolls[i] if strike_results is not None else roll
+                part.update(hit=r<max(5,min(95,raw_accuracy)),dodged=False)
+            if 'dodge' in qte and part['hit']:
+                avoided = (all(qte['dodge']) if i>=len(qte['dodge']) else qte['dodge'][i])
+                if avoided:part.update(hit=False,dodged=True)
+        hit = any(p['hit'] for p in parts)
+        dodged = not hit and any(p['dodged'] for p in parts)
     if parried:
         hit = dodged = False
         if strike_results:

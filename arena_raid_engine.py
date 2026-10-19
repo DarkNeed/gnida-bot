@@ -112,6 +112,12 @@ def pair_state(actor, target):
 
 
 def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True, allies=None, raid_context=None):
+    qte={}
+    attack=actor.pop('_qte_attack',None)
+    if attack is not None:qte['attack']=attack
+    guard=target.get('_qte_guard')
+    if guard and raid_context and raid_context.get('_qte_boss_phase') and guard.get('skill')==raid_context.get('intent',{}).get('skill'):
+        qte['dodge']=guard['dodge']
     return resolve_skill(
         pair_state(actor, target),
         "a",
@@ -122,6 +128,7 @@ def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True
         tick_actor_bleed=tick_actor_bleed,
         allies=allies,
         raid_context=raid_context,
+        qte=qte or None,
     )
 
 
@@ -368,6 +375,10 @@ def resolve_round(data, skills, rng=None):
     boss["is_boss"] = True
     stunned = False
     living = alive_players(data)
+    for player in living.values():
+        result=player.pop('qte_result',{})
+        if 'attack' in result:player['fighter']['_qte_attack']=result['attack']
+        if 'dodge' in result:player['fighter']['_qte_guard']=dict(dodge=result['dodge'],skill=result.get('guard_skill'))
     order = sorted(
         living, key=lambda k: (-effective_stat(living[k]["fighter"], "speed"), int(k))
     )
@@ -469,6 +480,7 @@ def resolve_round(data, skills, rng=None):
                 log_event(data, "boss", "boss", "Босс сопротивляется ошеломлению.")
         if prepared and not stunned:
             kit_react(data, key, event, prepared, rng)
+    data['_qte_boss_phase']=True
     if not finish_if_needed(data):
         if stunned:
             from arena_archclasses import obey_enemy_prescript
@@ -612,6 +624,10 @@ def resolve_round(data, skills, rng=None):
             won=False,
             result="Босс ушёл: достигнут предел 40 раундов. Без наград.",
         )
+    data.pop('_qte_boss_phase',None)
+    for player in data['players'].values():
+        player['fighter'].pop('_qte_attack',None)
+        player['fighter'].pop('_qte_guard',None)
     data["log"] = data["log"][-80:]
     data.pop("round_before", None)
     if not data["finished"]:

@@ -1,0 +1,134 @@
+/* Live widget: records input only. Server replay decides the combat result. */
+(() => {
+  'use strict';
+  let active = null;
+  window.ArenaMiniGames = {play, get active(){return !!active;}};
+  function play(challenge) {
+    if(active) return Promise.reject(new Error('Другая мини-игра уже открыта.'));
+    const E=window.QTELab;
+    if(!E) return Promise.reject(new Error('Обнови арену: модуль мини-игр не загрузился.'));
+    return new Promise(resolve=>{
+      const cover=document.createElement('div');cover.className='qte-cover';
+      cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Боевая мини-игра"><div class="qte-heading"><div><p class="qte-eyebrow"></p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"></p><canvas class="qte-live-canvas" width="720" height="320" tabindex="0" aria-label="Пробел для попадания, WASD или стрелки для уклонения"></canvas><div class="qte-live-status" role="status"></div><div class="qte-live-buttons"><button class="qte-hit">УДАР · ПРОБЕЛ / КАСАНИЕ</button><button class="qte-abort">Пропустить · неуспех</button></div><div class="qte-live-pad"><button data-direction="up" aria-label="Вверх">↑</button><button data-direction="left" aria-label="Влево">←</button><button data-direction="down" aria-label="Вниз">↓</button><button data-direction="right" aria-label="Вправо">→</button></div><p class="qte-info">Результат проверяет сервер. Закрытие или истечение времени не дают успешного попадания/уклонения.</p></section>';
+      const find=s=>cover.querySelector(s),canvas=find('canvas'),ctx=canvas.getContext('2d');
+      find('h2').textContent=challenge.name;
+      const defense=challenge.kind==='defense';
+      find('.qte-eyebrow').textContent=defense?'ЗАЩИТА · УВЕРНИСЬ ОТ АТАКИ':'ТВОЯ АТАКА · ПОЙМАЙ МОМЕНТ';
+      find('.qte-help').textContent=defense?'WASD / стрелки, движение пальцем или экранные кнопки. Зелёный пунктир обозначает проходы. Чистое прохождение — полное уклонение.':'Нажми в золотой зоне. На каждую отметку — одно нажатие. Повторного броска точности нет.';
+      find('.qte-hit').hidden=defense;find('.qte-live-pad').hidden=!defense;
+      const n=challenge.strikes;
+      const sim=defense?E.defense({pattern:challenge.pattern,stats:challenge.stats,seed:challenge.seed})
+        :E.attack({spec:{name:challenge.name,hits:n,damage:0,slot:n>1?.95:2.8},stats:challenge.stats,seed:challenge.seed});
+      const previousFocus=document.activeElement,previousOverflow=document.body.style.overflow;
+      document.body.append(cover);document.body.style.overflow='hidden';canvas.focus({preventScroll:true});
+      const abort=new AbortController(),on=(el,name,fn)=>el.addEventListener(name,fn,{signal:abort.signal});
+      let tick=0,accumulator=0,last=0,done=false,keys=new Set(),pointers=new Map(),target=null,drag=null,lastInput='';
+      const proof=defense?{ticks:720,inputs:[]}:{ticks:0,clicks:[]};
+      const deadline=performance.now()+Math.max(0,(challenge.expires-(challenge.server_now||Date.now()/1000))*1000);
+      let raf,watch;
+      function finish(failed=false) {
+        if(done)return;done=true;cancelAnimationFrame(raf);clearInterval(watch);abort.abort();
+        document.body.style.overflow=previousOverflow;cover.remove();active=null;
+        previousFocus?.isConnected&&previousFocus.focus?.({preventScroll:true});
+        if(!defense)proof.ticks=tick;
+        resolve(failed?{abort:true}:proof);
+      }
+      active={challenge:challenge.id};
+      function hit() {
+        if(defense||done)return;
+        const result=E.hit(sim);if(result===null)return;
+        proof.clicks.push(tick);
+        find('.qte-live-status').textContent=result?'Попадание засчитано.':'Промах: вне золотой зоны.';
+        if(result)window.ArenaAudio?.effect?.('hit');
+        draw();if(sim.ended)finish();
+      }
+      const keymap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',KeyA:'left',KeyD:'right',KeyW:'up',KeyS:'down'};
+      on(window,'keydown',e=>{
+        if(e.code==='Escape'){e.preventDefault();finish(true);return;}
+        if(e.code==='Space'&&!defense){e.preventDefault();if(!e.repeat)hit();return;}
+        if(defense&&keymap[e.code]){e.preventDefault();keys.add(keymap[e.code]);target=null;}
+        if(e.code==='Tab'){
+          const buttons=[...cover.querySelectorAll('button:not([hidden])')].filter(b=>b.offsetParent);
+          const index=buttons.indexOf(document.activeElement),next=e.shiftKey?(index<=0?buttons.length-1:index-1):(index+1)%buttons.length;
+          e.preventDefault();buttons[next]?.focus();
+        }
+      });
+      on(window,'keyup',e=>{if(keymap[e.code])keys.delete(keymap[e.code]);});
+      on(window,'blur',()=>{keys.clear();pointers.clear();target=null;});
+      on(document,'visibilitychange',()=>{if(document.hidden)finish(true);});
+      on(find('.qte-hit'),'click',hit);on(find('.qte-abort'),'click',()=>finish(true));
+      function point(e){const r=canvas.getBoundingClientRect();target={x:Math.round(E.clamp((e.clientX-r.left)/r.width*720,0,720)*100)/100,y:Math.round(E.clamp((e.clientY-r.top)/r.height*320,0,320)*100)/100};}
+      on(canvas,'pointerdown',e=>{e.preventDefault();canvas.setPointerCapture(e.pointerId);if(!defense){hit();return;}if(drag===null){drag=e.pointerId;point(e);}});
+      on(canvas,'pointermove',e=>{if(e.pointerId===drag)point(e);});
+      for(const name of ['pointerup','pointercancel','lostpointercapture'])on(canvas,name,e=>{if(e.pointerId===drag){drag=null;target=null;}});
+      cover.querySelectorAll('[data-direction]').forEach(button=>{
+        on(button,'pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);pointers.set(e.pointerId,button.dataset.direction);target=null;});
+        for(const name of ['pointerup','pointercancel','lostpointercapture'])on(button,name,e=>pointers.delete(e.pointerId));
+      });
+      function input(){
+        const all=new Set([...keys,...pointers.values()]);
+        const x=+all.has('right')-+all.has('left'),y=+all.has('down')-+all.has('up');
+        return x||y||!target?{x,y}:{target:[target.x,target.y]};
+      }
+      function step(){
+        if(defense){
+          const cmd=input(),encoded=JSON.stringify(cmd);
+          if(encoded!==lastInput){proof.inputs.push({t:tick,...cmd});lastInput=encoded;}
+          E.defenseStep(sim,1/120,cmd.target?{target:{x:cmd.target[0],y:cmd.target[1]}}:cmd);tick++;
+        }else{tick++;E.attackStep(sim,Math.min(sim.duration,tick/120)-sim.time);}
+        if(sim.ended){draw();finish();}
+      }
+      function text(value,x,y,color='#a3b8ce',size=13,align='left'){
+        ctx.font=`500 ${Math.max(size,Math.min(22,7200/Math.max(1,canvas.clientWidth)))}px Segoe UI, sans-serif`;
+        ctx.fillStyle=color;ctx.textAlign=align;ctx.fillText(value,x,y);
+      }
+      function draw(){
+        ctx.clearRect(0,0,720,320);ctx.fillStyle='#080f19';ctx.fillRect(0,0,720,320);ctx.strokeStyle='#172536';ctx.lineWidth=1;
+        for(let x=20;x<720;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,320);ctx.stroke();}
+        for(let y=20;y<320;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(720,y);ctx.stroke();}
+        if(!defense){
+          const f=E.attackFrame(sim),left=55,width=610,y=130;
+          text(`ОТМЕТКА ${f.index+1} / ${n}`,55,48);text('НАЖМИ В ЗОЛОТОЙ ЗОНЕ',665,48,'#e6b963',13,'right');
+          ctx.fillStyle='#1b2d44';ctx.fillRect(left,y,width,50);
+          const zx=left+(f.center-f.width/2)*width;ctx.fillStyle='#e6b96344';ctx.fillRect(zx,y,f.width*width,50);
+          ctx.strokeStyle='#e6b963';ctx.strokeRect(zx,y,f.width*width,50);
+          ctx.fillStyle='#ecf6ff';ctx.fillRect(left+f.cursor*width-2,y-10,4,70);
+          sim.results.forEach((result,i)=>{ctx.beginPath();ctx.arc(360-(n-1)*18+i*36,240,9,0,Math.PI*2);ctx.fillStyle=result===true?'#80d5b4':result===false?'#ef8883':'#344b65';ctx.fill();});
+        }else{
+          for(const w of sim.waves){
+            if(sim.time<w.at||w.spawned)continue;
+            ctx.setLineDash([8,8]);ctx.strokeStyle=w.curtain?'#80d5b480':'#e6b96380';ctx.fillStyle='#80d5b409';
+            const vertical=sim.id==='rain',c=w.lane*(vertical?720:320);
+            const half=w.curtain?Math.max(8,sim.p.gap/2-sim.p.radius-sim.player.r):0;
+            if(vertical){
+              ctx.fillRect(c-half,0,half*2,320);
+              for(const x of half?[c-half,c+half]:[c]){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,320);ctx.stroke();}
+              text(w.reverse?'▲':'▼',c,w.reverse?298:24,'#80d5b4',18,'center');
+            }else{
+              ctx.fillRect(0,c-half,720,half*2);
+              for(const y of half?[c-half,c+half]:[c]){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(720,y);ctx.stroke();}
+              text(w.reverse?'▶':'◀',w.reverse?20:700,c+6,w.curtain?'#80d5b4':'#e6b963',18,'center');
+              if(sim.id==='cross'){const x=(w.crossLane??w.lane)*720;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,320);ctx.stroke();text('▼',x,24,'#e6b963',18,'center');}
+            }
+          }
+          ctx.setLineDash([]);
+          for(const b of sim.bullets){ctx.save();ctx.translate(b.x,b.y);ctx.rotate(Math.atan2(b.vy,b.vx));ctx.fillStyle=sim.received.includes(b.strike)?'#78575c':'#efc397';ctx.beginPath();ctx.moveTo(13,0);ctx.lineTo(-8,-b.r);ctx.lineTo(-3,0);ctx.lineTo(-8,b.r);ctx.closePath();ctx.fill();ctx.restore();}
+          ctx.save();ctx.translate(sim.player.x,sim.player.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#80d5b4';ctx.shadowColor='#80d5b4';ctx.shadowBlur=15;ctx.fillRect(-6,-6,12,12);ctx.restore();
+          text('КАСАНИЯ: '+sim.received.length,700,302,sim.received.length?'#ef8883':'#80d5b4',12,'right');
+        }
+      }
+      function frame(now){
+        if(done)return;
+        const dt=last?(now-last)/1000:0;last=now;
+        if(dt>.35||now>=deadline){finish(true);return;}
+        accumulator+=dt;
+        while(accumulator>=1/120&&!done){accumulator-=1/120;step();}
+        if(done)return;draw();
+        find('.qte-count').textContent=Math.max(0,sim.duration-sim.time).toFixed(1)+' С';
+        raf=requestAnimationFrame(frame);
+      }
+      watch=setInterval(()=>{if(performance.now()>=deadline)finish(true);},200);
+      draw();raf=requestAnimationFrame(frame);
+    });
+  }
+})();

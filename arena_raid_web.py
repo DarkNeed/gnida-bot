@@ -121,6 +121,7 @@ async def raid_view(db, row, actor):
     if data:
         await decorate(data["boss"], 0, True)
         for key, player in data["players"].items():
+            player.pop('qte_result',None)
             await decorate(player["fighter"], player["fighter_id"],character_slot=player.get('character_slot',1))
             player["ready"] = player["selected"] is not None
             # Other players see only readiness, not the selected ability.
@@ -136,6 +137,7 @@ async def raid_view(db, row, actor):
         chat_id=row["chat_id"],
         creator_id=row["creator_id"],
         actor_id=actor,
+        qte=await db.arena_qte_view('raid',row['token'],actor),
         status=row["status"],
         revision=row["revision"],
         deadline=row["deadline"],

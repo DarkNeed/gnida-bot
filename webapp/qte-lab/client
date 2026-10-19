@@ -1,0 +1,322 @@
+/* Standalone sandbox. Deliberately has no API calls, Telegram SDK or persistence. */
+(() => {
+  'use strict';
+  const E = window.QTELab, $ = id => document.getElementById(id);
+  const canvas = $('game'), ctx = canvas.getContext('2d');
+  const C = {gold: '#e6b963', muted: '#8299b2', green: '#80d5b4', red: '#ef8883', white: '#e6edf5'};
+  let mode = 'attack', simulation = null, paused = false, pendingDefense = false;
+  let transition = 0, lastFrame = 0, seed = 10, attempts = 0, lastContact = 0;
+  let playerHP = 240, bossHP = 320, turn = 1, duelFinished = false;
+  let keys = new Set(), pointers = new Map(), target = null, dragPointer = null;
+  let sounds = null, flashUntil = 0, feedbackUntil = 0;
+  const statIds = ['accuracy', 'evasion', 'enemy-accuracy', 'enemy-evasion'];
+  const settingControls = [...document.querySelectorAll('.settings input[type=range], .settings select, [data-preset]')];
+  function stats() {
+    return {accuracy: +$('accuracy').value, evasion: +$('evasion').value,
+      enemyAccuracy: +$('enemy-accuracy').value, enemyEvasion: +$('enemy-evasion').value};
+  }
+  function feedback(text, style = '') {
+    $('feedback').className = 'feedback ' + style;
+    $('feedback').lastElementChild.textContent = text;
+  }
+  function journal(text) {
+    attempts++;
+    if (attempts === 1) $('log').replaceChildren();
+    const li = document.createElement('li'), number = document.createElement('span'), body = document.createElement('b');
+    number.textContent = String(attempts).padStart(2, '0'); body.textContent = text;
+    li.append(number, body); $('log').prepend(li);
+    while ($('log').children.length > 8) $('log').lastElementChild.remove();
+  }
+  function audioReady() {
+    if (!$('sound').checked) return;
+    try { sounds ||= new (window.AudioContext || window.webkitAudioContext)(); sounds.resume().catch(() => {}); } catch (_) {}
+  }
+  function tone(kind) {
+    if (!sounds || sounds.state !== 'running' || !$('sound').checked) return;
+    const t = sounds.currentTime, osc = sounds.createOscillator(), gain = sounds.createGain();
+    osc.type = kind === 'hurt' ? 'sawtooth' : 'triangle';
+    osc.frequency.setValueAtTime(kind === 'hurt' ? 145 : kind === 'miss' ? 220 : 780, t);
+    osc.frequency.exponentialRampToValueAtTime(kind === 'hurt' ? 40 : kind === 'miss' ? 90 : 310, t + .13);
+    gain.gain.setValueAtTime(.0001, t); gain.gain.exponentialRampToValueAtTime(.07, t + .006);
+    gain.gain.exponentialRampToValueAtTime(.0001, t + .17);
+    osc.connect(gain).connect(sounds.destination); osc.start(t); osc.stop(t + .18);
+  }
+  function hp() {
+    $('player-hp').textContent = `${playerHP} / 240`; $('boss-hp').textContent = `${bossHP} / 320`;
+    $('player-bar').style.width = playerHP / 240 * 100 + '%'; $('boss-bar').style.width = bossHP / 320 * 100 + '%';
+    $('round').textContent = mode === 'duel' ? 'ТЕСТОВЫЙ БОЙ · ХОД ' + turn : 'ТРЕНИРОВОЧНЫЙ ПОЛИГОН';
+  }
+  function impact(which) {
+    $('arena').classList.remove('impact', 'hurt'); $('arena').classList.add(which);
+    flashUntil = performance.now() + 250;
+  }
+  function controls() {
+    const active = !!simulation || transition > 0;
+    settingControls.forEach(el => {el.disabled = active || pendingDefense;});
+    $('start').hidden = active;
+    $('start').textContent = mode === 'duel' ? duelFinished ? 'Начать новый бой ↗' : pendingDefense ? 'Уклониться от ответа ↗' : turn > 1 ? 'Следующий ход ↗' : 'Начать тестовый бой ↗' : 'Начать испытание ↗';
+    $('hit').hidden = !simulation || simulation.kind !== 'attack' || paused;
+    $('stop').hidden = !active && !pendingDefense;
+    $('pad').hidden = !simulation || simulation.kind !== 'defense' || paused;
+    $('resume').hidden = !paused;
+    $('idle-copy').hidden = active || pendingDefense || duelFinished;
+    canvas.dataset.phase = paused ? 'paused' : simulation?.kind || (transition > 0 ? 'transition' : 'idle');
+  }
+  function clearInput() {keys.clear(); pointers.clear(); target = null; dragPointer = null;}
+  function pause() {
+    if (!simulation && transition <= 0) return;
+    paused = true; clearInput(); controls();
+    feedback('Испытание приостановлено. Возвращение во вкладку не засчитывает уклонение.');
+  }
+  function cancel(reset = true) {
+    simulation = null; transition = 0; pendingDefense = false; paused = false; lastFrame = 0;
+    clearInput();
+    if (reset) {playerHP = 240; bossHP = 320; turn = 1; duelFinished = false;}
+    $('phase-time').textContent = 'ГОТОВ'; hp(); controls(); drawIdle();
+  }
+  function settingsChanged() {
+    statIds.forEach(id => {$(id + '-value').textContent = $(id).value + '%';});
+    const p = E.params(stats(), $('pattern').value);
+    $('zone-value').textContent = Math.round(p.zone * 100) + '% шкалы';
+    $('speed-value').textContent = (p.bulletSpeed / 340).toFixed(2) + '×';
+  }
+  function describe() {
+    $('phase-label').textContent = mode === 'dodge' ? 'ЗАЩИТНАЯ МИНИ-АРЕНА' : mode === 'duel' ? 'ПОШАГОВЫЙ PvE · ПРОТОТИП' : 'АТАКУЮЩИЙ QTE';
+    $('trial-title').textContent = mode === 'dodge' ? 'Не дай себя задеть' : mode === 'duel' ? 'Мастерство против босса' : 'Поймай момент';
+    $('instruction').textContent = mode === 'dodge'
+      ? 'Уводи бирюзовый маркер от клинков. Чистое прохождение — полное уклонение, 0 урона.'
+      : mode === 'duel' ? 'Твоя атака → ответ босса → следующий ход. Победи Лей Хенга только за счёт своей реакции.'
+      : 'Останови указатель в золотой зоне. Успех — попадание, без броска вероятности.';
+    $('controls').textContent = mode === 'dodge' ? 'WASD / стрелки · веди пальцем по полю или используй кнопки · Esc — прервать'
+      : 'Пробел, кнопка «Удар» или касание поля · Esc — прервать';
+    $('arena-status').textContent = mode === 'dodge' ? 'Пройди чисто — избеги всего урона' : mode === 'duel' ? 'Тестовый бой · твой ход' : 'Точность — это твой выбор момента';
+  }
+  function begin(kind) {
+    clearInput(); paused = document.hidden; lastContact = 0; lastFrame = 0; feedbackUntil = 0;
+    simulation = kind === 'attack' ? E.attack({skill: $('skill').value, stats: stats(), seed: ++seed})
+      : E.defense({pattern: $('pattern').value, stats: stats(), seed: ++seed});
+    $('phase-label').textContent = kind === 'attack' ? 'ТВОЯ АТАКА · ' + (mode === 'duel' ? 'ХОД ' + turn : 'ТРЕНИРОВКА') : 'ОТВЕТ ПРОТИВНИКА';
+    $('trial-title').textContent = kind === 'attack' ? simulation.skill.name : simulation.pattern.name;
+    $('instruction').textContent = kind === 'attack'
+      ? simulation.skill.hits > 1 ? 'Шесть отметок подряд. На каждый удар — одно нажатие. Пропустил отметку — промахнулся этим ударом.' : 'Нажми, когда указатель окажется в золотой зоне. Второго случайного броска нет.'
+      : simulation.id === 'cross' ? 'Пунктир предупреждает о направлении залпа. Бирюзовый маркер — ты. Увернись от всех ударов.'
+      : 'Ищи зелёные проходы в стенах клинков. Залпы идут с противоположных сторон; следи за стрелками.';
+    $('controls').textContent = kind === 'attack' ? 'Пробел, «Удар» или касание поля · одно нажатие на отметку'
+      : 'WASD / стрелки · движение пальцем или кнопки · Esc — прервать';
+    $('arena-status').textContent = kind === 'attack' ? 'Твой ход · атакуй' : 'Лей Хенг атакует · уклоняйся';
+    feedback(kind === 'attack' ? 'Попади указателем в золотую зону.' : 'Чистое прохождение отменяет и урон, и эффекты попавшей атаки.');
+    controls(); canvas.focus({preventScroll: true});
+    document.querySelector('.trial-header').scrollIntoView({block: 'start'});
+  }
+  function start() {
+    if (simulation || transition > 0) return;
+    audioReady();
+    if (mode === 'duel' && duelFinished) {cancel();}
+    begin(mode === 'dodge' || pendingDefense ? 'defense' : 'attack');
+  }
+  function finish() {
+    const s = simulation;
+    if (!s) return;
+    simulation = null;
+    if (s.kind === 'attack') {
+      const r = E.attackResult(s);
+      const text = `${s.skill.name}: ${r.hits}/${r.total} попаданий · ${r.damage} урона. Без случайной проверки.`;
+      feedback(text, r.hits ? 'success' : 'fail'); journal(text);
+      if (mode === 'duel') {
+        bossHP = Math.max(0, bossHP - r.damage); hp();
+        if (r.damage) impact('impact');
+        if (!bossHP) {endDuel(true); return;}
+        pendingDefense = true; transition = 1.35;
+        $('arena-status').textContent = 'Босс готовит ответ…';
+      }
+    } else {
+      const r = E.defenseResult(s);
+      const text = r.damage === 0 ? `ПОЛНОЕ УКЛОНЕНИЕ · ${r.total}/${r.total} ударов избегнуто · 0 урона.`
+        : `Избегнуто ${r.dodged}/${r.total} ударов · получено ${r.damage} урона. Один залп не ранит повторно.`;
+      feedback(text, r.damage ? 'fail' : 'success'); journal(text);
+      if (!r.damage) tone('hit');
+      if (mode === 'duel') {
+        playerHP = Math.max(0, playerHP - r.damage); pendingDefense = false; hp();
+        if (!playerHP) {endDuel(false); return;}
+        turn++; hp(); $('arena-status').textContent = 'Твой ход · выбери следующую атаку';
+      }
+    }
+    $('phase-time').textContent = 'ИТОГ'; controls();
+  }
+  function endDuel(won) {
+    duelFinished = true; pendingDefense = false; transition = 0;
+    const text = won ? 'ПОБЕДА · Лей Хенг повержен. Наград нет — это полигон.' : 'ПОРАЖЕНИЕ · Можно попробовать снова с другими параметрами.';
+    feedback(text, won ? 'success' : 'fail'); journal(text); $('arena-status').textContent = won ? 'Победа в тестовом бою' : 'Испытание окончено';
+    $('phase-time').textContent = won ? 'ПОБЕДА' : 'ПОРАЖЕНИЕ'; controls();
+  }
+  function hit() {
+    if (paused || !simulation || simulation.kind !== 'attack') return;
+    audioReady();
+    const result = E.hit(simulation);
+    if (result === null) return;
+    tone(result ? 'hit' : 'miss');
+    feedback(result ? 'ПОПАДАНИЕ · удар засчитан.' : 'ПРОМАХ · указатель был вне золотой зоны.', result ? 'success' : 'fail');
+    feedbackUntil = performance.now() + 500;
+    if (result) impact('impact');
+    drawAttack(simulation);
+    if (simulation.ended) finish();
+  }
+  function backdrop() {
+    ctx.clearRect(0, 0, E.W, E.H); ctx.fillStyle = '#080f19'; ctx.fillRect(0, 0, E.W, E.H);
+    ctx.strokeStyle = '#172434'; ctx.lineWidth = 1;
+    for (let x = 20; x < E.W; x += 40) {ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, E.H); ctx.stroke();}
+    for (let y = 20; y < E.H; y += 40) {ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(E.W, y); ctx.stroke();}
+  }
+  function text(value, x, y, color = C.muted, size = 13, align = 'left') {
+    const readableSize = Math.max(size, Math.min(22, 10 * E.W / Math.max(1, canvas.clientWidth)));
+    ctx.fillStyle = color; ctx.font = `500 ${readableSize}px Segoe UI, sans-serif`; ctx.textAlign = align; ctx.fillText(value, x, y);
+  }
+  function drawIdle() {backdrop();}
+  function drawAttack(s) {
+    backdrop(); const f = E.attackFrame(s), left = 55, width = 610, y = 135, height = 48;
+    const result = s.results[f.index];
+    text('ОТМЕТКА ' + (f.index + 1) + ' / ' + s.skill.hits, left, 53, C.muted, 13);
+    text(result === null ? 'НАЖМИ В ЗОЛОТОЙ ЗОНЕ' : result ? 'ПОПАДАНИЕ' : 'ПРОМАХ', E.W - left, 53,
+      result === null ? C.gold : result ? C.green : C.red, 13, 'right');
+    ctx.fillStyle = '#172638'; ctx.fillRect(left, y, width, height);
+    ctx.strokeStyle = '#36465a'; ctx.strokeRect(left, y, width, height);
+    const zx = left + (f.center - f.width / 2) * width, zw = f.width * width;
+    ctx.fillStyle = '#e6b96335'; ctx.fillRect(zx, y, zw, height);
+    ctx.strokeStyle = C.gold; ctx.strokeRect(zx, y, zw, height);
+    text('ЦЕЛЬ', zx + zw / 2, y - 15, C.gold, 11, 'center');
+    const x = left + f.cursor * width;
+    ctx.shadowColor = result === false ? C.red : C.gold; ctx.shadowBlur = 13;
+    ctx.fillStyle = result === false ? C.red : C.white; ctx.fillRect(x - 2, y - 9, 4, height + 18); ctx.shadowBlur = 0;
+    ctx.beginPath(); ctx.moveTo(x - 7, y - 17); ctx.lineTo(x + 7, y - 17); ctx.lineTo(x, y - 10); ctx.fill();
+    const dotsWidth = s.skill.hits * 36, dotsLeft = (E.W - dotsWidth) / 2;
+    for (let i = 0; i < s.skill.hits; i++) {
+      ctx.beginPath(); ctx.arc(dotsLeft + i * 36 + 18, 239, 9, 0, Math.PI * 2);
+      ctx.fillStyle = s.results[i] === true ? C.green : s.results[i] === false ? C.red : '#26374c'; ctx.fill();
+      if (i === f.index) {ctx.strokeStyle = C.gold; ctx.lineWidth = 2; ctx.stroke();}
+    }
+    text(s.skill.hits > 1 ? 'ОДНО НАЖАТИЕ НА КАЖДУЮ ОТМЕТКУ' : 'ПРОБЕЛ / КАСАНИЕ ПОЛЯ', E.W / 2, 283, C.muted, 12, 'center');
+  }
+  function drawDefense(s) {
+    backdrop(); ctx.save();
+    for (const w of s.waves) {
+      if (s.time < w.at || w.spawned) continue;
+      const opacity = .2 + .45 * Math.min(1, (s.time - w.at) / s.p.warning);
+      ctx.strokeStyle = `rgba(230,185,99,${opacity})`; ctx.fillStyle = `rgba(230,185,99,${opacity * .11})`;
+      ctx.lineWidth = 1; ctx.setLineDash([8, 8]);
+      if (w.curtain) {
+        const vertical = s.id === 'rain', center = w.lane * (vertical ? E.W : E.H);
+        const half = Math.max(8, s.p.gap / 2 - s.p.radius - s.player.r);
+        ctx.strokeStyle = `rgba(128,213,180,${opacity})`;
+        ctx.fillStyle = `rgba(128,213,180,${opacity * .07})`;
+        if (vertical) {
+          ctx.fillRect(center-half,0,half*2,E.H);
+          for (const x of [center-half,center+half]) {ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,E.H);ctx.stroke();}
+          text(w.reverse ? '▲' : '▼',center,w.reverse ? E.H-22 : 24,C.green,18,'center');
+        } else {
+          ctx.fillRect(0,center-half,E.W,half*2);
+          for (const y of [center-half,center+half]) {ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(E.W,y);ctx.stroke();}
+          text(w.reverse ? '▶' : '◀',w.reverse ? 20 : E.W-20,center+6,C.green,18,'center');
+        }
+        continue;
+      }
+      if (s.id === 'rain') {
+        const x = w.lane * E.W; ctx.fillRect(x - 40, 0, 80, E.H); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, E.H); ctx.stroke();
+        text('▼', x, 23, C.gold, 16, 'center');
+      } else {
+        const y = w.lane * E.H; ctx.fillRect(0, y - 35, E.W, 70); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(E.W, y); ctx.stroke();
+        text('◀', E.W - 18, y + 5, C.gold, 16, 'center');
+        if (s.id === 'cross') {const x = (w.crossLane ?? w.lane) * E.W; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, E.H); ctx.stroke(); text('▼', x, 23, C.gold, 16, 'center');}
+      }
+    }
+    ctx.setLineDash([]);
+    for (const b of s.bullets) {
+      const used = s.received.includes(b.strike);
+      ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(Math.atan2(b.vy, b.vx));
+      ctx.fillStyle = used ? '#775358' : '#f0c08b'; ctx.shadowColor = used ? 'transparent' : '#dc8969'; ctx.shadowBlur = 7;
+      ctx.beginPath(); ctx.moveTo(13, 0); ctx.lineTo(-8, -b.r); ctx.lineTo(-3, 0); ctx.lineTo(-8, b.r); ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+    const p = s.player, recentlyHit = feedbackUntil > performance.now();
+    ctx.shadowBlur = 18; ctx.shadowColor = recentlyHit ? C.red : C.green; ctx.fillStyle = recentlyHit ? C.red : C.green;
+    ctx.translate(p.x, p.y); ctx.rotate(Math.PI / 4); ctx.fillRect(-p.r, -p.r, p.r * 2, p.r * 2);
+    ctx.strokeStyle = '#effff5'; ctx.lineWidth = 1; ctx.strokeRect(-p.r, -p.r, p.r * 2, p.r * 2); ctx.restore();
+    text('ИЗБЕГНУТО / ОЖИДАЕТСЯ: ' + (s.pattern.hits - s.received.length) + ' / ' + s.pattern.hits, 18, E.H - 15, C.muted, 11);
+    text('КАСАНИЯ: ' + s.received.length, E.W - 18, E.H - 15, s.received.length ? C.red : C.green, 11, 'right');
+  }
+  function movement() {
+    const directions = new Set([...keys, ...pointers.values()]);
+    const x = +directions.has('right') - +directions.has('left'), y = +directions.has('down') - +directions.has('up');
+    return x || y ? {x, y} : {target};
+  }
+  function frame(now) {
+    const elapsed = lastFrame ? (now - lastFrame) / 1000 : 0; lastFrame = now;
+    if ((simulation || transition > 0) && elapsed > .3 && !paused) pause();
+    const dt = Math.min(elapsed, .1);
+    if (!paused && transition > 0) {
+      transition = Math.max(0, transition - dt);
+      if (!transition) begin('defense');
+    }
+    if (simulation && !paused) {
+      if (simulation.kind === 'attack') {E.attackStep(simulation, dt); drawAttack(simulation);}
+      else {
+        E.defenseStep(simulation, dt, movement()); drawDefense(simulation);
+        if (simulation.received.length > lastContact) {
+          lastContact = simulation.received.length; feedbackUntil = now + 230; tone('hurt'); impact('hurt');
+          feedback('КАСАНИЕ · ' + lastContact + ' удар(а) получено. Остальные ещё можно избежать.', 'fail');
+        }
+      }
+      $('phase-time').textContent = Math.max(0, simulation.duration - simulation.time).toFixed(1) + ' С';
+      if (simulation.ended) finish();
+    }
+    if (flashUntil && now > flashUntil) {$('arena').classList.remove('impact', 'hurt'); flashUntil = 0;}
+    requestAnimationFrame(frame);
+  }
+  const keyMap = {ArrowLeft:'left', ArrowRight:'right', ArrowUp:'up', ArrowDown:'down', KeyA:'left', KeyD:'right', KeyW:'up', KeyS:'down'};
+  document.addEventListener('keydown', e => {
+    if (/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) {
+      if (e.code === 'Escape' && simulation) {cancel(); describe();}
+      return;
+    }
+    if (e.code === 'Escape') {cancel(); describe(); feedback('Испытание прервано. Ничего не сохранено.'); return;}
+    if (e.code === 'Space' && simulation) {e.preventDefault(); if (!e.repeat) hit();}
+    if (keyMap[e.code] && simulation?.kind === 'defense') {e.preventDefault(); keys.add(keyMap[e.code]); target = null;}
+  });
+  document.addEventListener('keyup', e => {if (keyMap[e.code]) keys.delete(keyMap[e.code]);});
+  canvas.addEventListener('pointerdown', e => {
+    if (!simulation || paused) return;
+    e.preventDefault(); canvas.focus({preventScroll:true}); canvas.setPointerCapture(e.pointerId);
+    if (simulation.kind === 'attack') {hit(); return;}
+    if (dragPointer === null) {dragPointer = e.pointerId; movePointer(e);}
+  });
+  function movePointer(e) {
+    if (e.pointerId !== dragPointer || !simulation || paused) return;
+    const r = canvas.getBoundingClientRect();
+    target = {x: (e.clientX - r.left) / r.width * E.W, y: (e.clientY - r.top) / r.height * E.H};
+  }
+  canvas.addEventListener('pointermove', movePointer);
+  function endPointer(e) {if (e.pointerId === dragPointer) {target = null; dragPointer = null;}}
+  canvas.addEventListener('pointerup', endPointer); canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('lostpointercapture', endPointer);
+  document.querySelectorAll('[data-move]').forEach(button => {
+    button.addEventListener('pointerdown', e => {e.preventDefault(); if (!simulation || paused) return; button.setPointerCapture(e.pointerId); pointers.set(e.pointerId, button.dataset.move); target = null;});
+    for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(event, e => pointers.delete(e.pointerId));
+  });
+  $('start').addEventListener('click', start); $('hit').addEventListener('click', () => {hit(); canvas.focus({preventScroll:true});});
+  $('stop').addEventListener('click', () => {cancel(); describe(); feedback('Испытание прервано. Тестовый бой сброшен.');});
+  $('resume').addEventListener('click', () => {paused = false; lastFrame = 0; clearInput(); controls(); canvas.focus({preventScroll:true});});
+  document.addEventListener('visibilitychange', () => {if (document.hidden) pause();});
+  window.addEventListener('blur', pause);
+  document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => {
+    cancel(); mode = button.dataset.mode;
+    document.querySelectorAll('[data-mode]').forEach(b => {b.classList.toggle('active', b === button); b.setAttribute('aria-pressed', String(b === button));});
+    describe(); hp(); controls(); feedback('Настрой параметры и начни попытку. Изменения не сохраняются.');
+  }));
+  document.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => {
+    const values = {equal:[75,25,75,25], strong:[95,80,50,10], weak:[40,10,95,70]}[button.dataset.preset];
+    statIds.forEach((id, i) => {$(id).value = values[i];});
+    document.querySelectorAll('[data-preset]').forEach(b => b.classList.toggle('active', b === button)); settingsChanged();
+  }));
+  statIds.forEach(id => $(id).addEventListener('input', () => {document.querySelectorAll('[data-preset]').forEach(b => b.classList.remove('active')); settingsChanged();}));
+  $('pattern').addEventListener('change', settingsChanged);
+  $('clear-log').addEventListener('click', () => {attempts = 0; $('log').replaceChildren();});
+  settingsChanged(); describe(); hp(); controls(); drawIdle(); requestAnimationFrame(frame);
+})();

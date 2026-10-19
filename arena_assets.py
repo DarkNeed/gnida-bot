@@ -10,6 +10,8 @@ def render_arena_index(root: Path) -> str:
         revision.update((root / name).read_bytes())
     for name in ('holdings.css','holdings-client'):
         if (root/name).exists():revision.update((root/name).read_bytes())
+    for name in ('qte-live','qte-live.css','qte-lab/engine'):
+        if (root/name).exists():revision.update((root/name).read_bytes())
     version = revision.hexdigest()[:16]
     return (
         (root / "index.html")
@@ -19,4 +21,7 @@ def render_arena_index(root: Path) -> str:
         .replace('src="/static/audio.js"', f'src="/static/audio.js?v={version}"')
         .replace('src="/static/holdings.js"', f'src="/static/holdings.js?v={version}"')
         .replace('href="/static/holdings.css"', f'href="/static/holdings.css?v={version}"')
+        .replace('src="/static/qte-live.js"', f'src="/static/qte-live.js?v={version}"')
+        .replace('src="/qte-lab/engine.js"', f'src="/qte-lab/engine.js?v={version}"')
+        .replace('href="/static/qte-live.css"', f'href="/static/qte-live.css?v={version}"')
     )
