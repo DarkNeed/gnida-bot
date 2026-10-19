@@ -139,9 +139,9 @@
     const count=p.basic?3:p.kind==='tiger'?12:p.kind==='train'?6:Math.max(p.strikes,4+(p.seed%3)+(d.intensity>.75?1:d.intensity<.25?-1:0)+(p.skill.class_id==='thumb'?1:0));
     const staticOnly=p.skill.base_id!=='mother_joke'&&['slash','thrust','grapple','hack','script','edict','holy','lightning','portal','coins','tiger'].includes(p.kind);
     const span=(p.basic?4.8:staticOnly?5.1:p.kind==='fire'?4.3:p.kind==='impact'?4:3.5)*(.94+(p.interval-.8)*.15)*(p.kit?.96:1)*(p.basic?1:1-.08*d.intensity);
-    const model=damageModel(options);
-    return {kind:'defense',p,d,...model,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:6.8,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
-      events:Array.from({length:count},(_,i)=>({at:.18+i*span/Math.max(1,count-1),strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/count)),index:i,
+    const model=damageModel(options),preparation=clamp(options.preparation??1,0,3);
+    return {kind:'defense',p,d,...model,preparation,activeDuration:6.8,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:preparation+6.8,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
+      events:Array.from({length:count},(_,i)=>({at:preparation+.18+i*span/Math.max(1,count-1),strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/count)),index:i,
         jitter:r(),angle:r()*TAU,ready:false})),received:[]};
   }
   function line(ax,ay,bx,by,r,extra={}){return {type:'line',ax,ay,bx,by,r,...extra};}
@@ -285,6 +285,7 @@
   function defenseStep(s,dt,input={}){
     if(s.ended)return;let remaining=Math.min(Math.max(0,dt),s.duration-s.time);
     while(remaining>1e-8){const step=Math.min(remaining,1/120);remaining-=step;const previous=s.time;s.time+=step;
+      if(s.time<=s.preparation+1e-8)continue;
       for(const e of s.events)if(!e.ready&&s.time>=e.at)prepare(s,e);
       const old={...s.player};let dx=input.x||0,dy=input.y||0;
       if(input.target){dx=input.target.x-old.x;dy=input.target.y-old.y;}

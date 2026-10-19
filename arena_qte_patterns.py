@@ -279,7 +279,7 @@ def attack_frame(s):
 
 def duration(challenge):
     return (
-        6.8
+        6.8 + challenge.get("defense_preparation", 0)
         if challenge["kind"] == "defense"
         else attack(
             profile(challenge["profile"]), challenge["stats"], challenge["seed"]
@@ -287,7 +287,7 @@ def duration(challenge):
     )
 
 
-def defense(p, stats, seed, enabled=None):
+def defense(p, stats, seed, enabled=None, preparation=1):
     d, r = difficulty(stats), random_values(seed ^ p["seed"])
     if p["kit"]:
         d["warning"] *= 0.92
@@ -351,7 +351,7 @@ def defense(p, stats, seed, enabled=None):
     )
     events = [
         dict(
-            at=0.18 + i * span / max(1, count - 1),
+            at=preparation + 0.18 + i * span / max(1, count - 1),
             strike=min(p["strikes"] - 1, math.floor(i * p["strikes"] / count)),
             index=i,
             jitter=next(r),
@@ -365,6 +365,7 @@ def defense(p, stats, seed, enabled=None):
         d=d,
         enabled=enabled,
         time=0,
+        preparation=preparation,
         player=dict(x=W * 0.32, y=H * 0.5, r=6),
         hazards=[],
         events=events,
@@ -786,6 +787,8 @@ def defense_step(s, control):
     dt = 1 / HZ
     previous = s["time"]
     s["time"] += dt
+    if s["time"] <= s["preparation"] + 1e-8:
+        return
     for e in s["events"]:
         if not e["ready"] and s["time"] >= e["at"]:
             prepare(s, e)
@@ -846,7 +849,11 @@ def replay(challenge, proof, elapsed):
             return dict(mask=[False] * n, weights=[0] * n)
         # Skipping must never deal less damage than playing and getting hit.
         s = defense(
-            p, challenge["stats"], challenge["seed"], challenge.get("enabled_strikes")
+            p,
+            challenge["stats"],
+            challenge["seed"],
+            challenge.get("enabled_strikes"),
+            challenge.get("defense_preparation", 0),
         )
         all_hazards = {}
         for e in s["events"]:
@@ -929,7 +936,11 @@ def replay(challenge, proof, elapsed):
             number(e.get("x", 0), -1, 1)
             number(e.get("y", 0), -1, 1)
     s = defense(
-        p, challenge["stats"], challenge["seed"], challenge.get("enabled_strikes")
+        p,
+        challenge["stats"],
+        challenge["seed"],
+        challenge.get("enabled_strikes"),
+        challenge.get("defense_preparation", 0),
     )
     index = 0
     control = {}

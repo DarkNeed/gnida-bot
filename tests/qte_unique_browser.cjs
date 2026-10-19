@@ -10,9 +10,16 @@ const {chromium}=require('playwright');const origin=process.env.QTE_UNIQUE_URL||
     assert((await page.locator('#skill option').count())>=200);
     await page.screenshot({path:path.join(output,'desktop-catalog.png'),fullPage:true});
     const families=await page.locator('#family-filter option').evaluateAll(nodes=>nodes.map(n=>n.value).filter(Boolean));
+    await page.evaluate(()=>{const defense=QTEUnique.defense;QTEUnique.defense=(...args)=>(window.__startSim=defense(...args));});
     for(const family of families){
       await page.selectOption('#family-filter',family);await page.locator('#start').click();
-      await page.waitForTimeout(1050);
+      if(family===families[0]){
+        assert((await page.locator('#chance-status').textContent()).includes('Подготовка'));
+        await page.keyboard.down('ArrowRight');await page.waitForTimeout(250);await page.keyboard.up('ArrowRight');
+        assert(await page.evaluate(()=>__startSim.player.x===720*.32&&!__startSim.hazards.length&&!__startSim.damage));
+        await page.screenshot({path:path.join(output,'defense-preparation.png')});
+      }
+      await page.waitForTimeout(1700);
       assert.equal(await page.locator('#game').getAttribute('data-phase'),'defense');
       if(['tiger','train','charm','void','eclipse','paint'].includes(family))await page.screenshot({path:path.join(output,family+'.png')});
       await page.locator('#stop').click();
@@ -22,7 +29,7 @@ const {chromium}=require('playwright');const origin=process.env.QTE_UNIQUE_URL||
     await page.evaluate(()=>{for(const [id,value] of [['enemy-accuracy','100'],['evasion','0']]){const el=document.getElementById(id);el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));}});
     for(const [cls,name] of [['thumb','Предупредительный выстрел'],['index','Первая строка'],['pinky','Лунная дуга'],['ragamuffin','Удар бомжа']]){
       await page.selectOption('#class-filter',cls);await page.locator('#search').fill(name);
-      await page.locator('#start').click();await page.waitForTimeout(900);
+      await page.locator('#start').click();await page.waitForTimeout(1900);
       assert.equal(await page.locator('#game').getAttribute('data-phase'),'defense');
       await page.screenshot({path:path.join(output,cls+'-accuracy100-evasion0.png')});await page.locator('#stop').click();
     }

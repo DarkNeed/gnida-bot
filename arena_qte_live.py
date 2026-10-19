@@ -68,6 +68,7 @@ def challenge(kind, attacker, target, skill, actor):
         descriptor["id"] = f"{skill.skill_id}:{skill.name}:2:{skill.damage_type}"
     return dict(
         version=2,
+        defense_preparation=1 if kind == "defense" else 0,
         profile=descriptor,
         subskills=subskills if kind == "defense" else None,
         damage_base=damage_preview(attacker, target, skill),

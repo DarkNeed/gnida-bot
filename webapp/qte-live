@@ -10,7 +10,7 @@
     if(!E||!V||!window.QTETouch?.attach)return Promise.reject(new Error('Обнови арену: новые мини-игры не загрузились.'));
     return new Promise(resolve=>{
       const defense=challenge.kind==='defense',p=E.profile(challenge.profile);
-      const sim=(defense?E.defense:E.attack)(p,challenge.stats,challenge.seed,{damageBase:challenge.damage_base,hp:challenge.target_hp,endOnDeath:false,enabledStrikes:challenge.enabled_strikes});
+      const sim=(defense?E.defense:E.attack)(p,challenge.stats,challenge.seed,{damageBase:challenge.damage_base,hp:challenge.target_hp,endOnDeath:false,enabledStrikes:challenge.enabled_strikes,preparation:challenge.defense_preparation??0});
       const cover=document.createElement('div');cover.className='qte-cover qte-pattern '+(defense?'qte-defense':'qte-attack');
       cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Боевая мини-игра"><div class="qte-heading"><div><p class="qte-eyebrow"></p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"><span class="qte-help-full"></span><span class="qte-help-compact"></span></p><div class="qte-health"><div><span class="qte-health-label"></span><strong class="qte-hp-value"></strong></div><div class="qte-hp-track"><i></i></div></div><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="320" tabindex="0" aria-label="Пробел для попадания, пальцем или WASD для уклонения"></canvas></div><div class="qte-live-status" role="status"></div><div class="qte-controls"><div class="qte-live-buttons"><button class="qte-hit">УДАР · ПРОБЕЛ / КАСАНИЕ</button><button class="qte-abort">Пропустить · неуспех</button></div><p class="qte-touch-help">Веди пальцем по полю или тяни джойстик.<small>Касание не переносит маркер под палец.</small></p><button class="qte-stick" aria-label="Джойстик уклонения"><span aria-hidden="true"></span></button><div class="qte-live-pad"><button data-direction="up" aria-label="Вверх">↑</button><button data-direction="left" aria-label="Влево">←</button><button data-direction="down" aria-label="Вниз">↓</button><button data-direction="right" aria-label="Вправо">→</button></div></div><p class="qte-info">HP — предварительный расчёт. Итоговый урон и эффекты проверяет сервер. Пропуск защиты засчитывает все угрозы.</p></section>';
       const find=s=>cover.querySelector(s),canvas=find('canvas'),ctx=canvas.getContext('2d');
@@ -26,7 +26,7 @@
       document.body.append(cover);document.body.style.overflow='hidden';canvas.focus({preventScroll:true});
       const abort=new AbortController(),on=(el,name,fn)=>el.addEventListener(name,fn,{signal:abort.signal});
       let tick=0,accumulator=0,last=0,done=false,keys=new Set(),pointers=new Map(),lastInput='',raf,watch;
-      const proof=defense?{ticks:816,inputs:[]}:{ticks:0,clicks:[]};
+      const proof=defense?{ticks:Math.round(sim.duration*120),inputs:[]}:{ticks:0,clicks:[]};
       const touch=window.QTETouch.attach({canvas,stick:find('.qte-stick'),getPlayer:()=>sim.player,isDefense:()=>defense,onTap:hit,onTouch:()=>cover.classList.add('qte-touch-mode')});
       const deadline=performance.now()+Math.max(0,(challenge.expires-(challenge.server_now||Date.now()/1000))*1000);
       active={challenge:challenge.id};
@@ -36,7 +36,10 @@
         if(!defense)proof.ticks=tick;resolve(failed?{abort:true}:proof);
       }
       function draw(){
-        V.draw(ctx,canvas,sim);find('.qte-count').textContent=Math.max(0,sim.duration-sim.time).toFixed(1)+' С';
+        const ready=defense&&sim.time<sim.preparation;
+        V.draw(ctx,canvas,sim);find('.qte-count').textContent=(ready?sim.preparation-sim.time:Math.max(0,sim.duration-sim.time)).toFixed(1)+' С';
+        cover.dataset.preparing=String(ready);
+        if(defense)find('.qte-live-status').textContent=ready?'Приготовься: атака ещё не началась.':'Касаний: '+sim.contacts.length;
         find('.qte-hp-value').textContent=sim.hp+' / '+sim.initialHp;
         find('.qte-hp-track i').style.width=100*sim.hp/sim.initialHp+'%';
         if(!defense){const f=E.attackFrame(sim);find('.qte-hit').disabled=!f.canHit||sim.ended;}

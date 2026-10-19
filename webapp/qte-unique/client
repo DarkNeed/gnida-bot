@@ -21,7 +21,7 @@
     $('hp-track').closest('.health-panel').classList.toggle('depleted',hp<=0);
     $('damage-value').textContent=(mode==='defense'?'Получено: ':'Нанесено: ')+damage;
     if(!s)$('chance-status').textContent='Только тестовое здоровье';
-    else if(mode==='defense')$('chance-status').textContent='Касаний: '+s.contacts.length;
+    else if(mode==='defense')$('chance-status').textContent=s.time<s.preparation?'Подготовка: '+(s.preparation-s.time).toFixed(1)+' с':'Касаний: '+s.contacts.length;
     else{const f=E.attackFrame(s);$('chance-status').textContent=f.phase==='ready'?'Подготовка: '+f.remaining.toFixed(1)+' с':f.phase==='cue'?'Сигнал перед ударом':s.results[f.index]===true?'Удар засчитан':s.results[f.index]===false?'Попытки исчерпаны':'Попыток: '+f.attemptsLeft+' / 2';
       $('hit').disabled=!f.canHit||s.ended;}
   }
@@ -152,6 +152,11 @@
   }
   function drawDefense(s){
     background();
+    if(s.time<s.preparation){
+      const p=s.player;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#92e2ce';ctx.fillRect(-5,-5,10,10);ctx.restore();
+      text('ПРИГОТОВЬСЯ',450,108,'#e8c17c',25,'center');text((s.preparation-s.time).toFixed(1)+' с',450,160,'#e9f4fb',28,'center');
+      text('ЗАТЕМ — УКЛОНЯЙСЯ',450,209,'#b9cddd',15,'center');text('ПАЛЕЦ / ДЖОЙСТИК / WASD',360,286,'#8da7bc',12,'center');return;
+    }
     for(const h of s.hazards)if(s.time>=h.at&&s.time<h.start)drawHazard(h,s.time,s.hitIds.includes(h.damageId));
     for(const h of s.hazards)if(s.time>=h.start&&s.time<h.end)drawHazard(h,s.time,s.hitIds.includes(h.damageId));
     const p=s.player;ctx.save();ctx.shadowColor='#87dbc7';ctx.shadowBlur=12;ctx.translate(p.x,p.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#92e2ce';ctx.fillRect(-5,-5,10,10);ctx.restore();
@@ -161,7 +166,7 @@
     if(sim||!filtered.length)return;
     record=null;clearInput();paused=document.hidden;
     sim=mode==='defense'?E.defense(selected,stats(),seed(),model()):E.attack(selected,stats(),seed(),model());lastFrame=0;
-    labels();controls();health(sim);feedback(mode==='defense'?'Золотые угрозы сильнее мелких. Каждый отдельный снаряд ранит один раз.':'Подготовься. У каждого удара два прохода и до двух попыток.');
+    labels();controls();health(sim);feedback(mode==='defense'?'Секунда подготовки, затем атака. Золотые угрозы сильнее мелких.':'Подготовься. У каждого удара два прохода и до двух попыток.');
     $('trial').scrollIntoView({block:'start',behavior:'instant'});canvas.focus({preventScroll:true});
   }
   function log(text,detail){

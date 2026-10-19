@@ -13,6 +13,11 @@
     function heart(x,y,size,c){ctx.save();ctx.translate(x,y);ctx.scale(size/12,size/12);ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(0,5);ctx.bezierCurveTo(-16,-3,-6,-15,0,-6);ctx.bezierCurveTo(6,-15,16,-3,0,5);ctx.fill();ctx.restore();}
     ctx.clearRect(0,0,720,320);ctx.fillStyle='#09111d';ctx.fillRect(0,0,720,320);
     ctx.strokeStyle='#1b3040';ctx.lineWidth=1;for(let x=20;x<720;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,320);ctx.stroke();}for(let y=20;y<320;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(720,y);ctx.stroke();}
+    if(s.kind==='defense'&&t<s.preparation){
+      ctx.save();ctx.translate(s.player.x,s.player.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#92e2ce';ctx.fillRect(-5,-5,10,10);ctx.restore();
+      text('ПРИГОТОВЬСЯ',450,108,'#e8c17c',25,'center');text((s.preparation-t).toFixed(1)+' с',450,160,'#e9f4fb',28,'center');
+      text('ЗАТЕМ — УКЛОНЯЙСЯ',450,209,'#b9cddd',15,'center');text('ПАЛЕЦ / ДЖОЙСТИК / WASD',360,286,'#8da7bc',12,'center');return;
+    }
     if(s.kind==='attack'){
       const f=E.attackFrame(s),gold='#e8c17c',white='#e9f4fb',style=p.style;
       if(f.phase==='ready'){

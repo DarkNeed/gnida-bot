@@ -12,7 +12,7 @@ function measure(catalog){const result={};
     for(const [name,stats] of Object.entries(sets)){let clean=0,contacts=0,weight=0,runs=0;
       for(const seed of [3,17,29,43,81])for(const policy of Object.values(policies)){
         const s=E.defense(p,{accuracy:75,enemyEvasion:25,...stats},seed,{damageBase:0,endOnDeath:false});
-        while(!s.ended)E.defenseStep(s,1/120,policy(s.time));
+        while(!s.ended)E.defenseStep(s,1/120,policy(Math.max(0,s.time-s.preparation)));
         clean+=!s.contacts.length;contacts+=s.contacts.length;weight+=s.contacts.reduce((n,c)=>n+c.weight,0);runs++;
       }
       result[id][name]={clean:+(clean/runs).toFixed(3),contacts:+(contacts/runs).toFixed(2),weight:+(weight/runs).toFixed(2)};
@@ -27,7 +27,7 @@ if(require.main===module){let input='';process.stdin.setEncoding('utf8');process
     for(const id of ['warning_shot','bayonet','first_line','last_line','falling_star','moon_arc','silent_cut','bum_punch']){
       const skill=catalog.find(s=>s.base_id===id&&s.origin==='Базовый навык');
       for(const seed of [3,17,29]){
-        const r=record({kind:'defense',profile:skill,seed,perfect:true,stats:{accuracy:45,enemyEvasion:70,enemyAccuracy:100,evasion:0}});
+        const r=record({kind:'defense',defense_preparation:1,profile:skill,seed,perfect:true,stats:{accuracy:45,enemyEvasion:70,enemyAccuracy:100,evasion:0}});
         if(r.result.contacts.length)throw new Error('Not clean '+id+' '+seed);
       }
       console.log('PASS reachable at accuracy 100 / evasion 0:',id);

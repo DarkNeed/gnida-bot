@@ -32,12 +32,16 @@ process.stdin.on('end',()=>{
   assert.deepEqual(Object.values(E.DAMAGE_TIERS).map(t=>E.damageValue(40,t.weight)),[4,12,24,40]);
   // Several projectiles of ONE native strike hurt independently, once per physical ID.
   const contact=E.defense({...timing,strikes:1},equal,17,{damageBase:40,hp:200});contact.events=[];
+  contact.preparation=0;
   contact.hazards=Object.entries(E.DAMAGE_TIERS).map(([tier,t],i)=>({type:'circle',x:contact.player.x,y:contact.player.y,r:20,start:0,end:1,at:0,strike:0,id:'hit'+i,damageId:'hit'+i,rawDamage:E.damageValue(40,t.weight),tier,weight:t.weight}));contact.projectileCount=4;
   E.defenseStep(contact,1/120);assert.equal(contact.hp,120);assert.equal(contact.damage,80);assert.equal(contact.contacts.length,4);assert.deepEqual(contact.received,[0]);
   E.defenseStep(contact,.5);assert.equal(contact.hp,120,'lingering area cannot damage every tick');assert.equal(contact.contacts.length,4);
-  const lethal=E.defense(timing,equal,17,{hp:10});lethal.events=[];lethal.hazards=copy(contact.hazards);E.defenseStep(lethal,1/120);
+  const lethal=E.defense(timing,equal,17,{hp:10,preparation:0});lethal.events=[];lethal.hazards=copy(contact.hazards);E.defenseStep(lethal,1/120);
   assert.equal(lethal.hp,0);assert.equal(lethal.damage,10);assert(lethal.ended);assert.equal(lethal.contacts.length,2);
-  const bolt=E.defense(timing,equal);bolt.events=[];bolt.hazards=copy(contact.hazards.slice(2));bolt.hazards.forEach(h=>h.damageId='one-discharge');E.defenseStep(bolt,1/120);assert.equal(bolt.contacts.length,1);
+  const bolt=E.defense(timing,equal,1,{preparation:0});bolt.events=[];bolt.hazards=copy(contact.hazards.slice(2));bolt.hazards.forEach(h=>h.damageId='one-discharge');E.defenseStep(bolt,1/120);assert.equal(bolt.contacts.length,1);
+  const ready=E.defense(timing,weak,17),spawn={...ready.player};E.defenseStep(ready,1,{x:1,y:1});
+  assert.deepEqual(ready.player,spawn);assert.equal(ready.damage,0);assert.equal(ready.contacts.length,0);assert.equal(ready.hazards.length,0);
+  assert.equal(ready.duration,7.8);E.defenseStep(ready,.2,{x:1});assert(ready.player.x>spawn.x);assert(ready.hazards.length>0);
   console.log('PASS preparation, two crossings, retry, anti-spam, immediate weighted damage and one collision per projectile');
   for(const p of profiles){
     families.set(p.kind,p);
@@ -62,7 +66,7 @@ process.stdin.on('end',()=>{
   assert.equal(E.family({class_id:'priest',base_id:'arch_priest_paladin',name:'Карающий приговор'}),'impact');
   assert.equal(E.family({class_id:'priest',base_id:'arch_priest_paladin',name:'Последний приговор'}),'thrust');
   const signatures=profiles.map(p=>{
-    const s=E.defense(p,equal,17);E.defenseStep(s,.2);
+    const s=E.defense(p,equal,17);E.defenseStep(s,s.preparation+.2);
     return JSON.stringify({times:s.events.map(e=>e.at),hazards:s.hazards});
   });
   assert.equal(new Set(signatures).size,profiles.length,'each named profile has a distinct mechanical schedule');
@@ -80,7 +84,8 @@ process.stdin.on('end',()=>{
     return risk+Math.hypot(s.player.x-360,s.player.y-160)/3000;
   }
   function possible(p,stats,seed,limit=22){
-    let frontier=[E.defense(p,stats,seed)];
+    const initial=E.defense(p,stats,seed);E.defenseStep(initial,initial.preparation);
+    let frontier=[initial];
     for(let step=0;step<68;step++){
       const cells=new Map();
       for(const s of frontier)for(const move of moves){

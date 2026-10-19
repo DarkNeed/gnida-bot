@@ -6,13 +6,39 @@ import subprocess
 import unittest
 from copy import deepcopy
 
-from arena_qte_patterns import profile, family, defense, prepare, duration, difficulty
+from arena_qte_patterns import (
+    profile,
+    family,
+    defense,
+    prepare,
+    duration,
+    difficulty,
+    defense_step,
+)
 from arena_qte_rules import replay
 from arena_qte_unique import review_catalog
 from arena_engine import create_battle_state, resolve_skill
 
 
 class PatternReplayTests(unittest.TestCase):
+    def test_defense_preparation_has_no_hazards_damage_or_early_movement(self):
+        skill = next(s for s in review_catalog() if s["base_id"] == "warning_shot")
+        c = self.config(skill)
+        for command in (dict(x=1, y=1), dict(target=[700, 300])):
+            s = defense(profile(skill), c["stats"], 23)
+            start = deepcopy(s["player"])
+            for _ in range(120):
+                defense_step(s, command)
+            self.assertEqual(s["player"], start)
+            self.assertFalse(s["hazards"])
+            self.assertFalse(s["contacts"])
+            self.assertTrue(all(not e["ready"] for e in s["events"]))
+            defense_step(s, command)
+            self.assertNotEqual(s["player"]["x"], start["x"])
+        self.assertAlmostEqual(duration(c), 7.8)
+        with self.assertRaises(ValueError):
+            replay(c, dict(ticks=816, inputs=[]), 30)
+
     def test_accuracy_evasion_have_strong_defense_contrast_without_slowing_player(self):
         high = difficulty(
             dict(accuracy=75, enemyEvasion=25, enemyAccuracy=100, evasion=0)
@@ -88,6 +114,7 @@ class PatternReplayTests(unittest.TestCase):
     def config(self, skill, kind="defense", **changes):
         return dict(
             version=2,
+            defense_preparation=1,
             profile=skill,
             kind=kind,
             seed=23,
@@ -118,6 +145,10 @@ class PatternReplayTests(unittest.TestCase):
                 enabled_strikes=[True, False, True, False, True, False],
             )
         )
+        legacy = self.config(multi)
+        legacy.pop("defense_preparation")
+        self.assertAlmostEqual(duration(legacy), 6.8)
+        configs.append(legacy)
         result = subprocess.run(
             [
                 shutil.which("node"),
@@ -173,11 +204,11 @@ class PatternReplayTests(unittest.TestCase):
             [dict(t=1), dict(t=1)],
         ):
             with self.assertRaises(ValueError):
-                replay(c, dict(ticks=816, inputs=events), 30)
+                replay(c, dict(ticks=936, inputs=events), 30)
         with self.assertRaises(ValueError):
             replay(c, dict(ticks=815, inputs=[]), 30)
         worst = replay(c, dict(abort=True), 0)
-        actual = replay(c, dict(ticks=816, inputs=[]), 30)
+        actual = replay(c, dict(ticks=936, inputs=[]), 30)
         self.assertGreaterEqual(
             sum(h["weight"] for h in worst["contacts"]),
             sum(h["weight"] for h in actual["contacts"]),

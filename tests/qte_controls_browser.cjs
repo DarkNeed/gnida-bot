@@ -18,7 +18,7 @@ const origin=process.env.QTE_LIVE_URL||'http://127.0.0.1:8108';
           window.__proof=null;window.__steps=[];const E=version===2?QTEUnique:QTELab;
           if(!E.__testDefense){E.__testDefense=E.defense;E.defense=(...args)=>(window.__sim=E.__testDefense(...args));}
           if(!E.__testStep){E.__testStep=E.defenseStep;E.defenseStep=(s,dt,cmd)=>{const old={...s.player};E.__testStep(s,dt,cmd);window.__steps.push({cmd,d:Math.hypot(s.player.x-old.x,s.player.y-old.y)});};}
-          ArenaMiniGames.play({version,id:'test-'+kind,kind,name:'Совершенная поступь тигробоя',strikes:6,pattern:'cross',seed:23,
+          ArenaMiniGames.play({version,defense_preparation:1,id:'test-'+kind,kind,name:'Совершенная поступь тигробоя',strikes:6,pattern:'cross',seed:23,
             profile:{id:'tigerslayer_flurry:Совершенная поступь тигробоя:6:physical',base_id:'tigerslayer_flurry',name:'Совершенная поступь тигробоя',class_id:'middle',strikes:6,damage_type:'physical'},damage_base:40,target_hp:200,
             stats:{accuracy:75,enemyEvasion:25,enemyAccuracy:95,evasion:10},server_now:Date.now()/1000,expires:Date.now()/1000+20}).then(p=>window.__proof=p);
         },{kind,version});
@@ -27,7 +27,14 @@ const origin=process.env.QTE_LIVE_URL||'http://127.0.0.1:8108';
         assert(win.y>=0&&win.y+win.height<=viewport.height,'modal inside viewport');
         await page.screenshot({path:path.join(output,`${kind}-v${version}-${viewport.width}x${viewport.height}.png`)});
         assert(await page.locator('.qte-window').evaluate(el=>el.scrollHeight<=el.clientHeight+1),'controls fit without scrolling '+JSON.stringify({kind,version,viewport,win,canvas:r}));
+        if(version===2&&kind==='defense'){
+          assert.equal(await page.locator('.qte-cover').getAttribute('data-preparing'),'true');
+          await page.keyboard.down('ArrowRight');await page.waitForTimeout(180);await page.keyboard.up('ArrowRight');
+          assert(await page.evaluate(()=>__sim.player.x===720*.32&&!__sim.hazards.length&&!__sim.contacts.length),'defense countdown is non-interactive and harmless');
+          await page.screenshot({path:path.join(output,`defense-preparation-${viewport.width}.png`)});
+        }
         if(mobile&&kind==='defense'){
+          if(version===2)await page.waitForFunction(()=>document.querySelector('.qte-cover')?.dataset.preparing==='false');
           assert(await page.locator('.qte-stick').isVisible());assert(!(await page.locator('.qte-live-pad').isVisible()));
           const cdp=await page.context().newCDPSession(page);
           const touch=async(type,x,y)=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:type==='touchEnd'||type==='touchCancel'?[]:[{x,y,radiusX:5,radiusY:5,id:1}]});

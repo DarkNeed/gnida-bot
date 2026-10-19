@@ -36,6 +36,7 @@ const origin=process.env.QTE_LIVE_URL||'http://127.0.0.1:8104';
       return false;
     },null,{polling:'raf'});
     await page.locator('.qte-eyebrow').filter({hasText:'ЗАЩИТА'}).waitFor({timeout:15000});
+    await page.waitForFunction(()=>document.querySelector('.qte-cover')?.dataset.preparing==='true');
     await page.waitForTimeout(900);
     await page.screenshot({path:path.join(__dirname,'../output/qte-lab/live-defense.png'),fullPage:true});
     await page.waitForTimeout(6200);
@@ -48,8 +49,8 @@ const origin=process.env.QTE_LIVE_URL||'http://127.0.0.1:8104';
     await page.locator('[data-combat-enabled="false"]').click();
     await page.locator('[data-combat-enabled="true"]').waitFor();
     await page.locator('[data-combat-close]').click();
-    const duel=await page.request.post(origin+'/preview-duel');
-    await page.goto(duel.url());
+    // Use PvE again so this setting check does not depend on random PvP initiative.
+    await page.locator('[data-do="waste:10"]').click();
     await page.locator('[data-skill=bum_punch]').click();
     await page.waitForTimeout(2500);
     assert.equal(await page.locator('.qte-cover').count(),0);
