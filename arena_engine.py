@@ -895,6 +895,7 @@ def create_battle_state(
             "archclass_stage": source.get("archclass_stage", 20),
             "progression_level": source.get("progression_level", 0),
             "level": min(MAX_FIGHTER_LEVEL, int(source["level"])),
+            "defense_mode": source.get("defense_mode", "dodge"),
             "stats": stats,
             "hp": stats["max_hp"],
             "resource": stats["resource_max"],
@@ -1269,6 +1270,8 @@ def resolve_skill(
     )
     strike_results = None
     pattern_contacts = None
+    blocked_contact = False
+    block_pattern = bool(qte and qte.get('pattern_dodge',{}).get('mode')=='block')
     strike_count = 6 if 'six_strike' in skill.tags else 3 if 'three_strike' in skill.tags else 2
     if any(tag in skill.tags for tag in ('six_strike','three_strike','two_strike')) and skill.damage_type:
         # One paid action, six independent accuracy/evasion checks. The total
@@ -1299,7 +1302,7 @@ def resolve_skill(
                 part.update(hit=(r<max(5,min(95,raw_accuracy)) if lucky else True),dodged=False)
             if 'dodge' in qte and part['hit']:
                 avoided = (all(qte['dodge']) if i>=len(qte['dodge']) else qte['dodge'][i])
-                if avoided:part.update(hit=False,dodged=True)
+                if avoided:part.update(hit=False,dodged=not block_pattern,blocked=block_pattern)
         hit = any(p['hit'] for p in parts)
         dodged = not hit and any(p['dodged'] for p in parts)
         if 'pattern_attack' in qte:
@@ -1312,11 +1315,15 @@ def resolve_skill(
             # Keep the native strike groups for effects, accuracy and animation,
             # but damage every physical projectile independently. Never normalize
             # their weights to a single skill-wide damage budget.
+            if block_pattern:
+                blocked_contact = any(c.get('blocked') and 0<=c['strike']<len(parts)
+                    and (parts[c['strike']]['hit'] or parts[c['strike']].get('blocked')) for c in qte['pattern_dodge']['contacts'])
             pattern_contacts = [dict(c) for c in qte['pattern_dodge']['contacts']
-                                if 0 <= c['strike'] < len(parts) and parts[c['strike']]['hit']]
+                                if 0 <= c['strike'] < len(parts) and parts[c['strike']]['hit'] and (not block_pattern or c['weight']>0)]
             strike_results=parts
             strike_count=len(parts)
     if parried:
+        blocked_contact = False
         hit = dodged = False
         if strike_results:
             for part in strike_results:
@@ -1376,13 +1383,21 @@ def resolve_skill(
         )
         if pattern_contacts is not None:
             reference_damage=damage
+            exact_potential = 0
+            rounded_potential = 0
             for c in pattern_contacts:
                 multiplier=1
                 if c['strike']==strike_count-1 and any(t in skill.tags for t in ('final_train','final_execution')):
                     last_pierce=.50 if 'final_train' in skill.tags else .60
                     base_defense=effective_stat(target,'physical_defense')
                     multiplier=(100+4*defense)/(100+4*base_defense*(1-min(.9,last_pierce+pet_pierce)))
-                c['potential']=max(1,math.floor(reference_damage*c['weight']*multiplier+.5))
+                if block_pattern:
+                    exact_potential += reference_damage*c['weight']*multiplier
+                    rounded = math.floor(exact_potential+.5)
+                    c['potential'] = max(0,rounded-rounded_potential)
+                    rounded_potential = rounded
+                else:
+                    c['potential']=max(1,math.floor(reference_damage*c['weight']*multiplier+.5))
             potential=sum(c['potential'] for c in pattern_contacts)
             remaining=final_incoming(target,rpg_incoming(target,potential,rpg_branch(target)),actor,raid_context) if potential else 0
             redirected=potential-remaining
@@ -1429,7 +1444,8 @@ def resolve_skill(
         actor["effects"] = [
             e for e in actor["effects"] if e["kind"] != "next_physical_damage"
         ]
-    rpg_received_damage(target,min(before[other]['hp'],damage),before[other]['hp'],rpg_context['action_id'],raid_context)
+    rpg_received_damage(target,min(before[other]['hp'],damage),before[other]['hp'],rpg_context['action_id'],raid_context,blocked=blocked_contact)
+    rpg_context['blocked_contact'] = blocked_contact
     _tick(actor,tick_dot=False,preserve_rally=True)
     effects_text = []
     charmed = False
@@ -1538,6 +1554,7 @@ def resolve_skill(
         previous_negatives,
         skills or BUILTIN_SKILLS,
         rng,
+        blocked=blocked_contact,
     )
     arch_notes = arch_after_action(
         actor, target, skill, hit, skills or BUILTIN_SKILLS, rng
@@ -1577,7 +1594,9 @@ def resolve_skill(
     if strike_results is not None:
         landed = sum(part["hit"] for part in strike_results)
         evaded = sum(part["dodged"] for part in strike_results)
-        text += f" · попаданий {landed}/{strike_count}, уклонений {evaded}, промахов {strike_count - landed - evaded}"
+        blocked = sum(bool(part.get('blocked')) for part in strike_results)
+        text += f" · попаданий {landed}/{strike_count}, уклонений {evaded}, промахов {strike_count - landed - evaded - blocked}"
+        if blocked:text += f" · заблокировано {blocked}"
     if hit and critical:
         text += " · критический удар"
     if obeyed:
@@ -1602,6 +1621,7 @@ def resolve_skill(
         "evolved": evolved,
         "damage_type": skill.damage_type,
         "hit": hit,
+        "blocked": blocked_contact,
         "dodged": dodged,
         "damage": damage,
         "critical": bool(hit and critical),

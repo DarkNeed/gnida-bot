@@ -67,7 +67,7 @@ def challenge(kind, attacker, target, skill, actor):
     if kind == "defense" and subskills:
         n = descriptor["strikes"] = 2
         descriptor["id"] = f"{skill.skill_id}:{skill.name}:2:{skill.damage_type}"
-    return dict(
+    result = dict(
         version=2,
         defense_preparation=1 if kind == "defense" else 0,
         profile=descriptor,
@@ -85,6 +85,25 @@ def challenge(kind, attacker, target, skill, actor):
             "slashes" if n == 6 else "rain" if skill.damage_type == "magic" else "cross"
         ),
     )
+    if kind == "defense" and target.get("defense_mode") == "block":
+        result.update(
+            version=3,
+            defense_mode="block",
+            stats=dict(
+                physicalDefense=effective_stat(b, "physical_defense"),
+                magicDefense=effective_stat(b, "magic_defense"),
+                enemyAttack=(
+                    max(
+                        effective_stat(a, "physical_attack"),
+                        effective_stat(a, "magic_attack"),
+                    )
+                    if "hybrid_attack" in skill.tags
+                    else effective_stat(a, (skill.damage_type or "magic") + "_attack")
+                ),
+                enemyAccuracy=accuracy,
+            ),
+        )
+    return result
 
 
 def damage_preview(attacker, target, skill):
@@ -132,6 +151,9 @@ class ArenaQteMixin:
             CREATE TABLE IF NOT EXISTS arena_qte_flows (
                 scope TEXT NOT NULL, token TEXT NOT NULL, actor_id INTEGER NOT NULL,
                 payload TEXT NOT NULL, PRIMARY KEY(scope,token,actor_id));
+            CREATE TABLE IF NOT EXISTS arena_character_defense (
+                actor_id INTEGER NOT NULL, slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 5),
+                mode TEXT NOT NULL CHECK(mode IN ('dodge','block')), PRIMARY KEY(actor_id,slot));
         """)
 
     def _qte_enabled_locked(self, actor):
@@ -142,17 +164,45 @@ class ArenaQteMixin:
         ).fetchone()
         return bool(row["minigames"]) if row else True
 
-    async def arena_combat_settings(self, actor, enabled=None):
+    def _defense_mode_locked(self, actor, slot=None):
+        if not actor:
+            return "dodge"
+        slot = self._character_active_locked(actor) if slot is None else slot
+        row = self.connection.execute(
+            "SELECT mode FROM arena_character_defense WHERE actor_id=? AND slot=?",
+            (actor, slot),
+        ).fetchone()
+        return row["mode"] if row else "dodge"
+
+    async def arena_combat_settings(
+        self, actor, enabled=None, *, defense_mode=None, expected_slot=None
+    ):
         async with self._lock:
+            slot = self._character_require_locked(actor, expected_slot)
+            if enabled is not None and type(enabled) is not bool:
+                raise ValueError("Некорректная настройка мини-игр.")
+            if defense_mode is not None:
+                if not isinstance(defense_mode, str) or defense_mode not in (
+                    "dodge",
+                    "block",
+                ):
+                    raise ValueError("Некорректный режим защиты.")
+                self.connection.execute(
+                    "INSERT INTO arena_character_defense VALUES(?,?,?) ON CONFLICT(actor_id,slot) DO UPDATE SET mode=excluded.mode",
+                    (actor, slot, defense_mode),
+                )
             if enabled is not None:
-                if type(enabled) is not bool:
-                    raise ValueError("Некорректная настройка мини-игр.")
                 self.connection.execute(
                     "INSERT INTO arena_combat_settings VALUES(?,?) ON CONFLICT(actor_id) DO UPDATE SET minigames=excluded.minigames",
                     (actor, int(enabled)),
                 )
+            if enabled is not None or defense_mode is not None:
                 self.connection.commit()
-            return dict(minigames=self._qte_enabled_locked(actor))
+            return dict(
+                minigames=self._qte_enabled_locked(actor),
+                defense_mode=self._defense_mode_locked(actor, slot),
+                character_slot=slot,
+            )
 
     def _qte_snapshot_locked(self, scope, row, state):
         if "qte_modes" in state:
@@ -186,7 +236,9 @@ class ArenaQteMixin:
         now = time.time()
         stage = flow["stages"][0]
         if new_stage:
-            if stage.get("version") == 2:
+            if stage.get("version") == 3:
+                duration = 9.5
+            elif stage.get("version") == 2:
                 from arena_qte_patterns import duration as pattern_duration
 
                 duration = pattern_duration(stage)
@@ -331,7 +383,10 @@ class ArenaQteMixin:
             flow["stages"] = [s for s in flow["stages"] if s["kind"] != "defense"]
         if flow["scope"] == "battle" and stage["kind"] == "attack":
             for following in flow["stages"]:
-                if following.get("version") == 2 and following["kind"] == "defense":
+                if (
+                    following.get("version") in (2, 3)
+                    and following["kind"] == "defense"
+                ):
                     following["enabled_strikes"] = mask
         if flow["stages"]:
             self._qte_save_locked(flow, True)

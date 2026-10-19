@@ -11,6 +11,9 @@
 .qte-info{font-size:10px}.qte-window [hidden]{display:none!important}.minigames-toggle{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.minigames-toggle .enabled{border-color:#e6b963;color:#e6b963}
 .qte-health>div:first-child{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#a9b9cd}.qte-hp-value{font-variant-numeric:tabular-nums;color:#c7e9db}.qte-hp-track{height:5px;background:#080f19;border-radius:3px;overflow:hidden;margin-top:5px}.qte-hp-track i{display:block;width:100%;height:100%;background:linear-gradient(90deg,#56aa98,#a0d4af)}.qte-hit:disabled{opacity:.45;cursor:default}
 .qte-pattern .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 350px) * 2.25))}
+.qte-block .qte-live-canvas{aspect-ratio:720/400}.qte-block .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 380px) * 1.8))}
+.qte-block-stamina{display:flex;justify-content:space-between;font-size:10px;color:#cbb581;margin-top:5px}.qte-stamina-track i{background:linear-gradient(90deg,#9e8958,#edd292)}.qte-block-raise{min-height:44px;border:1px solid #6f6851;border-radius:9px;background:#2b302d;color:#ecd1a0;font:inherit;font-size:11px;padding:9px;touch-action:none;user-select:none;-webkit-user-select:none}
+.qte-block .qte-health{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 12px}.qte-block .qte-health>div:nth-child(1){grid-column:1;grid-row:1}.qte-block .qte-health>div:nth-child(2){grid-column:1;grid-row:2}.qte-block .qte-health>div:nth-child(3){grid-column:2;grid-row:1;margin:0}.qte-block .qte-health>div:nth-child(4){grid-column:2;grid-row:2}.qte-block .qte-health .qte-hp-track{margin:0}
 @media(pointer:coarse){.qte-window .qte-stick,.qte-window .qte-touch-help{display:block}.qte-window .qte-live-pad{display:none}.qte-controls{flex-wrap:wrap}.qte-touch-help{flex:1}}
 @media(max-width:600px),(max-height:760px){
   .qte-window{padding:12px;gap:7px}.qte-heading{gap:8px}.qte-window h2{font-size:17px}.qte-eyebrow{font-size:8px;margin-bottom:4px}.qte-count{font-size:12px}
@@ -25,10 +28,13 @@
   .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 290px) * 2.25))}
   .qte-pattern .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 330px) * 2.25))}
 }
-@media(max-width:360px){.qte-pattern .qte-stick{width:96px;height:96px;min-width:96px;min-height:96px}.qte-pattern .qte-touch-help small{display:none}}
+@media(max-width:360px){.qte-pattern .qte-stick{width:96px;height:96px;min-width:96px;min-height:96px}.qte-pattern .qte-touch-help small{display:none}.qte-block .qte-window{gap:6px}}
+@media(max-width:600px),(max-height:760px){.qte-block .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 320px) * 1.8))}}
+@media(pointer:coarse) and (max-width:600px){.qte-block .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 365px) * 1.8))}}
 @media(max-height:500px) and (min-width:600px){
   .qte-window{grid-template-columns:minmax(0,1fr) 140px;gap:7px 12px;width:min(760px,100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 132px) * 2.25 + 190px))}
   .qte-heading{grid-column:1/-1;grid-row:1}.qte-help{display:none}.qte-field{grid-column:1;grid-row:2;width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 132px) * 2.25))}
   .qte-live-status{grid-column:1;grid-row:3}.qte-controls{grid-column:2;grid-row:2/4;display:flex;flex-direction:column;justify-content:center;gap:7px}.qte-touch-help{display:none!important}.qte-live-buttons{order:2!important;width:100%;flex-wrap:wrap}.qte-live-buttons button{width:100%;max-width:none!important;min-height:36px;padding:8px}.qte-window .qte-stick{width:98px;height:98px;min-width:98px;min-height:98px}
   .qte-pattern .qte-window{width:min(760px,100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 168px) * 2.25 + 190px))}.qte-pattern .qte-health{grid-column:1;grid-row:2}.qte-pattern .qte-field{grid-column:1;grid-row:3;width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 168px) * 2.25))}.qte-pattern .qte-live-status{grid-row:4}.qte-pattern .qte-controls{grid-row:2/5}
 }
+@media(max-height:500px) and (min-width:600px){.qte-block .qte-window{width:min(760px,100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 190px) * 1.8 + 190px))}.qte-block .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 190px) * 1.8))}.qte-block-raise{width:100%}}

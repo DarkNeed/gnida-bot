@@ -25,13 +25,13 @@ const origin=process.env.QTE_LIVE_URL||'http://127.0.0.1:8115';
     const touch=(type,x,y)=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:['touchEnd','touchCancel'].includes(type)?[]:[{x,y,radiusX:5,radiusY:5,id:1}]});
     const start=async(version=2)=>page.evaluate(version=>{
       window.__proof=null;
-      ArenaMiniGames.play({version,defense_preparation:1,id:'scroll-'+version,kind:'defense',name:'Проверка джойстика',
+      ArenaMiniGames.play({version,defense_mode:version===3?'block':undefined,defense_preparation:1,id:'scroll-'+version,kind:'defense',name:'Проверка джойстика',
         strikes:1,pattern:'cross',seed:23,profile:{id:'mana_shot:Мановый выстрел:1:magic',base_id:'mana_shot',
           name:'Мановый выстрел',class_id:'mage',strikes:1,damage_type:'magic'},damage_base:40,target_hp:200,
-        stats:{accuracy:75,enemyEvasion:25,enemyAccuracy:95,evasion:10},
+        stats:{accuracy:75,enemyEvasion:25,enemyAccuracy:95,evasion:10,physicalDefense:35,magicDefense:35,enemyAttack:30},
         server_now:Date.now()/1000,expires:Date.now()/1000+20}).then(p=>window.__proof=p);
     },version);
-    for(const version of [1,2]){
+    for(const version of [1,2,3]){
       await start(version);await page.locator('.qte-stick').waitFor();
       assert.equal(await page.evaluate(()=>document.body.style.position),'fixed');
       assert.equal(await page.evaluate(()=>Telegram.WebApp.isVerticalSwipesEnabled),false);
@@ -52,8 +52,8 @@ const origin=process.env.QTE_LIVE_URL||'http://127.0.0.1:8115';
       assert.deepEqual(await page.evaluate(()=>__styles()),await page.evaluate(()=>__before.styles));
       assert.equal(await page.evaluate(()=>Telegram.WebApp.isVerticalSwipesEnabled),true);
     }
-    assert.deepEqual(await page.evaluate(()=>__swipes),['disable','enable','disable','enable']);
-    console.log('PASS live v1/v2: no touch scroll, fixed viewport, cancel, styles/scroll/swipes restored');
+    assert.deepEqual(await page.evaluate(()=>__swipes),['disable','enable','disable','enable','disable','enable']);
+    console.log('PASS live v1/v2/v3: no touch scroll, fixed viewport, cancel, styles/scroll/swipes restored');
     // Preserve an already-disabled preference; skip unsupported/throwing bridges.
     for(const mode of ['disabled','old','throwing']){
       await page.evaluate(mode=>{

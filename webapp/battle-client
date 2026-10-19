@@ -15,9 +15,13 @@ let raidCurrent=null,raidInspect=null,raidPlaying=false;
 let qtePlaying=false;
 let combatPreferences=null,combatSettingsRequest=0,combatSettingsSaving=false;
 function combatSettingsBody(enabled){
-  return '<h2>Боевые мини-игры</h2><div class="minigames-toggle"><b>'+(enabled?'Включены':'Выключены · обычные броски')+'</b><button data-combat-enabled="'+!enabled+'" class="'+(enabled?'enabled':'primary')+'">'+(enabled?'Выключить':'Включить')+'</button></div><p class="muted">Настройка общая для всех твоих персонажей и чатов. По умолчанию включена. Изменение действует со следующего боя.</p><p>Включены: попадание через QTE, уклонение через мини-арену. Характеристики меняют сложность. Успешное уклонение соперника имеет приоритет над успешным попаданием.</p><p>Выключены: выбираешь навык, а попадание и уклонение рассчитываются обычными бросками. В PvP соперник сохраняет свой режим; при выключенных мини-играх твоё уклонение остаётся случайным.</p><p class="muted">Лечение, поддержка и зелья — без QTE. Кровотечение, горение и ответные реакции не отменяются прохождением отдельной атаки. Закрытие или сворачивание мини-игры засчитывает неуспех; бой не ждёт бесконечно.</p>';
+  return '<h2>Боевые мини-игры</h2><div class="minigames-toggle"><b>'+(enabled?'Включены':'Выключены · обычные броски')+'</b><button data-combat-enabled="'+!enabled+'" class="'+(enabled?'enabled':'primary')+'">'+(enabled?'Выключить':'Включить')+'</button></div><p class="muted">Настройка общая для всех твоих персонажей и чатов. По умолчанию включена. Изменение действует со следующего боя.</p><p>Включены: попадание через QTE, защита — выбранное для персонажа блокирование или уклонение. Характеристики меняют сложность. Успешная защита соперника имеет приоритет над успешным попаданием.</p><p>Выключены: выбираешь навык, а попадание и уклонение рассчитываются обычными бросками. В PvP соперник сохраняет свой режим; при выключенных мини-играх твоё уклонение остаётся случайным.</p><p class="muted">Лечение, поддержка и зелья — без QTE. Кровотечение, горение и ответные реакции не отменяются прохождением отдельной атаки. Закрытие или сворачивание мини-игры засчитывает неуспех; бой не ждёт бесконечно.</p>';
 }
 function closeCombatSettings(){document.getElementById('combat-settings')?.close();}
+function defenseSettingsBody(){
+  const mode=combatPreferences?.defense_mode||'dodge',slot=combatPreferences?.character_slot||menu?.characters?.active_slot||1;
+  return '<h3>Защита персонажа №'+slot+'</h3><div class="minigames-toggle">'+[['dodge','Уклонение'],['block','Блокирование']].map(([id,name])=>'<button data-defense-mode="'+id+'" aria-pressed="'+(mode===id)+'" class="'+(mode===id?'enabled':'')+'">'+name+'</button>').join('')+'</div><p class="muted">Сохраняется отдельно для этого персонажа во всех чатах. Применится со следующего боя; текущий бой не меняется.</p><p>'+(mode==='block'?'Блок: направляй щит навстречу атакам. Обычный блок поглощает 75% урона после брони, точный — весь. Отпускай щит для восстановления стойкости. Уклонение не влияет на сложность блока.':'Уклонение: двигайся по полю и избегай снарядов. Сложность зависит от уклонения и точности врага.')+'</p><p class="muted">При выключенных мини-играх используются обычные броски, независимо от выбранного режима защиты.</p>';
+}
 async function openCombatSettings(){
   if(qtePlaying||combatSettingsSaving){toast('Дождись окончания текущего действия.');return;}
   let dialog=document.getElementById('combat-settings');
@@ -34,21 +38,34 @@ async function openCombatSettings(){
     const data=demo?menu:await api('/api/menu/'+chat);
     if(request!==combatSettingsRequest)return;
     combatPreferences=data?.combat_settings||combatPreferences||{minigames:true};
-    body.innerHTML=combatSettingsBody(combatPreferences.minigames!==false);
+    body.innerHTML=combatSettingsBody(combatPreferences.minigames!==false)+defenseSettingsBody();
   }catch(error){if(request===combatSettingsRequest)body.innerHTML='<p role="alert">'+esc(error.message)+'</p><p class="muted">Закрой настройки и попробуй ещё раз.</p>';}
 }
 document.addEventListener('click',async event=>{
   const button=event.target.closest('button');if(!button||button.disabled)return;
   if(button.hasAttribute('data-combat-open')){await openCombatSettings();return;}
   if(button.hasAttribute('data-combat-close')){closeCombatSettings();return;}
+  if(button.hasAttribute('data-defense-mode')){
+    if(combatSettingsSaving)return;
+    combatSettingsSaving=true;button.disabled=true;const request=++combatSettingsRequest;
+    try{
+      const mode=button.dataset.defenseMode,slot=combatPreferences?.character_slot||menu?.characters?.active_slot||1;
+      const response=demo?null:await api('/api/menu/'+chat,{action:'combat_settings',defense_mode:mode,character_slot:slot});
+      combatPreferences=response?.menu?.combat_settings||{...combatPreferences,defense_mode:mode,character_slot:slot};
+      if(menu){menu.combat_settings=combatPreferences;if(response?.menu?.characters)menu.characters=response.menu.characters;}
+      if(request===combatSettingsRequest)document.querySelector('[data-combat-body]').innerHTML=combatSettingsBody(combatPreferences.minigames!==false)+defenseSettingsBody();
+      toast(demo?'Демо: настройка не сохраняется.':response.notice);
+    }catch(error){toast(error.message);}finally{combatSettingsSaving=false;button.disabled=false;}
+    return;
+  }
   if(!button.hasAttribute('data-combat-enabled')||combatSettingsSaving)return;
   const enabled=button.dataset.combatEnabled==='true',request=combatSettingsRequest;
   combatSettingsSaving=true;button.disabled=true;
   try{
     const response=demo?null:await api('/api/menu/'+chat,{action:'combat_settings',enabled});
-    combatPreferences=response?.menu?.combat_settings||{minigames:enabled};
-    if(menu)menu.combat_settings=combatPreferences;
-    if(request===combatSettingsRequest)document.querySelector('[data-combat-body]').innerHTML=combatSettingsBody(combatPreferences.minigames!==false);
+    combatPreferences=response?.menu?.combat_settings||{...combatPreferences,minigames:enabled};
+    if(menu){menu.combat_settings=combatPreferences;if(response?.menu?.characters)menu.characters=response.menu.characters;}
+    if(request===combatSettingsRequest)document.querySelector('[data-combat-body]').innerHTML=combatSettingsBody(combatPreferences.minigames!==false)+defenseSettingsBody();
     toast(demo?'Демо: настройка не сохраняется.':response.notice);
   }catch(error){toast(error.message);}finally{combatSettingsSaving=false;button.disabled=false;}
 });
@@ -403,7 +420,7 @@ async function animateEvent(event){
   if(event.hit_results||(event.hit&&event.damage)){
     for(const [i,amount] of (event.hits||[event.damage]).entries()){
       const part=event.hit_results?.[i],landed=part?part.hit:amount>0;
-      if(landed&&amount)target?.classList.add("hurt");const number=document.createElement("div");number.className="damage";number.textContent=part&&!landed?(part.dodged?"Уклонение":"Промах"):amount?"−"+amount:"";if(other===near){number.style.left="23%";number.style.top="65%";}document.querySelector(".field").append(number);setTimeout(()=>number.remove(),1000);
+      if(landed&&amount)target?.classList.add("hurt");const number=document.createElement("div");number.className="damage";number.textContent=part&&!landed?(part.blocked?"Блок":part.dodged?"Уклонение":"Промах"):amount?"−"+amount:"";if(other===near){number.style.left="23%";number.style.top="65%";}document.querySelector(".field").append(number);setTimeout(()=>number.remove(),1000);
       if(event.hits){if(landed&&amount)await slashImpact(target);else await sleep(190);target?.classList.remove("hurt");}
     }
   }
@@ -551,7 +568,7 @@ function forgePreview(operation,extra,summary){
 function characterSlot(){return current?.own_side?current[current.own_side+'_character_slot']||1:menu?.characters?.active_slot||1;}
 function charactersBody(data){
   const c=data.characters;if(!c)return '';
-  return '<div class="card"><h3>Твои персонажи · '+c.capacity+' / 5</h3><p class="muted">Отдельные билды и внешний вид. Инвентарь и лимиты наград общие.</p><div class="character-row">'+c.slots.map(s=>'<button class="character-option'+(s.active?' selected':'')+(s.locked?' locked':'')+'" data-do="'+(s.locked?'charactersbuy':'character:'+s.slot)+'" '+(!s.locked&&c.busy&&!s.active?'disabled':'')+'>'+(s.locked?'<span class="character-lock">🔒</span>':'<img src="'+esc(s.avatar_url)+'" class="'+(s.pixel_art?'pixel-art':'')+'" alt="'+esc(s.class_name)+'">')+'<b>№'+s.slot+(s.active?' · выбран':'')+'</b><span>'+esc(s.locked?'Закрыт':s.created?s.class_name:'Создать персонажа')+'</span><small>'+(s.locked?'Пакет всех 4 слотов':s.created?'Lv.'+s.level:'С 1 уровня')+'</small></button>').join('')+'</div>'+(!c.unlocked?button('Открыть все 4 слота · '+c.price+' ☆','charactersbuy','primary',c.payments_enabled===false):'')+(c.busy?'<p class="muted">Переключение доступно после завершения RPG-активности.</p>':'')+'</div>';
+  return '<div class="card"><h3>Твои персонажи · '+c.capacity+' / 5</h3><p class="muted">Отдельные билды и внешний вид. Инвентарь и лимиты наград общие. Защита выбранного персонажа настраивается в ⚙ рядом со звуком.</p><div class="character-row">'+c.slots.map(s=>'<button class="character-option'+(s.active?' selected':'')+(s.locked?' locked':'')+'" data-do="'+(s.locked?'charactersbuy':'character:'+s.slot)+'" '+(!s.locked&&c.busy&&!s.active?'disabled':'')+'>'+(s.locked?'<span class="character-lock">🔒</span>':'<img src="'+esc(s.avatar_url)+'" class="'+(s.pixel_art?'pixel-art':'')+'" alt="'+esc(s.class_name)+'">')+'<b>№'+s.slot+(s.active?' · выбран':'')+'</b><span>'+esc(s.locked?'Закрыт':s.created?s.class_name:'Создать персонажа')+'</span><small>'+(s.locked?'Пакет всех 4 слотов':s.created?'Lv.'+s.level:'С 1 уровня')+'</small>'+(!s.locked&&s.created?'<small>Защита: '+(s.defense_mode==='block'?'Блок':'Уклонение')+'</small>':'')+'</button>').join('')+'</div>'+(!c.unlocked?button('Открыть все 4 слота · '+c.price+' ☆','charactersbuy','primary',c.payments_enabled===false):'')+(c.busy?'<p class="muted">Переключение доступно после завершения RPG-активности.</p>':'')+'</div>';
 }
 async function buyCharacters(){
   if(demo){toast('Демо: платежи не выполняются.');return;}
@@ -1064,7 +1081,7 @@ async function raidAnimate(event){
   if(event.hit_results||event.damage){
     for(const [i,amount] of (event.hits||[event.damage]).entries()){
       const part=event.hit_results?.[i],landed=part?part.hit:amount>0;
-      if(landed&&amount)target?.classList.add('raid-hit');raidPopup(event.target,part&&!landed?(part.dodged?'Уклонение':'Промах'):amount);
+      if(landed&&amount)target?.classList.add('raid-hit');raidPopup(event.target,part&&!landed?(part.blocked?'Блок':part.dodged?'Уклонение':'Промах'):amount);
       if(event.hits){if(landed&&amount)await slashImpact(target);else await sleep(190);target?.classList.remove('raid-hit');}
     }
   }

@@ -45,6 +45,9 @@ def number(value, low, high):
 
 
 def replay(challenge, proof, elapsed):
+    if challenge.get('version') == 3:
+        from arena_qte_block import replay as replay_block
+        return replay_block(challenge, proof, elapsed)
     if challenge.get('version') == 2:
         from arena_qte_patterns import replay as replay_patterns
         return replay_patterns(challenge, proof, elapsed)

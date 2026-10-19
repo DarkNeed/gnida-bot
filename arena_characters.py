@@ -180,6 +180,7 @@ class CharacterMixin:
             final=profile.get('level',1)>=20 and profile.get('archclass_stage',10)>=20
             name=ARCHCLASSES.get(arch,{}).get('final_name' if final else 'name') or classes.get(cls,FIGHTER_CLASSES['ragamuffin']).name
             slots.append(dict(slot=slot,active=slot==active,locked=slot>1 and not unlocked,
+                defense_mode=self._defense_mode_locked(user,slot),
                 created=row is not None,level=profile.get('level',1),class_name=name,
                 avatar_url='/sprites/'+row['sprite_key']+'.png' if row and row['sprite_key'] else choice_avatar(cls,arch,20 if final else 10),
                 pixel_art=bool(row and row['pixel_art'])))

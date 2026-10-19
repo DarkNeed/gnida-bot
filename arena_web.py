@@ -815,8 +815,10 @@ def create_arena_app(
         action = body.get("action")
         expected_slot=int_field(body,'character_slot',1)
         if action=='combat_settings':
-            if type(body.get('enabled')) is not bool:raise ValueError('Некорректная настройка мини-игр.')
-            await db.arena_combat_settings(actor,body['enabled'])
+            if 'enabled' in body and type(body['enabled']) is not bool:raise ValueError('Некорректная настройка мини-игр.')
+            if 'enabled' not in body and 'defense_mode' not in body:raise ValueError('Настройка не указана.')
+            if 'defense_mode' in body and body['defense_mode'] not in ('dodge','block'):raise ValueError('Некорректный режим защиты.')
+            await db.arena_combat_settings(actor,body.get('enabled'),defense_mode=body.get('defense_mode'),expected_slot=expected_slot if 'defense_mode' in body else None)
             return web.json_response(dict(notice='Настройка сохранена. Применится со следующего боя.',menu=await app_menu(chat,actor)))
         if action=='select_character':
             notice=await db.arena_select_character(chat,actor,int_field(body,'slot'),int_field(body,'character_revision'))

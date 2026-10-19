@@ -115,13 +115,13 @@ def revive(side, key):
     return False
 
 
-def received(target, damage, key, fresh=True):
+def received(target, damage, key, fresh=True, *, blocked=False):
     m = target.setdefault('rpg_state', {})
-    if damage > 0 and fresh:
+    if (damage > 0 or blocked) and fresh:
         guarded = any(e['kind'] in ('incoming_damage_multiplier', 'rpg_counter') for e in target['effects'])
-        if key == 'warrior_berserker' and is_final(target):
+        if damage > 0 and key == 'warrior_berserker' and is_final(target):
             m['heat'] = min(5, m.get('heat', 0) + 1)
-        if key == 'warrior_knight' and guarded:
+        if key == 'warrior_knight' and (guarded or blocked):
             m['steadfast'] = min(3, m.get('steadfast', 0) + 1)
     return revive(target, key)
 

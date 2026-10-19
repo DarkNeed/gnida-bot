@@ -3,7 +3,72 @@
   'use strict';
   let active = null;
   window.ArenaMiniGames = {play, get active(){return !!active;}};
-  function play(challenge){return challenge.version===2?playPatterns(challenge):playLegacy(challenge);}
+  function play(challenge){return challenge.version===3&&challenge.defense_mode==='block'?playBlock(challenge):challenge.version===2?playPatterns(challenge):playLegacy(challenge);}
+  function playBlock(challenge){
+    if(active)return Promise.reject(new Error('Другая мини-игра уже открыта.'));
+    const B=window.QTEBlock,V=window.QTEBlockView;
+    if(!B||!V||!window.QTETouch?.lockViewport)return Promise.reject(new Error('Обнови арену: блокирование не загрузилось.'));
+    return new Promise(resolve=>{
+      const s=B.create(challenge.profile,challenge.stats,challenge.seed,{hp:challenge.target_hp,referenceDamage:challenge.damage_base,endOnDeath:false,enabledStrikes:challenge.enabled_strikes});
+      const cover=document.createElement('div');cover.className='qte-cover qte-pattern qte-block qte-defense';
+      cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Блокирование атаки"><div class="qte-heading"><div><p class="qte-eyebrow">ЗАЩИТА · БЛОКИРОВАНИЕ</p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"><span class="qte-help-full">Держи щит навстречу атаке. Отпускай для стойкости; новое поднятие перед ударом — точный блок.</span><span class="qte-help-compact">Держи направление — блок. Отпусти — восстанови стойкость.</span></p><div class="qte-health"><div><span>Твои HP · прогноз</span><strong class="qte-hp-value"></strong></div><div class="qte-hp-track"><i></i></div><div class="qte-block-stamina"><span>Стойкость</span><strong class="qte-stamina-value"></strong></div><div class="qte-hp-track qte-stamina-track"><i></i></div></div><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="400" tabindex="0" aria-label="Стрелки или WASD направляют щит, пробел поднимает блок"></canvas></div><div class="qte-live-status" role="status"></div><div class="qte-controls"><div class="qte-live-buttons"><button class="qte-abort">Пропустить · все попадания</button></div><button class="qte-block-raise" data-direction="raise">Держать блок</button><button class="qte-stick" aria-label="Джойстик направления щита"><span aria-hidden="true"></span></button><div class="qte-live-pad"><button data-direction="up">↑</button><button data-direction="left">←</button><button data-direction="down">↓</button><button data-direction="right">→</button></div></div><p class="qte-info">Обычный блок −75% урона после брони; точный — весь. Волна требует свежего поднятия щита. Урон и результат проверяет сервер.</p></section>';
+      const find=q=>cover.querySelector(q),canvas=find('canvas'),ctx=canvas.getContext('2d'),previousFocus=document.activeElement;
+      find('h2').textContent=challenge.name;document.body.append(cover);
+      const unlock=QTETouch.lockViewport(cover),abort=new AbortController(),on=(el,name,fn)=>el.addEventListener(name,fn,{signal:abort.signal});
+      const proof={ticks:1140,inputs:[]};let tick=0,accumulator=0,last=0,lastInput='',lastAngle=0,done=false,raf,watch,aim=null,canvasPointer=null;
+      const keys=new Set(),pointers=new Map();
+      const touch=QTETouch.attach({canvas,stick:find('.qte-stick'),getPlayer:()=>s.player,isDefense:()=>true,width:720,height:400,onTouch:()=>cover.classList.add('qte-touch-mode')});
+      const deadline=performance.now()+Math.max(0,(challenge.expires-(challenge.server_now||Date.now()/1000))*1000);
+      active={challenge:challenge.id};canvas.focus({preventScroll:true});
+      function clear(){keys.clear();pointers.clear();aim=null;canvasPointer=null;touch.clear();}
+      function finish(failed=false){
+        if(done)return;done=true;cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();cover.remove();unlock();active=null;
+        previousFocus?.isConnected&&previousFocus.focus?.({preventScroll:true});resolve(failed?{abort:true}:proof);
+      }
+      function input(){
+        const all=new Set([...keys,...pointers.values()]),stick=touch.input();
+        let x=+all.has('right')-+all.has('left'),y=+all.has('down')-+all.has('up');
+        if(!x&&!y&&Math.hypot(stick.x||0,stick.y||0)>.12){x=stick.x;y=stick.y;}
+        if(canvasPointer!==null&&aim){x=aim.x;y=aim.y;}
+        const directed=Math.hypot(x,y)>.05;if(directed)lastAngle=Math.atan2(y,x);
+        return {angle:B.angleDiff(lastAngle,0),active:directed||all.has('raise')||canvasPointer!==null};
+      }
+      const keymap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',KeyA:'left',KeyD:'right',KeyW:'up',KeyS:'down',Space:'raise'};
+      on(window,'keydown',e=>{
+        if(e.code==='Escape'){e.preventDefault();finish(true);return;}
+        if(keymap[e.code]){e.preventDefault();keys.add(keymap[e.code]);}
+        if(e.code==='Tab'){const buttons=[...cover.querySelectorAll('button')].filter(b=>b.offsetParent&&!b.disabled),i=buttons.indexOf(document.activeElement);e.preventDefault();buttons[e.shiftKey?(i<=0?buttons.length-1:i-1):(i+1)%buttons.length]?.focus();}
+      });
+      on(window,'keyup',e=>{if(keymap[e.code])keys.delete(keymap[e.code]);});on(window,'blur',clear);on(window,'resize',clear);
+      on(document,'visibilitychange',()=>{if(document.hidden)finish(true);});on(find('.qte-abort'),'click',()=>finish(true));
+      const point=e=>{const r=canvas.getBoundingClientRect();return {x:(e.clientX-r.left)*720/r.width-360,y:(e.clientY-r.top)*400/r.height-200};};
+      on(canvas,'pointerdown',e=>{if(canvasPointer!==null)return;e.preventDefault();canvasPointer=e.pointerId;aim=point(e);});
+      on(canvas,'pointermove',e=>{if(e.pointerId===canvasPointer){e.preventDefault();aim=point(e);}});
+      for(const name of ['pointerup','pointercancel','lostpointercapture'])on(canvas,name,e=>{if(e.pointerId===canvasPointer){canvasPointer=null;aim=null;}});
+      for(const button of cover.querySelectorAll('[data-direction]')){
+        on(button,'pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);touch.clear();pointers.set(e.pointerId,button.dataset.direction);});
+        for(const name of ['pointerup','pointercancel','lostpointercapture'])on(button,name,e=>pointers.delete(e.pointerId));
+      }
+      function draw(){
+        V.draw(ctx,canvas,s);cover.dataset.preparing=String(s.time<s.preparation);
+        find('.qte-count').textContent=Math.max(0,(s.time<s.preparation?s.preparation:s.duration)-s.time).toFixed(1)+' С';
+        find('.qte-hp-value').textContent=s.hp+' / '+s.initialHp;find('.qte-hp-track i').style.width=100*s.hp/s.initialHp+'%';
+        find('.qte-stamina-value').textContent=Math.round(s.stamina)+' / '+Math.round(s.params.maxStamina);
+        find('.qte-stamina-track i').style.width=100*s.stamina/s.params.maxStamina+'%';
+        find('.qte-live-status').textContent=s.time<s.preparation?'Приготовься: атака ещё не началась.':s.time<s.brokenUntil?'Стойкость пробита!':`Блоки ${s.blocks} · точные ${s.perfects} · пропущено ${s.misses}`;
+      }
+      function frame(now){
+        if(done)return;const dt=last?(now-last)/1000:0;last=now;if(now>=deadline){finish(true);return;}
+        accumulator+=dt;while(accumulator>=1/120&&!done){
+          accumulator-=1/120;const cmd=input(),encoded=JSON.stringify(cmd);
+          if(encoded!==lastInput){proof.inputs.push({t:tick,...cmd});lastInput=encoded;}
+          B.step(s,1/120,cmd);tick++;if(s.ended){draw();finish();}
+        }
+        if(!done){draw();raf=requestAnimationFrame(frame);}
+      }
+      watch=setInterval(()=>{if(performance.now()>=deadline)finish(true);},200);draw();raf=requestAnimationFrame(frame);
+    });
+  }
   function playPatterns(challenge){
     if(active)return Promise.reject(new Error('Другая мини-игра уже открыта.'));
     const E=window.QTEUnique,V=window.QTEView;

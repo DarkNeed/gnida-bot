@@ -108,9 +108,15 @@ class InteractiveStoreTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_default_on_and_account_preference_persists(self):
-        self.assertEqual(await self.db.arena_combat_settings(10), dict(minigames=True))
+        self.assertEqual(
+            await self.db.arena_combat_settings(10),
+            dict(minigames=True, defense_mode="dodge", character_slot=1),
+        )
         await self.db.arena_combat_settings(10, False)
-        self.assertEqual(await self.db.arena_combat_settings(10), dict(minigames=False))
+        self.assertEqual(
+            await self.db.arena_combat_settings(10),
+            dict(minigames=False, defense_mode="dodge", character_slot=1),
+        )
         with self.assertRaises(ValueError):
             await self.db.arena_combat_settings(10, 1)
 

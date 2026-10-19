@@ -1,0 +1,165 @@
+/* Local blocking lab: no account APIs, battle actions, storage or payments. */
+(()=>{
+  'use strict';
+  const B=QTEBlock,E=QTEUnique,$=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d');
+  const catalog=JSON.parse($('catalog').textContent),profiles=catalog.filter(skill=>skill.damage_type).map(E.profile);
+  let selected=profiles.find(p=>p.skill.base_id==='tigerslayer_flurry')||profiles[0],sim=null,record=null,paused=false,last=0,frameId;
+  let keys=new Set(),buttons=new Map(),canvasPointer=null,aim=null,raisePointer=null,lastAngle=0;
+  const modes={physical:'physicalDefense',magic:'magicDefense',attack:'enemyAttack',accuracy:'enemyAccuracy'};
+  const touch=QTETouch.attach({canvas,stick:$('stick'),getPlayer:()=>({x:B.W/2,y:B.H/2}),
+    enabled:()=>!!sim&&!paused,isDefense:()=>true,width:B.W,height:B.H});
+  function stats(){return Object.fromEntries(Object.entries(modes).map(([id,key])=>[key,+$(id).value]));}
+  function options(){return {power:E.clamp(+$('power').value||30,1,1000),hp:E.clamp(+$('hp').value||200,1,5000)};}
+  function seed(){return E.clamp(Math.floor(+$('seed').value||17),1,999999);}
+  function clear(){keys.clear();buttons.clear();canvasPointer=null;aim=null;raisePointer=null;touch.clear();$('raise').classList.remove('held');}
+  function available(){return !!sim&&!paused;}
+  function settings(){
+    for(const control of document.querySelectorAll('aside input,aside select,aside button,#shuffle'))control.disabled=!!sim;
+    $('start').hidden=!!sim;$('stop').hidden=!sim;$('controls').hidden=!sim||paused;$('resume').hidden=!paused;
+  }
+  function labels(){
+    const p=B.parameters(selected,stats());
+    $('class-name').textContent=selected.skill.class_name;$('skill-name').textContent=selected.skill.name;
+    $('pattern-name').textContent='Перехват · '+selected.title+' · '+(selected.skill.damage_type==='magic'?'магическая атака':'физическая атака');
+    for(const id of Object.keys(modes))$(id+'-value').textContent=$(id).value+(id==='accuracy'?'%':'');
+    $('armor-info').textContent=p.armor+' · −'+Math.round((1-p.armorMultiplier)*100)+'% урона';
+    $('arc-info').textContent=Math.round(p.arc*180/Math.PI)+'°';$('perfect-info').textContent=p.perfectWindow.toFixed(2)+' с';
+    if(!sim&&!record)hud(B.create(selected,stats(),seed(),options()));
+  }
+  function fillSkills(){
+    const list=profiles.filter(p=>!$('class-filter').value||p.skill.class_id===$('class-filter').value);
+    if(!list.includes(selected))selected=list[0];
+    $('skill').replaceChildren(...list.map(p=>new Option(p.skill.name+' · '+p.skill.origin,p.id)));
+    $('skill').value=selected.id;record=null;$('summary').hidden=true;labels();draw();
+  }
+  const classes=new Map(profiles.map(p=>[p.skill.class_id,p.skill.class_name]));
+  $('class-filter').replaceChildren(new Option('Все классы и боссы',''),...Array.from(classes,([id,name])=>new Option(name,id)));
+  $('class-filter').addEventListener('change',fillSkills);
+  $('skill').addEventListener('change',()=>{selected=profiles.find(p=>p.id===$('skill').value);record=null;$('summary').hidden=true;labels();draw();});
+  for(const button of document.querySelectorAll('[data-example]'))button.addEventListener('click',()=>{
+    if(sim)return;selected=profiles.find(p=>p.skill.base_id===button.dataset.example)||selected;
+    $('class-filter').value='';fillSkills();
+  });
+  for(const button of document.querySelectorAll('[data-preset]'))button.addEventListener('click',()=>{
+    if(sim)return;const value={light:0,tank:35,fortress:75}[button.dataset.preset];
+    $('physical').value=$('magic').value=value;
+    document.querySelectorAll('[data-preset]').forEach(b=>b.classList.toggle('selected',b===button));
+    record=null;labels();draw();
+  });
+  for(const node of document.querySelectorAll('aside input'))node.addEventListener('input',()=>{
+    if(sim)return;record=null;$('summary').hidden=true;
+    if(node.id==='physical'||node.id==='magic')document.querySelectorAll('[data-preset]').forEach(b=>b.classList.remove('selected'));
+    labels();draw();
+  });
+  $('shuffle').addEventListener('click',()=>{if(!sim){$('seed').value=seed()%999999+1;record=null;$('summary').hidden=true;draw();}});
+  function hud(s){
+    $('hp-value').textContent=s.hp+' / '+s.initialHp;$('hp-fill').style.width=100*s.hp/s.initialHp+'%';
+    $('guard-value').textContent=Math.round(s.stamina)+' / '+Math.round(s.params.maxStamina);$('guard-fill').style.width=100*s.stamina/s.params.maxStamina+'%';
+    for(const id of ['blocks','perfects','misses','breaks','damage'])$(id).textContent=s[id];
+    $('time').textContent=sim?(Math.max(0,s.time<s.preparation?s.preparation-s.time:s.duration-s.time).toFixed(1)+' С'):'ГОТОВ';
+    $('status').textContent=!sim?'Удерживай направление для блока.':s.time<s.preparation?'Подготовка — урона ещё нет':s.time<s.brokenUntil?'Стойкость пробита! Опусти защиту.':
+      s.active?s.time<=s.perfectUntil?'Точный блок готов':'Блок поднят · 75% поглощения':'Защита опущена · стойкость восстанавливается';
+    $('raise').classList.toggle('held',s.active);
+  }
+  function input(){
+    const all=new Set([...keys,...buttons.values()]);
+    let x=+all.has('right')-+all.has('left'),y=+all.has('down')-+all.has('up');
+    const stick=touch.input();
+    if(!x&&!y&&Math.hypot(stick.x||0,stick.y||0)>.12){x=stick.x;y=stick.y;}
+    if(canvasPointer!==null&&aim){x=aim.x;y=aim.y;}
+    const directed=Math.hypot(x,y)>.05;
+    if(directed)lastAngle=Math.atan2(y,x);
+    return {angle:lastAngle,active:directed||all.has('raise')||raisePointer!==null||canvasPointer!==null};
+  }
+  function begin(){
+    if(sim)return;record=null;$('summary').hidden=true;clear();paused=false;last=0;lastAngle=0;
+    sim=B.create(selected,stats(),seed(),options());settings();hud(sim);draw();
+    $('feedback').textContent='Секунда подготовки. Удерживай направление — блок; отпускай защиту между атаками.';
+    canvas.scrollIntoView({block:'center',behavior:'instant'});canvas.focus({preventScroll:true});
+    frameId=requestAnimationFrame(frame);
+  }
+  function finish(aborted=false){
+    if(!sim)return;cancelAnimationFrame(frameId);hud(sim);
+    const s=sim,r=B.result(s);record={...r,skill:selected.skill.name,stats:stats(),seed:seed(),power:s.power,initialHp:s.initialHp,aborted};
+    $('summary').hidden=false;$('summary').textContent=(aborted?'Испытание остановлено. ':'Испытание завершено. ')+
+      `Обычных блоков: ${r.blocks}; точных: ${r.perfects}; пропущено: ${r.misses}; пробитий: ${r.breaks}. `+
+      `Получено ${r.damage} урона из ${r.afterArmor} после брони; блок предотвратил ${r.prevented}. Осталось ${r.hp} HP. `+
+      `Рассчитано угроз: ${r.resolved}/${r.total}.`;
+    $('feedback').textContent=s.hp<=0?'Испытатель повержен. Попробуй больше брони или восстанавливай стойкость между залпами.':
+      r.misses?'Проверь направление щита и момент поднятия перед волнами.':'Все угрозы встречены защитой. Как ощущения?';
+    sim=null;paused=false;clear();settings();$('time').textContent=aborted?'ОСТАНОВЛЕНО':'ИТОГ';
+  }
+  function pause(){if(!sim||paused)return;paused=true;clear();last=0;settings();$('feedback').textContent='Пауза. Нажми «Продолжить» — время испытания не идёт в фоне.';}
+  $('start').addEventListener('click',begin);$('stop').addEventListener('click',()=>finish(true));
+  $('resume').addEventListener('click',()=>{if(!sim)return;paused=false;last=0;clear();settings();canvas.focus({preventScroll:true});});
+  const keymap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',KeyA:'left',KeyD:'right',KeyW:'up',KeyS:'down',Space:'raise'};
+  window.addEventListener('keydown',e=>{
+    if(!available())return;if(e.code==='Escape'){finish(true);return;}
+    if(keymap[e.code]){e.preventDefault();keys.add(keymap[e.code]);}
+  });
+  window.addEventListener('keyup',e=>{if(keymap[e.code])keys.delete(keymap[e.code]);});
+  window.addEventListener('blur',pause);document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
+  window.addEventListener('resize',()=>{clear();draw();});
+  const point=e=>{const r=canvas.getBoundingClientRect();return {x:(e.clientX-r.left)*B.W/r.width-B.W/2,y:(e.clientY-r.top)*B.H/r.height-B.H/2};};
+  canvas.addEventListener('pointerdown',e=>{if(!available()||canvasPointer!==null)return;e.preventDefault();canvasPointer=e.pointerId;aim=point(e);});
+  canvas.addEventListener('pointermove',e=>{if(e.pointerId===canvasPointer){e.preventDefault();aim=point(e);}});
+  for(const name of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(name,e=>{if(e.pointerId===canvasPointer){canvasPointer=null;aim=null;}});
+  for(const button of document.querySelectorAll('[data-dir],#raise')){
+    button.addEventListener('pointerdown',e=>{if(!available())return;e.preventDefault();button.setPointerCapture(e.pointerId);touch.clear();
+      if(button.id==='raise')raisePointer=e.pointerId;else buttons.set(e.pointerId,button.dataset.dir);});
+    for(const name of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(name,e=>{buttons.delete(e.pointerId);if(raisePointer===e.pointerId)raisePointer=null;});
+    for(const name of ['touchstart','touchmove'])button.addEventListener(name,e=>{if(available()&&e.cancelable)e.preventDefault();},{passive:false});
+  }
+  for(const button of document.querySelectorAll('[data-rate]'))button.addEventListener('click',()=>{
+    if(!record){$('feedback').textContent='Сначала пройди испытание.';return;}
+    const li=document.createElement('li');li.textContent=`${button.dataset.rate} · ${record.skill} · узор ${record.seed} · броня ${record.stats.physicalDefense}/${record.stats.magicDefense} · враг ${record.stats.enemyAttack}, точность ${record.stats.enemyAccuracy}% · урон ${record.damage} · блоки ${record.blocks}/${record.perfects}, пробития ${record.breaks}`;
+    $('journal').prepend(li);while($('journal').children.length>8)$('journal').lastElementChild.remove();
+  });
+  function line(x,y,x2,y2,color,width=1){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x2,y2);ctx.stroke();}
+  function arc(x,y,r,a,b,color,width=2){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.arc(x,y,r,a,b);ctx.stroke();}
+  function text(value,x,y,color='#b9cddd',size=15,align='center'){
+    ctx.font=`500 ${Math.max(size,Math.min(24,7200/Math.max(1,canvas.clientWidth)))}px Segoe UI,Arial,sans-serif`;ctx.fillStyle=color;ctx.textAlign=align;ctx.fillText(value,x,y);
+  }
+  function draw(){
+    const s=sim||B.create(selected,stats(),seed(),options()),cx=B.W/2,cy=B.H/2,t=s.time;
+    ctx.clearRect(0,0,B.W,B.H);ctx.fillStyle='#09131f';ctx.fillRect(0,0,B.W,B.H);
+    for(let x=0;x<=B.W;x+=40)line(x,0,x,B.H,'#162b3b');for(let y=0;y<=B.H;y+=40)line(0,y,B.W,y,'#162b3b');
+    arc(cx,cy,145,0,Math.PI*2,'#263c4b');arc(cx,cy,92,0,Math.PI*2,'#213945');
+    for(let i=0;i<8;i++){const a=i*Math.PI/4;line(cx+Math.cos(a)*97,cy+Math.sin(a)*97,cx+Math.cos(a)*150,cy+Math.sin(a)*150,'#2b3e48');}
+    if(sim&&t>=s.preparation){
+      for(const event of s.events){
+        if(t<event.at-event.warning||t>event.at+.26)continue;
+        const spent=event.resolved,progress=E.clamp((t-event.at+event.warning)/event.warning,0,1),color=event.tier==='critical'?'#fff0b6':event.tier==='minor'?'#92b4c6':'#e7bb77';
+        ctx.save();ctx.globalAlpha=spent?.15:.4+progress*.6;
+        if(event.kind==='wave'){
+          arc(cx,cy,155-progress*107,0,Math.PI*2,color,spent?2:4);
+          text('ВОЛНА · ПОДНИМИ БЛОК',cx,cy+109,'#f0cd92',13);
+        }else{
+          const radius=162-progress*113,x=cx+Math.cos(event.angle)*radius,y=cy+Math.sin(event.angle)*radius;
+          ctx.setLineDash([5,6]);line(cx+Math.cos(event.angle)*160,cy+Math.sin(event.angle)*160,cx+Math.cos(event.angle)*52,cy+Math.sin(event.angle)*52,color);ctx.setLineDash([]);
+          ctx.translate(x,y);ctx.rotate(event.angle+Math.PI);ctx.fillStyle=color;
+          if(event.kind==='slash'){ctx.fillRect(-16,-4,32,8);ctx.fillRect(3,-10,3,20);}
+          else{ctx.beginPath();ctx.moveTo(11,0);ctx.lineTo(-7,-6);ctx.lineTo(-7,6);ctx.closePath();ctx.fill();}
+        }ctx.restore();
+      }
+    }
+    // The stationary marker and directional guard never grant dodge movement.
+    ctx.save();ctx.translate(cx,cy);ctx.rotate(Math.PI/4);ctx.fillStyle='#9cd9c9';ctx.shadowColor='#84ceb8';ctx.shadowBlur=14;ctx.fillRect(-9,-9,18,18);ctx.restore();
+    if(s.active){ctx.save();ctx.shadowColor=t<=s.perfectUntil?'#fff0ad':'#c7a873';ctx.shadowBlur=t<=s.perfectUntil?18:6;
+      arc(cx,cy,48,s.angle-s.params.arc/2,s.angle+s.params.arc/2,t<=s.perfectUntil?'#fff1bd':'#e0be7b',9);ctx.restore();}
+    else{ctx.setLineDash([4,6]);arc(cx,cy,48,s.angle-s.params.arc/2,s.angle+s.params.arc/2,t<s.brokenUntil?'#c77f79':'#627b86',3);ctx.setLineDash([]);}
+    for(const c of s.contacts){const age=t-c.time;if(age<0||age>.8)continue;ctx.save();ctx.globalAlpha=1-age/.8;
+      text(c.outcome==='perfect'?'ТОЧНЫЙ БЛОК':c.outcome==='block'?'БЛОК −'+c.damage:c.outcome==='break'?'ПРОБИТИЕ −'+c.damage:'−'+c.damage,
+        cx,cy-66-age*40,c.outcome==='perfect'?'#fff1bd':c.outcome==='block'?'#a4d6b8':'#edaaa2',17);ctx.restore();}
+    if(!sim){text(record?'МОЖНО ПОВТОРИТЬ':'ЩИТ ПОВОРАЧИВАЕТСЯ. ТЫ — НЕТ.',cx,40,'#d8c595',18);text('СТРЕЛКИ / WASD · ДЖОЙСТИК · КАСАНИЕ',cx,366,'#97afbf',13);}
+    else if(t<s.preparation){text('ПРИГОТОВЬСЯ',cx,65,'#e8bf78',24);text((s.preparation-t).toFixed(1)+' с',cx,110,'#e8eff2',27);text('ДЕРЖИ НАПРАВЛЕНИЕ — ПОДНИМАЙ БЛОК',cx,350,'#a9c2cc',13);}
+    else text(s.active?'ЩИТ ПОДНЯТ':'ОПУСТИ ЩИТ ДЛЯ ВОССТАНОВЛЕНИЯ',cx,366,'#9eb7bd',13);
+  }
+  function frame(now){
+    if(!sim)return;
+    const dt=last?(now-last)/1000:0;last=now;
+    if(!paused){if(dt>.35){pause();}else{B.step(sim,dt,input());hud(sim);draw();if(sim.ended){finish();return;}}}
+    frameId=requestAnimationFrame(frame);
+  }
+  fillSkills();settings();draw();
+})();

@@ -814,6 +814,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             archclass_id=profile["archclass_id"],
             archclass_stage=profile["archclass_stage"],
             progression_level=profile["progression_level"],
+            defense_mode=self._defense_mode_locked(user),
             level=profile["level"],
             loadout=[k for k in json.loads(profile["loadout"]) if self._arena_content_enabled_locked(chat,'skill',k)],
             granted_skills=[k for k in self._arena_grants_locked(chat, user, personal) if self._arena_content_enabled_locked(chat,'skill',k)],

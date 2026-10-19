@@ -426,10 +426,10 @@ def combat_modifiers(actor, target, skill, rng):
 
 
 def after_action(
-    actor, target, skill, hit, damage, critical, obeyed, previous_negatives, skills, rng
+    actor, target, skill, hit, damage, critical, obeyed, previous_negatives, skills, rng, *, blocked=False
 ):
     m = actor.setdefault("mechanics", {})
-    if damage and has_trait(target, "revenge"):
+    if (damage or blocked) and has_trait(target, "revenge"):
         t = target.setdefault("mechanics", {})
         t["grudge"] = min(3, t.get("grudge", 0) + 1)
     if skill.skill_id in {"answer_for_it", "whole_family"}:

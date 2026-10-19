@@ -72,6 +72,13 @@ def add_qte_lab_routes(app: web.Application, root: Path) -> None:
     app.router.add_get("/static/qte-engine.js", patterns)
     app.router.add_get("/static/qte-view.js", pattern_view)
 
+    async def block_view(request):
+        return web.FileResponse(root / "qte-block-view", headers={
+            "Content-Type":"application/javascript; charset=utf-8", "Cache-Control":"no-cache",
+        })
+
+    app.router.add_get("/static/qte-block-view.js", block_view)
+
     async def touch_input(request):
         return web.FileResponse(
             root / "qte-input",

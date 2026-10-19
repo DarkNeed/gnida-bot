@@ -1,0 +1,32 @@
+/* Read-only live presentation; damage and block outcomes are replayed by Python. */
+(()=>{
+  window.QTEBlockView={draw};
+  function draw(ctx,canvas,s){
+    const E=QTEUnique,cx=360,cy=200,t=s.time;
+    function text(value,x,y,color='#b9cddd',size=15){ctx.font=`500 ${Math.max(size,Math.min(23,7200/Math.max(1,canvas.clientWidth)))}px Segoe UI,Arial,sans-serif`;ctx.fillStyle=color;ctx.textAlign='center';ctx.fillText(value,x,y);}
+    function line(x,y,x2,y2,c,w=1){ctx.strokeStyle=c;ctx.lineWidth=w;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x2,y2);ctx.stroke();}
+    function arc(r,a,b,c,w=2){ctx.strokeStyle=c;ctx.lineWidth=w;ctx.beginPath();ctx.arc(cx,cy,r,a,b);ctx.stroke();}
+    ctx.clearRect(0,0,720,400);ctx.fillStyle='#09131f';ctx.fillRect(0,0,720,400);
+    for(let x=0;x<=720;x+=40)line(x,0,x,400,'#162b3b');for(let y=0;y<=400;y+=40)line(0,y,720,y,'#162b3b');
+    arc(145,0,Math.PI*2,'#263c4b');arc(92,0,Math.PI*2,'#213945');
+    if(t>=s.preparation)for(const e of s.events){
+      if(s.enabledStrikes&&!s.enabledStrikes[e.strike]||t<e.at-e.warning||t>e.at+.26)continue;
+      const v=E.clamp((t-e.at+e.warning)/e.warning,0,1),c=e.tier==='critical'?'#fff0b6':e.tier==='minor'?'#92b4c6':'#e7bb77';
+      ctx.save();ctx.globalAlpha=e.resolved?.15:.4+v*.6;
+      if(e.kind==='wave'){arc(155-v*107,0,Math.PI*2,c,4);text('ВОЛНА · ПОДНИМИ БЛОК',cx,309,'#f0cd92',13);}
+      else{
+        const r=162-v*113,x=cx+Math.cos(e.angle)*r,y=cy+Math.sin(e.angle)*r;
+        ctx.setLineDash([5,6]);line(cx+Math.cos(e.angle)*160,cy+Math.sin(e.angle)*160,cx+Math.cos(e.angle)*52,cy+Math.sin(e.angle)*52,c);ctx.setLineDash([]);
+        ctx.translate(x,y);ctx.rotate(e.angle+Math.PI);ctx.fillStyle=c;
+        if(e.kind==='slash'){ctx.fillRect(-16,-4,32,8);ctx.fillRect(3,-10,3,20);}else{ctx.beginPath();ctx.moveTo(11,0);ctx.lineTo(-7,-6);ctx.lineTo(-7,6);ctx.closePath();ctx.fill();}
+      }ctx.restore();
+    }
+    ctx.save();ctx.translate(cx,cy);ctx.rotate(Math.PI/4);ctx.fillStyle='#9cd9c9';ctx.shadowColor='#84ceb8';ctx.shadowBlur=14;ctx.fillRect(-9,-9,18,18);ctx.restore();
+    if(s.active){ctx.save();ctx.shadowColor=t<=s.perfectUntil?'#fff0ad':'#c7a873';ctx.shadowBlur=12;arc(48,s.angle-s.params.arc/2,s.angle+s.params.arc/2,t<=s.perfectUntil?'#fff1bd':'#e0be7b',9);ctx.restore();}
+    else{ctx.setLineDash([4,6]);arc(48,s.angle-s.params.arc/2,s.angle+s.params.arc/2,t<s.brokenUntil?'#c77f79':'#627b86',3);ctx.setLineDash([]);}
+    for(const c of s.contacts){const age=t-c.time;if(age<0||age>.8)continue;ctx.save();ctx.globalAlpha=1-age/.8;
+      text(c.outcome==='perfect'?'ТОЧНЫЙ БЛОК':c.outcome==='block'?'БЛОК −'+c.damage:c.outcome==='break'?'ПРОБИТИЕ −'+c.damage:'−'+c.damage,cx,134-age*40,c.outcome==='perfect'?'#fff1bd':c.outcome==='block'?'#a4d6b8':'#edaaa2',17);ctx.restore();}
+    if(t<s.preparation){text('ПРИГОТОВЬСЯ',cx,65,'#e8bf78',24);text((s.preparation-t).toFixed(1)+' с',cx,110,'#e8eff2',27);}
+    else text(s.active?'ЩИТ ПОДНЯТ':'ОПУСТИ ЩИТ — ВОССТАНОВИ СТОЙКОСТЬ',cx,368,'#9eb7bd',13);
+  }
+})();

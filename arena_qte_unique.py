@@ -199,3 +199,44 @@ def add_unique_qte_routes(app, root):
     app.router.add_get("/qte-lab/unique", page)
     app.router.add_get("/qte-lab/unique/", page)
     app.router.add_get("/qte-lab/unique/{name:engine|client}.js", script)
+    add_block_qte_routes(app, root)
+
+
+def add_block_qte_routes(app, root):
+    """Read-only prototype; no battle/settings routes or account mutations."""
+    folder = root / "qte-block"
+
+    async def page(request):
+        version = hashlib.sha256(
+            (root / "qte-input").read_bytes()
+            + (root / "qte-input.css").read_bytes()
+            + (root / "qte-unique" / "engine").read_bytes()
+            + b"".join(
+                (folder / name).read_bytes()
+                for name in ("engine", "client", "style.css")
+            )
+        ).hexdigest()[:16]
+        catalog = json.dumps(review_catalog(), ensure_ascii=False).replace(
+            "<", "\\u003c"
+        )
+        return web.Response(
+            text=(folder / "index.html")
+            .read_text(encoding="utf-8")
+            .replace("__REV__", version)
+            .replace("__CATALOG__", catalog),
+            content_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def script(request):
+        return web.FileResponse(
+            folder / request.match_info["name"],
+            headers={
+                "Content-Type": "application/javascript; charset=utf-8",
+                "Cache-Control": "no-cache",
+            },
+        )
+
+    app.router.add_get("/qte-lab/block", page)
+    app.router.add_get("/qte-lab/block/", page)
+    app.router.add_get("/qte-lab/block/{name:engine|client}.js", script)

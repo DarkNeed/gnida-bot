@@ -19,6 +19,8 @@ def render_arena_index(root: Path) -> str:
         "qte-input.css",
         "qte-unique/engine",
         "qte-view",
+        "qte-block/engine",
+        "qte-block-view",
     ):
         if (root / name).exists():
             revision.update((root / name).read_bytes())
@@ -38,6 +40,8 @@ def render_arena_index(root: Path) -> str:
             'src="/static/qte-engine.js"', f'src="/static/qte-engine.js?v={version}"'
         )
         .replace('src="/static/qte-view.js"', f'src="/static/qte-view.js?v={version}"')
+        .replace('src="/qte-lab/block/engine.js"', f'src="/qte-lab/block/engine.js?v={version}"')
+        .replace('src="/static/qte-block-view.js"', f'src="/static/qte-block-view.js?v={version}"')
         .replace('src="/qte-lab/engine.js"', f'src="/qte-lab/engine.js?v={version}"')
         .replace(
             'href="/static/qte-live.css"', f'href="/static/qte-live.css?v={version}"'

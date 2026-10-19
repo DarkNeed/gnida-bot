@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0c1420">
+<title>Блокирование · лаборатория Гнида-бота</title>
+<link rel="stylesheet" href="/static/qte-input.css?v=__REV__"><link rel="stylesheet" href="/static/qte-block/style.css?v=__REV__">
+<script id="catalog" type="application/json">__CATALOG__</script><script defer src="/static/qte-input.js?v=__REV__"></script><script defer src="/qte-lab/unique/engine.js?v=__REV__"></script><script defer src="/qte-lab/block/engine.js?v=__REV__"></script><script defer src="/qte-lab/block/client.js?v=__REV__"></script></head>
+<body><main class="lab"><header><div><p class="eyebrow">ГНИДА / ЛАБОРАТОРИЯ ЗАЩИТЫ</p><h1>Выстоять.</h1><p class="muted">Броня вместо уклонения. Тестовый режим — без изменений обычных боёв.</p></div><a href="/qte-lab/unique/">← Атлас атак</a></header>
+<div class="layout"><section class="workbench">
+<div class="title"><div><span class="eyebrow" id="class-name"></span><h2 id="skill-name"></h2><p class="muted" id="pattern-name"></p></div><b class="draft">НА СОГЛАСОВАНИЕ</b></div>
+<div class="gauges"><div><label>Тестовое здоровье <strong id="hp-value"></strong></label><div class="track"><i id="hp-fill"></i></div></div><div><label>Стойкость <strong id="guard-value"></strong></label><div class="track guard"><i id="guard-fill"></i></div></div></div>
+<div class="readout"><span id="status">Блокируй направление атаки.</span><b id="time">ГОТОВ</b></div>
+<div class="surface"><canvas id="game" width="720" height="400" tabindex="0" aria-label="Блокирование: стрелки или WASD направляют щит, пробел поднимает блок"></canvas><button id="resume" hidden>Продолжить испытание</button></div>
+<div class="counters"><span>Блоки <b id="blocks">0</b></span><span>Точные <b id="perfects">0</b></span><span>Пропущено <b id="misses">0</b></span><span>Пробития <b id="breaks">0</b></span><span>Урон <b id="damage">0</b></span></div>
+<p class="feedback" id="feedback" role="status">Подними защиту в нужную сторону. Перед самой атакой — точный блок. Отпусти для восстановления стойкости.</p>
+<div class="actions"><button class="primary" id="start">Начать испытание ↗</button><button id="stop" hidden>Завершить</button><button id="shuffle">Другой узор ↻</button></div>
+<div class="controls" id="controls" hidden><div><p>Удерживай направление — щит поднят.<br>Отпусти и подними снова для точного блока.</p><div class="pad" aria-label="Направление защиты"><button data-dir="up" aria-label="Защита сверху">↑</button><button data-dir="left" aria-label="Защита слева">←</button><button data-dir="down" aria-label="Защита снизу">↓</button><button data-dir="right" aria-label="Защита справа">→</button></div></div><button id="raise" class="raise">Держать блок<br><small>Пробел · текущее направление</small></button><button id="stick" class="qte-stick" aria-label="Джойстик направления защиты"><span aria-hidden="true"></span></button></div>
+<p class="muted">На поле можно удерживать касание со стороны атаки. Круговая волна не требует направления, но блок нужно поднять незадолго до удара.</p>
+<div class="summary" id="summary" hidden></div><div class="rating"><span>Как ощущения?</span><button data-rate="Легко">Легко</button><button data-rate="В самый раз">В самый раз</button><button data-rate="Сложно">Сложно</button></div><ol id="journal"></ol>
+</section><aside><details open><summary>Приём и характеристики</summary><div class="settings">
+<label for="class-filter">Класс / противник</label><select id="class-filter"></select><label for="skill">Навык</label><select id="skill"></select>
+<div class="examples"><button data-example="warning_shot">Залп Солдато</button><button data-example="tigerslayer_flurry">Тигробой</button><button data-example="kit_eclipse">Глаза Кита</button></div>
+<p class="muted">Это отдельная интерпретация атак для блокирования: ритм, направления, тяжёлые удары и волны. Не копия траекторий уклонения.</p>
+<div class="presets"><button data-preset="light">Без брони</button><button data-preset="tank" class="selected">Танк</button><button data-preset="fortress">Крепость</button></div>
+<label for="physical">Физическая защита <output id="physical-value">35</output></label><input id="physical" type="range" min="0" max="100" value="35">
+<label for="magic">Магическая защита <output id="magic-value">35</output></label><input id="magic" type="range" min="0" max="100" value="35">
+<label for="attack">Атакующая характеристика врага <output id="attack-value">30</output></label><input id="attack" type="range" min="0" max="100" value="30">
+<label for="accuracy">Точность врага <output id="accuracy-value">85%</output></label><input id="accuracy" type="range" min="0" max="100" value="85">
+<div class="numbers"><p><span>Защита против этой атаки</span><b id="armor-info"></b></p><p><span>Сектор блока</span><b id="arc-info"></b></p><p><span>Окно точного блока</span><b id="perfect-info"></b></p><p><span>Подготовка + бой</span><b>1 + 8,5 с</b></p></div>
+<label for="power">Сила атаки (тестовая)</label><input id="power" type="number" min="1" max="1000" value="30"><label for="hp">Тестовые HP</label><input id="hp" type="number" min="1" max="5000" value="200"><label for="seed">Номер узора</label><input id="seed" type="number" min="1" max="999999" value="17">
+<p class="muted">Уклонение не используется. Броня снижает урон и улучшает стойкость, сектор и точность блока. Основная энергия не расходуется.</p>
+</div></details><details class="rules"><summary>Правила прототипа</summary><p>Обычный блок снимает 75% урона после брони. Точный блок снимает весь урон и возвращает немного стойкости. При недостатке стойкости защита частично поглощает удар и ломается на 0,65 с. Опущенная защита восстанавливается.</p><p>Удержание и поворот не обновляют точный блок. Для новой попытки опусти щит хотя бы на 0,1 с; между точными поднятиями минимум 0,32 с.</p><p>Блоки, волны, броня и все числа здесь тестовые. Прогрессия, Обиды, Стойкость класса и Воздаяние не начисляются. Данных аккаунта и наград нет.</p></details></aside></div>
+<footer>ЭКСПЕРИМЕНТ / БЛОКИРОВАНИЕ <span>Только в этой вкладке · без сохранения</span></footer></main></body></html>

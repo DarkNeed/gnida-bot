@@ -162,12 +162,12 @@ def rpg_parry(actor,target,skill):
     return (False,.65) if actor.get('is_boss') else (True,1.0)
 
 
-def rpg_received_damage(target, damage, before_hp, action_id=None, raid_context=None):
-    if damage<=0: return
+def rpg_received_damage(target, damage, before_hp, action_id=None, raid_context=None, *, blocked=False):
+    if damage<=0 and not blocked: return
     m=target.setdefault('rpg_state',{})
     fresh=action_id is None or m.get('received_action')!=action_id
     if action_id is not None: m['received_action']=action_id
-    path_received(target,damage,branch(target),fresh)
+    path_received(target,damage,branch(target),fresh,blocked=blocked)
     # A shielded ally credits its living Paladin, once for the whole enemy
     # action (including an AoE or a summon follow-up), not once per victim.
     if raid_context is not None:
@@ -181,14 +181,14 @@ def rpg_received_damage(target, damage, before_hp, action_id=None, raid_context=
                 _grant_retribution(source,action_id)
     if target['hp']<=0: return
     m=target.setdefault('rpg_state',{})
-    if has_trait(target,'rpg_rally'):
+    if damage>0 and has_trait(target,'rpg_rally'):
         m['rally_ceiling']=max(m.get('rally_ceiling',0),before_hp)
         m['rally']=min(target['stats']['max_hp'],m.get('rally',0)+damage)
     mana_guard = (any(e.get('id') == 'mana_barrier' for e in target['effects'])
                   or branch(target) == 'mage_necromancer' and m.get('summon', 0) > 0)
     if fresh and has_trait(target, 'rpg_barrier_charge') and mana_guard:
         m['mana'] = min(3, m.get('mana', 0) + 1)
-    if fresh and branch(target)=='priest_paladin' and any(e['kind']=='incoming_damage_multiplier' and e.get('value',1)<1 for e in target['effects']):
+    if fresh and branch(target)=='priest_paladin' and (blocked or any(e['kind']=='incoming_damage_multiplier' and e.get('value',1)<1 for e in target['effects'])):
         _grant_retribution(target,action_id)
 
 
@@ -309,7 +309,7 @@ def rpg_after_action(actor,target,skill,hit,damage,before_hp,rng,effective_stat,
     notes+=post_action(actor,target,skill,hit,damage,key,context,allies)
     # A prepared counter is one reaction, not another selectable player turn.
     counter=next((e for e in target['effects'] if e['kind']=='rpg_counter'),None)
-    if damage and target['hp']>0 and actor['hp']>0 and counter:
+    if (damage or context.get('blocked_contact')) and target['hp']>0 and actor['hp']>0 and counter:
         target['effects']=[e for e in target['effects'] if e is not counter]
         dealt=min(actor['hp'],max(1,round(counter['value']*(1+effective_stat(target,'physical_attack')/20)*100/(100+effective_stat(actor,'physical_defense')*4))))
         if branch(target)=='warrior_knight' and target['level']>=18 and any(e.get('id')=='armor_split' for e in actor['effects']):
