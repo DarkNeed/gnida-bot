@@ -93,7 +93,7 @@ class InteractiveStoreTests(unittest.IsolatedAsyncioTestCase):
         c = qte["challenge"]
         self.assertIsNotNone(c)
         proof = dict(abort=True) if abort else recording(c, perfect)["proof"]
-        with patch("arena_qte_live.time.time", return_value=c["started"] + 6.2):
+        with patch("arena_qte_live.time.time", return_value=c["expires"] - 0.5):
             if scope == "battle":
                 return await self.db.arena_interactive_action(
                     row["token"],
@@ -359,3 +359,33 @@ class InteractiveStoreTests(unittest.IsolatedAsyncioTestCase):
         row = await self.complete(row, 10, perfect=True, scope="raid")
         after = json.loads(row["data_json"])
         self.assertEqual(after["players"]["10"]["fighter"]["hp"], hp)
+
+    async def test_kit_real_raid_uses_one_pattern_with_two_native_groups(self):
+        row = await self.db.arena_raid_create(1, 10, boss_id="kit", silent=True)
+        row = await self.db.arena_raid_setup(
+            row["token"], 10, "start", expected_revision=row["revision"]
+        )
+        data = json.loads(row["data_json"])
+        data["players"]["10"]["fighter"]["hp"] = 10000
+        data["intent"].update(
+            skill="kit_reflection", targets=["10"], phase=1, kind="kit"
+        )
+        self.db.connection.execute(
+            "UPDATE arena_raids SET data_json=? WHERE token=?",
+            (json.dumps(data), row["token"]),
+        )
+        self.db.connection.commit()
+        row = await self.db.arena_interactive_raid(
+            row["token"], 10, data["round"], "defend"
+        )
+        c = (await self.db.arena_qte_view("raid", row["token"], 10))["challenge"]
+        self.assertEqual(c["version"], 2)
+        self.assertEqual(c["profile"]["strikes"], 2)
+        self.assertEqual(c["subskills"], ["kit_reflection", "kit_ash"])
+        row = await self.complete(row, 10, abort=True, scope="raid")
+        after = json.loads(row["data_json"])
+        self.assertEqual(after["round"], 2)
+        self.assertIsNone(await self.db.arena_qte_view("raid", row["token"], 10))
+        events = [e for e in after["log"] if e.get("skill") in c["subskills"]]
+        self.assertEqual(len(events), 2)
+        self.assertTrue(all(e["damage"] > 0 for e in events))

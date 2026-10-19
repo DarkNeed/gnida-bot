@@ -1,0 +1,48 @@
+/* Pointer input only. No movement bonuses: the simulation/server enforce speed. */
+(function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.QTETouch=api;})(globalThis,function(){
+  'use strict';
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  function relativeStart(pointer,player){return {x:pointer.x,y:pointer.y,playerX:player.x,playerY:player.y};}
+  function relativeTarget(origin,pointer,rect,width=720,height=320){
+    return [Math.round(clamp(origin.playerX+(pointer.x-origin.x)*width/rect.width,0,width)*100)/100,
+      Math.round(clamp(origin.playerY+(pointer.y-origin.y)*height/rect.height,0,height)*100)/100];
+  }
+  function stickVector(x,y,radius){
+    const length=Math.hypot(x,y),dead=radius*.12;
+    if(length<=dead)return {x:0,y:0};
+    const strength=clamp((length-dead)/(radius-dead),0,1);
+    return {x:Math.round(x/length*strength*1000)/1000,y:Math.round(y/length*strength*1000)/1000};
+  }
+  function attach({canvas,stick,getPlayer,isDefense=()=>true,enabled=()=>true,onTap=()=>{},onTouch=()=>{},width=720,height=320}){
+    const abort=new AbortController(),on=(el,event,fn)=>el.addEventListener(event,fn,{signal:abort.signal});
+    let drag=null,origin=null,target=null,held=null,vector={x:0,y:0};
+    const point=e=>({x:e.clientX,y:e.clientY});
+    const capture=(el,id)=>{try{el.setPointerCapture(id);}catch{}};
+    function resetStick(){vector={x:0,y:0};stick?.style.setProperty('--stick-x','0px');stick?.style.setProperty('--stick-y','0px');stick?.classList.remove('held');}
+    function clear(){drag=null;origin=null;target=null;held=null;resetStick();}
+    on(canvas,'pointerdown',e=>{
+      if(!enabled())return;e.preventDefault();if(e.pointerType==='touch')onTouch();
+      if(!isDefense()){onTap();return;}
+      if(drag!==null||held!==null)return;
+      drag=e.pointerId;capture(canvas,drag);origin=relativeStart(point(e),getPlayer());
+      // Touching anywhere does not move the character towards the fingertip.
+      target=[origin.playerX,origin.playerY];canvas.focus({preventScroll:true});
+    });
+    on(canvas,'pointermove',e=>{if(e.pointerId!==drag||!origin)return;e.preventDefault();target=relativeTarget(origin,point(e),canvas.getBoundingClientRect(),width,height);});
+    for(const event of ['pointerup','pointercancel','lostpointercapture'])on(canvas,event,e=>{if(e.pointerId===drag){drag=null;origin=null;target=null;}});
+    function updateStick(e){
+      const r=stick.getBoundingClientRect(),x=e.clientX-r.left-r.width/2,y=e.clientY-r.top-r.height/2,radius=r.width*.38;
+      vector=stickVector(x,y,radius);const length=Math.hypot(x,y)||1,travel=Math.min(length,radius*.7);
+      stick.style.setProperty('--stick-x',(x/length*travel).toFixed(1)+'px');stick.style.setProperty('--stick-y',(y/length*travel).toFixed(1)+'px');
+    }
+    if(stick){
+      on(stick,'pointerdown',e=>{if(!enabled()||!isDefense()||held!==null||drag!==null)return;
+        e.preventDefault();onTouch();held=e.pointerId;target=null;capture(stick,held);stick.classList.add('held');updateStick(e);});
+      on(stick,'pointermove',e=>{if(e.pointerId!==held)return;e.preventDefault();updateStick(e);});
+      for(const event of ['pointerup','pointercancel','lostpointercapture'])on(stick,event,e=>{if(e.pointerId===held){held=null;resetStick();}});
+    }
+    if(typeof window!=='undefined')on(window,'resize',clear);
+    return {input(){return held!==null?{...vector}:target?{target:[...target]}:{x:0,y:0};},clear,destroy(){clear();abort.abort();}};
+  }
+  return {relativeStart,relativeTarget,stickVector,attach};
+});

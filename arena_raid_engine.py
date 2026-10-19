@@ -115,9 +115,23 @@ def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True
     qte={}
     attack=actor.pop('_qte_attack',None)
     if attack is not None:qte['attack']=attack
+    pattern_attack=actor.pop('_qte_pattern_attack',None)
+    if pattern_attack is not None:qte['pattern_attack']=pattern_attack
     guard=target.get('_qte_guard')
     if guard and raid_context and raid_context.get('_qte_boss_phase') and guard.get('skill')==raid_context.get('intent',{}).get('skill'):
         qte['dodge']=guard['dodge']
+        if 'pattern_dodge' in guard:
+            result=deepcopy(guard['pattern_dodge'])
+            subskills=guard.get('subskills')
+            if subskills:
+                if skill_id in subskills:
+                    group=subskills.index(skill_id)
+                    result['contacts']=[dict(c,strike=0) for c in result['contacts'] if c['strike']==group]
+                    qte['dodge']=[guard['dodge'][group]]
+                else:
+                    result=None
+                    qte.pop('dodge',None)
+            if result is not None:qte['pattern_dodge']=result
     return resolve_skill(
         pair_state(actor, target),
         "a",
@@ -379,6 +393,9 @@ def resolve_round(data, skills, rng=None):
         result=player.pop('qte_result',{})
         if 'attack' in result:player['fighter']['_qte_attack']=result['attack']
         if 'dodge' in result:player['fighter']['_qte_guard']=dict(dodge=result['dodge'],skill=result.get('guard_skill'))
+        if 'pattern_attack' in result:player['fighter']['_qte_pattern_attack']=result['pattern_attack']
+        if 'pattern_dodge' in result:
+            player['fighter']['_qte_guard'].update(pattern_dodge=result['pattern_dodge'],subskills=result.get('guard_subskills'))
     order = sorted(
         living, key=lambda k: (-effective_stat(living[k]["fighter"], "speed"), int(k))
     )
@@ -627,6 +644,7 @@ def resolve_round(data, skills, rng=None):
     data.pop('_qte_boss_phase',None)
     for player in data['players'].values():
         player['fighter'].pop('_qte_attack',None)
+        player['fighter'].pop('_qte_pattern_attack',None)
         player['fighter'].pop('_qte_guard',None)
     data["log"] = data["log"][-80:]
     data.pop("round_before", None)

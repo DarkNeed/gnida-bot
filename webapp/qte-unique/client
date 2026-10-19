@@ -1,0 +1,229 @@
+/* Local review only: embedded catalogue, no gameplay API, payments or persistence. */
+(()=>{
+  'use strict';
+  const E=window.QTEUnique,$=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d');
+  const catalog=JSON.parse($('catalog').textContent),profiles=catalog.map(E.profile),byId=new Map(profiles.map(p=>[p.id,p]));
+  const statIds=['accuracy','evasion','enemy-accuracy','enemy-evasion'];
+  let selected=profiles.find(p=>p.skill.base_id==='tigerslayer_flurry')||profiles[0],filtered=[],mode='defense',sim=null,paused=false,lastFrame=0,record=null,attempt=0;
+  let keys=new Set(),pointers=new Map();
+  const touch=window.QTETouch.attach({canvas,stick:$('stick'),getPlayer:()=>sim.player,
+    isDefense:()=>mode==='defense',enabled:()=>!!sim&&!paused,onTap:hit,
+    onTouch:()=>document.documentElement.classList.add('qte-touch-mode')});
+  const statControls=[...document.querySelectorAll('.settings input,.settings select,.settings button,#shuffle')];
+  const icons={cutie:'♡',jock:'♜',nerd:'⌘',thumb:'⌖',index:'≡',middle:'⛓',ring:'✦',pinky:'✧',mage:'◉',warrior:'⚔',priest:'✝',hunter:'☾',raid:'◈'};
+  function stats(){return {accuracy:+$('accuracy').value,evasion:+$('evasion').value,enemyAccuracy:+$('enemy-accuracy').value,enemyEvasion:+$('enemy-evasion').value};}
+  function seed(){return E.clamp(Math.floor(+$('seed').value||17),1,999999);}
+  function model(){return {damageBase:E.clamp(+$('damage-base').value||40,1,1000),hp:E.clamp(+$('test-hp').value||200,1,5000)};}
+  function health(s){
+    const m=model(),hp=s?s.hp:m.hp,max=s?s.initialHp:m.hp,damage=s?s.damage:0;
+    $('hp-label').textContent=mode==='defense'?'Испытатель':'Мишень';$('hp-value').textContent=hp+' / '+max+' HP';
+    $('hp-fill').style.width=(100*hp/max)+'%';$('hp-track').setAttribute('aria-valuemax',max);$('hp-track').setAttribute('aria-valuenow',hp);
+    $('hp-track').closest('.health-panel').classList.toggle('depleted',hp<=0);
+    $('damage-value').textContent=(mode==='defense'?'Получено: ':'Нанесено: ')+damage;
+    if(!s)$('chance-status').textContent='Только тестовое здоровье';
+    else if(mode==='defense')$('chance-status').textContent='Касаний: '+s.contacts.length;
+    else{const f=E.attackFrame(s);$('chance-status').textContent=f.phase==='ready'?'Подготовка: '+f.remaining.toFixed(1)+' с':f.phase==='cue'?'Сигнал перед ударом':s.results[f.index]===true?'Удар засчитан':s.results[f.index]===false?'Попытки исчерпаны':'Попыток: '+f.attemptsLeft+' / 2';
+      $('hit').disabled=!f.canHit||s.ended;}
+  }
+  function clearInput(){keys.clear();pointers.clear();touch.clear();}
+  function controls(){
+    statControls.forEach(el=>el.disabled=!!sim);
+    $('start').hidden=!!sim;$('hit').hidden=!sim||mode!=='attack'||paused;$('stop').hidden=!sim;
+    $('movement').hidden=!sim||mode!=='defense'||paused;$('resume').hidden=!paused;
+    $('idle').hidden=!!sim||!!record;canvas.dataset.phase=paused?'paused':sim?.kind||'idle';
+    document.querySelectorAll('[data-mode]').forEach(b=>{b.disabled=!!sim;b.classList.toggle('selected',b.dataset.mode===mode);b.setAttribute('aria-pressed',String(b.dataset.mode===mode));});
+  }
+  function feedback(text,kind=''){const node=$('feedback');node.textContent=text;node.className=kind;}
+  function dots(mask=[]){$('strike-dots').replaceChildren(...Array.from({length:selected.strikes},(_,i)=>{const dot=document.createElement('i');dot.className=mask[i]===true?'success':mask[i]===false?'fail':'';return dot;}));}
+  function labels(){
+    document.documentElement.style.setProperty('--color',selected.color);
+    $('selected-name').textContent=selected.skill.name;$('selected-class').textContent=selected.skill.class_name;
+    $('selected-origin').textContent=selected.skill.origin+' · '+(selected.skill.damage_type?'атака':'враждебный эффект');
+    $('class-mark').textContent=icons[selected.skill.class_id]||'◈';
+    $('pattern-name').textContent=mode==='defense'?selected.title:'Попадание · '+selected.title;
+    $('strike-count').textContent=selected.strikes+' '+(selected.strikes===1?'удар':selected.strikes<5?'удара':'ударов');
+    $('instruction').textContent=mode==='defense'?selected.hint:selected.attackHint;
+    const d=E.defenseDifficulty(selected,stats());$('zone').textContent=Math.round(d.zone*100)+'% шкалы';$('warning').textContent=d.warning.toFixed(2)+' с';$('hits').textContent=selected.strikes;
+    statIds.forEach(id=>$(id+'-value').textContent=$(id).value+'%');
+    document.querySelectorAll('[data-example]').forEach(b=>b.classList.toggle('active',b.dataset.example===selected.skill.base_id));
+    $('strike-dots').hidden=mode==='defense';
+    $('damage-legend').textContent='При опоре '+model().damageBase+': '+Object.values(E.DAMAGE_TIERS).map(t=>t.name.toLowerCase()+' '+E.damageValue(model().damageBase,t.weight)).join(' · ')+'. У отдельных атак свои промежуточные значения. Общий урон серии может быть выше опоры.';
+    dots();if(!sim)health();
+  }
+  function filter(keep=true){
+    const cls=$('class-filter').value,family=$('family-filter').value,search=$('search').value.toLowerCase().trim();
+    filtered=profiles.filter(p=>(!cls||p.skill.class_id===cls)&&(!family||p.kind===family)&&(!search||(p.skill.name+' '+p.skill.origin+' '+p.title).toLowerCase().includes(search)));
+    $('skill').replaceChildren(...filtered.map(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.skill.name+(p.skill.origin==='Базовый навык'?'':' · '+p.skill.origin);return o;}));
+    $('filtered-count').textContent='· '+filtered.length;
+    if(filtered.length){if(!keep||!filtered.includes(selected))selected=filtered[0];$('skill').value=selected.id;labels();drawIdle();}
+    else{$('skill').append(new Option('Ничего не найдено',''));}
+    $('start').disabled=!filtered.length;$('previous').disabled=$('next').disabled=filtered.length<2;
+  }
+  function pick(p){if(sim||!p)return;selected=p;record=null;
+    $('class-filter').value='';$('family-filter').value='';$('search').value='';filter();$('skill').value=p.id;labels();feedback('Новый приём. Начни с равных характеристик.');controls();drawIdle();}
+  function background(){
+    ctx.clearRect(0,0,E.W,E.H);ctx.fillStyle='#09111d';ctx.fillRect(0,0,E.W,E.H);
+    ctx.strokeStyle='#1b3040';ctx.lineWidth=1;for(let x=20;x<E.W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,E.H);ctx.stroke();}for(let y=20;y<E.H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(E.W,y);ctx.stroke();}
+  }
+  function text(value,x,y,color='#8da7bc',size=13,align='left'){
+    // Keep important hints legible at mobile canvas resolutions.
+    const scale=E.W/Math.max(1,canvas.clientWidth);ctx.font=`500 ${Math.max(size,Math.min(22,9*scale))}px Segoe UI,sans-serif`;
+    ctx.fillStyle=color;ctx.textAlign=align;ctx.fillText(value,x,y);
+  }
+  function drawIdle(){background();}
+  function arc(cx,cy,r,start,end,color,width=4){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.arc(cx,cy,r,start,end);ctx.stroke();}
+  function mark(x,y,r,color){ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,E.TAU||Math.PI*2);ctx.fill();}
+  function heart(x,y,size,color){ctx.save();ctx.translate(x,y);ctx.scale(size/12,size/12);ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(0,5);ctx.bezierCurveTo(-16,-3,-6,-15,0,-6);ctx.bezierCurveTo(6,-15,16,-3,0,5);ctx.fill();ctx.restore();}
+  function drawAttack(s){
+    background();const f=E.attackFrame(s),style=selected.style,gold='#e8c17c',white='#e9f4fb';
+    if(f.phase==='ready'){
+      text('ПРИГОТОВЬСЯ',360,116,gold,25,'center');text(f.remaining.toFixed(1)+' с',360,164,white,28,'center');
+      text('ДВА ПРОХОДА МЕТКИ · ДО ДВУХ ПОПЫТОК',360,218,'#b9cddd',12,'center');return;
+    }
+    text('УДАР '+(f.index+1)+' / '+s.results.length,32,34,selected.color);text(f.remaining.toFixed(1)+' с',688,34,gold,13,'right');
+    if(style==='arc'||style==='orbit'){
+      const full=style==='orbit',start=full?-Math.PI/2:Math.PI,end=full?Math.PI*2:Math.PI;
+      const cx=360,cy=full?166:212,r=106;
+      arc(cx,cy,r,start,start+end,'#2b4358',10);arc(cx,cy,r,start+(f.center-f.width/2)*end,start+(f.center+f.width/2)*end,gold,16);
+      const angle=start+f.cursor*end,x=cx+Math.cos(angle)*r,y=cy+Math.sin(angle)*r;
+      ctx.strokeStyle=white;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(cx+Math.cos(angle)*55,cy+Math.sin(angle)*55);ctx.lineTo(x,y);ctx.stroke();mark(x,y,6,white);
+      if(full){text('✧',cx,cy+7,selected.color,28,'center');}else{arc(cx,cy,64,Math.PI,Math.PI*2,selected.color,2);}
+    }else if(style==='pulse'||style==='heart'){
+      const radius=30+f.center*104,active=30+f.cursor*104;
+      arc(360,166,radius,0,Math.PI*2,gold,Math.max(8,f.width*104));arc(360,166,active,0,Math.PI*2,white,3);
+      if(style==='heart')heart(360,171,36,selected.color);else mark(360,166,11,selected.color);
+    }else{
+      const left=55,width=610,y=160,center=left+f.center*width,x=left+f.cursor*width;
+      ctx.fillStyle='#172c3e';ctx.fillRect(left,y-20,width,40);ctx.fillStyle='#e4bd7340';ctx.fillRect(center-f.width*width/2,y-25,f.width*width,50);ctx.strokeStyle=gold;ctx.lineWidth=2;ctx.strokeRect(center-f.width*width/2,y-25,f.width*width,50);
+      if(style==='reticle'){
+        const yy=y+Math.sin(f.cursor*Math.PI*2+selected.phase)*45,ty=y+Math.sin(f.center*Math.PI*2+selected.phase)*45;
+        arc(center,ty,22,0,Math.PI*2,gold,2);ctx.strokeStyle=white;ctx.beginPath();ctx.moveTo(x-14,yy);ctx.lineTo(x+14,yy);ctx.moveTo(x,yy-14);ctx.lineTo(x,yy+14);ctx.stroke();
+      }else if(style==='gates'){
+        ctx.fillStyle=white;ctx.fillRect(x-3,y-50,6,100);ctx.fillStyle=selected.color;ctx.fillRect(left+width*(1-f.cursor)-2,y-38,4,76);
+      }else{
+        ctx.fillStyle=white;ctx.fillRect(x-3,y-36,6,72);
+        if(style==='scan'){text('0101   EXEC   1100',360,100,selected.color,18,'center');text('COMPILE → COMMIT',360,232,'#7e9eac',12,'center');}
+        if(style==='cross'){ctx.strokeStyle=selected.color;ctx.beginPath();ctx.moveTo(x-20,y);ctx.lineTo(x+20,y);ctx.stroke();}
+      }
+    }
+    const result=s.results[f.index];text(f.phase==='cue'?'СИГНАЛ · СЕЙЧАС НАЧНЁТСЯ':result===null?'ПОПЫТОК: '+f.attemptsLeft+' / 2 · МЕТКА ИДЁТ ТУДА И ОБРАТНО':result?'ПОПАДАНИЕ':'ПРОМАХ',360,292,result===null?'#b9cddd':result?'#8ed5b5':'#ecaaa5',12,'center');
+    drawDamage(s);
+  }
+  function drawDamage(s){
+    for(const [index,c] of s.contacts.entries()){const age=s.time-c.time;if(age<0||age>1.1)continue;
+      ctx.save();ctx.globalAlpha=Math.min(1,(1.1-age)*2);ctx.shadowColor='#050910';ctx.shadowBlur=5;
+      const x=E.clamp(c.x+12+(index%3-1)*22,26,E.W-26),y=E.clamp(c.y-16-age*40-(index%2)*14,28,E.H-22);
+      text('−'+c.damage,x,y,c.tier==='critical'?'#fff0b7':c.tier==='heavy'?'#ffd5a0':'#efb7af',c.tier==='minor'?16:24,'center');ctx.restore();}
+  }
+  function drawHazard(h,t,spent=false){
+    const warning=t<h.start,g=E.geometry(h,t),major=h.tier==='heavy'||h.tier==='critical',color=major?(h.tier==='critical'?'#fff0b7':'#e8bd7c'):selected.color;
+    ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.globalAlpha=spent?.1:warning?.55:h.tier==='minor'?.65:.95;ctx.setLineDash(warning?[7,6]:[]);
+    if(!warning&&major&&!spent){ctx.shadowColor=color;ctx.shadowBlur=h.tier==='critical'?14:6;}
+    if(h.type==='bullet'){
+      if(warning){
+        const distance=Math.hypot(h.vx,h.vy)||1;
+        ctx.globalAlpha=.3;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(h.x,h.y);ctx.lineTo(h.x+h.vx/distance*900,h.y+h.vy/distance*900);ctx.stroke();
+      }else if(g.motif==='heart')heart(g.x,g.y,g.r*2,color);
+      else if(g.motif==='star'){
+        ctx.translate(g.x,g.y);ctx.rotate(t*3);ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-10,0);ctx.lineTo(10,0);ctx.moveTo(0,-10);ctx.lineTo(0,10);ctx.stroke();
+      }else if(g.motif==='bone'||g.motif==='ice'||g.motif==='train'){
+        ctx.translate(g.x,g.y);ctx.rotate(Math.atan2(g.vy,g.vx));ctx.fillRect(-g.r*2,-g.r,g.r*4,g.r*2);
+      }else{
+        mark(g.x,g.y,g.r,color);if(g.motif==='ghost'){arc(g.x,g.y,g.r+4,0,Math.PI*2,color,1);}if(g.motif==='orb'){arc(g.x,g.y,g.r+5,0,Math.PI*2,color,2);}
+      }
+      if(!warning&&major&&!spent){ctx.globalAlpha=.95;arc(g.x,g.y,g.r+3,0,Math.PI*2,'#fff1cb',1);}
+    }else if(h.type==='line'){
+      ctx.lineWidth=warning?2:g.r*2;ctx.beginPath();ctx.moveTo(g.ax,g.ay);ctx.lineTo(g.bx,g.by);ctx.stroke();
+      if(warning){ctx.globalAlpha=.1;ctx.setLineDash([]);ctx.lineWidth=g.r*2;ctx.stroke();}
+      if(selected.kind==='eclipse'){const x=E.clamp(g.ax,20,700),y=E.clamp(g.ay,20,300);ctx.setLineDash([]);ctx.globalAlpha=.9;arc(x,y,12,0,Math.PI*2,color,2);mark(x,y,4,color);}
+    }else if(h.type==='rect'){
+      ctx.lineWidth=2;ctx.strokeRect(g.x,g.y,g.w,g.h);ctx.globalAlpha=warning?.08:.35;ctx.fillRect(g.x,g.y,g.w,g.h);
+    }else if(h.type==='ring'){
+      const radius=warning?h.r:g.r;
+      arc(g.x,g.y,radius,g.gap+g.gapWidth/2,g.gap+Math.PI*2-g.gapWidth/2,color,warning?2:g.thickness*2);
+    }else{
+      ctx.lineWidth=2;ctx.beginPath();ctx.arc(g.x,g.y,g.r,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=warning?.08:.28;ctx.fill();
+      if(h.type==='well'){
+        ctx.globalAlpha=.95;mark(g.x,g.y,g.r*.7,'#060813');ctx.globalAlpha=.7;ctx.setLineDash([]);
+        for(let j=0;j<3;j++){ctx.save();ctx.translate(g.x,g.y);ctx.rotate(t+j);ctx.scale(1,.45);arc(0,0,g.r+15+j*8,0,Math.PI*2,color,2);ctx.restore();}
+      }
+    }
+    ctx.restore();
+  }
+  function drawDefense(s){
+    background();
+    for(const h of s.hazards)if(s.time>=h.at&&s.time<h.start)drawHazard(h,s.time,s.hitIds.includes(h.damageId));
+    for(const h of s.hazards)if(s.time>=h.start&&s.time<h.end)drawHazard(h,s.time,s.hitIds.includes(h.damageId));
+    const p=s.player;ctx.save();ctx.shadowColor='#87dbc7';ctx.shadowBlur=12;ctx.translate(p.x,p.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#92e2ce';ctx.fillRect(-5,-5,10,10);ctx.restore();
+    text('КАСАНИЯ '+s.contacts.length+' · УРОН '+s.damage,690,299,s.contacts.length?'#ecaaa5':'#9eccc3',11,'right');drawDamage(s);
+  }
+  function begin(){
+    if(sim||!filtered.length)return;
+    record=null;clearInput();paused=document.hidden;
+    sim=mode==='defense'?E.defense(selected,stats(),seed(),model()):E.attack(selected,stats(),seed(),model());lastFrame=0;
+    labels();controls();health(sim);feedback(mode==='defense'?'Золотые угрозы сильнее мелких. Каждый отдельный снаряд ранит один раз.':'Подготовься. У каждого удара два прохода и до двух попыток.');
+    $('trial').scrollIntoView({block:'start',behavior:'instant'});canvas.focus({preventScroll:true});
+  }
+  function log(text,detail){
+    const li=document.createElement('li'),strong=document.createElement('strong'),small=document.createElement('small');strong.textContent=text;small.textContent=detail;li.append(strong,small);if(!attempt)$('log').replaceChildren();$('log').prepend(li);while($('log').children.length>10)$('log').lastElementChild.remove();attempt++;
+  }
+  function finish(aborted=false){
+    const s=sim;if(!s)return;
+    const r=mode==='defense'?E.defenseResult(s):E.attackResult(s),success=!aborted&&(mode==='defense'?r.hits===0:r.hits===r.total);
+    const text=aborted?`Испытание прервано · урон ${r.damage}.`:mode==='defense'?success?'Полное уклонение · урон 0.':`${r.hp<=0?'Испытатель повержен. ':''}Касаний: ${r.hits} · получено ${r.damage} урона · осталось ${r.hp} HP.`:`Попаданий ${r.hits}/${r.total} · нанесено ${r.damage} урона · у мишени ${r.hp} HP.`;
+    const detail=`${selected.skill.name} · ${mode==='defense'?'уклонение':'попадание'} · узор ${seed()} · точность/уклонение ${stats().accuracy}/${stats().evasion}, враг ${stats().enemyAccuracy}/${stats().enemyEvasion} · опора ${s.damageBase}, HP ${s.initialHp} · `+Object.entries(E.DAMAGE_TIERS).map(([id,t])=>t.name+': '+s.contacts.filter(c=>c.tier===id).length).join(', ');
+    record={text,detail,skill:selected.id,mode,seed:seed(),stats:stats(),aborted,damage:r.damage,hp:r.hp,damageBase:s.damageBase,initialHp:s.initialHp};health(s);sim=null;paused=false;clearInput();controls();dots(mode==='attack'?r.mask:[]);feedback(text,success?'success':'fail');$('phase-time').textContent=aborted?'ПРЕРВАНО':'ИТОГ';log(text,detail);
+  }
+  function hit(){if(!sim||paused||mode!=='attack')return;const ok=E.hit(sim);if(ok===null)return;const f=E.attackFrame(sim);dots(sim.results);health(sim);feedback(ok?'Попадание · урон '+sim.contacts.at(-1).damage:sim.results[f.index]===null?'Мимо — осталась ещё одна попытка.':'Две попытки потрачены: промах этим ударом.',ok?'success':'fail');drawAttack(sim);if(sim.ended)finish();}
+  function pause(){if(!sim)return;paused=true;clearInput();controls();feedback('Пауза. Нажми «Продолжить»: ожидание не засчитывает уклонение.');}
+  $('resume').addEventListener('click',()=>{if(!sim)return;paused=false;lastFrame=0;clearInput();controls();canvas.focus({preventScroll:true});});
+  $('start').addEventListener('click',begin);$('hit').addEventListener('click',hit);$('stop').addEventListener('click',()=>finish(true));
+  $('shuffle').addEventListener('click',()=>{if(!sim){$('seed').value=seed()%999999+1;record=null;controls();drawIdle();feedback('Номер узора изменён. Навык и характеристики прежние.');}});
+  $('clear').addEventListener('click',()=>{attempt=0;$('log').replaceChildren();});
+  document.querySelectorAll('[data-rate]').forEach(b=>b.addEventListener('click',()=>{if(!record){feedback('Сначала заверши испытание, затем оцени сложность.');return;}log('Оценка: '+b.dataset.rate,record.detail+' · '+record.text);}));
+  document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>{if(sim)return;mode=b.dataset.mode;record=null;labels();controls();drawIdle();feedback('Выбран режим: '+(mode==='defense'?'уклонение':'попадание')+'.');}));
+  for(const id of ['class-filter','family-filter','search'])$(id).addEventListener(id==='search'?'input':'change',()=>{if(sim)return;record=null;filter();controls();});
+  $('skill').addEventListener('change',()=>{if(sim)return;selected=byId.get($('skill').value)||selected;record=null;labels();controls();drawIdle();});
+  for(const [id,delta] of [['previous',-1],['next',1]])$(id).addEventListener('click',()=>{if(sim||filtered.length<2)return;selected=filtered[(filtered.indexOf(selected)+delta+filtered.length)%filtered.length];$('skill').value=selected.id;record=null;labels();controls();drawIdle();});
+  const presets={equal:[75,25,75,25],strong:[95,75,55,10],weak:[55,5,95,50]};
+  document.querySelectorAll('[data-preset]').forEach(b=>b.addEventListener('click',()=>{if(sim)return;presets[b.dataset.preset].forEach((v,i)=>$(statIds[i]).value=v);document.querySelectorAll('[data-preset]').forEach(x=>x.classList.toggle('selected',x===b));labels();}));
+  statIds.forEach(id=>$(id).addEventListener('input',()=>{if(!sim){document.querySelectorAll('[data-preset]').forEach(b=>b.classList.remove('selected'));labels();}}));
+  for(const id of ['damage-base','test-hp'])$(id).addEventListener('input',()=>{if(!sim){record=null;labels();controls();drawIdle();}});
+  const keymap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',KeyA:'left',KeyD:'right',KeyW:'up',KeyS:'down'};
+  window.addEventListener('keydown',e=>{
+    if(!sim||paused||/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName||''))return;
+    if(e.code==='Escape'){e.preventDefault();finish(true);return;}
+    if(e.code==='Space'&&mode==='attack'){e.preventDefault();if(!e.repeat)hit();return;}
+    if(mode==='defense'&&keymap[e.code]){e.preventDefault();keys.add(keymap[e.code]);}
+  });
+  window.addEventListener('keyup',e=>{if(keymap[e.code])keys.delete(keymap[e.code]);});
+  window.addEventListener('blur',pause);document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
+  document.querySelectorAll('[data-move]').forEach(b=>{
+    b.addEventListener('pointerdown',e=>{if(!sim||paused)return;e.preventDefault();b.setPointerCapture(e.pointerId);pointers.set(e.pointerId,b.dataset.move);touch.clear();});
+    for(const name of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(name,e=>pointers.delete(e.pointerId));
+  });
+  function input(){const all=new Set([...keys,...pointers.values()]),x=+all.has('right')-+all.has('left'),y=+all.has('down')-+all.has('up');if(x||y)return {x,y};const cmd=touch.input();return cmd.target?{target:{x:cmd.target[0],y:cmd.target[1]}}:cmd;}
+  let accumulator=0;
+  function frame(now){
+    const delta=lastFrame?(now-lastFrame)/1000:0;lastFrame=now;
+    if(sim&&!paused){
+      if(delta>.25){pause();accumulator=0;}
+      else{
+        accumulator+=delta;while(accumulator>=1/120&&sim&&!sim.ended){if(mode==='defense')E.defenseStep(sim,1/120,input());else E.attackStep(sim,1/120);accumulator-=1/120;}
+        if(sim){$('phase-time').textContent=Math.max(0,sim.duration-sim.time).toFixed(1)+' с';health(sim);if(mode==='defense')drawDefense(sim);else{drawAttack(sim);dots(sim.results);}if(sim.ended)finish();}
+      }
+    }else accumulator=0;
+    requestAnimationFrame(frame);
+  }
+  const groups=[...new Map(catalog.map(s=>[s.class_id,s.class_name])).entries()];
+  $('class-filter').append(new Option('Все классы и боссы',''),...groups.map(([id,name])=>new Option(name,id)));
+  const used=new Set(profiles.map(p=>p.kind));for(const [id,f] of Object.entries(E.FAMILIES))if(used.has(id))$('family-filter').append(new Option(f[0],id));
+  const examples=[['tigerslayer_flurry','Тигробой'],['arch_mge_bro','Ракетный прыжок'],['butt_peak','Паровозик'],['clench','Захват'],['meow','Мяу'],['arch_hacker','Взлом'],['red_etude','Краска'],['falling_star','Звёзды'],['mana_shot','Огненный шар'],['arch_mage_archmage','Пустота'],['arch_mage_necromancer','Некромант'],['holy_judgment','Кара'],['deportator_inator','Депортатор'],['kit_eclipse','Затмение']];
+  for(const [id,name] of examples){
+    const p=profiles.find(p=>name==='Паровозик'?p.skill.name==='Билет в паровозик':name==='Огненный шар'?p.skill.name==='Огненный шар':p.skill.base_id===id);
+    if(!p)continue;const b=document.createElement('button');b.dataset.example=p.skill.base_id;b.textContent=name;b.addEventListener('click',()=>pick(p));$('examples').append(b);
+  }
+  $('catalog-count').textContent=profiles.length+' профилей · '+used.size+' механик · отдельно от боёв';
+  const query=new URLSearchParams(location.search).get('skill'),deep=profiles.find(p=>p.id===query||p.skill.base_id===query||p.skill.name===query);if(deep)selected=deep;
+  filter();labels();controls();drawIdle();requestAnimationFrame(frame);
+})();

@@ -1166,7 +1166,7 @@ def resolve_skill(
     raid_context=None,
     qte=None,
 ) -> dict:
-    """Resolve a paid action; QTE masks, if any, come from server-side replay."""
+    """Resolve one paid action; masks and projectile weights are server replays."""
     rng = rng or random.SystemRandom()
     skill = validate_skill(state, side_key, skill_id, skills)
     _initialize_turn_counts(state)
@@ -1237,6 +1237,7 @@ def resolve_skill(
         skill.damage_type and not hit and roll < max(5, min(95, raw_accuracy))
     )
     strike_results = None
+    pattern_contacts = None
     strike_count = 6 if 'six_strike' in skill.tags else 3 if 'three_strike' in skill.tags else 2
     if any(tag in skill.tags for tag in ('six_strike','three_strike','two_strike')) and skill.damage_type:
         # One paid action, six independent accuracy/evasion checks. The total
@@ -1263,12 +1264,26 @@ def resolve_skill(
                     part['hit'] = not part['dodged']
             elif 'dodge' in qte:
                 r = rolls[i] if strike_results is not None else roll
-                part.update(hit=r<max(5,min(95,raw_accuracy)),dodged=False)
+                lucky=qte.get('luck_accuracy','pattern_dodge' not in qte)
+                part.update(hit=(r<max(5,min(95,raw_accuracy)) if lucky else True),dodged=False)
             if 'dodge' in qte and part['hit']:
                 avoided = (all(qte['dodge']) if i>=len(qte['dodge']) else qte['dodge'][i])
                 if avoided:part.update(hit=False,dodged=True)
         hit = any(p['hit'] for p in parts)
         dodged = not hit and any(p['dodged'] for p in parts)
+        if 'pattern_dodge' in qte or 'pattern_attack' in qte:
+            # Keep the native strike groups for effects, accuracy and animation,
+            # but damage every physical projectile independently. Never normalize
+            # their weights to a single skill-wide damage budget.
+            if 'pattern_dodge' in qte:
+                pattern_contacts = [dict(c) for c in qte['pattern_dodge']['contacts']
+                                    if 0 <= c['strike'] < len(parts) and parts[c['strike']]['hit']]
+            else:
+                pattern_contacts = [dict(id=f'strike:{i}',strike=i,weight=w)
+                                    for i,w in enumerate(qte['pattern_attack']['weights'])
+                                    if i<len(parts) and parts[i]['hit'] and w>0]
+            strike_results=parts
+            strike_count=len(parts)
     if parried:
         hit = dodged = False
         if strike_results:
@@ -1327,8 +1342,26 @@ def resolve_skill(
                 * rng.uniform(0.95, 1.05)
             ),
         )
-        damage = rpg_incoming(target,damage,rpg_branch(target))
-        if strike_results is not None:
+        if pattern_contacts is not None:
+            reference_damage=damage
+            for c in pattern_contacts:
+                multiplier=1
+                if c['strike']==strike_count-1 and any(t in skill.tags for t in ('final_train','final_execution')):
+                    last_pierce=.50 if 'final_train' in skill.tags else .60
+                    base_defense=effective_stat(target,'physical_defense')
+                    multiplier=(100+4*defense)/(100+4*base_defense*(1-min(.9,last_pierce+pet_pierce)))
+                c['potential']=max(1,math.floor(reference_damage*c['weight']*multiplier+.5))
+            potential=sum(c['potential'] for c in pattern_contacts)
+            remaining=final_incoming(target,rpg_incoming(target,potential,rpg_branch(target)),actor,raid_context) if potential else 0
+            redirected=potential-remaining
+            for c in pattern_contacts:
+                held=min(redirected,c['potential']);redirected-=held
+                c['damage']=min(target['hp'],c['potential']-held)
+                target['hp']-=c['damage']
+                strike_results[c['strike']]['damage']+=c['damage']
+            damage=sum(c['damage'] for c in pattern_contacts)
+        elif strike_results is not None:
+            damage = rpg_incoming(target,damage,rpg_branch(target))
             # Divide the same full-hit damage budget without rounding six
             # tiny hits up to an artificial minimum. Misses lose their share.
             full_damage = damage
@@ -1351,6 +1384,7 @@ def resolve_skill(
                     target["hp"] -= part["damage"]
             damage = sum(part["damage"] for part in strike_results)
         else:
+            damage = rpg_incoming(target,damage,rpg_branch(target))
             damage=final_incoming(target,damage,actor,raid_context)
             target["hp"] = max(0, target["hp"] - damage)
     final_received(target,actor,skill,hit,dodged,min(before[other]['hp'],damage))
@@ -1556,6 +1590,8 @@ def resolve_skill(
     if strike_results is not None:
         event["hits"] = [part["damage"] for part in strike_results]
         event["hit_results"] = strike_results
+    if pattern_contacts is not None:
+        event['qte_projectiles']=pattern_contacts
     state["log"].append(event)
     state["log"] = state["log"][-60:]
     if advance_turn:

@@ -56,8 +56,10 @@ const origin=process.env.QTE_LIVE_URL||'http://127.0.0.1:8105';
       const qte=await page.locator('.qte-window').boundingBox();
       assert(qte.y>=86&&qte.y+qte.height<=viewport.height-24,'QTE window safe');
       assert(qte.x>=16&&qte.x+qte.width<=viewport.width-18,'landscape side insets respected');
-      const controls=await page.locator('[data-direction="down"]').boundingBox();
-      assert(controls.y>=qte.y&&controls.y+controls.height<=qte.y+qte.height,'all dodge arrows visible without scrolling');
+      const controls=await page.locator('.qte-stick').boundingBox();
+      assert(controls.y>=qte.y&&controls.y+controls.height<=qte.y+qte.height,'joystick visible without scrolling');
+      const field=await page.locator('.qte-live-canvas').boundingBox();
+      assert(Math.abs(field.width/field.height-720/320)<.01,'canvas not stretched');
       await page.screenshot({path:path.join(__dirname,`../output/qte-lab/mobile-qte-${viewport.width}.png`)});
       await page.locator('.qte-abort').click();
       await page.evaluate(()=>{

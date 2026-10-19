@@ -3,34 +3,107 @@
   'use strict';
   let active = null;
   window.ArenaMiniGames = {play, get active(){return !!active;}};
-  function play(challenge) {
+  function play(challenge){return challenge.version===2?playPatterns(challenge):playLegacy(challenge);}
+  function playPatterns(challenge){
+    if(active)return Promise.reject(new Error('Другая мини-игра уже открыта.'));
+    const E=window.QTEUnique,V=window.QTEView;
+    if(!E||!V||!window.QTETouch?.attach)return Promise.reject(new Error('Обнови арену: новые мини-игры не загрузились.'));
+    return new Promise(resolve=>{
+      const defense=challenge.kind==='defense',p=E.profile(challenge.profile);
+      const sim=(defense?E.defense:E.attack)(p,challenge.stats,challenge.seed,{damageBase:challenge.damage_base,hp:challenge.target_hp,endOnDeath:false,enabledStrikes:challenge.enabled_strikes});
+      const cover=document.createElement('div');cover.className='qte-cover qte-pattern '+(defense?'qte-defense':'qte-attack');
+      cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Боевая мини-игра"><div class="qte-heading"><div><p class="qte-eyebrow"></p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"><span class="qte-help-full"></span><span class="qte-help-compact"></span></p><div class="qte-health"><div><span class="qte-health-label"></span><strong class="qte-hp-value"></strong></div><div class="qte-hp-track"><i></i></div></div><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="320" tabindex="0" aria-label="Пробел для попадания, пальцем или WASD для уклонения"></canvas></div><div class="qte-live-status" role="status"></div><div class="qte-controls"><div class="qte-live-buttons"><button class="qte-hit">УДАР · ПРОБЕЛ / КАСАНИЕ</button><button class="qte-abort">Пропустить · неуспех</button></div><p class="qte-touch-help">Веди пальцем по полю или тяни джойстик.<small>Касание не переносит маркер под палец.</small></p><button class="qte-stick" aria-label="Джойстик уклонения"><span aria-hidden="true"></span></button><div class="qte-live-pad"><button data-direction="up" aria-label="Вверх">↑</button><button data-direction="left" aria-label="Влево">←</button><button data-direction="down" aria-label="Вниз">↓</button><button data-direction="right" aria-label="Вправо">→</button></div></div><p class="qte-info">HP — предварительный расчёт. Итоговый урон и эффекты проверяет сервер. Пропуск защиты засчитывает все угрозы.</p></section>';
+      const find=s=>cover.querySelector(s),canvas=find('canvas'),ctx=canvas.getContext('2d');
+      find('h2').textContent=challenge.name;
+      find('.qte-eyebrow').textContent=defense?'ЗАЩИТА · '+p.title:'ТВОЯ АТАКА · ПОЙМАЙ МОМЕНТ';
+      find('.qte-help-full').textContent=defense?p.hint+' Разные снаряды ранят независимо; золотые опаснее мелких.':p.attackHint;
+      find('.qte-help-compact').textContent=defense?'Уходи от угроз. Золотые сильнее мелких. Пропуск = все касания.':'Подготовка → два прохода метки. До двух попыток на удар.';
+      find('.qte-health-label').textContent=(defense?'Твои HP':'HP цели')+' · прогноз';
+      find('.qte-abort').title=defense?'Пропуск или истечение времени засчитывают все снаряды как попадания.':'Пропуск расходует действие и не даёт попаданий.';
+      for(const selector of ['.qte-live-pad','.qte-stick','.qte-touch-help'])find(selector).hidden=!defense;
+      find('.qte-hit').hidden=defense;
+      const previousFocus=document.activeElement,overflow=document.body.style.overflow;
+      document.body.append(cover);document.body.style.overflow='hidden';canvas.focus({preventScroll:true});
+      const abort=new AbortController(),on=(el,name,fn)=>el.addEventListener(name,fn,{signal:abort.signal});
+      let tick=0,accumulator=0,last=0,done=false,keys=new Set(),pointers=new Map(),lastInput='',raf,watch;
+      const proof=defense?{ticks:816,inputs:[]}:{ticks:0,clicks:[]};
+      const touch=window.QTETouch.attach({canvas,stick:find('.qte-stick'),getPlayer:()=>sim.player,isDefense:()=>defense,onTap:hit,onTouch:()=>cover.classList.add('qte-touch-mode')});
+      const deadline=performance.now()+Math.max(0,(challenge.expires-(challenge.server_now||Date.now()/1000))*1000);
+      active={challenge:challenge.id};
+      function finish(failed=false){
+        if(done)return;done=true;cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();
+        document.body.style.overflow=overflow;cover.remove();active=null;previousFocus?.isConnected&&previousFocus.focus?.({preventScroll:true});
+        if(!defense)proof.ticks=tick;resolve(failed?{abort:true}:proof);
+      }
+      function draw(){
+        V.draw(ctx,canvas,sim);find('.qte-count').textContent=Math.max(0,sim.duration-sim.time).toFixed(1)+' С';
+        find('.qte-hp-value').textContent=sim.hp+' / '+sim.initialHp;
+        find('.qte-hp-track i').style.width=100*sim.hp/sim.initialHp+'%';
+        if(!defense){const f=E.attackFrame(sim);find('.qte-hit').disabled=!f.canHit||sim.ended;}
+      }
+      function hit(){
+        if(defense||done)return;const ok=E.hit(sim);if(ok===null)return;proof.clicks.push(tick);
+        const f=E.attackFrame(sim);find('.qte-live-status').textContent=ok?'Попадание засчитано.':sim.results[f.index]===null?'Мимо — осталась ещё одна попытка.':'Промах: две попытки потрачены.';
+        if(ok)window.ArenaAudio?.effect?.('hit');draw();if(sim.ended)finish();
+      }
+      const keymap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',KeyA:'left',KeyD:'right',KeyW:'up',KeyS:'down'};
+      on(window,'keydown',e=>{
+        if(e.code==='Escape'){e.preventDefault();finish(true);return;}
+        if(e.code==='Space'&&!defense){e.preventDefault();if(!e.repeat)hit();return;}
+        if(defense&&keymap[e.code]){e.preventDefault();keys.add(keymap[e.code]);}
+        if(e.code==='Tab'){const buttons=[...cover.querySelectorAll('button')].filter(b=>b.offsetParent&&!b.disabled),i=buttons.indexOf(document.activeElement);e.preventDefault();buttons[e.shiftKey?(i<=0?buttons.length-1:i-1):(i+1)%buttons.length]?.focus();}
+      });
+      on(window,'keyup',e=>{if(keymap[e.code])keys.delete(keymap[e.code]);});
+      on(window,'blur',()=>{keys.clear();pointers.clear();touch.clear();});on(document,'visibilitychange',()=>{if(document.hidden)finish(true);});
+      on(find('.qte-hit'),'click',hit);on(find('.qte-abort'),'click',()=>finish(true));
+      cover.querySelectorAll('[data-direction]').forEach(b=>{
+        on(b,'pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);pointers.set(e.pointerId,b.dataset.direction);touch.clear();});
+        for(const name of ['pointerup','pointercancel','lostpointercapture'])on(b,name,e=>pointers.delete(e.pointerId));
+      });
+      function input(){const all=new Set([...keys,...pointers.values()]),x=+all.has('right')-+all.has('left'),y=+all.has('down')-+all.has('up');return x||y?{x,y}:touch.input();}
+      function step(){
+        if(defense){const cmd=input(),encoded=JSON.stringify(cmd);if(encoded!==lastInput){proof.inputs.push({t:tick,...cmd});lastInput=encoded;}E.defenseStep(sim,1/120,cmd.target?{target:{x:cmd.target[0],y:cmd.target[1]}}:cmd);tick++;}
+        else{tick++;E.attackStep(sim,Math.min(sim.duration,tick/120)-sim.time);}
+        if(sim.ended){draw();finish();}
+      }
+      function frame(now){
+        if(done)return;const dt=last?(now-last)/1000:0;last=now;if(now>=deadline){finish(true);return;}
+        accumulator+=dt;while(accumulator>=1/120&&!done){accumulator-=1/120;step();}
+        if(done)return;draw();raf=requestAnimationFrame(frame);
+      }
+      watch=setInterval(()=>{if(performance.now()>=deadline)finish(true);},200);draw();raf=requestAnimationFrame(frame);
+    });
+  }
+  function playLegacy(challenge) {
     if(active) return Promise.reject(new Error('Другая мини-игра уже открыта.'));
     const E=window.QTELab;
-    if(!E) return Promise.reject(new Error('Обнови арену: модуль мини-игр не загрузился.'));
+    if(!E||!window.QTETouch?.attach) return Promise.reject(new Error('Обнови арену: модуль мини-игр или управления не загрузился.'));
     return new Promise(resolve=>{
       const cover=document.createElement('div');cover.className='qte-cover';
-      cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Боевая мини-игра"><div class="qte-heading"><div><p class="qte-eyebrow"></p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"></p><canvas class="qte-live-canvas" width="720" height="320" tabindex="0" aria-label="Пробел для попадания, WASD или стрелки для уклонения"></canvas><div class="qte-live-status" role="status"></div><div class="qte-live-buttons"><button class="qte-hit">УДАР · ПРОБЕЛ / КАСАНИЕ</button><button class="qte-abort">Пропустить · неуспех</button></div><div class="qte-live-pad"><button data-direction="up" aria-label="Вверх">↑</button><button data-direction="left" aria-label="Влево">←</button><button data-direction="down" aria-label="Вниз">↓</button><button data-direction="right" aria-label="Вправо">→</button></div><p class="qte-info">Результат проверяет сервер. Закрытие или истечение времени не дают успешного попадания/уклонения.</p></section>';
+      cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Боевая мини-игра"><div class="qte-heading"><div><p class="qte-eyebrow"></p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"></p><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="320" tabindex="0" aria-label="Пробел для попадания, движение пальцем или WASD для уклонения"></canvas></div><div class="qte-live-status" role="status"></div><div class="qte-controls"><div class="qte-live-buttons"><button class="qte-hit">УДАР · ПРОБЕЛ / КАСАНИЕ</button><button class="qte-abort">Пропустить · неуспех</button></div><p class="qte-touch-help">Веди пальцем по полю или тяни джойстик.<small>Касание не переносит маркер под палец.</small></p><button class="qte-stick" aria-label="Джойстик уклонения: удерживай и тяни в нужную сторону"><span aria-hidden="true"></span></button><div class="qte-live-pad"><button data-direction="up" aria-label="Вверх">↑</button><button data-direction="left" aria-label="Влево">←</button><button data-direction="down" aria-label="Вниз">↓</button><button data-direction="right" aria-label="Вправо">→</button></div></div><p class="qte-info">Результат проверяет сервер. Закрытие или истечение времени не дают успешного попадания/уклонения.</p></section>';
       const find=s=>cover.querySelector(s),canvas=find('canvas'),ctx=canvas.getContext('2d');
       find('h2').textContent=challenge.name;
       const defense=challenge.kind==='defense';
       cover.classList.add(defense?'qte-defense':'qte-attack');
       find('.qte-eyebrow').textContent=defense?'ЗАЩИТА · УВЕРНИСЬ ОТ АТАКИ':'ТВОЯ АТАКА · ПОЙМАЙ МОМЕНТ';
       find('.qte-help').innerHTML='<span class="qte-help-full"></span><span class="qte-help-compact"></span>';
-      find('.qte-help-full').textContent=defense?'WASD / стрелки, движение пальцем или экранные кнопки. Зелёный пунктир обозначает проходы. Чистое прохождение — полное уклонение.':'Нажми в золотой зоне. На каждую отметку — одно нажатие. Повторного броска точности нет.';
-      find('.qte-help-compact').textContent=defense?'Уклоняйся пальцем или стрелками. Зелёный пунктир — проход.':'Нажми в золотой зоне: одно нажатие на каждую отметку.';
-      find('.qte-hit').hidden=defense;find('.qte-live-pad').hidden=!defense;
+      find('.qte-help-full').textContent=defense?'WASD / стрелки, перетаскивание по полю или джойстик. Зелёный пунктир — проход. Чистое прохождение — полное уклонение.':'Нажми в золотой зоне. На каждую отметку — одно нажатие. Повторного броска точности нет.';
+      find('.qte-help-compact').textContent=defense?'Уводи маркер от клинков. Зелёный пунктир — проход.':'Нажми в золотой зоне: одно нажатие на каждую отметку.';
+      find('.qte-hit').hidden=defense;find('.qte-live-pad').hidden=!defense;find('.qte-stick').hidden=!defense;find('.qte-touch-help').hidden=!defense;
       const n=challenge.strikes;
       const sim=defense?E.defense({pattern:challenge.pattern,stats:challenge.stats,seed:challenge.seed})
         :E.attack({spec:{name:challenge.name,hits:n,damage:0,slot:n>1?.95:2.8},stats:challenge.stats,seed:challenge.seed});
       const previousFocus=document.activeElement,previousOverflow=document.body.style.overflow;
       document.body.append(cover);document.body.style.overflow='hidden';canvas.focus({preventScroll:true});
       const abort=new AbortController(),on=(el,name,fn)=>el.addEventListener(name,fn,{signal:abort.signal});
-      let tick=0,accumulator=0,last=0,done=false,keys=new Set(),pointers=new Map(),target=null,drag=null,lastInput='';
+      let tick=0,accumulator=0,last=0,done=false,keys=new Set(),pointers=new Map(),lastInput='';
+      const touch=window.QTETouch.attach({canvas,stick:find('.qte-stick'),getPlayer:()=>sim.player,
+        isDefense:()=>defense,onTap:hit,onTouch:()=>cover.classList.add('qte-touch-mode')});
       const proof=defense?{ticks:720,inputs:[]}:{ticks:0,clicks:[]};
       const deadline=performance.now()+Math.max(0,(challenge.expires-(challenge.server_now||Date.now()/1000))*1000);
       let raf,watch;
       function finish(failed=false) {
-        if(done)return;done=true;cancelAnimationFrame(raf);clearInterval(watch);abort.abort();
+        if(done)return;done=true;cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();
         document.body.style.overflow=previousOverflow;cover.remove();active=null;
         previousFocus?.isConnected&&previousFocus.focus?.({preventScroll:true});
         if(!defense)proof.ticks=tick;
@@ -49,7 +122,7 @@
       on(window,'keydown',e=>{
         if(e.code==='Escape'){e.preventDefault();finish(true);return;}
         if(e.code==='Space'&&!defense){e.preventDefault();if(!e.repeat)hit();return;}
-        if(defense&&keymap[e.code]){e.preventDefault();keys.add(keymap[e.code]);target=null;}
+        if(defense&&keymap[e.code]){e.preventDefault();keys.add(keymap[e.code]);}
         if(e.code==='Tab'){
           const buttons=[...cover.querySelectorAll('button:not([hidden])')].filter(b=>b.offsetParent);
           const index=buttons.indexOf(document.activeElement),next=e.shiftKey?(index<=0?buttons.length-1:index-1):(index+1)%buttons.length;
@@ -57,21 +130,17 @@
         }
       });
       on(window,'keyup',e=>{if(keymap[e.code])keys.delete(keymap[e.code]);});
-      on(window,'blur',()=>{keys.clear();pointers.clear();target=null;});
+      on(window,'blur',()=>{keys.clear();pointers.clear();touch.clear();});
       on(document,'visibilitychange',()=>{if(document.hidden)finish(true);});
       on(find('.qte-hit'),'click',hit);on(find('.qte-abort'),'click',()=>finish(true));
-      function point(e){const r=canvas.getBoundingClientRect();target={x:Math.round(E.clamp((e.clientX-r.left)/r.width*720,0,720)*100)/100,y:Math.round(E.clamp((e.clientY-r.top)/r.height*320,0,320)*100)/100};}
-      on(canvas,'pointerdown',e=>{e.preventDefault();canvas.setPointerCapture(e.pointerId);if(!defense){hit();return;}if(drag===null){drag=e.pointerId;point(e);}});
-      on(canvas,'pointermove',e=>{if(e.pointerId===drag)point(e);});
-      for(const name of ['pointerup','pointercancel','lostpointercapture'])on(canvas,name,e=>{if(e.pointerId===drag){drag=null;target=null;}});
       cover.querySelectorAll('[data-direction]').forEach(button=>{
-        on(button,'pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);pointers.set(e.pointerId,button.dataset.direction);target=null;});
+        on(button,'pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);pointers.set(e.pointerId,button.dataset.direction);touch.clear();});
         for(const name of ['pointerup','pointercancel','lostpointercapture'])on(button,name,e=>pointers.delete(e.pointerId));
       });
       function input(){
         const all=new Set([...keys,...pointers.values()]);
         const x=+all.has('right')-+all.has('left'),y=+all.has('down')-+all.has('up');
-        return x||y||!target?{x,y}:{target:[target.x,target.y]};
+        return x||y?{x,y}:touch.input();
       }
       function step(){
         if(defense){
@@ -123,7 +192,7 @@
       function frame(now){
         if(done)return;
         const dt=last?(now-last)/1000:0;last=now;
-        if(dt>.35||now>=deadline){finish(true);return;}
+        if(now>=deadline){finish(true);return;}
         accumulator+=dt;
         while(accumulator>=1/120&&!done){accumulator-=1/120;step();}
         if(done)return;draw();

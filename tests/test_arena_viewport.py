@@ -47,7 +47,10 @@ const tg = options.noTelegram ? undefined : {
   setHeaderColor: () => calls.push('header'),
   setBackgroundColor: () => calls.push('background'),
 };
-vm.runInNewContext(process.argv[2] + '\\nconfigureViewport();', {tg});
+const properties = new Map();
+const document = {documentElement:{style:{setProperty:(k,v)=>properties.set(k,v),removeProperty:k=>properties.delete(k)}}};
+const window = {addEventListener(){}};
+vm.runInNewContext(process.argv[2] + '\\nconfigureViewport();', {tg,document,window});
 process.stdout.write(JSON.stringify(calls));
 """
         result = subprocess.run(

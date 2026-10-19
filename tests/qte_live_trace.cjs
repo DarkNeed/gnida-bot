@@ -1,7 +1,8 @@
 const E=require('../webapp/qte-lab/engine');
 const safePath=require('./qte_lab_path.cjs');
 const config=JSON.parse(process.argv[2]);
-if(config.kind==='attack'){
+if(config.version===2){process.stdout.write(JSON.stringify(require('./qte_patterns_trace.cjs')(config)));}
+else if(config.kind==='attack'){
   const n=config.strikes,slot=n>1?.95:2.8,s=E.attack({spec:{hits:n,slot,damage:0},stats:config.stats,seed:config.seed});
   const proof={ticks:0,clicks:[]};
   for(let tick=0;tick<=Math.ceil(s.duration*120);tick++){

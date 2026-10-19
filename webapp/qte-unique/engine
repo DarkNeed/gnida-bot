@@ -1,0 +1,311 @@
+/* Shared pattern simulation. The server independently replays every input. */
+(function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.QTEUnique=api;})(globalThis,function(){
+  'use strict';
+  const W=720,H=320,TAU=Math.PI*2;
+  const DAMAGE_TIERS={minor:{name:'Мелкий',weight:.1},normal:{name:'Обычный',weight:.3},heavy:{name:'Тяжёлый',weight:.6},critical:{name:'Финальный',weight:1}};
+  function damageModel(options={}){return {damageBase:clamp(Number.isFinite(options.damageBase)?options.damageBase:40,0,1000000),initialHp:clamp(Number(options.hp)||200,1,1000000)};}
+  function impact(p,index){
+    if(p.kind==='train')return {tier:index===p.strikes-1?'critical':'heavy',weight:[.35,.6,1][Math.min(2,index)]};
+    if(p.kind==='tiger')return {tier:index===p.strikes-1?'critical':'heavy',weight:index===p.strikes-1?1:.6};
+    if(['gun','mana','charm','stars','dust','paint','ice','death'].includes(p.kind))return {tier:'normal',weight:.3};
+    if(['void','eclipse'].includes(p.kind))return {tier:'critical',weight:1};
+    return {tier:'heavy',weight:.6};
+  }
+  function damageValue(base,weight){return base<=0?0:Math.max(1,Math.round(base*weight));}
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  function hash(value){let n=2166136261;for(const c of String(value)){n=Math.imul(n^c.charCodeAt(0),16777619);}return n>>>0;}
+  function rng(seed){let n=seed>>>0;return()=>{n=(Math.imul(n,1664525)+1013904223)>>>0;return n/4294967296;};}
+  const FAMILIES={
+    slash:['Рубящие дуги','#f0a88c','Уходи поперёк отмеченного разреза. Следующий клинок меняет угол.','arc'],
+    thrust:['Выпады','#d5dae4','Уйди с линии выпада до рывка; острие фиксирует цель заранее.','bar'],
+    impact:['Удары и ударные волны','#e5b077','Выйди из области удара, затем пропусти волну через разрыв.','pulse'],
+    grapple:['Захваты','#ce9ee6','Проскальзывай между сходящимися захватами. Направление сжатия меняется.','gates'],
+    gun:['Прицельная стрельба','#f0cd86','Прицел фиксируется до выстрела. У Солдато перекрёстные очереди: меняй направление, не беги по одной линии.','reticle'],
+    rocket:['Ракетные взрывы','#f59876','Ракета бьёт по отмеченной области, осколки разлетаются наружу.','pulse'],
+    train:['Билет в паровозик','#e9a06b','Пропускай составы через отмеченные коридоры; финальный вагон быстрее.','bar'],
+    charm:['Сердца и обаяние','#ed9cc5','Спирали сердец и импульсы влюблённости: не стой на месте.','heart'],
+    hack:['Взлом','#82dcc4','Уходи с подсвеченных строк и столбцов до блокировки.','scan'],
+    script:['Изменение правил','#9fc8f5','Патч меняет безопасную область. Читай контур до компиляции.','scan'],
+    edict:['Предписания','#e1d7ba','Строки меняют направление; за основным предписанием следует пересекающий росчерк. Читай контуры.','scan'],
+    paint:['Краска и пуантилизм','#d291b2','Избегай клякс и точечных залпов. Краска ненадолго остаётся опасной.','orbit'],
+    beast:['Хищник и зверство','#c99291','След показывает траекторию броска. После прыжка идёт удар когтей.','arc'],
+    stars:['Созвездия','#b0c1f6','Между вращающимися звёздами проходят прицельные залпы. Не прячься у одного края.','orbit'],
+    mana:['Чистая мана','#8fc8ea','Магические сферы расходятся веером; эхо приходит с другой стороны.','pulse'],
+    holy:['Свет и кара','#e6db9f','Выйди из пересечения световых столбов до вспышки.','cross'],
+    void:['Пустота','#b09cdb','Чёрная дыра тянет к центру. Не входи в тёмное ядро.','orbit'],
+    death:['Души и кости','#8fb9a2','Костяные залпы сменяются душами, летящими от краёв.','pulse'],
+    fire:['Пламя и метеоры','#edac7d','Покинь место падения; огонь ещё некоторое время опасен.','pulse'],
+    ice:['Ледяные копья','#9ad9e2','Не зажимай себя у края: очередная гряда льда меняет промежутки.','bar'],
+    lightning:['Молнии','#d0bcf2','Контур разряда появляется заранее. Не пересекай его в момент вспышки.','gates'],
+    portal:['Депортация','#a5d3a0','Луч инатора сменяется порталами. Не оставайся в отмеченном секторе.','gates'],
+    mirror:['Отражения','#cad8eb','Удар и его отражение приходят с противоположных сторон с задержкой.','gates'],
+    coins:['Две стороны монеты','#e0bf82','Две стороны поля вспыхивают по очереди. Перестраивайся через середину.','orbit'],
+    eclipse:['Глаза во тьме','#bc9ec8','Глаза открывают линии взгляда. Уйди с лучей до закрытия зрачка.','orbit'],
+    dust:['Пыль и ослепление','#c7b69e','Два веера пыли сходятся в точке. Ищи зазор, не теряй свой маркер.','bar'],
+    tiger:['Поступь тигробоя','#e8b786','Шесть разрезов: горизонталь, вертикаль, диагонали и финальная пара.','arc'],
+  };
+  function family(skill){
+    const id=skill.base_id||skill.skill_id||'',n=(skill.name||'').toLowerCase(),branch=skill.branch||'',cls=skill.class_id;
+    if(/паровоз/.test(n))return 'train';
+    if(/tigerslayer|lei_perfected/.test(id))return 'tiger';
+    if(id==='lei_double_slash'||id==='lei_explosive_slash')return 'slash';
+    if(/kit_eclipse|solar_eclipse/.test(id))return 'eclipse';
+    if(id==='kit_reflection')return 'mirror';
+    if(id.startsWith('kit_coins'))return 'coins';
+    if(id==='kit_rift'||/небытия|стирание/.test(n))return 'void';
+    if(id==='kit_ash'||/пепел|пылающ|катаклизм|метеор|огненный/.test(n))return 'fire';
+    if(id==='kit_light')return 'holy';
+    if(id==='kit_flash'||/молни/.test(n))return 'lightning';
+    if(/deport|deportator/.test(id))return 'portal';
+    if(/doof_blast|mge|butt_peak/.test(id)||/ракет|дуэль на миду/.test(n))return 'rocket';
+    if(id.startsWith('doof_'))return 'mana';
+    if(/костян|похищение жизни|жатва|мёртв|душ/.test(n)||/necromancer/.test(branch+id))return 'death';
+    if(/ледян/.test(n))return 'ice';
+    if(/beast|fauvist/.test(branch+id)||/звер|хищник|разорвать|первобыт/.test(n))return 'beast';
+    if(/глаз|dust_in_eyes/.test(id))return 'dust';
+    if(cls==='cutie')return 'charm';
+    if(/clench|gachi/.test(id)||/захват|club/.test(n))return 'grapple';
+    if(cls==='jock'||cls==='middle')return 'impact';
+    if(cls==='thumb')return id==='bayonet'?'thrust':'gun';
+    if(id==='hunter_shot'||/осколок/.test(n))return 'gun';
+    if(cls==='index')return 'edict';
+    if(cls==='ring')return 'paint';
+    if(cls==='pinky')return /тихий|охраняющ/.test(n)?'slash':'stars';
+    if(cls==='nerd')return /programmer/.test(branch)||/патч|оптимиз|просчитал/.test(n)?'script':'hack';
+    if(cls==='mage')return /archmage/.test(branch+id)?'void':'mana';
+    if(cls==='priest')return /последний приговор/.test(n)?'thrust':/paladin/.test(branch+id)||/карающий/.test(n)?'impact':'holy';
+    if(cls==='warrior')return /контрудар|бастион|натиск/.test(n)?'impact':'slash';
+    if(cls==='hunter')return /лун/.test(n)?'stars':'beast';
+    if(id.startsWith('raid_'))return 'impact';
+    if(cls==='ragamuffin')return 'impact';
+    return skill.damage_type==='magic'?'mana':skill.damage_type?'thrust':'hack';
+  }
+  function profile(skill){
+    const id=skill.id||skill.skill_id||skill.base_id,seed=hash(id),r=rng(seed),kind=family(skill),entry=FAMILIES[kind];
+    const basic=skill.base_id==='bum_punch'&&skill.name==='Удар бомжа';
+    return {id,seed,kind,title:basic?'Простой удар':entry[0],color:entry[1],hint:basic?'Три коротких замаха без ударных волн. Выйди из небольшого отмеченного круга.':entry[2],style:entry[3],skill,basic,
+      strikes:clamp(skill.strikes||1,1,6),kit:(skill.base_id||'').startsWith('kit_'),phase:r()*TAU,polarity:r()<.5?-1:1,
+      speed:.94+r()*.18,spread:.78+r()*.34,interval:.8+r()*.4,drift:r()>.6,
+      attackHint:'Секунда подготовки, затем два прохода метки и до двух попыток на каждый удар. Первое неточное нажатие оставляет второй шанс.'};
+  }
+  function difficulty(stats){
+    const attack=clamp((stats.accuracy-stats.enemyEvasion)/100,-1,1),pressure=clamp((stats.enemyAccuracy-stats.evasion)/100,-1,1);
+    const intensity=clamp((pressure+.15)/1.15,0,1);
+    return {zone:clamp(.13+attack*.16,.075,.29),cursor:.85-attack*.28,
+      warning:.90-.58*intensity,speed:400+350*Math.pow(intensity,1.4),size:44+16*intensity,
+      gap:180-76*intensity,moveSpeed:240,pressure,intensity,
+      lead:.28*intensity*intensity,beamScale:1+.2*intensity*intensity};
+  }
+  function attack(p,stats,seed=1,options={}){
+    const r=rng(seed^p.seed),d=difficulty(stats),count=p.strikes;
+    const activeSlots=Array.from({length:count},()=>((count===1?1.8:1.18)/d.cursor)*(.96+r()*.08));
+    const strikeReady=.25,preparation=1,slots=activeSlots.map(v=>v+strikeReady),model=damageModel(options);
+    return {kind:'attack',p,d,...model,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,damage:0,contacts:[],preparation,strikeReady,activeSlots,slots,
+      duration:preparation+slots.reduce((a,b)=>a+b,0),time:0,ended:false,attempts:slots.map(()=>0),lastAttempt:slots.map(()=>-1),
+      centers:slots.map(()=>.28+r()*.44),results:slots.map(()=>null)};
+  }
+  function attackFrame(s){
+    let index=0,start=s.preparation;while(index<s.slots.length-1&&s.time>=start+s.slots[index]-1e-8){start+=s.slots[index++];}
+    const local=s.time-start,phase=s.time<s.preparation?'ready':local<s.strikeReady?'cue':'active';
+    const progress=clamp((local-s.strikeReady)/s.activeSlots[index],0,1);
+    let cursor=1-Math.abs(progress*2-1);
+    if(['pulse','heart'].includes(s.p.style))cursor=Math.pow(cursor,s.p.style==='heart'?1.45:.8);
+    if(index%2&&s.p.polarity<0)cursor=1-cursor;
+    const center=s.centers[index]+(s.p.drift?.035*Math.sin(local*3+s.p.phase):0);
+    const remaining=phase==='ready'?s.preparation-s.time:phase==='cue'?s.strikeReady-local:s.slots[index]-local;
+    return {index,cursor,center,width:s.d.zone,remaining:Math.max(0,remaining),phase,attemptsLeft:2-s.attempts[index],
+      canHit:phase==='active'&&s.results[index]===null&&s.attempts[index]<2&&s.time-s.lastAttempt[index]>=.22-1e-8};
+  }
+  function hit(s){if(s.ended)return null;const f=attackFrame(s);if(!f.canHit)return null;
+    const i=f.index,ok=Math.abs(f.cursor-f.center)<=f.width/2;s.attempts[i]++;s.lastAttempt[i]=s.time;
+    if(ok){
+      s.results[i]=true;const force=impact(s.p,i),raw=damageValue(s.damageBase,force.weight),damage=Math.min(s.hp,raw);
+      s.hp-=damage;s.damage+=damage;s.contacts.push({id:'strike:'+i,time:s.time,damage,raw,...force,x:360,y:160});
+    }else if(s.attempts[i]>=2)s.results[i]=false;
+    if(s.hp<=0&&s.endOnDeath||i===s.results.length-1&&s.results[i]!==null)s.ended=true;return ok;}
+  function attackStep(s,dt){if(s.ended)return;s.time=Math.min(s.duration,s.time+dt);let end=s.preparation;
+    s.slots.forEach((slot,i)=>{end+=slot;if(s.time>=end-1e-8&&s.results[i]===null)s.results[i]=false;});
+    if(s.time>=s.duration-1e-8)s.ended=true;}
+  function attackResult(s){return {hits:s.results.filter(Boolean).length,total:s.results.length,mask:s.results.map(Boolean),damage:s.damage,hp:s.hp};}
+  function defenseDifficulty(p,stats){
+    const d=difficulty(stats);
+    if(p.kit){d.warning*=.92;d.speed*=1.08;}
+    if(p.skill.class_id==='thumb'){d.speed*=1.16;d.warning=Math.max(.30,d.warning*.94);d.beamScale*=1.12;}
+    if(p.basic){d.warning=Math.max(.66,d.warning);d.size=24+8*d.intensity;}
+    return d;
+  }
+  function defense(p,stats,seed=1,options={}){
+    const d=defenseDifficulty(p,stats),r=rng(seed^p.seed);
+    const count=p.basic?3:p.kind==='tiger'?12:p.kind==='train'?6:Math.max(p.strikes,4+(p.seed%3)+(d.intensity>.75?1:d.intensity<.25?-1:0)+(p.skill.class_id==='thumb'?1:0));
+    const staticOnly=p.skill.base_id!=='mother_joke'&&['slash','thrust','grapple','hack','script','edict','holy','lightning','portal','coins','tiger'].includes(p.kind);
+    const span=(p.basic?4.8:staticOnly?5.1:p.kind==='fire'?4.3:p.kind==='impact'?4:3.5)*(.94+(p.interval-.8)*.15)*(p.kit?.96:1)*(p.basic?1:1-.08*d.intensity);
+    const model=damageModel(options);
+    return {kind:'defense',p,d,...model,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:6.8,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
+      events:Array.from({length:count},(_,i)=>({at:.18+i*span/Math.max(1,count-1),strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/count)),index:i,
+        jitter:r(),angle:r()*TAU,ready:false})),received:[]};
+  }
+  function line(ax,ay,bx,by,r,extra={}){return {type:'line',ax,ay,bx,by,r,...extra};}
+  function prepare(s,e){
+    const {x,y}=s.player,p=s.p,d=s.d,i=e.index,odd=i%2,sign=odd?1:-1;
+    const tx=clamp(x+(s.player.vx||0)*d.lead,12,W-12),ty=clamp(y+(s.player.vy||0)*d.lead,12,H-12);
+    const angle=e.angle,warning=d.warning,shapes=[],start=e.at+warning,n=p.skill.name.toLowerCase(),id=p.skill.base_id;
+    const add=(h,delay=0,duration=.24)=>shapes.push({...h,start:start+delay,end:start+delay+duration,strike:e.strike,at:e.at,index:i});
+    const beam=(a,b,c,f,width=15,delay=0,duration=.2)=>add(line(a,b,c,f,width*d.beamScale),delay,duration);
+    const circle=(cx,cy,r,delay=0,duration=.25)=>add({type:'circle',x:cx,y:cy,r},delay+Math.max(0,.44-warning),duration);
+    const bullet=(bx,by,vx,vy,r=7,delay=0,extra={})=>add({type:'bullet',x:bx,y:by,vx,vy,r,...extra},delay,2.9);
+    const fan=(bx,by,a,n=5,spread=.5,delay=0,motif='')=>{
+      for(let j=0;j<n;j++){const theta=a+(j-(n-1)/2)*spread;
+        const core=j===Math.floor(n/2),tier=core?'normal':'minor';
+        bullet(bx,by,Math.cos(theta)*d.speed*p.speed,Math.sin(theta)*d.speed*p.speed,(6+d.pressure)*(core?1.1:.8),delay,{motif,tier});}
+    };
+    const corridor=(vertical=false,offset=0)=>{
+      const axis=vertical?H:W,at=vertical?y:x;
+      const center=clamp(at+(odd?-1:1)*(55+e.jitter*15)+offset,d.gap/2+8,axis-d.gap/2-8);
+      const lo=center-d.gap/2,hi=center+d.gap/2;
+      if(vertical){add({type:'rect',x:0,y:0,w:W,h:lo},0,.25);add({type:'rect',x:0,y:hi,w:W,h:H-hi},0,.25);}
+      else{add({type:'rect',x:0,y:0,w:lo,h:H},0,.25);add({type:'rect',x:hi,y:0,w:W-hi,h:H},0,.25);}
+    };
+    const aimed=(side=odd,spread=.1,n=3,delay=0,motif='')=>{
+      const bx=d.intensity>.7?(side?Math.max(W*.65,x+220):Math.min(W*.35,x-220)):(side?W+15:-15),by=40+e.jitter*(H-80);
+      fan(bx,by,Math.atan2(ty-by,tx-bx),n,spread,delay,motif);};
+    const cross=(radius=17,delay=0)=>{beam(x,0,x,H,radius,delay);beam(0,y,W,y,radius,delay+.12);};
+    const diagonal=(theta,width=18,delay=0)=>{const dx=Math.cos(theta)*900,dy=Math.sin(theta)*900,cx=x+(tx-x)*.6,cy=y+(ty-y)*.6;beam(cx-dx,cy-dy,cx+dx,cy+dy,width,delay);};
+    switch(p.kind){
+      case 'slash':diagonal((i*.61+p.phase)%Math.PI,16+d.pressure*4);break;
+      case 'thrust':diagonal((odd?Math.PI*.18:-Math.PI*.12)+Math.sin(p.phase)*.12,12+d.pressure*3);
+        if(p.skill.class_id==='thumb'){diagonal(odd?-.55:.55,10,.20);shapes.at(-1).tier='minor';shapes.at(-1).weight=.15;}break;
+      case 'impact':circle(x,y,d.size);if(!p.basic)add({type:'ring',x,y,r:22,speed:170+80*d.intensity,gap:angle,gapWidth:1.65-.65*d.intensity,thickness:8+3*d.intensity},.28,1.1);break;
+      case 'grapple':corridor(!!odd);break;
+      case 'gun':
+        if(p.skill.class_id==='thumb'){
+          const bx=x+sign*(210+100*(1-d.intensity)),by=clamp(y+(e.jitter-.5)*180,-15,H+15);
+          fan(bx,by,Math.atan2(ty-by,tx-bx),d.intensity>.7?7:5,.12*p.spread);
+          aimed(!odd,.11*p.spread,d.intensity>.7?5:3,.18);
+        }else aimed(odd,.09*p.spread,d.intensity>.75?5:3);break;
+      case 'rocket':circle(x,y,d.size+6,0,.3);for(let j=0;j<8;j++)bullet(x,y,Math.cos(j*TAU/8)*230,Math.sin(j*TAU/8)*230,5,.32);break;
+      case 'train':{
+        const gap=clamp(y+sign*(70+p.spread*10),75,H-75),speed=d.speed*1.35*(1+i*.035),bx=odd?-25:W+25;
+        const rows=[];for(let yy=0;yy<=H;yy+=16)if(Math.abs(yy-gap)>d.gap*.32)rows.push(yy);
+        const core=rows.reduce((a,b)=>Math.abs(a-y)<Math.abs(b-y)?a:b,rows[0]);
+        for(const yy of rows)bullet(bx,yy,odd?speed:-speed,0,yy===core?10:5,0,{motif:'train',
+          tier:yy===core?(i===s.events.length-1?'critical':'heavy'):'minor',weight:yy===core?[.25,.35,.45,.6,.65,1][i]:.1});
+        break;}
+      case 'charm':
+        if(/мяу/.test(n)){diagonal(odd?.35:-.35,9);diagonal(odd?-.35:.35,9,.22);aimed(odd,.22,3,.35,'heart');}
+        else{aimed(odd,.19*p.spread,7,0,'heart');circle(x,y,31,.24,.2);}break;
+      case 'hack':
+        if(id==='mother_joke'){circle(x,y,35,0,.25);aimed(odd,.12,5,.24,'dust');}
+        else if(odd)beam(x,0,x,H,18+d.pressure*4);else beam(0,y,W,y,16+d.pressure*4);break;
+      case 'script':corridor(!!odd);circle(clamp(x+sign*100,25,W-25),y,25,.32,.35);break;
+      case 'edict':
+        if(/последн|исполнен/.test(n))diagonal(Math.PI*.25+p.polarity*.16,13);
+        else for(let j=0;j<3;j++){
+          const lane=(odd?tx:ty)+(j-1)*(68-12*d.intensity),delay=j*(.21-.07*d.intensity);
+          if(odd)beam(lane,0,lane,H,7+d.pressure*2,delay,.15);else beam(0,lane,W,lane,7+d.pressure*2,delay,.15);
+        }
+        if(d.intensity>.4){diagonal(odd?-.55:.55,6,.36);shapes.at(-1).tier='minor';shapes.at(-1).weight=.15;}break;
+      case 'paint':circle(x,y,28+d.pressure*4,0,.72);aimed(odd,.16,4,.12,'paint');break;
+      case 'beast':diagonal((odd?-.25:.25)+p.polarity*.15,22+d.pressure*4);diagonal((odd?.7:-.7),12,.3);break;
+      case 'stars':{
+        if(/падающ|небо/.test(n)){for(let j=-2;j<=2;j++)bullet(tx+j*(98-26*d.intensity),-20,sign*(35+30*d.intensity),d.speed*.95,6+2*d.intensity,Math.abs(j)*.08,{motif:'star'});
+          if(p.skill.class_id==='pinky')aimed(odd,.13,3,.2,'star');break;}
+        const bx=odd?80:W-80,by=H*.5;
+        for(let j=0;j<9;j++){const a=j*TAU/9+p.phase+i*.47;
+          bullet(bx,by,Math.cos(a)*d.speed*.8,Math.sin(a)*d.speed*.8,5,0,{turn:sign*.7,motif:'star'});}
+        if(p.skill.class_id==='pinky')aimed(odd,.12*p.spread,d.intensity>.75?5:3,.16,'star');
+        break;}
+      case 'mana':aimed(odd,.13*p.spread,5,0,'orb');aimed(!odd,.1,3,.25,'orb');break;
+      case 'holy':cross(14+d.pressure*3);break;
+      case 'void':add({type:'well',x,y,r:35+d.pressure*4,pull:65},0,.9);aimed(odd,.2,3,.3,'orb');break;
+      case 'death':
+        if(/похищение/.test(n))add({type:'well',x,y,r:30,pull:55},0,.6);
+        aimed(odd,.17,5,0,'bone');{
+        const bx=clamp(x+sign*140,20,W-20),by=odd?-20:H+20;
+        fan(bx,by,Math.atan2(y-by,x-bx),3,.12,.3,'ghost');}break;
+      case 'fire':circle(x,y,d.size,0,.7);circle(clamp(x+sign*95,20,W-20),clamp(y+sign*65,20,H-20),30,.35,.6);break;
+      case 'ice':for(let j=-2;j<=2;j++)bullet(x+j*78,odd?H+20:-20,0,(odd?-1:1)*d.speed,8,Math.abs(j)*.06,{motif:'ice'});break;
+      case 'lightning':{
+        const xx=clamp(x+sign*65,60,W-60);beam(x-110,0,xx,y,10);beam(xx,y,x-20,H,10,.04);
+        if(odd)beam(0,y+55,W,y-55,8,.25);break;}
+      case 'portal':corridor(!!odd);diagonal(odd?.55:-.55,10,.4);break;
+      case 'mirror':aimed(odd,.08,3);aimed(!odd,.08,3,.32);break;
+      case 'coins':{
+        const cx=clamp(x+sign*55,80,W-80);beam(cx,0,cx,H,25);circle(x,y,36,.32,.2);break;}
+      case 'eclipse':{
+        const bx=odd?W-25:25,by=30+(i%3)*130;beam(bx,by,x+(x-bx)*4,y+(y-by)*4,10+d.pressure*3);
+        if(i>1)circle(x,y,32,.3,.28);break;}
+      case 'dust':aimed(odd,.12,5,0,'dust');aimed(!odd,.16,4,.2,'dust');break;
+      case 'tiger':{
+        const direction=[0,Math.PI/2,Math.PI*.24,-Math.PI*.24,0,Math.PI/2][e.strike%6];
+        diagonal(direction,(odd?7:12)+d.pressure*3);
+        shapes[0].tier=odd?'minor':e.strike===p.strikes-1?'critical':'heavy';shapes[0].weight=odd?.15:e.strike===p.strikes-1?1:.6;break;}
+      default:throw new Error('Unknown pattern '+p.kind);
+    }
+    for(let j=0;j<shapes.length;j++){
+      const h=shapes[j];h.id='wave:'+i+':'+j;h.damageId=p.kind==='lightning'&&j<2?'wave:'+i+':bolt':h.id;
+      h.disabled=!!s.enabledStrikes&&!s.enabledStrikes[h.strike];
+      h.tier=h.tier||(['line','circle','rect'].includes(h.type)?'heavy':h.type==='ring'||h.type==='well'?'normal':'minor');
+      h.weight=h.weight??DAMAGE_TIERS[h.tier].weight;h.rawDamage=damageValue(s.damageBase,h.weight);
+      s.hazards.push(h);
+    }
+    s.projectileCount+=new Set(shapes.filter(h=>!h.disabled).map(h=>h.damageId)).size;
+    e.ready=true;
+  }
+  function geometry(h,t){
+    const age=Math.max(0,t-h.start);
+    if(h.type==='bullet'){
+      if(h.turn){const a=h.turn*age,cs=Math.cos(a),sn=Math.sin(a);
+        return {...h,x:h.x+(h.vx*sn+h.vy*(cs-1))/h.turn,y:h.y+(h.vx*(1-cs)+h.vy*sn)/h.turn};}
+      return {...h,x:h.x+h.vx*age,y:h.y+h.vy*age};
+    }
+    if(h.type==='ring')return {...h,r:h.r+h.speed*age};
+    return h;
+  }
+  function distance(px,py,ax,ay,bx,by){const dx=bx-ax,dy=by-ay,k=clamp(((px-ax)*dx+(py-ay)*dy)/(dx*dx+dy*dy||1),0,1);return Math.hypot(px-ax-k*dx,py-ay-k*dy);}
+  function segmentDistance(ax,ay,bx,by,cx,cy,dx,dy){
+    const det=(bx-ax)*(dy-cy)-(by-ay)*(dx-cx);
+    if(Math.abs(det)>1e-10){const u=((cx-ax)*(dy-cy)-(cy-ay)*(dx-cx))/det,v=((cx-ax)*(by-ay)-(cy-ay)*(bx-ax))/det;if(u>=0&&u<=1&&v>=0&&v<=1)return 0;}
+    return Math.min(distance(ax,ay,cx,cy,dx,dy),distance(bx,by,cx,cy,dx,dy),distance(cx,cy,ax,ay,bx,by),distance(dx,dy,ax,ay,bx,by));
+  }
+  function touches(h,old,now,t,dt){
+    const g=geometry(h,t),r=now.r;
+    if(h.type==='bullet'){const previous=geometry(h,Math.max(h.start,t-dt));return distance(0,0,previous.x-old.x,previous.y-old.y,g.x-now.x,g.y-now.y)<=g.r+r;}
+    if(h.type==='line')return segmentDistance(old.x,old.y,now.x,now.y,g.ax,g.ay,g.bx,g.by)<=g.r+r;
+    if(h.type==='circle'||h.type==='well')return distance(g.x,g.y,old.x,old.y,now.x,now.y)<=g.r+r;
+    if(h.type==='rect')return segmentDistance(old.x,old.y,now.x,now.y,g.x,g.y,g.x+g.w,g.y)<=r||segmentDistance(old.x,old.y,now.x,now.y,g.x,g.y+g.h,g.x+g.w,g.y+g.h)<=r||
+      segmentDistance(old.x,old.y,now.x,now.y,g.x,g.y,g.x,g.y+g.h)<=r||segmentDistance(old.x,old.y,now.x,now.y,g.x+g.w,g.y,g.x+g.w,g.y+g.h)<=r||now.x>=g.x&&now.x<=g.x+g.w&&now.y>=g.y&&now.y<=g.y+g.h;
+    if(h.type==='ring'){
+      const angle=Math.atan2(now.y-g.y,now.x-g.x),difference=Math.abs(Math.atan2(Math.sin(angle-g.gap),Math.cos(angle-g.gap)));
+      if(difference<g.gapWidth/2)return false;
+      const a=Math.hypot(old.x-g.x,old.y-g.y)-(g.r-g.speed*dt),b=Math.hypot(now.x-g.x,now.y-g.y)-g.r;
+      return Math.min(a,b)<=g.thickness+r&&Math.max(a,b)>=-g.thickness-r;
+    }
+    return false;
+  }
+  function defenseStep(s,dt,input={}){
+    if(s.ended)return;let remaining=Math.min(Math.max(0,dt),s.duration-s.time);
+    while(remaining>1e-8){const step=Math.min(remaining,1/120);remaining-=step;const previous=s.time;s.time+=step;
+      for(const e of s.events)if(!e.ready&&s.time>=e.at)prepare(s,e);
+      const old={...s.player};let dx=input.x||0,dy=input.y||0;
+      if(input.target){dx=input.target.x-old.x;dy=input.target.y-old.y;}
+      const length=Math.hypot(dx,dy),travel=input.target?Math.min(length,s.d.moveSpeed*step):s.d.moveSpeed*step*Math.min(1,length);
+      if(length){s.player.x+=dx/length*travel;s.player.y+=dy/length*travel;}
+      for(const h of s.hazards)if(h.type==='well'&&s.time>=h.start&&s.time<h.end){
+        const len=Math.hypot(h.x-s.player.x,h.y-s.player.y);if(len>1&&len<170){s.player.x+=(h.x-s.player.x)/len*h.pull*step;s.player.y+=(h.y-s.player.y)/len*h.pull*step;}
+      }
+      s.player.x=clamp(s.player.x,12,W-12);s.player.y=clamp(s.player.y,12,H-12);
+      s.player.vx=(s.player.x-old.x)/step;s.player.vy=(s.player.y-old.y)/step;
+      for(const h of s.hazards){if(h.disabled||h.end<previous||h.start>s.time||s.hitIds.includes(h.damageId))continue;
+        if(touches(h,old,s.player,s.time,step)){
+          s.hitIds.push(h.damageId);if(!s.received.includes(h.strike))s.received.push(h.strike);
+          const damage=Math.min(s.hp,h.rawDamage);s.hp-=damage;s.damage+=damage;
+          s.contacts.push({id:h.damageId,time:s.time,damage,raw:h.rawDamage,weight:h.weight,tier:h.tier,strike:h.strike,x:s.player.x,y:s.player.y});
+          if(s.hp<=0&&s.endOnDeath){s.ended=true;remaining=0;break;}
+        }}
+      s.hazards=s.hazards.filter(h=>h.end>=s.time);
+    }
+    if(s.time>=s.duration-1e-7){s.time=s.duration;s.ended=true;}
+  }
+  function defenseResult(s){return {hits:s.contacts.length,total:s.projectileCount,dodged:s.projectileCount-s.contacts.length,damage:s.damage,hp:s.hp,mask:Array.from({length:s.p.strikes},(_,i)=>!s.received.includes(i))};}
+  return {W,H,FAMILIES,DAMAGE_TIERS,impact,damageValue,hash,rng,clamp,family,profile,difficulty,defenseDifficulty,attack,attackStep,attackFrame,attackResult,hit,defense,defenseStep,defenseResult,geometry,distance,segmentDistance,touches};
+});

@@ -45,6 +45,9 @@ def number(value, low, high):
 
 
 def replay(challenge, proof, elapsed):
+    if challenge.get('version') == 2:
+        from arena_qte_patterns import replay as replay_patterns
+        return replay_patterns(challenge, proof, elapsed)
     if not isinstance(proof, dict):
         raise ValueError("Нет записи мини-игры.")
     if proof.get("abort") is True:

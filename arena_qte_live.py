@@ -48,7 +48,30 @@ def challenge(kind, attacker, target, skill, actor):
     stats = dict(
         accuracy=accuracy, enemyEvasion=evasion, enemyAccuracy=accuracy, evasion=evasion
     )
+    descriptor = dict(
+        id=f"{skill.skill_id}:{skill.name}:{n}:{skill.damage_type}",
+        base_id=skill.skill_id,
+        name=skill.name,
+        class_id=skill.class_id,
+        branch=attacker.get("archclass_id", ""),
+        damage_type=skill.damage_type,
+        strikes=n,
+    )
+    # Kit's announced reflection/coins consist of two different native actions.
+    # One pattern, two groups: do not apply the same collisions to both actions.
+    subskills = {
+        "kit_reflection": ["kit_reflection", "kit_ash"],
+        "kit_coins": ["kit_coins", "kit_coins_ash"],
+    }.get(skill.skill_id)
+    if kind == "defense" and subskills:
+        n = descriptor["strikes"] = 2
+        descriptor["id"] = f"{skill.skill_id}:{skill.name}:2:{skill.damage_type}"
     return dict(
+        version=2,
+        profile=descriptor,
+        subskills=subskills if kind == "defense" else None,
+        damage_base=damage_preview(attacker, target, skill),
+        target_hp=target["hp"],
         id=secrets.token_hex(16),
         kind=kind,
         actor=actor,
@@ -60,6 +83,43 @@ def challenge(kind, attacker, target, skill, actor):
             "slashes" if n == 6 else "rain" if skill.damage_type == "magic" else "cross"
         ),
     )
+
+
+def damage_preview(attacker, target, skill):
+    """Read-only estimate for immediate HP feedback; the paid action is resolved later.
+
+    Raid ally effects, defenses and critical rolls can change before the boss acts.
+    No guessed HP or result from the client is ever persisted.
+    """
+    if not skill.damage_type:
+        return 0
+    from arena_engine import resolve_skill, BUILTIN_SKILLS
+
+    a, b = deepcopy(attacker), deepcopy(target)
+    # Give the projection room to expose the full reference damage, not overkill.
+    b["hp"] = max(b["hp"], 1000000)
+    state = dict(
+        sides={"a": a, "b": b},
+        turn=1,
+        active_side="a",
+        log=[],
+        finished=False,
+        winner=None,
+    )
+    try:
+        event = resolve_skill(
+            state,
+            "a",
+            skill.skill_id,
+            {**BUILTIN_SKILLS, skill.skill_id: skill},
+            random.Random(0),
+            advance_turn=False,
+            tick_actor_bleed=False,
+            qte=dict(attack=[True] * strike_count(skill)),
+        )
+        return event["damage"]
+    except ValueError:
+        return max(1, round(skill.power))
 
 
 class ArenaQteMixin:
@@ -124,11 +184,16 @@ class ArenaQteMixin:
         now = time.time()
         stage = flow["stages"][0]
         if new_stage:
-            duration = (
-                6
-                if stage["kind"] == "defense"
-                else stage["strikes"] * (0.95 if stage["strikes"] > 1 else 2.8)
-            )
+            if stage.get("version") == 2:
+                from arena_qte_patterns import duration as pattern_duration
+
+                duration = pattern_duration(stage)
+            else:
+                duration = (
+                    6
+                    if stage["kind"] == "defense"
+                    else stage["strikes"] * (0.95 if stage["strikes"] > 1 else 2.8)
+                )
             stage.update(started=now, expires=now + duration + 8)
         self.connection.execute(
             "INSERT INTO arena_qte_flows VALUES(?,?,?,?) ON CONFLICT(scope,token,actor_id) DO UPDATE SET payload=excluded.payload",
@@ -211,6 +276,9 @@ class ArenaQteMixin:
             luck_evasion=bool(
                 b["controller_id"] and not modes.get(str(b["controller_id"]))
             ),
+            luck_accuracy=bool(
+                a["controller_id"] and not modes.get(str(a["controller_id"]))
+            ),
         )
         self._qte_save_locked(flow, True)
         return True
@@ -244,15 +312,25 @@ class ArenaQteMixin:
             self._qte_delete_locked(flow)
             return
         stage = flow["stages"][0]
-        result = (
-            [False] * stage["strikes"]
-            if expired
-            else replay(stage, proof, time.time() - stage["started"])
+        result = replay(
+            stage,
+            dict(abort=True) if expired else proof,
+            time.time() - stage["started"],
         )
-        flow["result"]["attack" if stage["kind"] == "attack" else "dodge"] = result
+        key = "attack" if stage["kind"] == "attack" else "dodge"
+        mask = result["mask"] if isinstance(result, dict) else result
+        flow["result"][key] = mask
+        if isinstance(result, dict):
+            flow["result"]["pattern_" + key] = result
+            if stage.get("subskills"):
+                flow["result"]["guard_subskills"] = stage["subskills"]
         flow["stages"].pop(0)
-        if flow["scope"] == "battle" and stage["kind"] == "attack" and not any(result):
+        if flow["scope"] == "battle" and stage["kind"] == "attack" and not any(mask):
             flow["stages"] = [s for s in flow["stages"] if s["kind"] != "defense"]
+        if flow["scope"] == "battle" and stage["kind"] == "attack":
+            for following in flow["stages"]:
+                if following.get("version") == 2 and following["kind"] == "defense":
+                    following["enabled_strikes"] = mask
         if flow["stages"]:
             self._qte_save_locked(flow, True)
             return
@@ -263,7 +341,11 @@ class ArenaQteMixin:
                 "UPDATE arena_battles SET deadline=MAX(deadline,?) WHERE token=?",
                 (int(time.time()) + 2, flow["token"]),
             )
-            result = dict(flow["result"], luck_evasion=flow["luck_evasion"])
+            result = dict(
+                flow["result"],
+                luck_evasion=flow["luck_evasion"],
+                luck_accuracy=flow.get("luck_accuracy", True),
+            )
             self._arena_action_locked(
                 flow["token"],
                 flow["actor"],

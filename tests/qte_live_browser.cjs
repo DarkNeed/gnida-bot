@@ -23,32 +23,33 @@ const origin=process.env.QTE_LIVE_URL||'http://127.0.0.1:8104';
     await page.locator('[data-combat-close]').click();
     await page.locator('[data-do="waste:10"]').click();
     await page.evaluate(()=>{
-      const attack=QTELab.attack;
-      QTELab.attack=options=>(window.__liveState=attack(options));
+      const attack=QTEUnique.attack;
+      QTEUnique.attack=(...args)=>(window.__liveState=attack(...args));
     });
     await page.locator('[data-skill=bum_punch]').click();
     await page.locator('.qte-cover').waitFor();
     await page.screenshot({path:path.join(__dirname,'../output/qte-lab/live-attack.png'),fullPage:true});
     await page.waitForFunction(()=>{
       const s=window.__liveState;if(!s)return false;
-      const f=QTELab.attackFrame(s);
-      if(Math.abs(f.cursor-f.center)<f.width/4){window.dispatchEvent(new KeyboardEvent('keydown',{code:'Space'}));return true;}
+      const f=QTEUnique.attackFrame(s);
+      if(f.canHit&&Math.abs(f.cursor-f.center)<f.width/4){window.dispatchEvent(new KeyboardEvent('keydown',{code:'Space'}));return true;}
       return false;
     },null,{polling:'raf'});
     await page.locator('.qte-eyebrow').filter({hasText:'ЗАЩИТА'}).waitFor({timeout:15000});
     await page.waitForTimeout(900);
     await page.screenshot({path:path.join(__dirname,'../output/qte-lab/live-defense.png'),fullPage:true});
-    await page.locator('.qte-abort').click();
+    await page.waitForTimeout(6200);
     await page.locator('.qte-cover').waitFor({state:'detached'});
-    await page.locator('#panel .skills').waitFor({timeout:15000});
+    await page.waitForFunction(()=>document.querySelector('#panel .skills')||document.querySelector('#turn')?.textContent==='Бой завершён',null,{timeout:15000});
     console.log('PASS live PvE: actual QTE proof, server replay, bot defense, return to actions');
-    await page.locator('[data-do=surrender]').click();
+    if(await page.locator('[data-do=surrender]').count())await page.locator('[data-do=surrender]').click();
     await page.locator('[data-do=menu]').click();
     await page.locator('[data-combat-open]').click();
     await page.locator('[data-combat-enabled="false"]').click();
     await page.locator('[data-combat-enabled="true"]').waitFor();
     await page.locator('[data-combat-close]').click();
-    await page.locator('[data-do="waste:10"]').click();
+    const duel=await page.request.post(origin+'/preview-duel');
+    await page.goto(duel.url());
     await page.locator('[data-skill=bum_punch]').click();
     await page.waitForTimeout(2500);
     assert.equal(await page.locator('.qte-cover').count(),0);

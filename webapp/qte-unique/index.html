@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0c1420">
+<title>Атлас атак · лаборатория Гнида-бота</title><link rel="stylesheet" href="/static/qte-input.css?v=__REV__"><link rel="stylesheet" href="/static/qte-unique/style.css?v=__REV__">
+<script id="catalog" type="application/json">__CATALOG__</script><script defer src="/static/qte-input.js?v=__REV__"></script><script defer src="/qte-lab/unique/engine.js?v=__REV__"></script><script defer src="/qte-lab/unique/client.js?v=__REV__"></script></head>
+<body><main class="lab">
+<header class="masthead"><div><p class="eyebrow">ГНИДА / ЛАБОРАТОРИЯ РЕАКЦИИ</p><h1>Атлас атак<span>03</span></h1></div><a href="/qte-lab/">Старый полигон ↗</a></header>
+<div class="intro"><p>У каждого приёма — свой почерк.</p><span id="catalog-count"></span></div>
+<div class="layout"><section class="workbench">
+<div class="skill-header"><div class="class-mark" id="class-mark">⌁</div><div><p class="eyebrow" id="selected-class"></p><h2 id="selected-name"></h2><p id="selected-origin"></p></div><span class="draft">НА СОГЛАСОВАНИЕ</span></div>
+<div class="toolbar"><div class="mode-tabs" role="group" aria-label="Режим"><button data-mode="defense" class="selected" aria-pressed="true">01 · Уклонение</button><button data-mode="attack" aria-pressed="false">02 · Попадание</button></div><span id="phase-time">ГОТОВ</span></div>
+<div class="trial" id="trial"><div class="trial-heading"><span id="pattern-name"></span><span id="strike-count"></span></div><p class="instruction" id="instruction"></p>
+<div class="health-panel"><div><span id="hp-label">Испытатель</span><strong id="hp-value">200 / 200 HP</strong></div><div class="health-track" role="progressbar" aria-label="Тестовое здоровье" aria-valuemin="0" aria-valuemax="200" aria-valuenow="200" id="hp-track"><i id="hp-fill"></i></div><p><span id="damage-value">Получено: 0</span><span id="chance-status">Только тестовое здоровье</span></p></div>
+<div class="game-surface"><canvas id="game" width="720" height="320" tabindex="0" aria-label="Испытание: WASD или стрелки для движения; пробел для попадания"></canvas><div id="idle"><span>⌖</span><strong>Выбери навык. Почувствуй его ритм.</strong><small>Результат не влияет на настоящего персонажа</small></div><button id="resume" hidden>Продолжить испытание</button></div>
+<div class="result-line"><div id="strike-dots" aria-label="Результаты отдельных ударов"></div><span id="feedback" role="status" aria-live="polite">Здесь нет наград, потерь и случайных бросков попадания.</span></div>
+<div class="actions"><button id="start" class="primary">Начать испытание ↗</button><button id="hit" class="primary" hidden>УДАР · ПРОБЕЛ / КАСАНИЕ</button><button id="stop" hidden>Прервать</button><button id="shuffle" title="Изменить узор, сохранив навык">Новый узор ↻</button></div>
+<div class="movement" id="movement" hidden><span>Веди пальцем по полю без скачка маркера<br>или тяни джойстик. На ПК — стрелки / WASD.</span><button class="qte-stick" id="stick" aria-label="Джойстик уклонения: удерживай и тяни"><span aria-hidden="true"></span></button><div class="pad"><button data-move="up" aria-label="Вверх">↑</button><button data-move="left" aria-label="Влево">←</button><button data-move="down" aria-label="Вниз">↓</button><button data-move="right" aria-label="Вправо">→</button></div></div>
+</div>
+<div class="review"><span>Как сложность?</span><button data-rate="Легко">Легко</button><button data-rate="В самый раз">В самый раз</button><button data-rate="Сложно">Сложно</button><small>Оценка останется в журнале этой вкладки.</small></div>
+<section class="journal"><header><h3>Журнал испытаний</h3><button id="clear">Очистить</button></header><ol id="log"><li>Попробуй один навык на равных характеристиках, затем в режиме «Слабее врага».</li></ol></section>
+</section>
+<aside class="settings"><p class="eyebrow">КАТАЛОГ ПРИЁМОВ</p><h2>Выбери свой кошмар</h2>
+<label for="class-filter">Класс / противник</label><select id="class-filter"></select>
+<label for="family-filter">Механика узора</label><select id="family-filter"><option value="">Все механики</option></select>
+<label for="search">Найти навык или усиление</label><input id="search" type="search" placeholder="Мяу, паровозик, метеор…" autocomplete="off">
+<label for="skill">Навык <span id="filtered-count"></span></label><select id="skill"></select>
+<div class="switch-skill"><button id="previous">← Предыдущий</button><button id="next">Следующий →</button></div>
+<details open><summary>Начни с этих примеров</summary><div class="examples" id="examples"></div></details>
+<div class="settings-divider"></div><p class="eyebrow">СЛОЖНОСТЬ ОТ ХАРАКТЕРИСТИК</p>
+<div class="presets"><button data-preset="equal" class="selected">Равные</button><button data-preset="strong">Сильнее</button><button data-preset="weak">Слабее врага</button></div>
+<label for="accuracy">Твоя точность <output id="accuracy-value"></output></label><input id="accuracy" type="range" min="0" max="100" value="75">
+<label for="evasion">Твоё уклонение <output id="evasion-value"></output></label><input id="evasion" type="range" min="0" max="100" value="25">
+<label for="enemy-accuracy">Точность врага <output id="enemy-accuracy-value"></output></label><input id="enemy-accuracy" type="range" min="0" max="100" value="75">
+<label for="enemy-evasion">Уклонение врага <output id="enemy-evasion-value"></output></label><input id="enemy-evasion" type="range" min="0" max="100" value="25">
+<div class="numbers"><div><span>Зона попадания</span><b id="zone"></b></div><div><span>Предупреждение</span><b id="warning"></b></div><div><span>Ударов в навыке</span><b id="hits"></b></div><div><span>Длительность защиты</span><b>6,8 с</b></div></div>
+<label for="seed">Номер узора — для повторной проверки</label><input id="seed" type="number" min="1" max="999999" value="17">
+<label for="damage-base">Опорный урон — не лимит серии</label><input id="damage-base" type="number" min="1" max="1000" value="40">
+<label for="test-hp">Тестовый запас HP</label><input id="test-hp" type="number" min="1" max="5000" value="200">
+<p class="muted" id="damage-legend">При опоре 40: мелкий 4 · обычный 12 · тяжёлый 24 · финальный 40. У отдельных атак свои промежуточные значения. Общий урон серии может быть выше 40.</p>
+<p class="muted">Одинаковый номер и характеристики дают повторяемый узор. Прицелы фиксируются на тебе во время предупреждения: движение меняет дальнейший бой.</p>
+<details><summary>Что здесь проверяем</summary><p>Разные геометрия, ритм, направления и ловушки. Каждый отдельный снаряд или область наносят урон один раз, сразу при касании. Разные снаряды одного удара могут ранить независимо. Крупные золотые угрозы сильнее мелких; у паровозика составы усиливаются к финалу, у тигробоя основные разрезы сильнее догоняющих.</p><p>Попадание: 1 секунда подготовки, короткий сигнал перед каждым ударом, проход метки туда и обратно. До двух нажатий на удар; после первого промаха можно исправиться. Между попытками защита от спама.</p><p>Это тест новой модели урона, не ребаланс настоящих боёв. Тестовые HP и урон настраиваются выше. Переключение вкладки ставит испытание на паузу; никаких результатов на сервер не отправляется.</p></details>
+</aside></div><footer>ЭКСПЕРИМЕНТ / УНИКАЛЬНЫЕ ПРИЁМЫ <span>Без подключения к обычным боям · без сохранения прогрессии</span></footer>
+</main></body></html>
