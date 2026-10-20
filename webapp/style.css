@@ -97,6 +97,15 @@ dialog.effect-dialog:not([open]){display:none}dialog.effect-dialog::backdrop{bac
 .combat-slash{position:absolute;pointer-events:none;z-index:12;left:15%;top:35%;width:70%;height:5px;background:#fff0c2;box-shadow:0 0 9px 3px #ec6549;transform:rotate(-35deg);border-radius:50%;animation:combatSlash .19s ease-out both}
 .rarity.legendary{color:#ffe0a1;background:#ad78283b;border:1px solid #bd945a}
 /* Encounter scenery stays separate from transparent character sprites. */
+.whaler-field{background:radial-gradient(ellipse at 70% 60%,#63825255,transparent 54%),linear-gradient(#111e20,#263e35 60%,#293c2e);border-color:#72835a}
+.whaler-field:before{background:repeating-linear-gradient(87deg,transparent 0 13%,#0b141b88 14% 15%,transparent 16% 25%),radial-gradient(ellipse at 40% 80%,#91a86644,transparent 65%);pointer-events:none}
+.whaler-field[data-phase="2"]{background:radial-gradient(ellipse at 72% 50%,#9c9d3955,transparent 60%),linear-gradient(#111a18,#37412c 65%,#40452a)}
+.whaler-field .raid-enemy{left:66%;width:33%}.whaler-field .raid-enemy .raid-art{height:245px}
+.whaler-field .raid-enemy .raid-sprite{transform:none;animation:raid-idle 3s ease-in-out infinite}
+.whaler-field .raid-dialogue{left:27%;top:105px;width:39%;transform:none;grid-template-columns:36px 1fr;border-color:#7f8a62;background:#121e1deb}
+.whaler-field .raid-dialogue-portrait{background-image:url('/static/assets/whaler.png');background-size:480%;background-position:45% 0;width:36px}
+.whaler-field .raid-dialogue small{display:none}
+@media(max-width:550px){.whaler-field .raid-enemy{left:64%;width:35%}.whaler-field .raid-enemy .raid-art{height:190px}.whaler-field .raid-dialogue{left:4%;top:95px;width:60%;grid-template-columns:25px 1fr;padding:6px;gap:5px}.whaler-field .raid-dialogue-portrait{width:25px}.whaler-field .raid-dialogue p{font-size:10px}}
 .raid-field[data-boss="lei_heng"][data-phase="2"]{background:radial-gradient(ellipse at 80% 10%,#973d4266,transparent 55%),linear-gradient(#241c30,#50383f 67%,#424451)}
 .doof-field[data-phase="2"]{background:radial-gradient(ellipse at 80% 10%,#5a496e88,transparent 50%),radial-gradient(ellipse at 10% 95%,#526862,transparent 65%),linear-gradient(#191e39,#303c53 67%,#343f4c)}
 .kit-field{background:radial-gradient(ellipse at 76% 14%,#c2c7c649,transparent 44%),linear-gradient(#171e2b,#424853 67%,#353a45);border-color:#8b8b91}

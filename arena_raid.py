@@ -386,12 +386,30 @@ class RaidMixin:
         return row
 
     def _raid_resolve_locked(self, row, data):
+        pending = data.get('whaler_reaction')
+        if (pending and not pending.get('result') and pending['target'] in alive_players(data)
+                and self._qte_load_locked('raid', row['token'], int(pending['target']))):
+            # A different participant leaving cannot force the marked player's
+            # still-open defense to fail, nor replay already paid actions.
+            self._raid_save_locked(row, data)
+            return
         _, skills = self._fighter_catalog_locked()
         resolve_round(data, skills)
         if data["finished"]:
             self._raid_finish_locked(row, data)
         else:
             self._raid_save_locked(row, data)
+            if data.get('whaler_reaction'):
+                from arena_qte_live import challenge
+                from arena_whaler import WHALER_SKILLS
+                pending = data['whaler_reaction']
+                actor = int(pending['target'])
+                if not self._qte_load_locked('raid', row['token'], actor):
+                    incoming = challenge('defense', data['boss'], data['players'][str(actor)]['fighter'],
+                                         WHALER_SKILLS['whaler_punishment'], actor)
+                    self._qte_save_locked(dict(scope='raid', token=row['token'], owner=actor, actor=actor,
+                                               turn=data['round'], skill='', stages=[incoming], result={},
+                                               reaction=True, guard_skill='whaler_punishment'), True)
 
     def _raid_expire_locked(self):
         self._qte_expire_locked('raid')
@@ -461,7 +479,9 @@ class RaidMixin:
                 self._raid_expire_locked()
                 self._arena_expire_locked()
                 self._raid_validate_fighter_locked(chat, actor, actor, True, "")
-                self._arena_profile_locked(chat, actor, True)
+                profile = self._arena_profile_locked(chat, actor, True)
+                if profile['level'] < BOSSES[boss_id].get('min_level', 1):
+                    raise ValueError('Китобой доступен с 20 уровня.')
                 now, token = int(time.time()), secrets.token_urlsafe(12)
                 self.connection.execute(
                     "INSERT INTO arena_raids(token,chat_id,creator_id,created_at,deadline,boss_id,silent) VALUES(?,?,?,?,?,?,?)",
@@ -511,7 +531,9 @@ class RaidMixin:
                     owner = self._raid_validate_fighter_locked(
                         row["chat_id"], actor, fighter, personal, token
                     )
-                    self._arena_profile_locked(row["chat_id"], fighter, personal)
+                    profile = self._arena_profile_locked(row["chat_id"], fighter, personal)
+                    if profile['level'] < BOSSES[row['boss_id']].get('min_level', 1):
+                        raise ValueError('Каждый участник Китобоя должен иметь 20 уровень.')
                     self.connection.execute(
                         """INSERT INTO arena_raid_players VALUES(?,?,?,?,?) ON CONFLICT(token,actor_id)
                            DO UPDATE SET fighter_id=excluded.fighter_id,personal=excluded.personal,slave_owner=excluded.slave_owner""",

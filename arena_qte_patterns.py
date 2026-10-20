@@ -45,6 +45,15 @@ def family(s):
     def contains(*words):
         return any(word in n for word in words)
 
+    if ident == 'whaler_harpoon':
+        return 'thrust'
+    if ident == 'whaler_staff':
+        return 'slash'
+    if ident in ('whaler_miasma', 'swamp_miasma', 'whaler_rot', 'whaler_rot_magic'):
+        return 'death'
+    if ident.startswith('whaler_punishment'):
+        return 'lightning'
+
     if contains("паровоз"):
         return "train"
     if "tigerslayer" in ident or "lei_perfected" in ident:
@@ -200,7 +209,7 @@ def difficulty(stats):
         speed=400 + 350 * intensity**1.4,
         size=44 + 16 * intensity,
         gap=180 - 76 * intensity,
-        moveSpeed=240,
+        moveSpeed=240 * clamp(stats.get('controlScale', 1), .5, 1),
         pressure=d,
         intensity=intensity,
         lead=0.28 * intensity * intensity,
@@ -330,6 +339,7 @@ def defense(p, stats, seed, enabled=None, preparation=1):
     if p["basic"]:
         d["warning"] = max(0.66, d["warning"])
         d["size"] = 24 + 8 * d["intensity"]
+    d['warning'] += stats.get('extraWarning', 0)
     static = p["skill"].get("base_id") != "mother_joke" and p["kind"] in (
         "slash",
         "thrust",
@@ -807,7 +817,8 @@ def defense_step(s, control):
     else:
         dx, dy = control.get("x", 0), control.get("y", 0)
     length = math.hypot(dx, dy)
-    travel = min(length, 240 * dt) if "target" in control else 240 * dt * min(length, 1)
+    speed = s['d']['moveSpeed']
+    travel = min(length, speed * dt) if "target" in control else speed * dt * min(length, 1)
     if length:
         p["x"] += dx / length * travel
         p["y"] += dy / length * travel

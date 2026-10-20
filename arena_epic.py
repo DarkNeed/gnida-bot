@@ -83,6 +83,8 @@ def temporary_buff(e):
 
 
 def temporary_debuff(e):
+    if e['kind'] in {'plague_fever','plague_spores'}:
+        return True
     if not 0 < e.get("duration", 0) < 10000:
         return False
     if e['kind']=='burn':
@@ -97,9 +99,11 @@ def temporary_debuff(e):
 
 
 def cleanse_one(side, rng):
+    from arena_plague import clear
+    plague_cleared = clear(side)
     choices = [e for e in side["effects"] if temporary_debuff(e)]
     if not choices:
-        return False
+        return plague_cleared
     chosen = rng.choice(choices)
     side["effects"] = [e for e in side["effects"] if e is not chosen]
     return True

@@ -479,6 +479,17 @@ BUILTIN_SKILLS['solar_eclipse'] = Skill(
                 'Трофей Кита, не продаётся у торговца и не создаётся в кузнице.',
     tags=('raid_loot', 'hybrid_attack', 'fourth_action', 'once_on_hit'),
 )
+BUILTIN_SKILLS['swamp_miasma'] = Skill(
+    'swamp_miasma', 'Миазмы', 'raid', 20, 'magic', 10, 95, 40, 3,
+    effects=(dict(id='player_miasma', kind='plague_infect', value=3, turns=3, target='enemy'),),
+    rarity='epic', tags=('raid_loot', 'hybrid_attack'),
+    description='Трофей Китобоя. 40 энергии, перезарядка 3 хода. Магическая атака от большей из двух атак. '
+                'Попадание накладывает лихорадку: −3 HP в начале каждого из трёх следующих ходов цели, '
+                'и +1 стак Болотных спор (до 3): −1 HP за стак в начале хода до снятия. '
+                'Лихорадка обновляется, не складывается. Полезное лечение снимает один стак спор; '
+                'очищение или отдельное действие восстановления энергии снимает всю чуму. '
+                'Пассивная регенерация не очищает. Не создаёт Кару болот и не замедляет управление.',
+)
 VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _finger_classes.items()})
 # Old names remain valid input; stable IDs keep inventory and saved builds intact.
 VISIBLE_CLASS_ALIASES.update(
@@ -1064,6 +1075,14 @@ def restore_turn_resource(side: dict) -> int:
 
 
 def _begin_resource_turn(state: dict, key: str) -> None:
+    from arena_plague import begin_turn
+    poison = begin_turn(state['sides'][key])
+    if poison and state['log']:
+        state['log'][-1]['text'] += f' · чума: −{poison} HP'
+        if state['log'][-1].get('after'):
+            state['log'][-1]['after'][key]['hp'] = state['sides'][key]['hp']
+    if state['sides'][key]['hp'] <= 0:
+        state.update(finished=True, winner='b' if key=='a' else 'a', finish_reason='plague')
     gain = restore_turn_resource(state["sides"][key])
     if gain and state["log"]:
         event = state["log"][-1]
@@ -1222,6 +1241,7 @@ def resolve_skill(
         k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
     }
     previous_negatives = negative_kinds(target)
+    plague_allies_before = [(s, s['hp']) for s in (allies or [])]
     adored = has_adoration(target)
     bleeding = any(e["kind"] == "bleed" for e in target["effects"])
     mirror_accuracy, mirror_multiplier = gift_modifiers(actor, target)
@@ -1452,6 +1472,7 @@ def resolve_skill(
     _tick(actor,tick_dot=False,preserve_rally=True)
     effects_text = []
     charmed = False
+    restored = 0
     if hit:
         for effect in skill.effects:
             if (
@@ -1463,8 +1484,11 @@ def resolve_skill(
             if rng.random() >= effect.get("chance", 1):
                 continue
             recipient = target if effect.get("target") == "enemy" else actor
+            resource_before_effect = actor['resource']
             rpg_note = rpg_effect(actor,target,effect,rng,allies,raid_context)
             if rpg_note is not None:
+                if effect['kind'] == 'rpg_blood_bullets':
+                    restored += max(0, actor['resource'] - resource_before_effect)
                 effects_text.append(rpg_note)
                 continue
             if effect["kind"] == "resource_leech":
@@ -1481,10 +1505,17 @@ def resolve_skill(
                         recipient["resource"] + int(effect["value"]),
                     ),
                 )
+                if recipient is actor and effect['value'] > 0:
+                    restored += max(0, actor['resource'] - resource_before_effect)
             elif effect["kind"] == "heal_pct":
                 recipient["hp"] = min(recipient["stats"]["max_hp"], recipient["hp"] + round(recipient["stats"]["max_hp"] * effect["value"]))
             elif effect["kind"] == "cleanse_one":
+                from arena_plague import clear
+                clear(recipient)
                 cleanse_one(recipient, rng)
+            elif effect['kind'] == 'plague_infect':
+                from arena_plague import infect
+                infect(recipient, fever=int(effect['value']), turns=int(effect.get('turns', 3)))
             elif effect["kind"] == "dispel_buffs":
                 recipient["effects"] = [e for e in recipient["effects"] if not temporary_buff(e)]
             else:
@@ -1587,6 +1618,17 @@ def resolve_skill(
     arch_notes += final_notes
     pet_notes += rpg_notes
     pet_notes += epic_after_action(actor, target, skill, hit, rng)
+    from arena_plague import clear as clear_plague, healed as heal_plague, deliberate_restore
+    # Count the actual dedicated restoration, not refunds from traits/pets or
+    # passive regeneration. Direct self-restores and blood bullets are explicit.
+    restored = restored if hit and deliberate_restore(skill) else 0
+    if restored:
+        clear_plague(actor)
+    plague_healed_seen = set()
+    for who, old_hp in [(actor,before[side_key]['hp']), (target,before[other]['hp'])] + plague_allies_before:
+        if who['hp'] > old_hp and id(who) not in plague_healed_seen:
+            heal_plague(who)
+            plague_healed_seen.add(id(who))
     text = f"{skill.name}: " + (
         f"−{damage} HP"
         if damage
@@ -1627,6 +1669,7 @@ def resolve_skill(
         "blocked": blocked_contact,
         "dodged": dodged,
         "damage": damage,
+        "deliberate_resource_restored": restored,
         "critical": bool(hit and critical),
         "bleed_damage": bleed_damage,
         "self_damage": self_damage,

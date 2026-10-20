@@ -63,6 +63,8 @@ def challenge(kind, attacker, target, skill, actor):
     subskills = {
         "kit_reflection": ["kit_reflection", "kit_ash"],
         "kit_coins": ["kit_coins", "kit_coins_ash"],
+        "whaler_punishment": ["whaler_punishment", "whaler_punishment_magic"],
+        "whaler_rot": ["whaler_rot", "whaler_rot_magic"],
     }.get(skill.skill_id)
     if kind == "defense" and subskills:
         n = descriptor["strikes"] = 2
@@ -103,6 +105,10 @@ def challenge(kind, attacker, target, skill, actor):
                 enemyAccuracy=accuracy,
             ),
         )
+    if kind == 'defense' and (any(e['kind']=='plague_fever' and e.get('viscous') for e in target['effects'])
+                              or skill.skill_id in {'whaler_punishment','whaler_rot'}):
+        result['stats']['controlScale'] = .8
+        result['stats']['extraWarning'] = .15
     return result
 
 
@@ -293,7 +299,8 @@ class ArenaQteMixin:
                 and player
                 and not player.get("withdrawn")
                 and player["fighter"]["hp"] > 0
-                and player["selected"] is None
+                and (player["selected"] is None or flow.get('reaction') and
+                     state.get('whaler_reaction', {}).get('target') == str(flow['owner']))
             )
         except (ValueError, KeyError):
             return False
@@ -412,6 +419,11 @@ class ArenaQteMixin:
             self._qte_battle_drive_locked(flow["token"])
         else:
             row = self._raid_row_locked(flow["token"])
+            if flow.get('reaction'):
+                data = json.loads(row['data_json'])
+                data['whaler_reaction']['result'] = flow['result']
+                self._raid_resolve_locked(row, data)
+                return
             # A completed attempt at the boundary is resolved before the round timeout.
             self.connection.execute(
                 "UPDATE arena_raids SET deadline=MAX(deadline,?) WHERE token=?",

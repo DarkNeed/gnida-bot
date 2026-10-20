@@ -271,7 +271,7 @@ class KitStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(public['data']['boss']['level'], 25)
         self.assertEqual(public['data']['boss']['class_avatar_url'], '/static/assets/kit.png')
         body = await RaidPublisher(self.db, self.bot, 'TestBot').body(dict(row, status='lobby'))
-        self.assertIn('фиксированный уровень 25', body)
+        self.assertIn('фиксированный уровень 25', body.casefold())
         self.assertNotIn('Уровень босса подстраивается', body)
         with patch('arena_raid.random.SystemRandom', return_value=FixedRoll()):
             first = self.win(row)['rewards']['10']
@@ -321,7 +321,7 @@ class KitClientTests(unittest.TestCase):
             self.assertEqual(body.count('class="raid-fighter'), 4)
         data.update(status='lobby', data=None)
         body = run('document.getElementById=()=>null;raidScreen(input);', data)
-        self.assertIn('фиксированный уровень 25', body)
+        self.assertIn('фиксированный уровень 25', body.casefold())
         self.assertNotIn('Уровень босса подстраивается', body)
 
     def test_replay_uses_the_event_phase_not_the_latest_server_sprite(self):

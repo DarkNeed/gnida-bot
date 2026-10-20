@@ -1,0 +1,8 @@
+# Китобой — Чумной ловчий
+
+Generated with the built-in image generation tool, transparent background.
+Saved as `webapp/assets/whaler.png`; original alpha preserved, no programmatic art edits.
+
+## Prompt
+
+Use case: stylized-concept. Asset type: transparent full-body 2D dark fantasy turn-based RPG boss sprite. One adult human male Whaler, a sinister plague doctor and former hunter burned by a black-sun angel. Entire full body visible, including boots and both weapon tips, isolated on genuinely transparent background, no ground, no frame, no typography. Three-quarter combat stance facing LEFT toward players standing lower-left; strong readable silhouette at small screen scale. Wears a long ragged BLACK cloak, black gloves and a long beaked black plague mask, with TWO small glowing RED eyes behind lenses. Exposed patches of old burned dark skin visible at neck and wrist, healed scars not fresh gore. One hand holds a large traditional barbed WHALING HARPOON with rope, the other a BLACK LACQUERED WOODEN STAFF. On belt three distinct glass bottles containing DARK GREEN, LIME GREEN, and YELLOW liquid, and a small severed otherworldly black tendril trophy. Clothing almost black but readable muted charcoal folds, subtle green reflected light from bottles, cold grey metal. Hand-painted high-quality illustrated game sprite, dark ink outlines and painterly shading, grim atmospheric but crisp edges; anatomy proportional, not chibi, not photorealistic. No giant aura, no smoke background, no floor shadow or oval base. Weapons in clear separate silhouettes, no extra limbs. Leave breathing room on all sides.

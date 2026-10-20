@@ -45,6 +45,10 @@
     tiger:['Поступь тигробоя','#e8b786','Шесть разрезов: горизонталь, вертикаль, диагонали и финальная пара.','arc'],
   };
   function family(skill){
+    if(skill.base_id==='whaler_harpoon')return 'thrust';
+    if(skill.base_id==='whaler_staff')return 'slash';
+    if(['whaler_miasma','swamp_miasma','whaler_rot','whaler_rot_magic'].includes(skill.base_id))return 'death';
+    if((skill.base_id||'').startsWith('whaler_punishment'))return 'lightning';
     const id=skill.base_id||skill.skill_id||'',n=(skill.name||'').toLowerCase(),branch=skill.branch||'',cls=skill.class_id;
     if(/паровоз/.test(n))return 'train';
     if(/tigerslayer|lei_perfected/.test(id))return 'tiger';
@@ -93,7 +97,7 @@
     const intensity=clamp((pressure+.15)/1.15,0,1);
     return {zone:clamp(.13+attack*.16,.075,.29),cursor:.85-attack*.28,
       warning:.90-.58*intensity,speed:400+350*Math.pow(intensity,1.4),size:44+16*intensity,
-      gap:180-76*intensity,moveSpeed:240,pressure,intensity,
+      gap:180-76*intensity,moveSpeed:240*clamp(stats.controlScale??1,.5,1),pressure,intensity,
       lead:.28*intensity*intensity,beamScale:1+.2*intensity*intensity};
   }
   function attack(p,stats,seed=1,options={}){
@@ -142,6 +146,7 @@
     if(p.kit){d.warning*=.92;d.speed*=1.08;}
     if(p.skill.class_id==='thumb'){d.speed*=1.16;d.warning=Math.max(.30,d.warning*.94);d.beamScale*=1.12;}
     if(p.basic){d.warning=Math.max(.66,d.warning);d.size=24+8*d.intensity;}
+    d.warning+=stats.extraWarning||0;
     return d;
   }
   function defense(p,stats,seed=1,options={}){

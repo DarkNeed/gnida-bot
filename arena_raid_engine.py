@@ -20,12 +20,16 @@ from arena_doof import DOOF_SKILLS, set_doof_intent, resolve_doof_action
 from arena_kit import (KIT_LEVEL, KIT_STATS, KIT_SKILLS, set_kit_intent,
                        resolve_kit_action, kit_prepare_action, kit_finish_action,
                        kit_react, kit_defend)
+from arena_whaler import WHALER_SKILLS, WHALER_LEVEL
 
 RAID_SIZE = 3
 RAID_ROUND_SECONDS = 120
 RAID_MAX_ROUNDS = 40
 BOSS_NAME = "Железный сборщик"
 BOSSES = {
+    'whaler': dict(name='Китобой — Чумной ловчий', sprite='/static/assets/whaler.png',
+                   skills=tuple(WHALER_SKILLS), recommended_level=20, min_level=20,
+                   fixed_level=WHALER_LEVEL, difficulty='Чумной рейд', loot_skill='swamp_miasma'),
     'kit': dict(name='Кит — Ангел чёрного солнца', sprite='/static/assets/kit.png',
                 phase_sprites={'1': '/static/assets/kit.png',
                                '2': '/static/assets/kit_phase_two.png',
@@ -85,6 +89,7 @@ BOSS_SKILLS = {
 }
 BOSS_SKILLS.update(DOOF_SKILLS)
 BOSS_SKILLS.update(KIT_SKILLS)
+BOSS_SKILLS.update(WHALER_SKILLS)
 
 
 def raid_boss_sprite(boss_id, phase=1):
@@ -153,6 +158,10 @@ def set_intent(data):
         return
     boss = data["boss"]
     boss["is_boss"] = True
+    if data.get('boss_id') == 'whaler':
+        from arena_whaler import set_intent as whaler_intent
+        whaler_intent(data)
+        return
     if data.get('boss_id') == 'kit':
         set_kit_intent(data)
         return
@@ -223,7 +232,7 @@ def set_intent(data):
     data["intent"] = intent
 
 
-AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz", "kit")
+AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz", "kit", "whaler")
 
 
 def raid_boss_level(levels):
@@ -243,6 +252,10 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
              else min(20, round(sum(s["level"] for s in sources) / len(sources))))
     if boss_id == 'kit':
         level = KIT_LEVEL
+    if boss_id == 'whaler':
+        if any(s['level'] < 20 for s in sources):
+            raise ValueError('Китобой доступен каждому участнику с 20 уровня.')
+        level = WHALER_LEVEL
     enemy = dict(
         slave_id=0,
         owner_id=0,
@@ -291,6 +304,12 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
         boss['passive_details'] = [dict(name='Эхо-щиты', rarity='legendary', effects=[
             dict(kind='kit_echo_shields', value=.25, description='Первое успешное прямое атакующее действие отряда за раунд ослаблено на 25%. Эхо-взор также ослабляет предсказанную атаку; эти защиты не складываются. Питомцы, призывы и периодический урон не расходуют щит.')])]
     boss["loadout"] = list(BOSSES[boss_id]["skills"])
+    if boss_id == 'whaler':
+        boss['stats'] = dict(max_hp=600 + 300 * (len(players)-1), resource_max=100,
+                             physical_attack=0, magic_attack=0, physical_defense=0,
+                             magic_defense=0, evasion=5, speed=15, resource_regen=0)
+        boss['hp'] = boss['stats']['max_hp']
+        boss['raid_damage_multiplier'] = 1
     boss["name"] = BOSSES[boss_id]["name"]
     boss["mechanics"] = {}
     boss["is_boss"] = True
@@ -385,6 +404,9 @@ def resolve_round(data, skills, rng=None):
     if data["finished"]:
         raise ValueError("Рейд завершён.")
     rng = rng or random.SystemRandom()
+    if data.get('whaler_reaction'):
+        from arena_whaler import resume_reaction
+        return resume_reaction(data, skills, rng)
     data["round_before"] = raid_snapshot(data)
     boss = data["boss"]
     boss["is_boss"] = True
@@ -453,6 +475,8 @@ def resolve_round(data, skills, rng=None):
             continue
         if prepared:
             kit_finish_action(data, key, event, prepared)
+        if data.get('boss_id') == 'whaler':
+            data.setdefault('whaler_restored', {})[key] = event.get('deliberate_resource_restored', 0)
         log_event(
             data,
             key,
@@ -498,6 +522,23 @@ def resolve_round(data, skills, rng=None):
                 log_event(data, "boss", "boss", "Босс сопротивляется ошеломлению.")
         if prepared and not stunned:
             kit_react(data, key, event, prepared, rng)
+    if data.get('boss_id') == 'whaler' and not finish_if_needed(data):
+        from arena_whaler import prepare_reaction
+        if prepare_reaction(data, rng, stunned):
+            if data.get('qte_modes', {}).get(data['whaler_reaction']['target']):
+                return data
+            from arena_whaler import resume_reaction
+            return resume_reaction(data, skills, rng)
+    return _finish_boss_round(data, skills, rng, stunned)
+
+
+def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
+    boss, living = data['boss'], alive_players(data)
+    if tick_whaler:
+        from arena_plague import begin_turn
+        poison = begin_turn(boss)
+        if poison:
+            log_event(data, 'boss', 'boss', f'Чума: −{poison} HP.', damage=poison)
     data['_qte_boss_phase']=True
     if not finish_if_needed(data):
         if stunned:
@@ -511,6 +552,10 @@ def resolve_round(data, skills, rng=None):
             data["control_lock"] = max(0, data["control_lock"] - 1)
         elif data.get('boss_id') == 'kit':
             resolve_kit_action(data, rng)
+            data['control_lock'] = max(0, data['control_lock'] - 1)
+        elif data.get('boss_id') == 'whaler':
+            from arena_whaler import resolve_action
+            resolve_action(data, rng)
             data['control_lock'] = max(0, data['control_lock'] - 1)
         else:
             intent = data["intent"]
@@ -654,11 +699,18 @@ def resolve_round(data, skills, rng=None):
         for player in data["players"].values():
             player["selected"] = None
             if not player.get("withdrawn"):
+                from arena_plague import begin_turn
+                poison = begin_turn(player['fighter'])
+                if poison:
+                    log_event(data, str(player['actor_id']), str(player['actor_id']), f'Чума: −{poison} HP.', damage=poison)
                 gain = restore_turn_resource(player["fighter"])
                 if gain and data["log"]:
                     event = data["log"][-1]
                     key = str(player["actor_id"])
                     event.setdefault("resource_regen", {})[key] = gain
                     event["after"][key]["resource"] = player["fighter"]["resource"]
-        set_intent(data)
+        if not finish_if_needed(data):
+            set_intent(data)
+    if data.get('boss_id') == 'whaler' and data.get('won'):
+        data['dialogue'] = dict(speaker='КИТОБОЙ', text='Агх… Вы сильнее Кита. Хотя я не один там был… Встретимся во время чумы.', warning='', persistent=True)
     return data

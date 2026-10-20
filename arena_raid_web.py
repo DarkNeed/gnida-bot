@@ -147,6 +147,11 @@ async def raid_view(db, row, actor):
         silent=bool(row.get("silent", False)),
         recommended_level=boss_info.get("recommended_level", 1),
         fixed_level=boss_info.get('fixed_level'),
+        min_level=boss_info.get('min_level', 1),
+        encounter_rules=('С 20 уровня. 600/900/1200 HP на 1/2/3 бойцов, обе защиты 0, уклонение 5%. '
+                         'Кара — по восстановившему больше всех, один раз за раунд; пассивные 8% не учитываются. '
+                         'На последней четверти HP: восстановите 30 энергии на живого участника за раунд, добейте босса или защищайтесь от Гнили.'
+                         if row.get('boss_id')=='whaler' else ''),
         difficulty=boss_info.get('difficulty', ''),
         phase_count=boss_info.get('phase_count', 2),
         boss_sprites=dict(boss_info.get('phase_sprites', {})),

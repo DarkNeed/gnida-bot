@@ -16,13 +16,15 @@ from arena_raid_engine import BOSSES
 from handlers.routes import text_or_caption_regexp
 
 RAID_RE = re.compile(
-    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng|фуфелшмерц|фуфел|doofenshmirtz|doof|кит|kit|маэль))?\s*$",
+    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng|фуфелшмерц|фуфел|doofenshmirtz|doof|китобой|whaler|кит|kit|маэль))?\s*$",
     re.I,
 )
 
 
 def raid_boss_id(match):
     name = match.group("boss").casefold() if match and match.group("boss") else ""
+    if name in ('китобой','whaler'):
+        return 'whaler'
     if name in ('кит', 'kit', 'маэль'):
         return 'kit'
     return (

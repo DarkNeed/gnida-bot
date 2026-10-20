@@ -9,7 +9,7 @@
     const strength=armor/(armor+enemyAttack+20);
     return {armor,strength,armorMultiplier:100/(100+4*armor),maxStamina:70+strength*90,
       arc:(90+strength*100)*Math.PI/180,perfectWindow:clamp(.16+strength*.18-accuracy*.0004,.12,.28),
-      recovery:32+strength*22,rotation:Math.PI*4,warning:.95-accuracy*.003,
+      recovery:32+strength*22,rotation:Math.PI*4*clamp(stats.controlScale??1,.5,1),warning:.95-accuracy*.003+(stats.extraWarning||0),
       pressure:clamp((enemyAttack+20)/(armor+30),.65,1.5),blockReduction:.75};
   }
   function threats(p,seed,params,preparation,activeDuration){
