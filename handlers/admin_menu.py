@@ -35,8 +35,12 @@ def create_admin_menu_router(database):
                        callback_data=f"adm:toggle:{chat['chat_id']}:{m['id']}:{int(not m['enabled'])}:{settings['revision']}")] for m in settings['modules']]
             rows.append([InlineKeyboardButton(text='← Админ-меню',callback_data='adm:home')])
             return title+'<b>🧩 Функции чата</b>\nНажми, чтобы включить или выключить модуль.\nАрена: личные бои, пустоши и рейды. Рабовладение: рабство и предприятия. Классы доступны всем. Выключение не удаляет прогресс; при выключении арены незавершённые бои закрываются со возвратом ставок.', markup(rows)
-        return title+'<b>⚙️ Админ-меню</b>\nНастройки, команды и события относятся только к этому чату.', markup([
+        merchant = await database.arena_merchant_notifications(int(chat['chat_id']))
+        merchant_label = '🧳 Сообщения торговца: ' + ('ВКЛ' if merchant['enabled'] else 'ВЫКЛ')
+        return title+'<b>⚙️ Админ-меню</b>\nНастройки, команды и события относятся только к этому чату.\nСообщения торговца — только объявления в группе; магазин и покупки остаются доступны в арене.', markup([
             [InlineKeyboardButton(text='🧩 Функции чата',callback_data='adm:modules')],
+            [InlineKeyboardButton(text=merchant_label,
+                callback_data=f"adm:merchant:{chat['chat_id']}:{int(not merchant['enabled'])}:{merchant['revision']}")],
             [InlineKeyboardButton(text='⚙️ Кастомные команды',callback_data='cc:list:0')],
             [InlineKeyboardButton(text='🎲 Конструктор событий',callback_data='evm:list')],
             [InlineKeyboardButton(text='💬 Выбрать чат',callback_data='adm:chats')],
@@ -77,6 +81,12 @@ def create_admin_menu_router(database):
                 if chat is None or int(parts[2])!=int(chat['chat_id']) or parts[4] not in {'0','1'}:
                     raise ValueError('Чат изменился или права владельца утрачены.')
                 notice = await database.arena_set_module(int(parts[2]),actor,parts[3],parts[4]=='1',int(parts[5]))
+            elif action=='merchant':
+                chat = await verified_constructor_chat(database,bot,actor)
+                if chat is None or int(parts[2])!=int(chat['chat_id']) or parts[3] not in {'0','1'}:
+                    raise ValueError('Чат изменился или права владельца утрачены.')
+                notice = await database.arena_set_merchant_notifications(
+                    int(parts[2]), actor, parts[3]=='1', int(parts[4]))
             elif action not in {'home','chats','modules'}:
                 raise ValueError('Кнопка устарела.')
             view = await picker(bot,actor) if action=='chats' else await home(bot,actor,action in {'modules','toggle'})

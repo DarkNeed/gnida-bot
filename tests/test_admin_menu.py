@@ -85,6 +85,43 @@ class ChatOwnerAdminTests(constructors.ConstructorChatTests):
         self.assertEqual((await self.store.get_template(self.events[-100]))['success_reward'],15)
         state.clear.assert_awaited()
 
+    async def test_merchant_toggle_is_local_persistent_and_revision_bound(self):
+        callback = await self.admin_click('adm:home')
+        buttons = self.buttons(callback)
+        self.assertTrue(any(b.callback_data == 'adm:merchant:-100:0:0' and
+                            'ВКЛ' in b.text for b in buttons))
+        callback = await self.admin_click('adm:merchant:-100:0:0')
+        self.assertIn('отключены', callback.answer.await_args.args[0])
+        self.assertTrue(any(b.callback_data == 'adm:merchant:-100:1:1' and
+                            'ВЫКЛ' in b.text for b in self.buttons(callback)))
+        self.assertTrue((await self.db.arena_merchant_notifications(-200))['enabled'])
+        self.assertTrue(await self.db.feature_enabled(-100, 'arena'))
+        await self.db.close()
+        await self.db.connect()
+        self.assertEqual(await self.db.arena_merchant_notifications(-100),
+                         dict(enabled=False, revision=1))
+        callback = await self.admin_click('adm:merchant:-100:1:0')
+        self.assertIn('изменились', callback.answer.await_args.args[0])
+        await self.admin_click('adm:merchant:-100:1:1')
+        self.assertTrue((await self.db.arena_merchant_notifications(-100))['enabled'])
+
+    async def test_merchant_toggle_checks_selected_chat_and_current_owner_role(self):
+        callback = await self.admin_click('adm:merchant:-200:0:0')
+        self.assertTrue(callback.answer.await_args.kwargs['show_alert'])
+        self.assertTrue((await self.db.arena_merchant_notifications(-200))['enabled'])
+        self.roles[-100] = 'administrator'
+        callback = await self.admin_click('adm:merchant:-100:0:0')
+        self.assertTrue(callback.answer.await_args.kwargs['show_alert'])
+        self.assertTrue((await self.db.arena_merchant_notifications(-100))['enabled'])
+        self.roles[-100] = 'creator'
+        callback = await self.admin_click('adm:merchant:-100:bad:0')
+        self.assertTrue(callback.answer.await_args.kwargs['show_alert'])
+        callback = self.callback('adm:merchant:-100:0:0')
+        callback.message.chat.type = 'supergroup'
+        await self.handler(self.admin, 'admin_callback')(callback, self.bot, self.state())
+        self.assertTrue(callback.answer.await_args.kwargs['show_alert'])
+        self.assertTrue((await self.db.arena_merchant_notifications(-100))['enabled'])
+
     async def test_global_owner_still_requires_membership_not_ownership(self):
         self.assertTrue(await manages_chat(self.bot,-100,1980056841))
         self.roles[-100]='left'

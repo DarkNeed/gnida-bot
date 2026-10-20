@@ -93,6 +93,11 @@ class ArenaMarketMixin(ForgeMixin):
                 day TEXT NOT NULL, visit INTEGER NOT NULL, chat_id INTEGER NOT NULL,
                 PRIMARY KEY(day,visit,chat_id)
             );
+            CREATE TABLE IF NOT EXISTS arena_merchant_notification_settings(
+                chat_id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1,
+                revision INTEGER NOT NULL DEFAULT 0, updated_by INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_merchant_period ON arena_merchant_visits(day,visit);
             CREATE INDEX IF NOT EXISTS idx_merchant_offer_content ON arena_merchant_offers(visit_id,kind,content_id);
         """)
@@ -653,6 +658,34 @@ class ArenaMarketMixin(ForgeMixin):
             offers=offers,
         )
 
+    def _arena_merchant_notifications_locked(self, chat):
+        row = self.connection.execute(
+            'SELECT enabled,revision FROM arena_merchant_notification_settings WHERE chat_id=?',
+            (chat,),
+        ).fetchone()
+        return dict(enabled=bool(row['enabled']) if row else True,
+                    revision=row['revision'] if row else 0)
+
+    async def arena_merchant_notifications(self, chat):
+        async with self._lock:
+            return self._arena_merchant_notifications_locked(chat)
+
+    async def arena_set_merchant_notifications(self, chat, actor, enabled, revision):
+        if type(enabled) is not bool or type(revision) is not int:
+            raise ValueError('Некорректная настройка сообщений торговца.')
+        async with self._lock:
+            with self.connection:
+                current = self._arena_merchant_notifications_locked(chat)
+                if current['revision'] != revision:
+                    raise ValueError('Настройки изменились. Обнови меню.')
+                self.connection.execute('''INSERT INTO arena_merchant_notification_settings
+                    (chat_id,enabled,revision,updated_by,updated_at) VALUES(?,?,?,?,?)
+                    ON CONFLICT(chat_id) DO UPDATE SET enabled=excluded.enabled,
+                    revision=excluded.revision,updated_by=excluded.updated_by,updated_at=excluded.updated_at''',
+                    (chat, int(enabled), revision + 1, actor, market_now()))
+        return ('Сообщения торговца включены.' if enabled else
+                'Сообщения торговца отключены. Магазин остаётся доступен в арене.')
+
     async def arena_due_merchants(self):
         async with self._lock:
             now = market_now()
@@ -671,6 +704,8 @@ class ArenaMarketMixin(ForgeMixin):
             due = []
             if visit:
                 for chat in chats:
+                    if not self._arena_merchant_notifications_locked(chat)['enabled']:
+                        continue
                     if not self.connection.execute('SELECT 1 FROM arena_merchant_notifications WHERE day=? AND visit=? AND chat_id=?',
                                                    (visit['day'], visit['visit'], chat)).fetchone():
                         due.append(dict(visit, chat_id=chat))

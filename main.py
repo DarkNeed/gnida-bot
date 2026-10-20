@@ -131,6 +131,9 @@ async def main() -> None:
                     last_merchant_sweep = sweep_time
                     for visit in await database.arena_due_merchants():
                         try:
+                            # Settings may change after the sweep claimed a batch.
+                            if not (await database.arena_merchant_notifications(visit['chat_id']))['enabled']:
+                                continue
                             await bot.send_message(
                                 visit["chat_id"],
                                 "🧳 Пришёл странствующий торговец. Трактаты, зелья и конфеты — в арене. Он останется на два часа.",

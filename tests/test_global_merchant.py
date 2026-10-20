@@ -170,6 +170,46 @@ class GlobalMerchantTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.arena_market_view(-100, 10))['merchant']['visit_id'], shop['visit_id'])
         self.assertEqual([r['chat_id'] for r in await self.db.arena_due_merchants()], [-100])
 
+    async def test_muted_notifications_preserve_shop_purchase_and_other_chats(self):
+        shop = await self.open_shop()
+        await self.db.arena_menu(-100, 10)
+        await self.db.arena_menu(-200, 10)
+        self.assertEqual(await self.db.arena_merchant_notifications(-100),
+                         dict(enabled=True, revision=0))
+        await self.db.arena_set_merchant_notifications(-100, 1980056841, False, 0)
+        self.assertEqual([v['chat_id'] for v in await self.db.arena_due_merchants()], [-200])
+        await self.fund(-100)
+        offer = next(o for o in shop['offers'] if o['kind'] == 'potion')
+        await self.db.arena_buy_item(-100, 10, offer['id'])
+        view = await self.db.arena_market_view(-100, 10)
+        self.assertEqual(view['merchant']['visit_id'], shop['visit_id'])
+        self.assertEqual(next(o for o in view['merchant']['offers']
+                              if o['id'] == offer['id'])['bought'], 1)
+        await self.db.close()
+        await self.db.connect()
+        self.assertEqual(await self.db.arena_merchant_notifications(-100),
+                         dict(enabled=False, revision=1))
+        self.assertEqual(await self.db.arena_due_merchants(), [])
+        await self.db.arena_set_merchant_notifications(-100, 1980056841, True, 1)
+        self.assertEqual([v['chat_id'] for v in await self.db.arena_due_merchants()], [-100])
+        self.assertEqual(await self.db.arena_due_merchants(), [])
+        # Switching off/on must not duplicate an already announced visit.
+        await self.db.arena_set_merchant_notifications(-100, 1980056841, False, 2)
+        await self.db.arena_set_merchant_notifications(-100, 1980056841, True, 3)
+        self.assertEqual(await self.db.arena_due_merchants(), [])
+
+    async def test_all_chats_can_mute_without_disabling_the_global_shop(self):
+        for chat in (-100, -200):
+            await self.db.arena_menu(chat, 10)
+            await self.db.arena_set_merchant_notifications(chat, 1980056841, False, 0)
+        await self.open_shop()
+        self.assertEqual(await self.db.arena_due_merchants(), [])
+        self.assertTrue((await self.db.arena_market_view(-100, 10))['merchant']['offers'])
+        with self.assertRaisesRegex(ValueError, 'изменились'):
+            await self.db.arena_set_merchant_notifications(-100, 1980056841, True, 0)
+        with self.assertRaises(ValueError):
+            await self.db.arena_set_merchant_notifications(-100, 1980056841, 'false', 1)
+
     async def test_migration_failure_rolls_back_promotion_and_marker(self):
         shop, _, _ = await self.legacy()
         self.db.connection.execute("CREATE TRIGGER fail_migration BEFORE INSERT ON arena_market_migrations WHEN NEW.name='account_merchant_v1' BEGIN SELECT RAISE(ABORT,'fail'); END")
