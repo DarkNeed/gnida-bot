@@ -696,6 +696,10 @@ def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
     data.pop("round_before", None)
     if not data["finished"]:
         data["round"] += 1
+        # Start-of-turn plague can be the first event of the new round, before
+        # resolve_round has captured its action snapshot. Keep its own pre-tick
+        # snapshot so logging and saving cannot roll back the completed round.
+        data['round_before'] = raid_snapshot(data)
         for player in data["players"].values():
             player["selected"] = None
             if not player.get("withdrawn"):
@@ -709,6 +713,7 @@ def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
                     key = str(player["actor_id"])
                     event.setdefault("resource_regen", {})[key] = gain
                     event["after"][key]["resource"] = player["fighter"]["resource"]
+        data.pop('round_before', None)
         if not finish_if_needed(data):
             set_intent(data)
     if data.get('boss_id') == 'whaler' and data.get('won'):

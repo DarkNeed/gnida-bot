@@ -43,6 +43,39 @@ def encounter(size=1):
 
 
 class WhalerTests(unittest.TestCase):
+    def test_landed_miasma_advances_round_and_logs_each_plague_tick(self):
+        for size in (1, 3):
+            with self.subTest(size=size):
+                d = encounter(size)
+                d['round'] = 3
+                set_intent(d)
+                for player in d['players'].values():
+                    player['fighter']['hp'] = player['fighter']['stats']['max_hp'] = 1000
+                    player['fighter']['resource'] = 50
+                    player['selected'] = 'defend'
+                resolve_round(d, BUILTIN_SKILLS, FixedRoll())
+                self.assertEqual(d['round'], 4)
+                attacks = [e for e in d['log'] if e.get('skill') == 'whaler_miasma']
+                ticks = [e for e in d['log'] if e['round'] == 4]
+                self.assertEqual(len(attacks), size)
+                self.assertTrue(all(e['hit'] for e in attacks))
+                self.assertEqual(len(ticks), size)
+                self.assertIn('before', ticks[0])
+                for tick in ticks:
+                    key = tick['target']
+                    self.assertEqual(tick['damage'], 6)
+                    self.assertEqual(tick['after'][key]['hp'],
+                                     attacks[-1]['after'][key]['hp'] - 6)
+                self.assertNotIn('round_before', d)
+                # Saved/reloaded raids must continue rather than replay the
+                # previous miasma or apply its start-of-turn damage twice.
+                d = json.loads(json.dumps(d))
+                for player in d['players'].values():
+                    player['selected'] = 'defend'
+                resolve_round(d, BUILTIN_SKILLS, FixedRoll())
+                self.assertEqual(d['round'], 5)
+                self.assertEqual(len([e for e in d['log'] if e['round'] == 5]), size)
+
     def test_fixed_hp_no_armor_and_party_gate(self):
         for size, hp in [(1, 600), (2, 900), (3, 1200)]:
             d = encounter(size)
@@ -254,6 +287,32 @@ class WhalerStoreTests(unittest.IsolatedAsyncioTestCase):
             return await self.db.arena_interactive_raid(
                 row["token"], 10, 1, proof={}, challenge_id=c["id"]
             )
+
+    async def test_miasma_qte_completion_commits_next_round_and_survives_restart(self):
+        row = await self.ready()
+        d = json.loads(row['data_json'])
+        d['round'] = 3
+        d['players']['10']['fighter']['hp'] = 1000
+        d['players']['10']['fighter']['stats']['max_hp'] = 1000
+        set_intent(d)
+        self.db._raid_save_locked(row, d)
+        self.db.connection.commit()
+        row = await self.db.arena_interactive_raid(row['token'], 10, 3, 'defend')
+        c = (await self.db.arena_qte_view('raid', row['token'], 10))['challenge']
+        with patch('arena_qte_live.replay', return_value=dict(mask=[False], contacts=[])):
+            row = await self.db.arena_interactive_raid(
+                row['token'], 10, 3, proof={}, challenge_id=c['id'])
+        saved = json.loads(row['data_json'])
+        self.assertEqual(row['round'], 4)
+        self.assertEqual(saved['round'], 4)
+        self.assertEqual(len([e for e in saved['log'] if e['round'] == 4]), 1)
+        self.assertEqual(saved['log'][-1]['damage'], 6)
+        self.assertIsNone(await self.db.arena_qte_view('raid', row['token'], 10))
+        await self.db.close()
+        await self.db.connect()
+        loaded = await self.db.arena_raid_get(row['token'])
+        self.assertEqual(loaded['round'], 4)
+        self.assertEqual(json.loads(loaded['data_json']), saved)
 
     async def test_reaction_expiry_does_not_repeat_restoration(self):
         row = await self.ready()
