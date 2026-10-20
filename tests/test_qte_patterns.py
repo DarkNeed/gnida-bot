@@ -14,6 +14,8 @@ from arena_qte_patterns import (
     duration,
     difficulty,
     defense_step,
+    attack,
+    attack_frame,
 )
 from arena_qte_rules import replay
 from arena_qte_unique import review_catalog
@@ -21,6 +23,32 @@ from arena_engine import create_battle_state, resolve_skill
 
 
 class PatternReplayTests(unittest.TestCase):
+    def test_attack_miss_is_final_and_server_rejects_a_second_attempt(self):
+        for strikes in (1, 2, 6):
+            with self.subTest(strikes=strikes):
+                skill = dict(review_catalog()[0], strikes=strikes)
+                c = self.config(skill, 'attack')
+                s = attack(profile(skill), c['stats'], c['seed'])
+                miss_tick = hit_tick = None
+                for tick in range(math.ceil(s['duration'] * 120)):
+                    s['time'] = tick / 120
+                    f = attack_frame(s)
+                    if f['index'] != 0 or not f['canHit']:
+                        continue
+                    distance = abs(f['cursor'] - f['center'])
+                    if miss_tick is None and distance > f['width']:
+                        miss_tick = tick
+                    elif miss_tick is not None and distance < f['width'] / 3:
+                        hit_tick = tick
+                        break
+                self.assertIsNotNone(miss_tick)
+                self.assertIsNotNone(hit_tick)
+                total = math.ceil(duration(c) * 120)
+                result = replay(c, dict(ticks=total, clicks=[miss_tick]), 60)
+                self.assertEqual(result['mask'], [False] * strikes)
+                with self.assertRaises(ValueError):
+                    replay(c, dict(ticks=total, clicks=[miss_tick, hit_tick]), 60)
+
     def test_defense_preparation_has_no_hazards_damage_or_early_movement(self):
         skill = next(s for s in review_catalog() if s["base_id"] == "warning_shot")
         c = self.config(skill)
@@ -131,7 +159,7 @@ class PatternReplayTests(unittest.TestCase):
         for skill in catalog:
             families[family(skill)] = skill
             configs.append(self.config(skill))
-            configs.append(self.config(skill, "attack", retry=True))
+            configs.append(self.config(skill, "attack", miss_first=True))
         for skill in families.values():
             for evasion in (0, 100):
                 c = self.config(skill)

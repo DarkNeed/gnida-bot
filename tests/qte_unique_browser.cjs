@@ -43,11 +43,18 @@ const {chromium}=require('playwright');const origin=process.env.QTE_UNIQUE_URL||
     await page.keyboard.press('Space');assert.equal(await page.evaluate(()=>window.__trial.attempts[0]),0);
     assert((await page.locator('#chance-status').textContent()).includes('Подготовка'));
     await page.screenshot({path:path.join(output,'attack-preparation.png')});
-    // Deliberately miss on the first pass, then take the remaining chance.
+    // One bad press ends this strike; a later press cannot repair its result.
     await page.waitForFunction(()=>{const s=window.__trial,f=QTEUnique.attackFrame(s);return f.canHit&&Math.abs(f.cursor-f.center)>f.width;},null,{polling:'raf'});
     await page.keyboard.press('Space');assert.equal(await page.evaluate(()=>window.__trial.attempts[0]),1);
-    assert.equal(await page.evaluate(()=>window.__trial.results[0]),null);assert((await page.locator('#feedback').textContent()).includes('ещё одна'));
-    await page.screenshot({path:path.join(output,'attack-second-chance.png')});
+    assert.equal(await page.evaluate(()=>window.__trial.results[0]),false);
+    await page.waitForFunction(()=>document.querySelector('#game').dataset.phase==='idle');
+    assert((await page.locator('#feedback').textContent()).includes('0/1'));
+    await page.keyboard.press('Space');
+    assert.equal(await page.evaluate(()=>window.__trial.attempts[0]),1);
+    assert((await page.locator('#hp-value').textContent()).includes('200 / 200'));
+    await page.screenshot({path:path.join(output,'attack-one-attempt.png')});
+    // A fresh trial can still succeed with its one correctly timed press.
+    await page.locator('#start').click();
     await page.waitForFunction(()=>{
       const s=window.__trial;if(!s||s.ended)return false;const f=QTEUnique.attackFrame(s);
       if(f.canHit&&Math.abs(f.cursor-f.center)<f.width/3)window.dispatchEvent(new KeyboardEvent('keydown',{code:'Space'}));
@@ -55,7 +62,7 @@ const {chromium}=require('playwright');const origin=process.env.QTE_UNIQUE_URL||
     },null,{polling:'raf'});
     await page.waitForFunction(()=>document.querySelector('#game').dataset.phase==='idle');
     assert((await page.locator('#feedback').textContent()).includes('1/1'));
-    assert.equal(await page.evaluate(()=>window.__trial.attempts[0]),2);assert((await page.locator('#hp-value').textContent()).includes('188 / 200'));
+    assert.equal(await page.evaluate(()=>window.__trial.attempts[0]),1);assert((await page.locator('#hp-value').textContent()).includes('188 / 200'));
     await page.locator('[data-rate="В самый раз"]').click();assert((await page.locator('#log').textContent()).includes('Оценка: В самый раз'));
     await page.selectOption('#family-filter','tiger');await page.locator('#start').click();
     await page.waitForTimeout(400);await page.evaluate(()=>window.dispatchEvent(new Event('blur')));

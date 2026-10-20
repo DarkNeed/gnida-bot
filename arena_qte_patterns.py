@@ -289,8 +289,7 @@ def attack_frame(s):
         phase=phase,
         canHit=phase == "active"
         and s["results"][i] is None
-        and s["attempts"][i] < 2
-        and s["time"] - s["lastAttempt"][i] >= 0.22 - 1e-8,
+        and s["attempts"][i] < 1,
     )
 
 
@@ -898,7 +897,7 @@ def replay(challenge, proof, elapsed):
         raise ValueError("Мини-игра ещё не могла завершиться.")
     if is_attack:
         clicks = proof.get("clicks")
-        if not isinstance(clicks, list) or len(clicks) > n * 2:
+        if not isinstance(clicks, list) or len(clicks) > n:
             raise ValueError("Слишком много нажатий.")
         s = attack(p, challenge["stats"], challenge["seed"])
         previous = -1
@@ -916,13 +915,13 @@ def replay(challenge, proof, elapsed):
             i = f["index"]
             if not f["canHit"]:
                 raise ValueError(
-                    "Нажатие вне окна или повторная попытка слишком быстрая."
+                    "Нажатие вне окна или попытка этого удара уже использована."
                 )
             s["attempts"][i] += 1
             s["lastAttempt"][i] = s["time"]
             if abs(f["cursor"] - f["center"]) <= f["width"] / 2:
                 s["results"][i] = True
-            elif s["attempts"][i] >= 2:
+            else:
                 s["results"][i] = False
         # A closed tab is failure, not a way to shorten unplayed marks.
         if ticks < total and s["results"][-1] is None:

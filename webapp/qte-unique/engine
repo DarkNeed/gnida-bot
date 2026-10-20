@@ -90,7 +90,7 @@
     return {id,seed,kind,title:basic?'Простой удар':entry[0],color:entry[1],hint:basic?'Три коротких замаха без ударных волн. Выйди из небольшого отмеченного круга.':entry[2],style:entry[3],skill,basic,
       strikes:clamp(skill.strikes||1,1,6),kit:(skill.base_id||'').startsWith('kit_'),phase:r()*TAU,polarity:r()<.5?-1:1,
       speed:.94+r()*.18,spread:.78+r()*.34,interval:.8+r()*.4,drift:r()>.6,
-      attackHint:'Секунда подготовки, затем два прохода метки и до двух попыток на каждый удар. Первое неточное нажатие оставляет второй шанс.'};
+      attackHint:'Секунда подготовки и короткий сигнал перед ударом. Одно нажатие на каждый удар: неточное нажатие засчитывается как промах без повторной попытки.'};
   }
   function difficulty(stats){
     const attack=clamp((stats.accuracy-stats.enemyEvasion)/100,-1,1),pressure=clamp((stats.enemyAccuracy-stats.evasion)/100,-1,1);
@@ -127,15 +127,15 @@
     if(index%2&&s.p.polarity<0)cursor=1-cursor;
     const center=s.centers[index]+(s.p.drift?.035*Math.sin(local*3+s.p.phase):0);
     const remaining=phase==='ready'?s.preparation-s.time:phase==='cue'?s.strikeReady-local:s.slots[index]-local;
-    return {index,cursor,center,width:s.d.zone,remaining:Math.max(0,remaining),phase,attemptsLeft:2-s.attempts[index],
-      canHit:phase==='active'&&s.results[index]===null&&s.attempts[index]<2&&s.time-s.lastAttempt[index]>=.22-1e-8};
+    return {index,cursor,center,width:s.d.zone,remaining:Math.max(0,remaining),phase,attemptsLeft:1-s.attempts[index],
+      canHit:phase==='active'&&s.results[index]===null&&s.attempts[index]<1};
   }
   function hit(s){if(s.ended)return null;const f=attackFrame(s);if(!f.canHit)return null;
     const i=f.index,ok=Math.abs(f.cursor-f.center)<=f.width/2;s.attempts[i]++;s.lastAttempt[i]=s.time;
     if(ok){
       s.results[i]=true;const force={...impact(s.p,i),weight:attackWeights(s.p)[i]},raw=attackDamage(s,i),damage=Math.min(s.hp,raw);
       s.hp-=damage;s.damage+=damage;s.contacts.push({id:'strike:'+i,time:s.time,damage,raw,...force,x:360,y:160});
-    }else if(s.attempts[i]>=2)s.results[i]=false;
+    }else s.results[i]=false;
     if(s.hp<=0&&s.endOnDeath||i===s.results.length-1&&s.results[i]!==null)s.ended=true;return ok;}
   function attackStep(s,dt){if(s.ended)return;s.time=Math.min(s.duration,s.time+dt);let end=s.preparation;
     s.slots.forEach((slot,i)=>{end+=slot;if(s.time>=end-1e-8&&s.results[i]===null)s.results[i]=false;});

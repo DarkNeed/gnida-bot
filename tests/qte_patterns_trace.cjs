@@ -21,12 +21,12 @@ function safeRoute(initial,limit=28){
 function record(c){
   const p=E.profile(c.profile),s=(c.kind==='attack'?E.attack:E.defense)(p,c.stats,c.seed,{damageBase:0,hp:1000000,endOnDeath:false,enabledStrikes:c.enabled_strikes,preparation:c.defense_preparation??0});
   if(c.kind==='attack'){
-    const proof={ticks:0,clicks:[]};let retry=false;
+    const proof={ticks:0,clicks:[]};let missedFirst=false;
     for(let tick=0;tick<=Math.ceil(s.duration*120);tick++){
       E.attackStep(s,Math.min(s.duration,tick/120)-s.time);const f=E.attackFrame(s);
-      const miss=c.retry&&!retry&&f.canHit&&Math.abs(f.cursor-f.center)>f.width;
+      const miss=c.miss_first&&!missedFirst&&f.canHit&&Math.abs(f.cursor-f.center)>f.width;
       if(f.canHit&&(miss||Math.abs(f.cursor-f.center)<f.width/3)){
-        E.hit(s);proof.clicks.push(tick);if(miss)retry=true;
+        E.hit(s);proof.clicks.push(tick);if(miss)missedFirst=true;
       }
       if(s.ended){proof.ticks=tick;break;}
     }

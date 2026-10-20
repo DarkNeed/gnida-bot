@@ -22,7 +22,7 @@
     $('damage-value').textContent=(mode==='defense'?'Получено: ':'Нанесено: ')+damage;
     if(!s)$('chance-status').textContent='Только тестовое здоровье';
     else if(mode==='defense')$('chance-status').textContent=s.time<s.preparation?'Подготовка: '+(s.preparation-s.time).toFixed(1)+' с':'Касаний: '+s.contacts.length;
-    else{const f=E.attackFrame(s);$('chance-status').textContent=f.phase==='ready'?'Подготовка: '+f.remaining.toFixed(1)+' с':f.phase==='cue'?'Сигнал перед ударом':s.results[f.index]===true?'Удар засчитан':s.results[f.index]===false?'Попытки исчерпаны':'Попыток: '+f.attemptsLeft+' / 2';
+    else{const f=E.attackFrame(s);$('chance-status').textContent=f.phase==='ready'?'Подготовка: '+f.remaining.toFixed(1)+' с':f.phase==='cue'?'Сигнал перед ударом':s.results[f.index]===true?'Удар засчитан':s.results[f.index]===false?'Попытка использована':'Попыток: '+f.attemptsLeft+' / 1';
       $('hit').disabled=!f.canHit||s.ended;}
   }
   function clearInput(){keys.clear();pointers.clear();touch.clear();}
@@ -78,7 +78,7 @@
     background();const f=E.attackFrame(s),style=selected.style,gold='#e8c17c',white='#e9f4fb';
     if(f.phase==='ready'){
       text('ПРИГОТОВЬСЯ',360,116,gold,25,'center');text(f.remaining.toFixed(1)+' с',360,164,white,28,'center');
-      text('ДВА ПРОХОДА МЕТКИ · ДО ДВУХ ПОПЫТОК',360,218,'#b9cddd',12,'center');return;
+      text('ОДНА ПОПЫТКА НА КАЖДЫЙ УДАР',360,218,'#b9cddd',12,'center');return;
     }
     text('УДАР '+(f.index+1)+' / '+s.results.length,32,34,selected.color);text(f.remaining.toFixed(1)+' с',688,34,gold,13,'right');
     if(style==='arc'||style==='orbit'){
@@ -106,7 +106,7 @@
         if(style==='cross'){ctx.strokeStyle=selected.color;ctx.beginPath();ctx.moveTo(x-20,y);ctx.lineTo(x+20,y);ctx.stroke();}
       }
     }
-    const result=s.results[f.index];text(f.phase==='cue'?'СИГНАЛ · СЕЙЧАС НАЧНЁТСЯ':result===null?'ПОПЫТОК: '+f.attemptsLeft+' / 2 · МЕТКА ИДЁТ ТУДА И ОБРАТНО':result?'ПОПАДАНИЕ':'ПРОМАХ',360,292,result===null?'#b9cddd':result?'#8ed5b5':'#ecaaa5',12,'center');
+    const result=s.results[f.index];text(f.phase==='cue'?'СИГНАЛ · СЕЙЧАС НАЧНЁТСЯ':result===null?'ПОПЫТОК: '+f.attemptsLeft+' / 1':result?'ПОПАДАНИЕ':'ПРОМАХ',360,292,result===null?'#b9cddd':result?'#8ed5b5':'#ecaaa5',12,'center');
     drawDamage(s);
   }
   function drawDamage(s){
@@ -166,7 +166,7 @@
     if(sim||!filtered.length)return;
     record=null;clearInput();paused=document.hidden;
     sim=mode==='defense'?E.defense(selected,stats(),seed(),model()):E.attack(selected,stats(),seed(),model());lastFrame=0;
-    labels();controls();health(sim);feedback(mode==='defense'?'Секунда подготовки, затем атака. Золотые угрозы сильнее мелких.':'Подготовься. У каждого удара два прохода и до двух попыток.');
+    labels();controls();health(sim);feedback(mode==='defense'?'Секунда подготовки, затем атака. Золотые угрозы сильнее мелких.':'Подготовься. На каждый удар — одно нажатие без повторной попытки.');
     $('trial').scrollIntoView({block:'start',behavior:'instant'});canvas.focus({preventScroll:true});
   }
   function log(text,detail){
@@ -179,7 +179,7 @@
     const detail=`${selected.skill.name} · ${mode==='defense'?'уклонение':'попадание'} · узор ${seed()} · точность/уклонение ${stats().accuracy}/${stats().evasion}, враг ${stats().enemyAccuracy}/${stats().enemyEvasion} · опора ${s.damageBase}, HP ${s.initialHp} · `+Object.entries(E.DAMAGE_TIERS).map(([id,t])=>t.name+': '+s.contacts.filter(c=>c.tier===id).length).join(', ');
     record={text,detail,skill:selected.id,mode,seed:seed(),stats:stats(),aborted,damage:r.damage,hp:r.hp,damageBase:s.damageBase,initialHp:s.initialHp};health(s);sim=null;paused=false;clearInput();controls();dots(mode==='attack'?r.mask:[]);feedback(text,success?'success':'fail');$('phase-time').textContent=aborted?'ПРЕРВАНО':'ИТОГ';log(text,detail);
   }
-  function hit(){if(!sim||paused||mode!=='attack')return;const ok=E.hit(sim);if(ok===null)return;const f=E.attackFrame(sim);dots(sim.results);health(sim);feedback(ok?'Попадание · урон '+sim.contacts.at(-1).damage:sim.results[f.index]===null?'Мимо — осталась ещё одна попытка.':'Две попытки потрачены: промах этим ударом.',ok?'success':'fail');drawAttack(sim);if(sim.ended)finish();}
+  function hit(){if(!sim||paused||mode!=='attack')return;const ok=E.hit(sim);if(ok===null)return;dots(sim.results);health(sim);feedback(ok?'Попадание · урон '+sim.contacts.at(-1).damage:'Промах. Повторной попытки нет.',ok?'success':'fail');drawAttack(sim);if(sim.ended)finish();}
   function pause(){if(!sim)return;paused=true;clearInput();controls();feedback('Пауза. Нажми «Продолжить»: ожидание не засчитывает уклонение.');}
   $('resume').addEventListener('click',()=>{if(!sim)return;paused=false;lastFrame=0;clearInput();controls();canvas.focus({preventScroll:true});});
   $('start').addEventListener('click',begin);$('hit').addEventListener('click',hit);$('stop').addEventListener('click',()=>finish(true));

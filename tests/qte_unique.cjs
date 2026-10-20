@@ -11,20 +11,22 @@ process.stdin.on('end',()=>{
   // explicitly so the route search does not repeatedly serialize the catalogue.
   const copyDefense=s=>({...s,player:{...s.player},events:s.events.map(e=>({...e})),hazards:s.hazards.slice(),
     received:s.received.slice(),contacts:s.contacts.slice(),hitIds:s.hitIds.slice()});
-  // Preparation, retry and anti-spam are engine rules, not just disabled buttons.
+  // Preparation and one attempt per strike are engine rules, not just UI locks.
   const timing=E.profile({id:'retry-test',base_id:'test',class_id:'thumb',name:'Test',strikes:2});
   const retry=E.attack(timing,equal,17);
   assert.equal(E.attackFrame(retry).phase,'ready');assert.equal(E.hit(retry),null);assert.deepEqual(retry.attempts,[0,0]);
   E.attackStep(retry,1.01);assert.equal(E.attackFrame(retry).phase,'cue');assert.equal(E.hit(retry),null);
-  E.attackStep(retry,.25);assert.equal(E.hit(retry),false);assert.equal(retry.results[0],null);assert.equal(E.hit(retry),null);
+  E.attackStep(retry,.25);assert.equal(E.hit(retry),false);assert.equal(retry.results[0],false);assert.equal(E.hit(retry),null);
   assert.equal(retry.attempts[0],1,'rapid second press ignored');
+  assert.equal(E.attackFrame(retry).attemptsLeft,0);
+  while(E.attackFrame(retry).index===0){E.attackStep(retry,1/120);if(E.attackFrame(retry).index===0)assert.equal(E.hit(retry),null,'miss cannot be retried later');}
+  assert.equal(retry.results[0],false,'earlier miss is preserved');
   while(!E.attackFrame(retry).canHit||Math.abs(E.attackFrame(retry).cursor-E.attackFrame(retry).center)>retry.d.zone/3)E.attackStep(retry,1/120);
-  assert.equal(E.hit(retry),true);assert.equal(retry.attempts[0],2);assert(retry.hp<retry.initialHp,'immediate damage on successful retry');
+  assert.equal(E.hit(retry),true);assert.equal(retry.attempts[1],1);assert(retry.hp<retry.initialHp,'immediate damage on the next strike');
   const hp=retry.hp;assert.equal(E.hit(retry),null);assert.equal(retry.hp,hp,'successful strike cannot damage twice');
-  while(E.attackFrame(retry).index===0)E.attackStep(retry,1/120);
-  assert.equal(retry.results[0],true,'earlier strike is preserved');
+  assert.deepEqual(E.attackResult(retry).mask,[false,true]);
   const doubleMiss=E.attack({...timing,strikes:1},equal,17);E.attackStep(doubleMiss,1.26);
-  assert.equal(E.hit(doubleMiss),false);E.attackStep(doubleMiss,.23);assert.equal(E.hit(doubleMiss),false);
+  assert.equal(E.hit(doubleMiss),false);E.attackStep(doubleMiss,.23);assert.equal(E.hit(doubleMiss),null);
   assert.equal(doubleMiss.results[0],false);assert(doubleMiss.ended);assert.equal(E.hit(doubleMiss),null);
   const passes=E.attack({...timing,strikes:1,drift:false},equal,17);let last=null,crossings=0;
   while(!passes.ended){const f=E.attackFrame(passes);if(f.phase==='active'){const sign=Math.sign(f.cursor-f.center);if(last!==null&&sign!==last)crossings++;last=sign;}E.attackStep(passes,1/120);}
@@ -42,7 +44,7 @@ process.stdin.on('end',()=>{
   const ready=E.defense(timing,weak,17),spawn={...ready.player};E.defenseStep(ready,1,{x:1,y:1});
   assert.deepEqual(ready.player,spawn);assert.equal(ready.damage,0);assert.equal(ready.contacts.length,0);assert.equal(ready.hazards.length,0);
   assert.equal(ready.duration,7.8);E.defenseStep(ready,.2,{x:1});assert(ready.player.x>spawn.x);assert(ready.hazards.length>0);
-  console.log('PASS preparation, two crossings, retry, anti-spam, immediate weighted damage and one collision per projectile');
+  console.log('PASS preparation, unchanged cursor motion, one attempt per strike, immediate weighted damage and one collision per projectile');
   for(const p of profiles){
     families.set(p.kind,p);
     assert(E.FAMILIES[p.kind]);assert.deepEqual(p,E.profile(p.skill));

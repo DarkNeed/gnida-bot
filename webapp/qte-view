@@ -22,7 +22,7 @@
       const f=E.attackFrame(s),gold='#e8c17c',white='#e9f4fb',style=p.style;
       if(f.phase==='ready'){
         text('ПРИГОТОВЬСЯ',360,118,gold,25,'center');text(f.remaining.toFixed(1)+' с',360,166,white,28,'center');
-        text('ДВА ПРОХОДА · ДО ДВУХ ПОПЫТОК',360,220,'#b9cddd',13,'center');return;
+        text('ОДНА ПОПЫТКА НА КАЖДЫЙ УДАР',360,220,'#b9cddd',13,'center');return;
       }
       text('УДАР '+(f.index+1)+' / '+s.results.length,32,34,color);
       if(style==='arc'||style==='orbit'){
@@ -46,7 +46,7 @@
           if(style==='cross'){ctx.strokeStyle=color;ctx.beginPath();ctx.moveTo(x-20,y);ctx.lineTo(x+20,y);ctx.stroke();}
         }
       }
-      const r=s.results[f.index];text(f.phase==='cue'?'СИГНАЛ · СЕЙЧАС НАЧНЁТСЯ':r===null?'ПОПЫТОК: '+f.attemptsLeft+' / 2 · ТУДА И ОБРАТНО':r?'ПОПАДАНИЕ':'ПРОМАХ',360,292,r===null?'#b9cddd':r?'#8ed5b5':'#ecaaa5',12,'center');
+      const r=s.results[f.index];text(f.phase==='cue'?'СИГНАЛ · СЕЙЧАС НАЧНЁТСЯ':r===null?'ПОПЫТОК: '+f.attemptsLeft+' / 1':r?'ПОПАДАНИЕ':'ПРОМАХ',360,292,r===null?'#b9cddd':r?'#8ed5b5':'#ecaaa5',12,'center');
     }else{
       function hazard(h){
         const warning=t<h.start,g=E.geometry(h,t),spent=h.disabled||s.hitIds.includes(h.damageId),major=h.tier==='heavy'||h.tier==='critical',c=major?(h.tier==='critical'?'#fff0b7':'#e8bd7c'):color;

@@ -82,7 +82,7 @@
       find('h2').textContent=challenge.name;
       find('.qte-eyebrow').textContent=defense?'ЗАЩИТА · '+p.title:'ТВОЯ АТАКА · ПОЙМАЙ МОМЕНТ';
       find('.qte-help-full').textContent=defense?p.hint+' Разные снаряды ранят независимо; золотые опаснее мелких.':p.attackHint;
-      find('.qte-help-compact').textContent=defense?'Уходи от угроз. Золотые сильнее мелких. Пропуск = все касания.':'Подготовка → два прохода метки. До двух попыток на удар.';
+      find('.qte-help-compact').textContent=defense?'Уходи от угроз. Золотые сильнее мелких. Пропуск = все касания.':'Подготовка → одно нажатие на каждый удар. Промах без повторной попытки.';
       find('.qte-health-label').textContent=(defense?'Твои HP':'HP цели')+' · прогноз';
       if(!defense)find('.qte-info').textContent+=' Даже после успешной отметки бот или босс может уклониться по своей характеристике.';
       find('.qte-abort').title=defense?'Пропуск или истечение времени засчитывают все снаряды как попадания.':'Пропуск расходует действие и не даёт попаданий.';
@@ -112,7 +112,7 @@
       }
       function hit(){
         if(defense||done)return;const ok=E.hit(sim);if(ok===null)return;proof.clicks.push(tick);
-        const f=E.attackFrame(sim);find('.qte-live-status').textContent=ok?'Попадание засчитано.':sim.results[f.index]===null?'Мимо — осталась ещё одна попытка.':'Промах: две попытки потрачены.';
+        find('.qte-live-status').textContent=ok?'Попадание засчитано.':'Промах. Повторной попытки нет.';
         if(ok)window.ArenaAudio?.effect?.('hit');draw();if(sim.ended)finish();
       }
       const keymap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',KeyA:'left',KeyD:'right',KeyW:'up',KeyS:'down'};
