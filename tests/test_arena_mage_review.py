@@ -94,7 +94,7 @@ class MageReviewTests(unittest.TestCase):
 
     def test_echo_discount_starts_at_twelve_and_payment_is_real_on_miss(self):
         for level in (10, 11, 12, 18):
-            for sid, price in (('mana_shot', 10), ('mana_blob', 25), ('mana_overload', 35)):
+            for sid, price in (('mana_shot', 10), ('mana_blob', 25), ('mana_overload', 40)):
                 with self.subTest(level=level, skill=sid):
                     state = self.state('mage', 'mage_archmage')
                     actor = state['sides']['a']
@@ -187,7 +187,7 @@ class MageReviewTests(unittest.TestCase):
         self.assertTrue(actor['rpg_state']['echo_ready'])
         self.assertEqual(actor['resource'], 100)
         self.alternate(state, 'mana_overload')
-        self.assertEqual(actor['resource'], 83)  # 25 paid, +8 next turn.
+        self.assertEqual(actor['resource'], 78)  # 30 paid, +8 next turn.
         self.assertEqual(actor['cooldowns']['mana_overload'], 3)
         self.assertFalse(actor['rpg_state']['echo_ready'])
 
@@ -211,12 +211,12 @@ class MageReviewTests(unittest.TestCase):
         actor['loadout'] = ['mana_overload', 'mana_shot', 'mana_blob', 'arch_mage_elementalist']
         for sid in ('mana_overload', 'mana_shot', 'mana_blob'):
             self.alternate(state, sid)
-        self.assertEqual(actor['resource'], 84)  # 100 - 35 - 10 - 25 + 30 + 3*8
+        self.assertEqual(actor['resource'], 79)  # 100 - 40 - 10 - 25 + 30 + 3*8
         self.assertEqual(actor['rpg_state']['elements'], [])
         self.assertEqual(effective_skill(state, 'a', 'arch_mage_elementalist').name, 'Катаклизм')
         event = resolve_skill(state, 'a', 'arch_mage_elementalist', rng=FixedRoll())
         self.assertEqual(len(event['hit_results']), 3)
-        self.assertEqual(actor['resource'], 44)
+        self.assertEqual(actor['resource'], 39)
         self.assertFalse(any(e.get('id') in ('rpg_burn', 'rpg_frost', 'rpg_conductivity')
                              for e in state['sides']['b']['effects']))
 
@@ -254,7 +254,7 @@ class MageReviewTests(unittest.TestCase):
         self.assertTrue(actor['rpg_state']['echo_ready'])
         player['selected'] = 'mana_overload'
         resolve_round(data, BUILTIN_SKILLS, FixedRoll())
-        self.assertEqual(actor['resource'], 83)  # 25 paid, +8 next round.
+        self.assertEqual(actor['resource'], 78)  # 30 paid, +8 next round.
         self.assertFalse(actor['rpg_state']['echo_ready'])
 
     def test_mage_descriptions_are_specific_and_echo_bonus_is_current(self):

@@ -85,7 +85,7 @@ class ApprovedBalanceTests(unittest.TestCase):
         skill=effective_skill(state,'a','mana_overload')
         self.assertAlmostEqual(rpg_modifiers(a,b,skill)[1],2.8)
         self.assertEqual(mastery_modifiers(a,b,skill)[1],1)
-        self.tap(state,'mana_overload');self.assertEqual(a['resource'],75)
+        self.tap(state,'mana_overload');self.assertEqual(a['resource'],70)
         state=self.state('mage','mage_archmage');a,b=state['sides'].values()
         a['rpg_state']=dict(mana=3,echo_ready=True)
         self.assertAlmostEqual(rpg_modifiers(a,b,effective_skill(state,'a','mana_overload'))[1],2.05*1.6)
@@ -100,12 +100,12 @@ class ApprovedBalanceTests(unittest.TestCase):
                     self.assertTrue(all(e['value']==defense for e in skill.effects if e['kind'].endswith('_defense_pct')))
                 self.tap(state,'arch_'+arch);self.assertEqual(a['mechanics']['focus'],2)
         state=self.state('pinky','pinky_tiansha');state['sides']['a']['mechanics']['focus']=3
-        self.assertEqual(effective_skill(state,'a','falling_star').cost,50)
+        self.assertEqual(effective_skill(state,'a','falling_star').cost,55)
 
     def test_final_variant_buffs_keep_single_action_and_hit_budgets(self):
         cases=[('cutie','femboy','air_kiss',dict(shame=3),28,30,.25),
                ('jock','gachi_actor','smack',dict(grip=2),32,35,None),
-               ('jock','mge_bro','butt_peak',dict(dominance=3),40,45,0),
+               ('jock','mge_bro','butt_peak',dict(dominance=3),40,50,0),
                ('index','index_proxy','last_line',dict(execution=2),34,40,.55)]
         for cls,arch,sid,memory,power,cost,pierce in cases:
             with self.subTest(arch=arch):
@@ -200,7 +200,7 @@ class ApprovedBalanceTests(unittest.TestCase):
         self.tap(state,'mana_focus');self.assertEqual(a['rpg_state']['elements'],['fire'])
         self.tap(state,'mana_blob',miss=True);a['resource']=60
         self.tap(state,'mana_overload',miss=True)
-        self.assertEqual(a['resource'],55)
+        self.assertEqual(a['resource'],50)
         self.assertEqual(a['rpg_state']['elements'],[])
 
     def test_final_rpg_costs_and_required_resources(self):

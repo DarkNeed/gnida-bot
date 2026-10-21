@@ -54,7 +54,7 @@ class JockEngineTests(unittest.TestCase):
                 state = self.state()
                 event = self.tap(state, skill)
                 a = state["sides"]["a"]
-                self.assertEqual(a["resource"], 100 - cost + 8)
+                self.assertEqual(a["resource"], 100 - cost + 5)
                 self.assertEqual(a["cooldowns"][skill], cooldown)
                 self.assertEqual(state["active_side"], "b")
                 self.assertEqual(event["after"]["a"]["resource"], a["resource"])
@@ -81,7 +81,7 @@ class JockEngineTests(unittest.TestCase):
             self.assertAlmostEqual(boosted, full * 1.15, delta=1)
             self.assertEqual(self.boost(state), 0)
             self.assertEqual(
-                state["sides"]["a"]["resource"], 68
+                state["sides"]["a"]["resource"], 65
             )  # Prepared version costs 15 from level 10.
 
     def test_bonus_refreshes_without_stacking(self):
@@ -121,7 +121,7 @@ class JockEngineTests(unittest.TestCase):
         for _ in range(2):
             state["active_side"] = "a"
             skip_turn(state)
-        self.assertEqual(state["sides"]["a"]["resource"], 83)
+        self.assertEqual(state["sides"]["a"]["resource"], 80)
         self.assertEqual(self.boost(state), 0)
 
     def test_validation_uses_full_cost_before_refund(self):
@@ -133,7 +133,7 @@ class JockEngineTests(unittest.TestCase):
         self.assertEqual(state, before)
 
     def test_each_trait_only_works_when_equipped_not_merely_class_or_skill(self):
-        for selected, refund, boost in (([], 0, 0), ([0], 0, 0.15), ([1], 8, 0)):
+        for selected, refund, boost in (([], 0, 0), ([0], 0, 0.15), ([1], 5, 0)):
             state = self.state()
             a = state["sides"]["a"]
             a["passive_details"] = [a["passive_details"][i] for i in selected]
@@ -160,7 +160,7 @@ class JockEngineTests(unittest.TestCase):
         state = self.state(controlled=True)
         self.tap(state, "flex_chest")
         state = json.loads(json.dumps(state))
-        self.assertEqual(state["sides"]["a"]["resource"], 63)
+        self.assertEqual(state["sides"]["a"]["resource"], 60)
         self.assertEqual(self.boost(state), 0.15)
         self.tap(state, "smack")
         self.assertEqual(self.boost(state), 0)

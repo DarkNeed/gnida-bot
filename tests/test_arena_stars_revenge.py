@@ -81,8 +81,8 @@ class StarsRevengeTests(unittest.TestCase):
                         self.assertFalse(event["critical"])
 
     def test_star_prices_power_and_level_twelve_upgrade_at_both_stages(self):
-        for level, stage, power, cost in ((10, 10, 21, 45), (11, 10, 21, 45), (12, 10, 22, 45),
-                                          (20, 10, 22, 45), (20, 20, 34, 50)):
+        for level, stage, power, cost in ((10, 10, 21, 50), (11, 10, 21, 50), (12, 10, 22, 50),
+                                          (20, 10, 22, 50), (20, 20, 34, 55)):
             state = self.state(branch="pinky_tiansha", level=level, stage=stage)
             state["sides"]["a"]["mechanics"]["focus"] = 3
             skill = effective_skill(state, "a", "falling_star")
@@ -183,11 +183,11 @@ class StarsRevengeTests(unittest.TestCase):
         evolved["sides"]["a"]["own_turns"] = 4
         a = evolved["sides"]["a"]
         skill = effective_skill(evolved, "a", "meow")
-        self.assertEqual((skill.power, skill.cost, skill.cooldown), (22, 35, 2))
+        self.assertEqual((skill.power, skill.cost, skill.cooldown), (22, 40, 2))
         first = self.tap(plain, "meow")["damage"]
         upgraded = self.tap(evolved, "meow")["damage"]
         self.assertAlmostEqual(upgraded / first, 22 / 17, delta=.08)
-        self.assertEqual(a["resource"], 65)
+        self.assertEqual(a["resource"], 60)
 
 
 class RecoilStoreTests(unittest.IsolatedAsyncioTestCase):

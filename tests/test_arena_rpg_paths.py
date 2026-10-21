@@ -135,7 +135,7 @@ class RPGPathTests(unittest.TestCase):
         state=self.final('mage_elementalist');actor=state['sides']['a'];enemy=state['sides']['b']
         for sid in ('mana_shot','mana_blob','mana_overload'):self.use(state,sid)
         self.assertEqual(actor['rpg_state']['elements'],[])
-        self.assertEqual(actor['resource'],95) # 100-35+30
+        self.assertEqual(actor['resource'],90) # 100-40+30
         self.assertEqual(effective_skill(state,'a','arch_mage_elementalist').name,'Катаклизм')
         self.use(state,'arch_mage_elementalist',hit=False)
         self.assertTrue(any(e.get('id')=='rpg_frost' for e in enemy['effects']))

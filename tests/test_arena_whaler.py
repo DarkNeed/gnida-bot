@@ -208,19 +208,19 @@ class WhalerTests(unittest.TestCase):
         d["qte_modes"] = {"10": True, "20": True, "30": False}
         for key, p in d["players"].items():
             p["selected"] = "mana_focus"
-            p["fighter"]["resource"] = {"10": 50, "20": 65, "30": 80}[key]
+            p["fighter"]["resource"] = {"10": 50, "20": 70, "30": 80}[key]
             p["fighter"]["hp"] = p["fighter"]["stats"]["max_hp"] = 1000
         resolve_round(d, BUILTIN_SKILLS, FixedRoll())
-        self.assertEqual(d["whaler_restored"], {"10": 40, "20": 35, "30": 20})
+        self.assertEqual(d["whaler_restored"], {"10": 35, "20": 30, "30": 20})
         self.assertEqual(d["whaler_reaction"]["target"], "10")
         self.assertEqual(d["round"], 1)
-        self.assertEqual(d["players"]["10"]["fighter"]["resource"], 90)
+        self.assertEqual(d["players"]["10"]["fighter"]["resource"], 85)
         d = json.loads(json.dumps(d))
         d["whaler_reaction"]["result"] = dict(dodge=[True, True])
         resolve_round(d, BUILTIN_SKILLS, FixedRoll())
         self.assertEqual(d["round"], 2)
         self.assertEqual(d["players"]["10"]["fighter"]["own_turns"], 1)
-        self.assertEqual(d["players"]["10"]["fighter"]["resource"], 98)
+        self.assertEqual(d["players"]["10"]["fighter"]["resource"], 93)
         self.assertEqual(
             len([e for e in d["log"] if e.get("skill") == "mana_focus"]), 3
         )
@@ -383,7 +383,7 @@ class WhalerControlTests(unittest.IsolatedAsyncioTestCase):
         row = await self.db.arena_interactive_raid(row["token"], 20, 1, "surrender")
         d = json.loads(row["data_json"])
         self.assertIn("whaler_reaction", d)
-        self.assertEqual(d["players"]["10"]["fighter"]["resource"], 90)
+        self.assertEqual(d["players"]["10"]["fighter"]["resource"], 85)
         self.assertEqual(
             (await self.db.arena_qte_view("raid", row["token"], 10))["challenge"]["id"],
             c["id"],
@@ -462,7 +462,7 @@ class WhalerControlTests(unittest.IsolatedAsyncioTestCase):
         row = await self.complete(row, [True])
         d = json.loads(row["data_json"])
         self.assertEqual(d["players"]["10"]["selected"], "mana_focus")
-        self.assertEqual(d["players"]["10"]["fighter"]["resource"], 90)
+        self.assertEqual(d["players"]["10"]["fighter"]["resource"], 85)
         c = (await self.db.arena_qte_view("raid", row["token"], 10))["challenge"]
         self.assertEqual(c["name"], "Кара болот")
         self.assertEqual(c["strikes"], 2)
@@ -475,7 +475,7 @@ class WhalerControlTests(unittest.IsolatedAsyncioTestCase):
         row = await self.complete(row, [True, True])
         d = json.loads(row["data_json"])
         self.assertEqual(d["round"], 2)
-        self.assertEqual(d["players"]["10"]["fighter"]["resource"], 98)
+        self.assertEqual(d["players"]["10"]["fighter"]["resource"], 93)
         self.assertEqual(d["players"]["10"]["fighter"]["own_turns"], 1)
         with self.assertRaises(ValueError):
             await self.db.arena_interactive_raid(

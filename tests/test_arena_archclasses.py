@@ -177,7 +177,7 @@ class ArchEngineTests(unittest.TestCase):
         state = self.state("mge_bro", 20)
         a = state["sides"]["a"]
         self.tap(state, "butt_peak")
-        self.assertEqual(a["resource"], 45)
+        self.assertEqual(a["resource"], 40)
         self.assertAlmostEqual(
             effective_stat(a, "physical_defense"), a["stats"]["physical_defense"] * 0.8
         )

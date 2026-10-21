@@ -242,7 +242,7 @@ def arch_rule(skill, source):
         changes = dict(
             name="Дуэль на миду",
             power=22 if final else 20,
-            cost=55 if final else 50,
+            cost=60 if final else 55,
             effects=(e("mge_risk", "physical_defense_pct", -0.20, 1, "self"),),
         )
     elif key == "programmer" and skill.skill_id == "charging":
@@ -297,7 +297,7 @@ def arch_rule(skill, source):
         changes = dict(
             name="За спиной семьи",
             effects=(
-                e("grit_restore", "resource", 35, target="self"),
+                e("grit_restore", "resource", 30, target="self"),
                 e(
                     "grit_guard",
                     "physical_defense_pct",
@@ -319,7 +319,7 @@ def arch_rule(skill, source):
         changes = dict(
             name="Долг крови",
             power=20 if final else 19,
-            cost=50 if final else 45,
+            cost=55 if final else 50,
             effects=(),
         )
     elif key == "ring_pointillist" and skill.skill_id == "red_etude":
@@ -336,7 +336,7 @@ def arch_rule(skill, source):
         changes = dict(
             name="Завершённый шедевр",
             power=20 if final else 18,
-            cost=45 if final else 40,
+            cost=50 if final else 45,
             tags=("consume_negatives",),
         )
     elif key == "pinky_dihui" and skill.skill_id == "moon_arc":
@@ -354,7 +354,7 @@ def arch_rule(skill, source):
         changes = dict(
             name="Рассечь небеса",
             power=22 if final else 21,
-            cost=45,
+            cost=50,
             tags=("consume_focus",),
         )
     if changes is None:

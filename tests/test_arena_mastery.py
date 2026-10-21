@@ -230,10 +230,10 @@ class MasteryEngineTests(unittest.TestCase):
         self.assertEqual(a['mastery_state']['flow'],3)
         a['resource']=100
         self.tap(state,'mana_overload',roll=.99)
-        self.assertEqual(a['resource'],65)
+        self.assertEqual(a['resource'],60)
         self.assertEqual(a['mastery_state']['flow'],3)
         self.tap(state,'mana_overload')
-        self.assertEqual(a['resource'],40)
+        self.assertEqual(a['resource'],30)
         self.assertEqual(a['mastery_state']['flow'],0)
         a['mastery_state']['flow']=3
         self.tap(state,'mana_barrier')

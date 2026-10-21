@@ -161,7 +161,7 @@ class EvolutionEngineTests(unittest.TestCase):
         self.assertEqual(state["turn"], 9)
         skill = effective_skill(state, "a", "meow")
         self.assertEqual(
-            (skill.name, skill.cost, skill.cooldown), ("Кульминация: Мяу", 35, 2)
+            (skill.name, skill.cost, skill.cooldown), ("Кульминация: Мяу", 40, 2)
         )
         self.tap(state, "meow")
         self.assertEqual(state["sides"]["a"]["cooldowns"]["meow"], 2)

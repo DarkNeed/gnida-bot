@@ -93,7 +93,7 @@ class RebalanceEngineTests(unittest.TestCase):
 
     def test_dodge_not_ordinary_miss_refunds_love(self):
         for roll, dodged, resource in (
-            (0.80, True, 58),
+            (0.80, True, 54),
             (0.99, False, 50),
             (0, False, 50),
         ):
@@ -155,7 +155,7 @@ class RebalanceEngineTests(unittest.TestCase):
         b["resource"] = 0
         for i in range(3):
             self.tap(state, "humiliate")
-            self.assertEqual(a["resource"], 100 - (i + 1) * 15 + (10 if i == 2 else 0))
+            self.assertEqual(a["resource"], 100 - (i + 1) * 15 + (5 if i == 2 else 0))
         self.assertEqual(class_modifiers(a, b, BUILTIN_SKILLS["humiliate"])[0], 0)
         self.assertEqual(class_modifiers(a, b, BUILTIN_SKILLS["mother_joke"])[0], 10)
         self.assertEqual(a["mechanics"]["paid_magic"], 0)
@@ -190,10 +190,13 @@ class RebalanceEngineTests(unittest.TestCase):
         a = state["sides"]["a"]
         a["resource"] = 0
         self.tap(state, "go_to_store")
-        self.assertEqual((a["resource"], state["active_side"]), (55, "b"))
+        self.assertEqual((a["resource"], state["active_side"]), (45, "b"))
         self.assertNotIn("go_to_store", a["cooldowns"])
         with self.assertRaises(ValueError):
             resolve_skill(state, "a", "go_to_store")
+        self.tap(state, "bum_punch", "b")
+        resolve_skill(state, "a", "go_to_store", rng=FixedRoll())
+        self.assertEqual(a["resource"], 98)  # 45 + 8 next turn + 45.
         self.tap(state, "bum_punch", "b")
         resolve_skill(state, "a", "go_to_store", rng=FixedRoll())
         self.assertEqual(a["resource"], 100)
@@ -280,6 +283,21 @@ class RebalanceStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(view["passives"]), 3)
         again = await self.db.arena_passive_view(1, 10, True)
         self.assertEqual(again["passive_loadout"], view["passive_loadout"])
+
+    async def test_combat_cards_show_economy_price_and_updated_passive(self):
+        row = await self.duel()
+        state = create_battle_state(
+            dict(owner_id=10, slave_id=10, class_id='nerd', level=9,
+                 loadout=['humiliate', 'mother_joke', 'charging', 'go_to_store']),
+            dict(owner_id=20, slave_id=20, class_id='ragamuffin', level=9))
+        state['sides']['a']['resource'] = 15
+        row['state_json'] = json.dumps(state)
+        view = await battle_view(self.db, row, 10)
+        side = view['state']['sides']['a']
+        prices = {s['skill_id']: s['cost'] for s in side['skill_details']}
+        self.assertEqual(prices, dict(humiliate=15, mother_joke=40, charging=15, go_to_store=0))
+        economy = next(p for p in side['passive_details'] if p['name'] == 'Экономия')
+        self.assertIn('возвращает 5 энергии', economy['effects'][0]['description'])
 
     async def test_damage_bonus_view_matches_multiplicative_reduction(self):
         row = await self.duel()

@@ -3,6 +3,9 @@
 from arena_fingers import has_trait
 
 JOCK_PREPARATION_SKILLS = frozenset({"flex_chest", "clench"})
+NERD_ECONOMY_REFUND = 5
+JOCK_PREPARATION_REFUND = 5
+CUTIE_DODGE_REFUND = 4
 
 
 def has_adoration(side):
@@ -48,8 +51,8 @@ def class_after_action(actor, target, skill, hit, dodged, adored, charmed):
         if skill.cost and has_trait(actor, "economy"):
             count = memory.get("paid_magic", 0) + 1
             memory["paid_magic"] = count % 3
-            if count == 3:
-                refund += 10
+            if count >= 3:
+                refund += NERD_ECONOMY_REFUND
     if hit and skill.skill_id in JOCK_PREPARATION_SKILLS:
         if has_trait(actor, "right_version"):
             # Refresh one charge after the current action's tick, never stack it.
@@ -66,11 +69,11 @@ def class_after_action(actor, target, skill, hit, dodged, adored, charmed):
                 )
             )
         if has_trait(actor, "fucking_stamina"):
-            refund += min(8, skill.cost)
+            refund += min(JOCK_PREPARATION_REFUND, skill.cost)
     actor["resource"] = min(actor["stats"]["resource_max"], actor["resource"] + refund)
     if dodged and has_trait(target, "evasive_love"):
         target["resource"] = min(
-            target["stats"]["resource_max"], target["resource"] + 8
+            target["stats"]["resource_max"], target["resource"] + CUTIE_DODGE_REFUND
         )
     if hit and adored and skill.skill_id == "meow" and 'keep_adoration' not in skill.tags:
         target["effects"] = [e for e in target["effects"] if e.get("id") != "adoration"]

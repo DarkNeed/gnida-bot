@@ -24,7 +24,7 @@ from arena_whaler import WHALER_SKILLS, WHALER_LEVEL
 
 RAID_SIZE = 3
 RAID_ROUND_SECONDS = 120
-RAID_MAX_ROUNDS = 40
+RAID_MAX_ROUNDS = 100
 BOSS_NAME = "Железный сборщик"
 BOSSES = {
     'whaler': dict(name='Китобой — Чумной ловчий', sprite='/static/assets/whaler.png',
@@ -685,7 +685,7 @@ def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
         data.update(
             finished=True,
             won=False,
-            result="Босс ушёл: достигнут предел 40 раундов. Без наград.",
+            result=f"Босс ушёл: достигнут предел {RAID_MAX_ROUNDS} раундов. Без наград.",
         )
     data.pop('_qte_boss_phase',None)
     for player in data['players'].values():

@@ -263,14 +263,34 @@ class RaidEngineTests(unittest.TestCase):
         self.assertEqual(data["round"], 2)
         self.assertTrue(any("Навык недоступен" in e["text"] for e in data["log"]))
 
+    def test_victory_on_hundredth_round_is_not_replaced_by_round_cap(self):
+        data = self.state()
+        self.sturdy(data)
+        data['round'] = 100
+        data['boss']['hp'] = 1
+        data['boss']['stats']['physical_defense'] = 0
+        data['boss']['stats']['evasion'] = 0
+        for player in data['players'].values():
+            player['fighter']['stats']['speed'] = 1000
+            player['selected'] = 'bum_punch'
+        set_intent(data)
+        resolve_round(data, BUILTIN_SKILLS, Roll())
+        self.assertTrue(data['finished'])
+        self.assertTrue(data['won'])
+
     def test_round_cap_and_no_mutual_death_victory(self):
         data = self.state()
         self.sturdy(data)
-        data["round"] = 40
+        data["round"] = 99
+        set_intent(data)
+        resolve_round(data, BUILTIN_SKILLS, Roll())
+        self.assertFalse(data["finished"])
+        self.assertEqual(data["round"], 100)
         set_intent(data)
         resolve_round(data, BUILTIN_SKILLS, Roll())
         self.assertTrue(data["finished"])
         self.assertFalse(data["won"])
+        self.assertIn("100 раундов", data["result"])
         data = self.state()
         data["boss"]["hp"] = 0
         for p in data["players"].values():

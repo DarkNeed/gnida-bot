@@ -44,24 +44,24 @@ def build_rpg_catalog(FighterClass, Skill, effect):
                      cost,cooldown,effects,'rare' if level>=8 else 'uncommon',description,pierce,tags)
     skills = (
         s('warrior','armor_split','Раскол брони',5,'physical',9,15,1,(effect('armor_split','rpg_armor_break',.15,3),),description='Снижает физическую защиту на 15%, повтор усиливает раскол до 45%. Три действия цели.'),
-        s('warrior','steel_charge','Стальной натиск',5,'physical',14,20,1,description='Против расколотой брони становится двумя ударами с суммарной силой 22 и отдельной проверкой каждого попадания.'),
+        s('warrior','steel_charge','Стальной натиск',5,'physical',14,25,1,description='Против расколотой брони становится двумя ударами с суммарной силой 22 и отдельной проверкой каждого попадания.'),
         s('warrior','counter_lunge','Ответный выпад',6,None,0,20,3,(effect('counter_lunge','rpg_counter',8,1,target='self'),),description='Готовит один контрудар на следующую прямую атаку врага до своего следующего действия. Не срабатывает после смерти.'),
-        s('warrior','warrior_execute','Казнь',8,'physical',18,35,3,description='При HP цели ≤30% сила повышается до 30; при расколотой броне дополнительно игнорирует 35% защиты.'),
+        s('warrior','warrior_execute','Казнь',8,'physical',18,40,3,description='При HP цели ≤30% сила повышается до 30; при расколотой броне дополнительно игнорирует 35% защиты.'),
         s('mage','mana_shot','Мановый выстрел',5,'magic',10,10,description='Недорогая магическая атака. При попадании с пассивкой Перенасыщение даёт заряд маны.'),
         s('mage','mana_blob','Сгусток маны',5,'magic',16,25,1,description='Усиленная магическая атака. При попадании с пассивкой Перенасыщение даёт заряд маны.'),
         s('mage','mana_barrier','Мановый барьер',6,None,0,25,3,(effect('mana_barrier','incoming_damage_multiplier',.70,2,target='self'),),description='Прямой урон −30% на два собственных действия; попадания врага подготавливают Перенасыщение.'),
-        s('mage','mana_focus','Сосредоточиться',5,None,0,0,0,(effect('mana_focus','resource',40,target='self'),),description='Возвращает 40 маны, расходуя действие.'),
-        s('mage','mana_overload','Перегрузка',8,'magic',18,35,3,tags=('rpg_mana_spend',),description='Расходует до 3 зарядов Перенасыщения: +35% урона за заряд. При промахе заряды сохраняются.'),
+        s('mage','mana_focus','Сосредоточиться',5,None,0,0,0,(effect('mana_focus','resource',35,target='self'),),description='Возвращает 35 маны, расходуя действие.'),
+        s('mage','mana_overload','Перегрузка',8,'magic',18,40,3,tags=('rpg_mana_spend',),description='Расходует до 3 зарядов Перенасыщения: +35% урона за заряд. При промахе заряды сохраняются.'),
         s('priest','light_word','Слово света',5,'magic',10,10),
         s('priest','priest_heal','Исцеление',5,None,0,25,3,(effect('priest_heal','rpg_heal',.25,target='self'),),description='Лечит 25% максимального HP. В рейде автоматически выбирает живого союзника с наименьшим процентом HP.'),
         s('priest','priest_ward','Оберег',6,None,0,20,3,(effect('priest_ward','incoming_damage_multiplier',.75,1,target='self'),),description='Прямой урон −25% до следующего собственного действия.'),
         s('priest','priest_cleanse','Очищение',6,None,0,15,2,(effect('priest_cleanse','cleanse_one',1,target='self'),)),
-        s('priest','holy_judgment','Кара',8,'magic',18,35,3,tags=('rpg_faith_spend',),description='Расходует Веру ради +20% урона за заряд. Паладин наносит физический урон и использует Воздаяние.'),
+        s('priest','holy_judgment','Кара',8,'magic',18,40,3,tags=('rpg_faith_spend',),description='Расходует Веру ради +20% урона за заряд. Паладин наносит физический урон и использует Воздаяние.'),
         s('hunter','hunter_cut','Рваный разрез',5,'physical',10,15,0,(effect('hunter_bleed','bleed',3,3,chance=.75),),description='75% шанса кровотечения. В раскрытой форме сила 16, цена 25, пробитие 25%; в сложенной — усиленный возврат крови.'),
         s('hunter','hunter_transform','Раскрыть охоту',5,'physical',9,15,1,tags=('rpg_transform',),description='Атакует и переключает оружие: раскрытая форма — тяжёлый удар, сложенная — лёгкий. Без отдельного подтверждения.'),
         s('hunter','hunter_shot','Прерывающий выстрел',6,'physical',4,20,2,(effect('hunter_parry','rpg_parry',1,1,target='self'),),description='При попадании готовит прерывание следующей атаки противника. Если враг атакует — открывается висцеральная атака. Босс не теряет действие; его урон по охотнику снижается на 35%.'),
         s('hunter','hunter_visceral','Висцеральная атака',8,'physical',28,40,3,tags=('rpg_visceral',),description='Требует успешного прерывания, игнорирует 50% защиты, возвращает больше недавно потерянного HP. Окно — два собственных действия.',pierce=.50),
-        s('hunter','blood_bullets','Кровавые пули',6,None,0,0,2,(effect('blood_bullets','rpg_blood_bullets',.10,target='self'),),description='Жертвует 10% максимального HP ради 35 энергии. Не может убить; самоурон нельзя вернуть Кровавым ответом.'),
+        s('hunter','blood_bullets','Кровавые пули',6,None,0,0,2,(effect('blood_bullets','rpg_blood_bullets',.10,target='self'),),description='Жертвует 10% максимального HP ради 30 энергии. Не может убить; самоурон нельзя вернуть Кровавым ответом.'),
     )
     unique = (
         s('warrior','arch_warrior_berserker','Кровавый натиск',15,'physical',24,45,3,tags=('archclass:warrior_berserker',),description='Мощный удар; против расколотой брони игнорирует 40% защиты.'),
@@ -222,7 +222,7 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
         return f'исцеление: +{healed} HP'+(' союзнику' if recipient is not actor else '')
     if kind=='rpg_blood_bullets':
         loss=max(1,round(actor['stats']['max_hp']*.10));actor['hp']-=loss
-        gained=min(35,actor['stats']['resource_max']-actor['resource']);actor['resource']+=gained
+        gained=min(30,actor['stats']['resource_max']-actor['resource']);actor['resource']+=gained
         return f'Кровавые пули: −{loss} HP, +{gained} энергии'
     if kind=='rpg_summon':
         actor.setdefault('rpg_state',{}).update(summon=3,summon_power=item['value'],summon_fresh=True,death_servants=False)

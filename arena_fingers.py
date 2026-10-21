@@ -1,6 +1,8 @@
 """Original Five Fingers-inspired classes and their bounded combat mechanics."""
 
 FINGER_IDS = {"thumb", "index", "middle", "ring", "pinky"}
+MUSE_REFUND = 5
+PRESCRIPT_REFUND = 8
 
 
 def build_catalog(FighterClass, Skill, effect):
@@ -49,7 +51,7 @@ def build_catalog(FighterClass, Skill, effect):
                 passive(
                     "prescript",
                     "Воля предписания",
-                    "Исполнение отмеченного навыка возвращает 10 Воли.",
+                    f"Исполнение отмеченного навыка возвращает {PRESCRIPT_REFUND} Воли.",
                 ),
                 passive(
                     "obedience",
@@ -87,7 +89,7 @@ def build_catalog(FighterClass, Skill, effect):
                 passive(
                     "muse",
                     "Муза",
-                    "Новый тип отрицательного эффекта на враге возвращает 8 Вдохновения, не чаще раза за действие.",
+                    f"Новый тип отрицательного эффекта на враге возвращает {MUSE_REFUND} Вдохновения, не чаще раза за действие.",
                 ),
                 passive(
                     "exhibit",
@@ -171,7 +173,7 @@ def build_catalog(FighterClass, Skill, effect):
             0,
             3,
             (
-                effect("reload", "resource", 40, target="self"),
+                effect("reload", "resource", 30, target="self"),
                 effect("aim", "accuracy_flat", 10, 1, target="self"),
             ),
         ),
@@ -249,7 +251,7 @@ def build_catalog(FighterClass, Skill, effect):
             0,
             2,
             (
-                effect("rage", "resource", 35, target="self"),
+                effect("rage", "resource", 30, target="self"),
                 effect("grit", "physical_defense_pct", 0.25, 1, target="self"),
             ),
         ),
@@ -273,7 +275,7 @@ def build_catalog(FighterClass, Skill, effect):
             "physical",
             17,
             86,
-            40,
+            45,
             3,
             description="За каждую обиду: +12% суммарного урона и +3 точности (до 3 обид). Попадание расходует обиды; промах сохраняет одну из накопленных.",
         ),
@@ -324,7 +326,7 @@ def build_catalog(FighterClass, Skill, effect):
             "magic",
             15,
             88,
-            35,
+            40,
             3,
             description="+10% урона за тип отрицательного эффекта (до 3); сокращает их длительность на ход.",
         ),
@@ -339,7 +341,7 @@ def build_catalog(FighterClass, Skill, effect):
             100,
             0,
             3,
-            (effect("focus", "resource", 35, target="self"),),
+            (effect("focus", "resource", 30, target="self"),),
             "Добавляет 2 заряда Созвездия, если эта пассивка экипирована.",
         ),
         s(
@@ -362,7 +364,7 @@ def build_catalog(FighterClass, Skill, effect):
             "physical",
             16,
             87,
-            40,
+            45,
             3,
             description="25% базового шанса критического удара. Крит наносит ×1,5 урона.",
         ),
@@ -467,10 +469,10 @@ def after_action(
         ]
     refund = 0
     if hit and has_trait(actor, "muse") and negative_kinds(target) - previous_negatives:
-        refund += 8
+        refund += MUSE_REFUND
     if obeyed:
         if has_trait(actor, "prescript"):
-            refund += 10
+            refund += PRESCRIPT_REFUND
         if has_trait(actor, "obedience"):
             actor["cooldowns"] = {
                 k: v if k == skill.skill_id else v - 1

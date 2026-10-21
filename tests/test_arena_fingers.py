@@ -115,7 +115,7 @@ class FingerEngineTests(unittest.TestCase):
         actor["cooldowns"]["unrelated"] = 3
         event = self.tap(state, selected)
         self.assertIn("предписание исполнено", event["text"])
-        self.assertEqual(actor["resource"], 55 - BUILTIN_SKILLS[selected].cost)
+        self.assertEqual(actor["resource"], 53 - BUILTIN_SKILLS[selected].cost)
         self.assertEqual(actor["cooldowns"]["unrelated"], 1)
         self.assertNotIn("prescript", actor["mechanics"])
 
@@ -140,10 +140,10 @@ class FingerEngineTests(unittest.TestCase):
         actor, target = state["sides"]["a"], state["sides"]["b"]
         event = self.tap(state, "red_etude")
         self.assertEqual(event["bleed_damage"], 0)
-        self.assertEqual(actor["resource"], 88)
+        self.assertEqual(actor["resource"], 85)
         actor["cooldowns"].clear()
         self.tap(state, "red_etude")
-        self.assertEqual(actor["resource"], 68)  # refreshing isn't a new type
+        self.assertEqual(actor["resource"], 65)  # refreshing isn't a new type
         target["hp"] = 2
         actor["cooldowns"].clear()
         self.tap(state, "bum_punch", "b")
@@ -163,7 +163,7 @@ class FingerEngineTests(unittest.TestCase):
         foreign["sides"]["a"]["loadout"].append("calm_breath")
         foreign["sides"]["a"]["resource"] = 10
         self.tap(foreign, "calm_breath")
-        self.assertEqual(foreign["sides"]["a"]["resource"], 45)
+        self.assertEqual(foreign["sides"]["a"]["resource"], 40)
         self.assertNotIn("focus", foreign["sides"]["a"]["mechanics"])
 
     def test_state_round_trip_and_effects_expire(self):

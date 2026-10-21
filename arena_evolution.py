@@ -31,14 +31,14 @@ EVOLUTIONS = {
         name="Долг крови",
         condition="Накоплены три обиды",
         trigger="grudge",
-        changes=dict(power=17, cost=45),
+        changes=dict(power=17, cost=50),
         description="За обиду: +12% урона и +3 точности. Попадание расходует обиды и даёт обе защиты +20% на один свой ход; промах сохраняет одну обиду.",
     ),
     "last_stroke": dict(
         name="Завершённый шедевр",
         condition="На цели три разных отрицательных эффекта",
         trigger="negatives",
-        changes=dict(power=18, cost=40, tags=("consume_negatives",)),
+        changes=dict(power=18, cost=45, tags=("consume_negatives",)),
         description="Снимает отрицательные эффекты после попадания. При промахе эффекты сохраняются.",
     ),
     "moon_arc": dict(
@@ -79,7 +79,7 @@ EVOLUTIONS = {
         name="Кульминация: Мяу",
         condition="Завершены четыре собственных хода бойца",
         trigger="turns",
-        changes=dict(power=22, cost=35),
+        changes=dict(power=22, cost=40),
         description="Усиленная версия до конца боя. Против умилённой цели сохраняются +25% урона и снятие умиления при попадании.",
     ),
 }

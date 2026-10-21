@@ -21,6 +21,9 @@ from arena_engine import (
 )
 from arena_fingers import combat_modifiers, has_trait
 from arena_class_mechanics import class_modifiers, JOCK_PREPARATION_SKILLS
+from arena_class_mechanics import JOCK_PREPARATION_REFUND
+from arena_mirror_effects import gift_cost
+from arena_pets import pet_cost
 from arena_archclasses import ARCHCLASSES
 
 BUILDS = {
@@ -119,7 +122,7 @@ def select_skill(state, style):
     candidates = [
         effective_skill(state, key, k)
         for k in actor["loadout"]
-        if effective_skill(state, key, k).cost <= actor["resource"]
+        if pet_cost(actor, effective_skill(state, key, k), gift_cost(actor, effective_skill(state, key, k))) <= actor["resource"]
         and not actor["cooldowns"].get(k, 0)
     ]
     if not candidates:
@@ -147,7 +150,7 @@ def select_skill(state, style):
         )
         if style == "tactical":
             energy_value = 0.07 if actor["resource"] >= 40 else 0.18
-            value -= skill.cost * energy_value
+            value -= pet_cost(actor, skill, gift_cost(actor, skill)) * energy_value
             enemy_order = actor.get("mechanics", {}).get("enemy_prescript")
             if enemy_order and enemy_order["skill_id"] != skill.skill_id:
                 value -= (
@@ -240,7 +243,7 @@ def select_skill(state, style):
                     )
                     value += hit * 0.15 * physical_peak
                 if has_trait(actor, "fucking_stamina"):
-                    value += hit * min(8, skill.cost) * energy_value
+                    value += hit * min(JOCK_PREPARATION_REFUND, skill.cost) * energy_value
         elif value <= 0:
             value = sum(
                 min(

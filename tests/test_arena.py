@@ -163,7 +163,7 @@ class ArenaEngineTests(unittest.TestCase):
             resolve_skill(state, "a", "dust_in_eyes", skills)
         self.assertEqual(state["sides"]["a"]["resource"], 16)
         resolve_skill(state, "a", "go_to_store", skills, rng=random.Random(1))
-        self.assertEqual(state["sides"]["a"]["resource"], 71)
+        self.assertEqual(state["sides"]["a"]["resource"], 61)
 
     def test_miss_still_consumes_full_energy(self):
         state = self.state(level=3)

@@ -12,7 +12,9 @@ from arena_fingers import (
     combat_modifiers,
     after_action,
 )
-from arena_class_mechanics import class_modifiers, class_after_action, has_adoration
+from arena_class_mechanics import (class_modifiers, class_after_action, has_adoration,
+                                   NERD_ECONOMY_REFUND, JOCK_PREPARATION_REFUND,
+                                   CUTIE_DODGE_REFUND)
 from arena_mirror_effects import gift_cost, gift_modifiers, gift_after_action
 from arena_pets import pet_snapshot, pet_cost, pet_modifiers, pet_before_action, pet_after_action
 from arena_evolution import skill_variant, evolution_after_action
@@ -290,12 +292,12 @@ BUILTIN_SKILLS = {
             "magic",
             17,
             85,
-            35,
+            40,
             2,
             description="Против умилённой цели +25% урона, но при попадании умиление снимается.",
         ),
         Skill("smack", "Въебать", "jock", 5, "physical", 10, 95, 10, 0),
-        Skill("butt_peak", "Жопный пик", "jock", 6, "physical", 18, 75, 45, 3),
+        Skill("butt_peak", "Жопный пик", "jock", 6, "physical", 18, 75, 50, 3),
         Skill(
             "flex_chest",
             "Напрячь сиси",
@@ -403,7 +405,7 @@ BUILTIN_SKILLS = {
             100,
             0,
             0,
-            (effect("energy_drinks", "resource", 55, target="self"),),
+            (effect("energy_drinks", "resource", 45, target="self"),),
         ),
     )
 }
@@ -512,7 +514,7 @@ FIGHTER_CLASSES["cutie"] = replace(
         dict(
             effect("evasive_love", "evasive_love", 1, target="self"),
             name="Не трогай лапками",
-            description="Уклонение от прямой атаки возвращает 8 Любви. Обычный промах врага бонуса не даёт.",
+            description=f"Уклонение от прямой атаки возвращает {CUTIE_DODGE_REFUND} Любви. Обычный промах врага бонуса не даёт.",
         ),
     ),
 )
@@ -527,7 +529,7 @@ FIGHTER_CLASSES["nerd"] = replace(
         dict(
             effect("economy", "economy", 1, target="self"),
             name="Экономия",
-            description="Каждая третья платная магическая атака возвращает 10 энергии. Счётчик обнуляется в новом бою.",
+            description=f"Каждая третья платная магическая атака возвращает {NERD_ECONOMY_REFUND} энергии, включая промахи. Счётчик обнуляется в новом бою. Цена навыка оплачивается полностью.",
         ),
     ),
 )
@@ -542,7 +544,7 @@ FIGHTER_CLASSES["jock"] = replace(
         dict(
             effect("fucking_stamina", "fucking_stamina", 1, target="self"),
             name="♂ Fucking Stamina ♂",
-            description="«Напрячь сиси» и успешный «Зажим булками» возвращают 8 Тестостерона после оплаты навыка. Ход и перезарядка сохраняются.",
+            description=f"«Напрячь сиси» и успешный «Зажим булками» возвращают {JOCK_PREPARATION_REFUND} Тестостерона после оплаты навыка. Ход и перезарядка сохраняются.",
         ),
     ),
 )

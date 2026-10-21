@@ -106,7 +106,7 @@ class FinalsEngineTests(unittest.TestCase):
         self.assertEqual(event['skill_name'],'Билет в паровозик')
         self.assertEqual([p['hit'] for p in event['hit_results']],[True,False,True])
         self.assertEqual(sum(event['hits']),event['damage'])
-        self.assertEqual((a['resource'],a['own_turns']),(55,1))
+        self.assertEqual((a['resource'],a['own_turns']),(50,1))
         self.assertEqual(a['final_state']['dominance'],0)
         self.assertAlmostEqual(effective_stat(a,'physical_defense'),a['stats']['physical_defense']*.8)
         pet.assert_called_once()
@@ -121,7 +121,7 @@ class FinalsEngineTests(unittest.TestCase):
         event=self.tap(state,'butt_peak',roll=.99)
         self.assertEqual(event['hits'],[0,0,0])
         self.assertEqual(a['final_state']['dominance'],3)
-        self.assertEqual(a['resource'],55)
+        self.assertEqual(a['resource'],50)
 
     def test_train_native_preparation_is_affordable_without_specific_pet_or_tractat(self):
         state=self.state();a=state['sides']['a']
@@ -130,7 +130,7 @@ class FinalsEngineTests(unittest.TestCase):
         self.assertEqual(a['resource'],50)
         self.assertEqual(a['final_state']['dominance'],3)
         self.assertEqual(self.tap(state,'butt_peak')['skill_name'],'Билет в паровозик')
-        self.assertEqual(a['resource'],5)
+        self.assertEqual(a['resource'],0)
 
     def test_dominance_misses_count_repetition_does_not(self):
         state=self.state();a=state['sides']['a']
@@ -196,7 +196,7 @@ class FinalsEngineTests(unittest.TestCase):
             self.assertEqual(a['final_state']['program_until'],0)
             self.assertFalse(a['final_state']['compiled'])
             self.assertEqual(a['cooldowns'].get('mother_joke'),2 if mode=='doxxing' else 4)
-            if mode=='go_to_store':self.assertEqual(a['resource'],75)
+            if mode=='go_to_store':self.assertEqual(a['resource'],65)
 
     def test_hacker_tax_is_actual_cost_once_free_fallback_and_cleanse(self):
         state=self.state('hacker');a,b=state['sides'].values()
