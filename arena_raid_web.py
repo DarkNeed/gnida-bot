@@ -138,6 +138,7 @@ async def raid_view(db, row, actor):
         creator_id=row["creator_id"],
         actor_id=actor,
         qte=await db.arena_qte_view('raid',row['token'],actor),
+        qte_watch=await db.arena_qte_watchables('raid',row['token'],actor),
         status=row["status"],
         revision=row["revision"],
         deadline=row["deadline"],

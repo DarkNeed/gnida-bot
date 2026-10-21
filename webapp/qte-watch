@@ -1,0 +1,149 @@
+/* Ephemeral spectator relay: input events, never video or authoritative results. */
+(function(root,factory){
+  const api=factory(root,typeof module==='object'&&module.exports?require('./qte-unique/engine'):root.QTEUnique,
+    typeof module==='object'&&module.exports?require('./qte-block/engine'):root.QTEBlock);
+  if(typeof module==='object'&&module.exports)module.exports=api;else root.ArenaQTEWatch=api;
+})(globalThis,function(root,E,B){
+  'use strict';
+  let viewer=null;
+  function createReplay(stage){
+    const options={damageBase:stage.damage_base,hp:stage.target_hp,referenceDamage:stage.damage_base,
+      endOnDeath:false,enabledStrikes:stage.enabled_strikes,preparation:stage.defense_preparation??0};
+    const sim=stage.version===3?B.create(stage.profile,stage.stats,stage.seed,options):
+      (stage.kind==='defense'?E.defense:E.attack)(E.profile(stage.profile),stage.stats,stage.seed,options);
+    return {stage,sim,tick:0,knownTick:0,inputs:[],clicks:[],inputIndex:0,clickIndex:0,control:{},ended:false,aborted:false};
+  }
+  function extendReplay(model,packet){
+    if(packet.id!==model.stage.id)return model;
+    if(packet.reset)model=createReplay(model.stage);
+    model.inputs.push(...(packet.inputs||[]));model.clicks.push(...(packet.clicks||[]));
+    model.knownTick=packet.tick;model.ended=!!packet.ended;model.aborted=!!packet.aborted;
+    return model;
+  }
+  function stepReplay(model,target){
+    const attack=model.stage.kind==='attack';target=Math.min(target,model.knownTick);
+    function clicks(){while(model.clickIndex<model.clicks.length&&model.clicks[model.clickIndex]<=model.tick){E.hit(model.sim);model.clickIndex++;}}
+    while(model.tick<target){
+      if(attack){clicks();E.attackStep(model.sim,Math.min(model.sim.duration,(model.tick+1)/120)-model.sim.time);}
+      else{
+        while(model.inputIndex<model.inputs.length&&model.inputs[model.inputIndex].t<=model.tick){model.control=model.inputs[model.inputIndex++];}
+        const c=model.control;
+        if(model.stage.version===3)B.step(model.sim,1/120,c);
+        else E.defenseStep(model.sim,1/120,c.target?{target:{x:c.target[0],y:c.target[1]}}:c);
+      }
+      model.tick++;
+    }
+    if(attack)clicks();return model;
+  }
+  const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function buttons(scope,token,stages,names={}){
+    if(!stages?.length)return '';
+    return '<div class="qte-watch-buttons row">'+stages.map(s=>'<button class="small" data-qte-watch="'+esc(scope)+'" data-watch-token="'+esc(token)+'" data-watch-actor="'+s.actor+'">▶ Смотреть · '+esc(names[s.actor]||'Игрок '+s.actor)+' · '+esc(s.name)+'</button>').join('')+'</div>';
+  }
+  function socket(scope,token){
+    const scheme=root.location.protocol==='https:'?'wss:':'ws:';
+    return new root.WebSocket(scheme+'//'+root.location.host+'/qte-stream/'+encodeURIComponent(scope)+'/'+encodeURIComponent(token));
+  }
+  function auth(){return root.Telegram?.WebApp?.initData||'';}
+  function source(stage,context,snapshot){
+    const noop={finish(){}};
+    if(!context?.token||!auth()||![2,3].includes(stage.version)||!root.WebSocket)return noop;
+    let ws;try{ws=socket(context.scope,context.token);}catch{return noop;}
+    let wanted=false,reset=true,inputs=0,clicks=0,lastTick=-1,done=false,aborted=false,closed=false;
+    function flush(){
+      if(ws.readyState!==1)return;
+      if(!wanted){if(done)ws.close();return;}
+      try{
+      const s=snapshot(),allInputs=s.inputs||[],allClicks=s.clicks||[];
+      if(!reset&&!done&&s.tick===lastTick&&inputs===allInputs.length&&clicks===allClicks.length)return;
+      ws.send(JSON.stringify({type:'data',id:stage.id,tick:s.tick,reset,
+        inputs:allInputs.slice(reset?0:inputs),clicks:allClicks.slice(reset?0:clicks),ended:done,aborted}));
+      inputs=allInputs.length;clicks=allClicks.length;lastTick=s.tick;reset=false;
+      if(done)ws.close();
+      }catch{ws.close();}
+    }
+    ws.onopen=()=>ws.send(JSON.stringify({role:'source',auth:auth(),challenge:stage.id}));
+    ws.onmessage=event=>{try{const d=JSON.parse(event.data);if(d.type==='demand'){wanted=!!d.active;reset=true;if(done)flush();}}catch{ws.close();}};
+    const timer=root.setInterval(flush,200);
+    const timeout=root.setTimeout(()=>ws.close(),45000);
+    ws.onclose=()=>{closed=true;root.clearInterval(timer);root.clearTimeout(timeout);};
+    ws.onerror=()=>{};
+    return {finish(options={}){if(closed||done)return;done=true;aborted=!!options.abort;flush();}};
+  }
+  function close(){viewer?.close();}
+  function watch(scope,token,actor,choices){
+    if(root.ArenaMiniGames?.active)return;
+    close();
+    const cover=root.document.createElement('div');cover.className='qte-cover qte-pattern qte-spectator';
+    cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Просмотр мини-игры"><div class="qte-heading"><div><p class="qte-eyebrow">НАБЛЮДЕНИЕ · ТОЛЬКО ПРОСМОТР</p><h2>Подключаемся…</h2></div><button class="qte-watch-close" aria-label="Закрыть просмотр">Закрыть</button></div><div class="qte-watch-players row"></div><p class="qte-help">Трансляция с небольшой задержкой. Управление остаётся у игрока.</p><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="320" aria-label="Мини-игра другого игрока без управления"></canvas></div><p class="qte-live-status" role="status">Ожидаем действия игрока…</p><p class="qte-info">Изображение — предварительный расчёт. Итог боя проверяет сервер. Запись не сохраняется.</p></section>';
+    root.document.body.append(cover);
+    const previous=root.document.activeElement,unlock=root.QTETouch?.lockViewport(cover)||(()=>{}),canvas=cover.querySelector('canvas'),ctx=canvas.getContext('2d');
+    const status=cover.querySelector('.qte-live-status'),title=cover.querySelector('h2'),players=cover.querySelector('.qte-watch-players');
+    let ws,model=null,raf,heartbeat,closed=false,selected=actor,lastFrame=0,budget=0,seek=true;
+    const abort=new AbortController();
+    function finish(){if(closed)return;closed=true;root.cancelAnimationFrame(raf);root.clearInterval(heartbeat);abort.abort();ws?.close();cover.remove();unlock();viewer=null;previous?.isConnected&&previous.focus?.({preventScroll:true});}
+    viewer={close:finish,scope,token};
+    cover.querySelector('.qte-watch-close').addEventListener('click',finish,{signal:abort.signal});
+    root.addEventListener('keydown',event=>{
+      if(event.code==='Escape'){event.preventDefault();finish();}
+      if(event.code==='Tab'){
+        const list=[...cover.querySelectorAll('button')],i=list.indexOf(root.document.activeElement);event.preventDefault();
+        list[event.shiftKey?(i<=0?list.length-1:i-1):(i+1)%list.length]?.focus();
+      }
+    },{signal:abort.signal});
+    root.document.addEventListener('visibilitychange',()=>{if(root.document.hidden)finish();},{signal:abort.signal});
+    root.addEventListener('pagehide',finish,{signal:abort.signal});
+    function chooseButtons(){
+      players.innerHTML=choices.map(c=>'<button class="small '+(c.actor===selected?'primary':'')+'" data-watch-select="'+c.actor+'">'+esc(c.label)+'</button>').join('');
+    }
+    chooseButtons();
+    players.addEventListener('click',event=>{
+      const b=event.target.closest('[data-watch-select]');if(!b||ws?.readyState!==1)return;
+      selected=Number(b.dataset.watchSelect);ws.send(JSON.stringify({type:'select',actor:selected}));model=null;chooseButtons();
+    },{signal:abort.signal});
+    try{ws=socket(scope,token);}catch{status.textContent='Не удалось подключиться. Закрой окно и попробуй снова.';return;}
+    ws.onopen=()=>ws.send(JSON.stringify({role:'watch',auth:auth(),actor:selected}));
+    ws.onmessage=event=>{
+      try{
+        const d=JSON.parse(event.data);
+        if(d.type==='begin'){
+          model=createReplay(d.stage);seek=true;cover.classList.toggle('qte-block',d.stage.version===3);canvas.height=d.stage.version===3?400:320;
+          title.textContent=d.stage.name;status.textContent='Получаем действия игрока…';
+        }else if(d.type==='data'&&model){model=extendReplay(model,d);if(d.reset)seek=true;}
+        else if(d.type==='end'&&model&&d.id===model.stage.id){model.ended=true;status.textContent='Мини-игра завершена. Ждём следующий ход.';}
+        else if(d.type==='waiting'){model=null;title.textContent='Ожидаем трансляцию';status.textContent='Игрок ещё не открыл мини-игру или не подключился к трансляции.';}
+        else if(d.type==='error')status.textContent=d.message||'Трансляция недоступна.';
+      }catch{status.textContent='Не удалось прочитать трансляцию.';}
+    };
+    ws.onclose=()=>{status.textContent='Трансляция отключена. Закрой окно и нажми «Смотреть» снова.';root.clearInterval(heartbeat);};
+    ws.onerror=()=>{status.textContent='Не удалось подключиться к трансляции.';};
+    heartbeat=root.setInterval(()=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'ping'}));},10000);
+    function frame(now){
+      if(closed)return;
+      const elapsed=lastFrame?Math.min(.1,(now-lastFrame)/1000):0;lastFrame=now;
+      if(model){
+        const target=model.ended?model.knownTick:Math.max(0,model.knownTick-36);
+        // Catch up once on late join, then play smoothly between network batches.
+        if(seek){stepReplay(model,target);seek=false;budget=0;}
+        else{
+          budget+=elapsed*120*(target-model.tick>120?1.5:1);
+          const ticks=Math.floor(budget);budget-=ticks;
+          stepReplay(model,Math.min(target,model.tick+ticks));
+        }
+        (model.stage.version===3?root.QTEBlockView:root.QTEView)?.draw(ctx,canvas,model.sim);
+        if(model.tick>=model.knownTick&&model.ended)status.textContent=model.aborted?'Мини-игра остановлена. Итог рассчитает сервер.':'Мини-игра завершена. Ждём следующий ход.';
+        else status.textContent='Игрок проходит '+(model.stage.version===3?'блокирование':model.stage.kind==='attack'?'проверку попадания':'уклонение')+' · '+(model.tick/120).toFixed(1)+' с · HP '+model.sim.hp+' / '+model.sim.initialHp;
+      }
+      raf=root.requestAnimationFrame(frame);
+    }
+    cover.querySelector('.qte-watch-close').focus();raf=root.requestAnimationFrame(frame);
+  }
+  if(root.document)root.document.addEventListener('click',event=>{
+    const b=event.target.closest?.('[data-qte-watch]');if(!b)return;
+    event.preventDefault();
+    const choices=[...root.document.querySelectorAll('[data-qte-watch]')].filter(n=>n.dataset.watchToken===b.dataset.watchToken)
+      .map(n=>({actor:Number(n.dataset.watchActor),label:n.textContent.replace(/^▶ Смотреть · /,'')}));
+    watch(b.dataset.qteWatch,b.dataset.watchToken,Number(b.dataset.watchActor),choices);
+  });
+  return {buttons,source,watch,close,createReplay,extendReplay,stepReplay,get active(){return !!viewer;}};
+});

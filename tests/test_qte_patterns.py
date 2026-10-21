@@ -23,6 +23,76 @@ from arena_engine import create_battle_state, resolve_skill
 
 
 class PatternReplayTests(unittest.TestCase):
+    def test_shared_hunter_shot_has_delayed_crossfire_in_every_branch(self):
+        skill = next(s for s in review_catalog() if s['base_id'] == 'hunter_shot')
+        stats = self.config(skill)['stats']
+        for branch in ('', 'hunter_beast', 'hunter_moon'):
+            hard = defense(profile(dict(skill, branch=branch)), stats, 23)
+            self.assertEqual(hard['p']['kind'], 'gun')
+            self.assertTrue(hard['p']['hunterShot'])
+            self.assertAlmostEqual(hard['d']['speed'] / difficulty(stats)['speed'], 1.12)
+            prepare(hard, hard['events'][0])
+            self.assertEqual(len(hard['hazards']), 8)
+        hard = defense(profile(skill), stats, 23)
+        prepare(hard, hard['events'][0])
+        bullets = hard['hazards']
+        self.assertEqual(len(bullets), 8)
+        self.assertTrue(all(h['type'] == 'bullet' for h in bullets))
+        self.assertTrue(any(h['vx'] > 0 for h in bullets))
+        self.assertTrue(any(h['vx'] < 0 for h in bullets))
+        self.assertAlmostEqual(max(h['start'] for h in bullets) - min(h['start'] for h in bullets), .24)
+
+    def test_moon_judgment_and_final_add_aimed_bullets_to_orbit(self):
+        for name in ('Приговор бледной луны', 'Луна не прощает'):
+            with self.subTest(name=name):
+                skill = next(s for s in review_catalog() if s['name'] == name)
+                s = defense(profile(skill), self.config(skill)['stats'], 23)
+                prepare(s, s['events'][0])
+                self.assertEqual(sum(bool(h.get('turn')) for h in s['hazards']), 9)
+                aimed = [h for h in s['hazards'] if not h.get('turn')]
+                self.assertEqual(len(aimed), 5)
+                self.assertTrue(any(h['tier'] == 'normal' for h in aimed))
+                self.assertAlmostEqual(aimed[0]['start'] - s['hazards'][0]['start'], .22)
+
+    def test_moon_tuning_preserves_attack_checks_and_one_second_preparation(self):
+        skill = next(s for s in review_catalog() if s['base_id'] == 'hunter_shot')
+        p = profile(skill)
+        stats = self.config(skill)['stats']
+        normal_attack = attack(p, stats, 23)
+        plain_attack = attack(dict(p, moon=False, hunterShot=False), stats, 23)
+        normal_attack.pop('p')
+        plain_attack.pop('p')
+        self.assertEqual(normal_attack, plain_attack)
+        hard = defense(p, dict(stats, enemyAccuracy=100, evasion=0), 23)
+        easy = defense(p, dict(stats, enemyAccuracy=50, evasion=75), 23)
+        self.assertGreater(hard['d']['speed'], easy['d']['speed'])
+        self.assertLess(hard['d']['warning'], easy['d']['warning'])
+        self.assertGreaterEqual(hard['d']['warning'], .32)
+        start = deepcopy(hard['player'])
+        for _ in range(120):
+            defense_step(hard, dict(x=1, y=1))
+        self.assertEqual(hard['player'], start)
+        self.assertFalse(hard['hazards'])
+        self.assertFalse(hard['contacts'])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required')
+    def test_moon_patterns_allow_clean_routes_and_server_accepts_them(self):
+        configs = []
+        for name in ('Прерывающий выстрел', 'Приговор бледной луны', 'Луна не прощает'):
+            skill = next(s for s in review_catalog() if s['name'] == name)
+            c = self.config(skill, perfect=True)
+            c['seed'] = 17
+            c['stats'].update(enemyAccuracy=100, evasion=0)
+            configs.append(c)
+        result = subprocess.run(
+            [shutil.which('node'), str(Path(__file__).with_name('qte_patterns_trace.cjs'))],
+            input=json.dumps(configs), capture_output=True, text=True,
+            encoding='utf-8', timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for c, trace in zip(configs, json.loads(result.stdout), strict=True):
+            self.assertFalse(trace['result']['contacts'], c['profile']['name'])
+            self.assertEqual(replay(c, trace['proof'], 30), trace['result'])
+
     def test_attack_miss_is_final_and_server_rejects_a_second_attempt(self):
         for strikes in (1, 2, 6):
             with self.subTest(strikes=strikes):
@@ -160,6 +230,9 @@ class PatternReplayTests(unittest.TestCase):
             families[family(skill)] = skill
             configs.append(self.config(skill))
             configs.append(self.config(skill, "attack", miss_first=True))
+        shared_shot = next(s for s in catalog if s['base_id'] == 'hunter_shot')
+        for branch in ('', 'hunter_beast', 'hunter_moon'):
+            configs.append(self.config(dict(shared_shot, branch=branch)))
         for skill in families.values():
             for evasion in (0, 100):
                 c = self.config(skill)

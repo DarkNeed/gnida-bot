@@ -467,6 +467,35 @@ class ArenaQteMixin:
                 challenge=public if stage["actor"] == actor else None,
             )
 
+    async def arena_qte_watchables(self, scope, token, viewer):
+        """Read-only stage labels; no controls, results or future raid choices."""
+        async with self._lock:
+            rows = self.connection.execute(
+                'SELECT payload FROM arena_qte_flows WHERE scope=? AND token=? LIMIT 4',
+                (scope, token)).fetchall()
+            result = []
+            for row in rows:
+                flow = json.loads(row['payload'])
+                if not flow.get('stages') or not self._qte_valid_locked(flow):
+                    continue
+                s = flow['stages'][0]
+                if s.get('version') in (2, 3) and s['actor'] != viewer and s['expires'] > time.time():
+                    result.append(dict(actor=s['actor'], id=s['id'], name=s['name'], kind=s['kind']))
+            return result
+
+    async def arena_qte_stream_stage(self, scope, token, actor, ident):
+        """Only the actual player may start publishing their current stage."""
+        async with self._lock:
+            flow = self._qte_load_locked(scope, token, actor if scope == 'raid' else 0)
+            if not flow or not flow.get('stages') or not self._qte_valid_locked(flow):
+                raise ValueError('Мини-игра уже завершена.')
+            stage = flow['stages'][0]
+            if stage['actor'] != actor or stage['id'] != ident or stage.get('version') not in (2, 3):
+                raise ValueError('Транслировать можно только собственную текущую мини-игру.')
+            if stage['expires'] <= time.time():
+                raise ValueError('Время мини-игры истекло.')
+            return deepcopy(stage)
+
     async def arena_interactive_action(
         self, token, actor, revision, action, skill="", proof=None, challenge_id=None
     ):

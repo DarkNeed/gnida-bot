@@ -274,6 +274,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
         available=available,
         actor_id=actor,
         qte=await db.arena_qte_view('battle',row['token'],actor),
+        qte_watch=await db.arena_qte_watchables('battle',row['token'],actor),
     )
 
 
@@ -524,6 +525,8 @@ def create_arena_app(
         return response
 
     app = web.Application(middlewares=[guard], client_max_size=64 * 1024)
+    from arena_qte_watch import add_qte_watch_routes
+    add_qte_watch_routes(app, db, read_member, lambda raw: validate_init_data(raw, token)['id'])
     image_slots = asyncio.Semaphore(2)
 
     async def index(request):
@@ -967,6 +970,10 @@ def create_arena_app(
     app.router.add_post('/api/characters/invoice',characters_invoice)
     app.router.add_get("/health", health)
     app.router.add_get("/static/client.js", client)
+    async def qte_watch_client(request):
+        return web.FileResponse(ROOT / 'qte-watch', headers={
+            'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-cache'})
+    app.router.add_get('/static/qte-watch.js', qte_watch_client)
     app.router.add_get("/static/audio.js", audio)
     app.router.add_get("/static/style.css", stylesheet)
     async def holdings_client(request):

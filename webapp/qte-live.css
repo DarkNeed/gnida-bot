@@ -38,3 +38,7 @@
   .qte-pattern .qte-window{width:min(760px,100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 168px) * 2.25 + 190px))}.qte-pattern .qte-health{grid-column:1;grid-row:2}.qte-pattern .qte-field{grid-column:1;grid-row:3;width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 168px) * 2.25))}.qte-pattern .qte-live-status{grid-row:4}.qte-pattern .qte-controls{grid-row:2/5}
 }
 @media(max-height:500px) and (min-width:600px){.qte-block .qte-window{width:min(760px,100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 190px) * 1.8 + 190px))}.qte-block .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 190px) * 1.8))}.qte-block-raise{width:100%}}
+.qte-watch-buttons{gap:8px;margin-top:10px;flex-wrap:wrap}.qte-watch-buttons button{text-align:left;white-space:normal}
+.qte-spectator .qte-window{display:flex;flex-direction:column;width:min(760px,100%);gap:10px}
+.qte-spectator .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 270px) * 1.8));align-self:center}
+.qte-watch-players{gap:6px;flex-wrap:wrap}.qte-watch-players:has(button:only-child){display:none}.qte-watch-close{flex-shrink:0;min-height:40px}

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const code = fs.readFileSync(require('node:path').join(__dirname,'../webapp/arena-audio'),'utf8');
-function harness({saved=null,storageFails=false,available=true,rejected=false,room=true}={}) {
+function harness({saved=null,storageFails=false,available=true,rejected=false,room=true,silent=false}={}) {
   const handlers={},windowHandlers={},intervals=new Map(),contexts=[],sources=[],ramps=[],nodes=[],delays=[],timeouts=[];
   const sceneLabel={textContent:''};
   let serial=0,stored=saved;
@@ -37,15 +37,35 @@ function harness({saved=null,storageFails=false,available=true,rejected=false,ro
     async resume(){if(rejected)throw new Error('autoplay');this.state='running';}
     async suspend(){this.state='suspended';}
   }
-  const document={hidden:false,querySelectorAll:()=>[],querySelector:()=>null,getElementById:id=>id==='audio-scene'?sceneLabel:null,addEventListener:(k,f)=>handlers[k]=f};
+  const opener={disabled:false,attributes:{},setAttribute(k,v){this.attributes[k]=v;}};
+  const document={hidden:false,currentScript:{dataset:{audioSilent:String(silent)}},querySelectorAll:()=>[opener],querySelector:()=>null,getElementById:id=>id==='audio-scene'?sceneLabel:null,addEventListener:(k,f)=>handlers[k]=f};
   const window={addEventListener:(k,f)=>windowHandlers[k]=f};
   if(available)window.AudioContext=Context;
   const sandbox={window,document,localStorage:{getItem(){if(storageFails)throw Error('denied');return stored;},setItem(k,v){if(storageFails)throw Error('denied');stored=v;}},setInterval(f){const id=++serial;intervals.set(id,f);return id;},clearInterval(id){intervals.delete(id);},setTimeout(f){timeouts.push(f);},console};
   vm.runInNewContext(code,sandbox);
   const button=attrs=>({disabled:false,dataset:{audioTest:attrs['data-audio-test']},hasAttribute:k=>k in attrs});
   const click=async attrs=>{const b=button(attrs);await handlers.click({target:{closest:()=>b}});};
-  return {audio:window.ArenaAudio,document,handlers,windowHandlers,contexts,sources,intervals,ramps,nodes,delays,timeouts,sceneLabel,click,get stored(){return stored;}};
+  return {audio:window.ArenaAudio,document,handlers,windowHandlers,contexts,sources,intervals,ramps,nodes,delays,timeouts,sceneLabel,opener,click,get stored(){return stored;}};
 }
+
+test('side-by-side demo keeps spectator silent without muting player or saving preferences',async()=>{
+  const saved=JSON.stringify({muted:false,music:22,effects:50});
+  const player=harness({saved}),watcher=harness({saved,silent:true});
+  player.audio.scene('battle');watcher.audio.scene('battle');
+  await player.click({});
+  for(const attrs of [{},{'data-audio-toggle':''},{'data-audio-test':'hit'}])await watcher.click(attrs);
+  watcher.audio.effect('hit');watcher.audio.actionStart({damage_type:'magic'});
+  watcher.audio.impact({damage:30,hit:true});
+  watcher.windowHandlers.pageshow();watcher.handlers.visibilitychange();
+  watcher.handlers.input({target:{dataset:{audioVolume:'music'},value:'0'}});
+  watcher.audio.refresh();
+  assert.equal(watcher.contexts.length,0);assert.equal(watcher.sources.length,0);assert.equal(watcher.intervals.size,0);
+  assert.equal(watcher.stored,saved);
+  assert.equal(watcher.opener.disabled,true);
+  assert.match(watcher.opener.attributes['aria-label'],/окне игрока/);
+  assert.equal(player.contexts.length,1);assert.equal(player.intervals.size,1);
+  assert.equal(player.opener.disabled,false);assert.ok(player.sources.length>0);
+});
 test('fresh and corrupt preferences default to enabled after first gesture',async()=>{
   for(const saved of [null,'broken json']){
     const h=harness({saved});h.audio.scene('battle');h.audio.effect('hit');

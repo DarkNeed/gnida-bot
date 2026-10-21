@@ -3,8 +3,8 @@
   'use strict';
   let active = null;
   window.ArenaMiniGames = {play, get active(){return !!active;}};
-  function play(challenge){return challenge.version===3&&challenge.defense_mode==='block'?playBlock(challenge):challenge.version===2?playPatterns(challenge):playLegacy(challenge);}
-  function playBlock(challenge){
+  function play(challenge,context){window.ArenaQTEWatch?.close();return challenge.version===3&&challenge.defense_mode==='block'?playBlock(challenge,context):challenge.version===2?playPatterns(challenge,context):playLegacy(challenge);}
+  function playBlock(challenge,context){
     if(active)return Promise.reject(new Error('Другая мини-игра уже открыта.'));
     const B=window.QTEBlock,V=window.QTEBlockView;
     if(!B||!V||!window.QTETouch?.lockViewport)return Promise.reject(new Error('Обнови арену: блокирование не загрузилось.'));
@@ -20,9 +20,10 @@
       const touch=QTETouch.attach({canvas,stick:find('.qte-stick'),getPlayer:()=>s.player,isDefense:()=>true,width:720,height:400,onTouch:()=>cover.classList.add('qte-touch-mode')});
       const deadline=performance.now()+Math.max(0,(challenge.expires-(challenge.server_now||Date.now()/1000))*1000);
       active={challenge:challenge.id};canvas.focus({preventScroll:true});
+      const relay=window.ArenaQTEWatch?.source(challenge,context,()=>({tick,inputs:proof.inputs}));
       function clear(){keys.clear();pointers.clear();aim=null;canvasPointer=null;touch.clear();}
       function finish(failed=false){
-        if(done)return;done=true;cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();cover.remove();unlock();active=null;
+        if(done)return;done=true;relay?.finish({abort:failed});cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();cover.remove();unlock();active=null;
         previousFocus?.isConnected&&previousFocus.focus?.({preventScroll:true});resolve(failed?{abort:true}:proof);
       }
       function input(){
@@ -69,7 +70,7 @@
       watch=setInterval(()=>{if(performance.now()>=deadline)finish(true);},200);draw();raf=requestAnimationFrame(frame);
     });
   }
-  function playPatterns(challenge){
+  function playPatterns(challenge,context){
     if(active)return Promise.reject(new Error('Другая мини-игра уже открыта.'));
     const E=window.QTEUnique,V=window.QTEView;
     if(!E||!V||!window.QTETouch?.attach||!window.QTETouch?.lockViewport)return Promise.reject(new Error('Обнови арену: новые мини-игры не загрузились.'));
@@ -96,8 +97,9 @@
       const touch=window.QTETouch.attach({canvas,stick:find('.qte-stick'),getPlayer:()=>sim.player,isDefense:()=>defense,onTap:hit,onTouch:()=>cover.classList.add('qte-touch-mode')});
       const deadline=performance.now()+Math.max(0,(challenge.expires-(challenge.server_now||Date.now()/1000))*1000);
       active={challenge:challenge.id};
+      const relay=window.ArenaQTEWatch?.source(challenge,context,()=>({tick,inputs:proof.inputs,clicks:proof.clicks}));
       function finish(failed=false){
-        if(done)return;done=true;cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();
+        if(done)return;done=true;relay?.finish({abort:failed});cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();
         cover.remove();unlockViewport();active=null;previousFocus?.isConnected&&previousFocus.focus?.({preventScroll:true});
         if(!defense)proof.ticks=tick;resolve(failed?{abort:true}:proof);
       }

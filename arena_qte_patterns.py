@@ -91,6 +91,8 @@ def family(s):
         return "death"
     if contains("ледян"):
         return "ice"
+    if ident == "hunter_shot":
+        return "gun"
     if any(v in branch + ident for v in ("beast", "fauvist")) or contains(
         "звер", "хищник", "разорвать", "первобыт"
     ):
@@ -189,6 +191,8 @@ def profile(skill):
         basic=skill.get("base_id") == "bum_punch" and skill.get("name") == "Удар бомжа",
         strikes=clamp(skill.get("strikes", 1), 1, 6),
         kit=skill.get("base_id", "").startswith("kit_"),
+        moon=skill.get("base_id") == "arch_hunter_moon",
+        hunterShot=skill.get("base_id") == "hunter_shot",
         phase=next(r) * TAU,
         polarity=-1 if next(r) < 0.5 else 1,
         speed=0.94 + next(r) * 0.18,
@@ -312,6 +316,9 @@ def defense(p, stats, seed, enabled=None, preparation=1):
         d["speed"] *= 1.16
         d["warning"] = max(0.30, d["warning"] * 0.94)
         d["beamScale"] *= 1.12
+    if p["moon"] or p['hunterShot']:
+        d["speed"] *= 1.12
+        d["warning"] = max(0.32, d["warning"] * 0.96)
     count = (
         3
         if p["basic"]
@@ -522,6 +529,8 @@ def prepare(s, e):
             aimed(not odd, 0.11 * p["spread"], 5 if d["intensity"] > 0.7 else 3, 0.18)
         else:
             aimed(odd, 0.09 * p["spread"], 5 if d["intensity"] > 0.75 else 3)
+            if p['hunterShot']:
+                aimed(not odd, 0.12 * p["spread"], 3, 0.24, "star")
     elif k == "rocket":
         circle(x, y, d["size"] + 6, 0, 0.3)
         for j in range(8):
@@ -628,6 +637,8 @@ def prepare(s, e):
                     0.16,
                     "star",
                 )
+            if p["moon"]:
+                aimed(not odd, 0.14 * p["spread"], 5 if d["intensity"] > 0.75 else 3, 0.22, "star")
     elif k == "mana":
         aimed(odd, 0.13 * p["spread"], 5, 0, "orb")
         aimed(not odd, 0.1, 3, 0.25, "orb")

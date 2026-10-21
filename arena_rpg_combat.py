@@ -249,6 +249,9 @@ def post_action(actor, target, skill, hit, damage, key, before, allies=None):
     if key == 'hunter_moon' and 'rpg_visceral' in skill.tags:
         if hit:
             m['moon_mark'] = False
+            if native and skill.skill_id == 'arch_hunter_moon' and actor['cooldowns'].get('hunter_shot', 0) > 0:
+                actor['cooldowns']['hunter_shot'] = max(0, actor['cooldowns']['hunter_shot'] - 1)
+                notes.append('Лунная связка: перезарядка выстрела −1')
             if 'rpg_white_moon' in skill.tags:
                 m['moon_used'] = True
         elif actor['level'] >= 18 and actor.get('own_turns', 0) < before.get('visceral_until', 0):

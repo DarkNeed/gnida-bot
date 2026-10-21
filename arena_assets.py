@@ -13,6 +13,7 @@ def render_arena_index(root: Path) -> str:
             revision.update((root / name).read_bytes())
     for name in (
         "qte-live",
+        "qte-watch",
         "qte-live.css",
         "qte-lab/engine",
         "qte-input",
@@ -36,6 +37,7 @@ def render_arena_index(root: Path) -> str:
             'href="/static/holdings.css"', f'href="/static/holdings.css?v={version}"'
         )
         .replace('src="/static/qte-live.js"', f'src="/static/qte-live.js?v={version}"')
+        .replace('src="/static/qte-watch.js"', f'src="/static/qte-watch.js?v={version}"')
         .replace(
             'src="/static/qte-engine.js"', f'src="/static/qte-engine.js?v={version}"'
         )

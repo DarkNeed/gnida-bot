@@ -79,7 +79,7 @@ async function runPendingMiniGames(){
   try{
     while(data?.qte?.challenge){
       const challenge=data.qte.challenge;
-      const proof=await window.ArenaMiniGames.play(challenge);
+      const proof=await window.ArenaMiniGames.play(challenge,{scope:raid?'raid':'battle',token:id});
       data=await api('/api/'+(raid?'raid/':'battle/')+id,{action:'qte',challenge_id:challenge.id,proof,revision:data.revision,round:data.data?.round||0});
       if(raid){if(raidCurrent?.token!==id)break;await receiveRaid(data);}
       else{if(token!==id)break;await applyBattle(data);}
@@ -381,6 +381,10 @@ function renderActions(){
     panel.innerHTML='<div class="battlelog">'+(current.own_side||current.consent_side?"Ход соперника…":"Ты наблюдаешь за боем.")+'<div class="muted">'+esc(st.log.at(-1)?.text||"Первый ход скоро начнётся.")+'</div></div>';
   }
   if(!st.finished&&Object.values(st.sides).some(s=>s.controller_id===current.actor_id))panel.innerHTML+='<div class="row surrender-row">'+button("Сдаться","surrender","small danger")+'</div>';
+  if(!st.finished){
+    const names=Object.fromEntries(Object.values(st.sides).map(s=>[s.controller_id,s.name]));
+    panel.innerHTML+=window.ArenaQTEWatch?.buttons('battle',current.token,current.qte_watch,names)||'';
+  }
   updateTurnTimer();
 }
 function updateTurnTimer(){
@@ -1025,7 +1029,7 @@ function raidScreen(data){
         }
         body+='<div class="surrender-row row">'+raidButton('Покинуть бой без награды','skill:surrender','danger small')+'</div>';
       }else body+='<h3>Наблюдение за рейдом</h3><p class="muted">'+(own?'Твой боец выбыл. Отряд может продолжить бой.':'Ты зритель. Выбор действий доступен участникам отряда.')+'</p>';
-      body+='</div>';
+      body+=(window.ArenaQTEWatch?.buttons('raid',data.token,data.qte_watch,Object.fromEntries(Object.values(d.players).map(p=>[p.actor_id,p.fighter.name])))||'')+'</div>';
     }else{
       body+='<div class="card"><h2>'+esc(d.result)+'</h2>'+Object.entries(d.rewards).map(([key,r])=>'<p>'+esc(d.players[key].fighter.name)+': +'+r.francs+' ₣ · +'+r.xp+' XP'+(r.full_reward===false?' · повторная награда 20%':r.full_reward?' · полная награда':'')+(r.loot?' · 📜 '+esc(r.loot):'')+(r.forge_seal?' · ⚒️ '+esc(r.forge_seal)+' +1':'')+'</p>').join('')+'</div>';
     }

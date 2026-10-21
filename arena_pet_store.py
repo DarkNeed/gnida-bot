@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from arena_global import RPG_SCOPE
-from arena_characters import CHARACTER_PACK, CHARACTER_PRICE, CHARACTER_TERMS_VERSION
+from arena_characters import CHARACTER_PACK, CHARACTER_PRICE, CHARACTER_TERMS_VERSION, CHARACTER_OWNER_ID
 from arena_pets import PETS, PET_ODDS, PET_PACKS, PET_TERMS_VERSION, PET_MILESTONES, pet_snapshot
 
 
@@ -59,6 +59,10 @@ class PetMixin:
         CREATE TABLE IF NOT EXISTS pet_refund_receipts (
           charge_id TEXT PRIMARY KEY, payload TEXT NOT NULL, currency TEXT NOT NULL,
           total INTEGER NOT NULL, received_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS pet_admin_changes (
+          event_key TEXT PRIMARY KEY, user_id INTEGER NOT NULL, pet_id TEXT NOT NULL,
+          actor_id INTEGER NOT NULL, action TEXT NOT NULL, changed INTEGER NOT NULL,
+          previous_json TEXT, created_at INTEGER NOT NULL);
         """)
         if "refunded_at" not in {r["name"] for r in self.connection.execute("PRAGMA table_info(pet_payment_issues)")}:
             self.connection.execute("ALTER TABLE pet_payment_issues ADD COLUMN refunded_at INTEGER")
@@ -103,6 +107,50 @@ class PetMixin:
             view = self._pet_view_locked(user, chat)
             self.connection.commit()
             return view
+
+    async def pet_admin_change(self, user, pet_id, actor_id, event_key, *, revoke=False):
+        """Owner-only gift/removal, audited and safe against redelivered updates.
+
+        Never creates a purchase, charges resources, changes pity or rewards a
+        duplicate. Removal clears all saved equipment but not battle snapshots.
+        """
+        if type(actor_id) is not int or actor_id != CHARACTER_OWNER_ID:
+            raise ValueError('Дарить и забирать питомцев может только владелец бота.')
+        if type(user) is not int or not 0 < user <= 2**63 - 1:
+            raise ValueError('Некорректный Telegram ID.')
+        if not isinstance(pet_id, str) or pet_id not in PETS:
+            raise ValueError('Неизвестный питомец.')
+        if not isinstance(event_key, str) or not 1 <= len(event_key) <= 128 or type(revoke) is not bool:
+            raise ValueError('Некорректный номер команды.')
+        action = 'revoke' if revoke else 'grant'
+        async with self._lock:
+            try:
+                self.connection.execute('BEGIN IMMEDIATE')
+                old = self.connection.execute('SELECT * FROM pet_admin_changes WHERE event_key=?', (event_key,)).fetchone()
+                if old:
+                    if (old['user_id'], old['pet_id'], old['actor_id'], old['action']) != (user, pet_id, actor_id, action):
+                        raise ValueError('Эта команда уже обработана с другими параметрами.')
+                    self.connection.commit()
+                    return dict(changed=bool(old['changed']), replay=True)
+                self._pet_wallet_locked(user)
+                previous = self.connection.execute('SELECT * FROM pet_owned WHERE user_id=? AND pet_id=?', (user, pet_id)).fetchone()
+                if revoke:
+                    removed = self.connection.execute('DELETE FROM pet_equipment WHERE user_id=? AND pet_id=?', (user, pet_id)).rowcount
+                    changed = self.connection.execute('DELETE FROM pet_owned WHERE user_id=? AND pet_id=?', (user, pet_id)).rowcount > 0
+                else:
+                    removed = 0
+                    changed = self.connection.execute('INSERT OR IGNORE INTO pet_owned(user_id,pet_id,acquired_at) VALUES(?,?,?)',
+                        (user, pet_id, int(time.time()))).rowcount > 0
+                if changed or removed:
+                    self.connection.execute('UPDATE pet_wallets SET revision=revision+1 WHERE user_id=?', (user,))
+                self.connection.execute('INSERT INTO pet_admin_changes VALUES(?,?,?,?,?,?,?,?)',
+                    (event_key, user, pet_id, actor_id, action, int(changed),
+                     json.dumps(dict(previous)) if previous else None, int(time.time())))
+                self.connection.commit()
+                return dict(changed=changed, replay=False)
+            except Exception:
+                self.connection.rollback()
+                raise
 
     def _pet_source_locked(self, chat, user):
         wallet = self.connection.execute("SELECT tickets FROM pet_wallets WHERE user_id=?", (user,)).fetchone()

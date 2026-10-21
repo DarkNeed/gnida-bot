@@ -72,7 +72,7 @@ def build_rpg_catalog(FighterClass, Skill, effect):
         s('priest','arch_priest_bishop','Страшный суд',15,'magic',24,45,3,tags=('archclass:priest_bishop','rpg_faith_spend'),description='Расходует Веру с удвоенным бонусом, +40% урона за заряд.'),
         s('priest','arch_priest_paladin','Карающий приговор',15,'physical',25,45,3,tags=('archclass:priest_paladin','rpg_faith_spend'),description='Расходует Веру и накопленное Воздаяние.',pierce=.35),
         s('hunter','arch_hunter_beast','Разорвать добычу',15,'physical',22,40,3,tags=('archclass:hunter_beast','rpg_beast_spend'),description='+25% урона за Зверство, до 3. Расходует Зверство только при попадании.'),
-        s('hunter','arch_hunter_moon','Приговор бледной луны',15,'magic',32,45,3,tags=('archclass:hunter_moon','rpg_visceral','hybrid_attack'),description='Требует прерывания; использует большую атаку бойца и магическую защиту врага.',pierce=.50),
+        s('hunter','arch_hunter_moon','Приговор бледной луны',15,'magic',36,45,3,tags=('archclass:hunter_moon','rpg_visceral','hybrid_attack'),description='Требует прерывания; использует большую атаку бойца и магическую защиту врага. Попадание сокращает перезарядку Прерывающего выстрела на 1 действие.',pierce=.50),
     )
     return classes, {s.skill_id:s for s in (*skills,*unique)}
 

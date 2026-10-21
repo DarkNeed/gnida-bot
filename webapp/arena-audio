@@ -2,6 +2,8 @@
 // Original procedural soundtrack/SFX. Browser-only, extensionless for BotHost.
 (() => {
   const KEY = 'gnida.arena.audio.v1';
+  // Per-document preview flag, never a shared/persisted mute preference.
+  const silent = document.currentScript?.dataset?.audioSilent === 'true';
   const THEMES = {
     menu: {bpm: 78, roots: [45, 41, 48, 43], motif: [0, 7, 10, 14, 10, 7, 3, 7], soft: true},
     battle: {bpm: 138, roots: [45, 41, 48, 43], motif: [0, 7, 12, 10, 7, 12, 15, 14], lead: [12, 10, 7, 15]},
@@ -29,8 +31,10 @@
   function save() { try { localStorage.setItem(KEY,JSON.stringify(prefs)); } catch {} }
   function labels() {
     for(const b of document.querySelectorAll('[data-audio-open]')) {
-      b.textContent = prefs.muted ? '🔇' : '♫';
-      b.setAttribute('aria-label','Настройки звука' + (prefs.muted ? ' — выключен' : ''));
+      b.textContent = silent || prefs.muted ? '🔇' : '♫';
+      b.disabled = silent;
+      b.setAttribute('aria-label',silent ? 'Звук демо играет в окне игрока' : 'Настройки звука' + (prefs.muted ? ' — выключен' : ''));
+      if(silent)b.title = 'Звук демо играет только в окне игрока';
     }
     const toggle = document.querySelector('[data-audio-toggle]');
     if(toggle) { toggle.textContent = prefs.muted ? 'Включить звук' : 'Выключить звук'; toggle.setAttribute('aria-pressed',String(!prefs.muted)); }
@@ -46,7 +50,7 @@
     node.gain.linearRampToValueAtTime(value,ctx.currentTime+duration);
   }
   function createContext() {
-    if(ctx || unavailable) return;
+    if(silent || ctx || unavailable) return;
     const Context = window.AudioContext || window.webkitAudioContext;
     if(!Context) { unavailable = true; return; }
     ctx = new Context();
@@ -62,7 +66,7 @@
     for(let i=0;i<samples.length;i++) { seed = (seed*16807)%2147483647; samples[i] = seed/1073741823.5-1; }
   }
   async function unlock() {
-    if(prefs.muted || document.hidden) return;
+    if(silent || prefs.muted || document.hidden) return;
     const ticket = generation;
     try {
       createContext();
@@ -228,7 +232,7 @@
     }
   }
   function startMusic() {
-    if(!ctx || ctx.state !== 'running' || prefs.muted || !prefs.music || document.hidden || !THEMES[scene]) return;
+    if(silent || !ctx || ctx.state !== 'running' || prefs.muted || !prefs.music || document.hidden || !THEMES[scene]) return;
     if(playing === scene && timer) return;
     stopMusic(); playing = scene; step = 0; next = ctx.currentTime+.03;
     musicBus = ctx.createGain(); musicBus.gain.value = 0; musicBus.connect(master);
@@ -242,7 +246,7 @@
     startMusic(); labels();
   }
   function effect(name) {
-    if(prefs.muted || !prefs.effects || !ctx || ctx.state !== 'running' || document.hidden) return;
+    if(silent || prefs.muted || !prefs.effects || !ctx || ctx.state !== 'running' || document.hidden) return;
     const at = ctx.currentTime+.005;
     const notes = (list,d=.09) => list.forEach((n,i)=>tone(n,at+i*d,d*2,.15,fx));
     if(name === 'click') tone(78,at,.045,.08,fx,'sine');
@@ -299,6 +303,7 @@
     labels(); if(!dialog.open) dialog.showModal();
   }
   document.addEventListener('click',safe(async e=>{
+    if(silent) return;
     const button = e.target.closest('button'); if(!button || button.disabled) return;
     if(button.hasAttribute('data-audio-open')) { openPanel(button); await unlock(); return; }
     if(button.hasAttribute('data-audio-toggle')) {
@@ -312,6 +317,7 @@
     if(!button.hasAttribute('data-audio-close')) { await unlock(); effect('click'); }
   }));
   document.addEventListener('input',safe(e=>{
+    if(silent) return;
     const k = e.target.dataset?.audioVolume; if(!['music','effects'].includes(k)) return;
     prefs[k] = Math.max(0,Math.min(100,Number(e.target.value)||0)); save();
     document.getElementById('audio-'+k+'-value').textContent = prefs[k]+'%';
