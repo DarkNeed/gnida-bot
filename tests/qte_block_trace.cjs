@@ -9,6 +9,11 @@ let raw='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>raw+=s);
       const cmd={angle:B.angleDiff(angle,0),active:c.policy==='hold'||c.policy==='react'&&next?s.time>=next?.at-.1:c.policy==='sweep'&&tick%90<55};
       // Hold mode really holds from the start, rather than following a cue.
       if(c.policy==='hold')cmd.active=true;
+      if(c.policy==='careful'){
+        const visible=next&&s.time>=next.at-next.warning;
+        cmd.angle=B.angleDiff(visible?next.angle:s.angle,0);
+        cmd.active=!!(visible&&next.kind!=='feint'&&s.time>=next.at-.1);
+      }
       cmd.active=!!cmd.active;const value=JSON.stringify(cmd);
       if(value!==encoded){proof.inputs.push({t:tick,...cmd});encoded=value;}
       B.step(s,1/120,cmd);

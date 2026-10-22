@@ -38,6 +38,10 @@ def parameters(p, stats):
 
 
 def threats(p, seed, params):
+    from arena_chaplain_block import threats as chaplain_threats
+    special = chaplain_threats(p, seed, params)
+    if special is not None:
+        return special
     random = random_values((seed ^ p["seed"]) & 0xFFFFFFFF)
     shot = p["kind"] in (
         "gun",
@@ -166,6 +170,12 @@ def step(s, command):
             continue
         event["resolved"] = True
         if s["enabled"] is not None and not s["enabled"][event["strike"]]:
+            continue
+        if event['kind'] == 'feint':
+            if s['active']:
+                s['stamina'] = max(0, s['stamina']-12*p['pressure'])
+            s['contacts'].append(dict(id=event['id'], strike=event['strike'], tier=event['tier'],
+                weight=0, reduction=0, blocked=False, outcome='feint', tick=round(s['time']*HZ)))
             continue
         cost = (30 if event["kind"] == "wave" else 42 * event["weight"]) * p["pressure"]
         facing = (
