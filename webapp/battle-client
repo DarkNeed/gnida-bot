@@ -1033,6 +1033,10 @@ function raidPhaseSprite(data){
 }
 function raidSoundtrack(data){
   if(data.status!=='active')return data.status==='lobby'?'menu':'';
+  if(data.boss_id==='chaplain'){
+    const phase=Number(data.data?.phase||1);
+    return phase>=4?'chaplain_root':phase>=3?'chaplain_override':phase>=2?'chaplain_fault':'chaplain';
+  }
   if(data.boss_id==='kit'){
     const phase=Number(data.data?.phase||1);
     return phase>=3?'kit_abyss':phase>=2?'kit_menace':'raid';

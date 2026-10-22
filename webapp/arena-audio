@@ -11,10 +11,16 @@
     lei_heng: {bpm: 152, roots: [40, 40, 43, 38], motif: [0, 7, 12, 15, 12, 7, 5, 7], lead: [12, 15, 19, 17]},
     doofenshmirtz: {bpm: 144, roots: [42, 45, 40, 41], motif: [0, 12, 3, 11, 7, 3, 12, 6], lead: [12, 11, 15, 6]},
     kit_menace: {bpm: 112, roots: [29, 28, 29, 25], motif: [0, 1, 7, 6, 0, -1, 7, 6], style: 'menace'},
-    kit_abyss: {bpm: 64, roots: [26, 25, 22, 23], style: 'abyss'}
+    kit_abyss: {bpm: 64, roots: [26, 25, 22, 23], style: 'abyss'},
+    chaplain: {bpm:108, roots:[38,34,41,36,38,43,37,33], style:'chaplain', revision:1},
+    chaplain_fault: {bpm:116, roots:[38,34,41,36,38,43,37,33], style:'chaplain', revision:2},
+    chaplain_override: {bpm:132, roots:[38,37,34,33,38,43,41,37], style:'chaplain', revision:3},
+    chaplain_root: {bpm:148, roots:[38,34,37,33,38,43,41,33], style:'chaplain', revision:4}
   };
   const THEME_LABELS = {menu:'Меню',battle:'Бой',raid:'Рейд',lei_heng:'Лей Хенг',doofenshmirtz:'Фуфелшмерц',
-    kit_menace:'Кит · II фаза · Надвигающаяся угроза',kit_abyss:'Кит · III фаза · Бездна смотрит в ответ'};
+    kit_menace:'Кит · II фаза · Надвигающаяся угроза',kit_abyss:'Кит · III фаза · Бездна смотрит в ответ',
+    chaplain:'Капеллан · I · Регламент',chaplain_fault:'Капеллан · II · Несохранённый результат',
+    chaplain_override:'Капеллан · III · Ручное вмешательство',chaplain_root:'Капеллан · IV · Полный доступ'};
   let prefs = {muted: false, music: 22, effects: 50};
   try {
     const p = JSON.parse(localStorage.getItem(KEY));
@@ -127,11 +133,71 @@
   function createRoom(theme) {
     if(!theme.style || !ctx.createDelay) return;
     // Feed-forward echoes only: no feedback loop can survive mute/pagehide.
-    for(const [seconds,level] of theme.style==='abyss'?[[.37,.24],[.73,.13]]:[[.17,.14],[.31,.08]]) {
+    const echoes=theme.style==='abyss'?[[.37,.24],[.73,.13]]:theme.style==='chaplain'?[[.29,.16],[.61,.085]]:[[.17,.14],[.31,.08]];
+    for(const [seconds,level] of echoes) {
       const delay=ctx.createDelay(1),filter=ctx.createBiquadFilter(),wet=ctx.createGain();
       delay.delayTime.value=seconds;filter.type='lowpass';filter.frequency.value=theme.style==='abyss'?950:1500;
       wet.gain.value=level;musicBus.connect(delay);delay.connect(filter);filter.connect(wet);wet.connect(master);
       roomNodes.push(delay,filter,wet);
+    }
+  }
+  function pipe(note,at,duration,volume,bus){
+    // Original additive organ: a fundamental, octave and restrained upper fifth.
+    tone(note,at,duration,volume*.55,bus,'sine',null,-3,true,.10);
+    tone(note+12,at,duration*.88,volume*.24,bus,'sine',null,3,true,.08);
+    tone(note+19,at,duration*.70,volume*.12,bus,'triangle',null,0,true,.06);
+  }
+  function clockBell(note,at,volume,bus){
+    for(const [offset,length,level] of [[0,2.5,.5],[12,1.8,.24],[19.1,1.2,.12],[28.2,.7,.06]])
+      tone(note+offset,at,length,volume*level,bus,'sine');
+  }
+  function chaplainPhrase(theme,root,within,bar,beat,tick,at){
+    const phase=theme.revision,bus=musicBus,section=Math.floor(bar/8)%4;
+    const cantus=[[7,12,10,7,3,5,2,0],[7,12,10,7,0,2,5,3],
+      [0,7,12,10,15,14,12,7],[12,10,7,3,14,12,7,6]][section];
+    if(within===0){
+      const chord=bar%8===7?[0,4,7]:[0,3,7];
+      for(const n of chord)pipe(root+24+n,at,beat*(phase>=3?3.1:3.7),phase>=4?.067:.055,bus);
+      tone(root,at,beat*3.6,.095,bus,'sine',null,0,true,.05);
+      if(phase>=3)brass(root+12,at,beat*2.6,phase===4?.105:.07,bus);
+      if(bar%2===0||phase===4){
+        abyssChoir(root+24,at,beat*3.7,phase===4?.055:.035,bus);
+        if(phase>=3)abyssChoir(root+31,at,beat*3.3,.025,bus);
+      }
+      if(bar%4===0)clockBell(root+36,at,phase===4?.13:.10,bus);
+    }
+    // Short missing clock ticks read as a broken mechanism, not a second player.
+    const gap=phase>=3&&bar%4===2&&(within===10||within===11);
+    if(!gap&&within%4===0){
+      const tock=within%8===4;
+      noise(at,.028,phase>=3?.038:.026,bus,tock?1500:2300);
+      tone(tock?78:83,at,.045,.025,bus,'sine',tock?72:77);
+    }
+    if(gap)return;
+    const part=Math.floor(within/2),reverse=phase===2&&bar%4>=2;
+    if(within%(phase>=3?2:4)===0){
+      const index=reverse?7-part:part,n=[0,7,12,7,3,10,7,2][index];
+      tone(root+12+n,at,tick*(phase>=3?1.45:2.4),phase===4?.06:.039,bus,'triangle');
+      if(phase>=3)tone(root+24+n,at,tick*1.25,.022,bus,'sawtooth',null,-4);
+    }
+    if(within%(phase===1?8:4)===0){
+      const index=(Math.floor(within/2)+Math.floor(bar/2))%8,note=root+24+cantus[index];
+      if(phase<=2)pipe(note,at,beat*1.3,.05,bus);
+      else brass(note,at,beat*.82,phase===4?.07:.05,bus);
+    }
+    if(within===0||within===8||phase>=3&&(within===6||within===14))drum(at,bus,phase>=3);
+    if(within===4||within===12){
+      noise(at,.17,phase>=3?.07:.035,bus,phase>=3?850:560);
+      if(phase===4)tone(43,at,.2,.065,bus,'triangle',31);
+    }
+    if(phase===2&&bar%4===3&&within===14){
+      // A quiet backward interval anticipates the ordinary rewind.
+      tone(root+36,at,beat*.7,.035,bus,'triangle',root+24);
+      noise(at,.16,.018,bus,1200,.04);
+    }
+    if(phase>=3&&bar%4===3&&within===15){
+      clockBell(root+30,at,.06,bus);
+      if(phase===4)brass(root+18,at,beat*.75,.045,bus);
     }
   }
   function stopMusic() {
@@ -154,8 +220,10 @@
     const beat = 60/theme.bpm, tick = beat/(theme.soft?2:4);
     if(next < ctx.currentTime) next = ctx.currentTime+.02;
     while(next < ctx.currentTime+.18) {
-      const bar=Math.floor(step/16),root=theme.roots[bar%4],within=step%16;
-      if(theme.style==='menace') {
+      const bar=Math.floor(step/16),root=theme.roots[bar%theme.roots.length],within=step%16;
+      if(theme.style==='chaplain') {
+        chaplainPhrase(theme,root,within,bar,beat,tick,next);
+      } else if(theme.style==='menace') {
         // Half-time martial pulse, semitone/tritone pressure, low brass swells.
         if(within===0) {
           brass(root+12,next,beat*2.6,.12,musicBus);

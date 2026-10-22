@@ -226,3 +226,54 @@ test('Kit arrangements schedule complete evolving bars with bounded active voice
     assert.ok(h.sources.every(s=>Number.isFinite(s.started)&&s.stopped>s.started));
   }
 });
+
+const chaplainThemes=['chaplain','chaplain_fault','chaplain_override','chaplain_root'];
+test('Chaplain has four original evolving organ, choir and clock scores with bounded voices',async()=>{
+  const fingerprints=new Set();
+  for(const theme of chaplainThemes){
+    const h=harness();h.audio.scene(theme);await h.click({});
+    assert.match(h.sceneLabel.textContent,/Капеллан/);assert.equal(h.intervals.size,1);
+    fingerprints.add(JSON.stringify(h.sources.filter(s=>s.type).map(s=>[s.type,s.frequency.value,s.stopped-s.started])));
+    assert.ok(h.sources.some(s=>s.type==='sine'&&s.detune.value===-3),'organ fundamental');
+    assert.ok(h.sources.some(s=>s.type==='sawtooth'&&s.connections[0].Q.value===3.5),'choir');
+    let peak=0;
+    for(let i=1;i<=800;i++){
+      h.contexts[0].currentTime=i/10;for(const fn of h.intervals.values())fn();
+      for(const s of h.sources)if(!s.ended&&s.stopped<=i/10){s.ended=true;s.onended?.();}
+      peak=Math.max(peak,h.sources.filter(s=>!s.ended).length);assert.equal(h.intervals.size,1);
+    }
+    assert.ok(peak<100,theme+' active voices: '+peak);
+    assert.ok(h.sources.some(s=>s.buffer&&s.stopped-s.started<.05),'clock ticks');
+    assert.ok(h.sources.filter(s=>s.type).every(s=>Number.isFinite(s.frequency.value)&&s.frequency.value>=20&&s.frequency.value<4500));
+    assert.ok(h.sources.every(s=>Number.isFinite(s.started)&&s.stopped>s.started&&s.stopped-s.started<7));
+    h.audio.scene('');assert.equal(h.intervals.size,0);
+  }
+  assert.equal(fingerprints.size,4);
+});
+test('Chaplain phase changes crossfade once and never multiply music or bypass preferences',async()=>{
+  const h=harness();h.audio.scene('chaplain');await h.click({});
+  for(const theme of chaplainThemes){
+    h.audio.scene(theme);const count=h.sources.length;
+    for(let i=0;i<50;i++)h.audio.scene(theme);
+    assert.equal(h.sources.length,count);assert.equal(h.intervals.size,1);
+  }
+  assert.ok(h.ramps.some(([,time])=>time===.8));
+  await h.click({'data-audio-toggle':''});assert.equal(h.intervals.size,0);
+  assert.ok(h.sources.every(s=>s.stopped===0));assert.ok(h.delays.every(d=>d.connections.length===0));
+  for(const theme of chaplainThemes){
+    for(const options of [{saved:JSON.stringify({muted:true})},{saved:JSON.stringify({music:0})},{silent:true}]){
+      const noSound=harness(options);noSound.audio.scene(theme);await noSound.click({});assert.equal(noSound.intervals.size,0);
+    }
+    const fallback=harness({room:false});fallback.audio.scene(theme);await fallback.click({});assert.equal(fallback.intervals.size,1);
+    fallback.document.hidden=true;fallback.handlers.visibilitychange();assert.equal(fallback.intervals.size,0);
+  }
+});
+test('actual raid scenes select every Chaplain phase and keep other bosses unchanged',()=>{
+  const source=fs.readFileSync(require('node:path').join(__dirname,'../webapp/battle-client'),'utf8');
+  const start=source.indexOf('function raidSoundtrack'),end=source.indexOf('function raidPortrait',start),scope={};
+  vm.createContext(scope);vm.runInContext(source.slice(start,end),scope);
+  for(let phase=1;phase<=4;phase++)assert.equal(scope.raidSoundtrack({status:'active',boss_id:'chaplain',data:{phase}}),chaplainThemes[phase-1]);
+  assert.equal(scope.raidSoundtrack({status:'lobby',boss_id:'chaplain'}),'menu');
+  assert.equal(scope.raidSoundtrack({status:'finished',boss_id:'chaplain'}),'');
+  assert.equal(scope.raidSoundtrack({status:'active',boss_id:'kit',data:{phase:3}}),'kit_abyss');
+});
