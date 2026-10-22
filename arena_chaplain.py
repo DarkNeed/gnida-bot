@@ -6,6 +6,7 @@ import secrets
 from arena_engine import Skill, _tick
 
 CHAPLAIN_LEVEL = 25
+AMENDMENT_COOLDOWN = 5
 INCOMING = (1.6, 1.3, 1.1, 1.0)
 ANCHORS = {
     'chaplain_anchor:damage': ('damage', 'Урон боссу'),
@@ -169,6 +170,7 @@ def _restore_fighter(fighter, saved):
             for name in ('rpg_state', 'final_state', 'mastery_state', 'epic_state')}
     uses = deepcopy(fighter.get('epic_state', {}).get('skill_uses', {}))
     amendment = deepcopy(amendment_active(fighter))
+    amendment_cd = fighter.get('cooldowns', {}).get('last_amendment', 0)
     remaining = max(0, amendment['until'] - fighter.get('own_turns', 0)) if amendment else 0
     fighter.clear()
     fighter.update(deepcopy(saved))
@@ -181,6 +183,9 @@ def _restore_fighter(fighter, saved):
         counts = fighter.setdefault('epic_state', {}).setdefault('skill_uses', {})
         counts[skill] = max(counts.get(skill, 0), count)
     fighter.get('mechanics', {}).pop('last_amendment', None)
+    fighter['cooldowns'].pop('last_amendment', None)
+    if amendment_cd:
+        fighter['cooldowns']['last_amendment'] = amendment_cd
     if amendment:
         amendment['until'] = fighter.get('own_turns', 0) + remaining
         fighter.setdefault('mechanics', {})['last_amendment'] = amendment
@@ -265,6 +270,15 @@ def amendment_action(fighter):
         fighter['hp'] = max(fighter['hp'], min(fighter['stats']['max_hp'], mark['hp']))
         fighter['effects'] = [e for e in fighter['effects'] if not temporary_debuff(e)]
         fighter['mechanics'].pop('last_amendment', None)
-        return 'Мгновение возвращено: HP восстановлены, снимаемые дебаффы очищены. Энергия и перезарядки не возвращаются.'
+        return 'Мгновение возвращено: HP восстановлены, снимаемые дебаффы очищены. Энергия и перезарядки не возвращаются. Последняя поправка восстанавливается 5 собственных ходов.'
     fighter.setdefault('mechanics', {})['last_amendment'] = dict(hp=fighter['hp'], until=fighter['own_turns'] + 2)
     return 'Мгновение закреплено на два собственных действия. Повторное применение бесплатно, но тратит действие.'
+
+
+def amendment_tick(fighter):
+    """Expiration starts its own cooldown after the completed action, not before it."""
+    memory = fighter.get('mechanics', {})
+    mark = memory.get('last_amendment')
+    if mark and fighter.get('own_turns', 0) > mark['until']:
+        memory.pop('last_amendment')
+        fighter['cooldowns']['last_amendment'] = AMENDMENT_COOLDOWN

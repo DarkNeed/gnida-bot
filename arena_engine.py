@@ -493,11 +493,12 @@ BUILTIN_SKILLS['swamp_miasma'] = Skill(
                 'Пассивная регенерация не очищает. Не создаёт Кару болот и не замедляет управление.',
 )
 BUILTIN_SKILLS['last_amendment'] = Skill(
-    'last_amendment', 'Последняя поправка', 'raid', 20, None, 0, 100, 50, 0,
-    rarity='legendary', tags=('raid_loot', 'once_per_battle'),
-    description='Трофей Капеллана. Один раз за бой: за 50 энергии запоминает своё HP на два '
+    'last_amendment', 'Последняя поправка', 'raid', 20, None, 0, 100, 50, 5,
+    rarity='legendary', tags=('raid_loot',),
+    description='Трофей Капеллана. Многоразовый: за 50 энергии запоминает своё HP на два '
                 'следующих собственных действия. Повторное применение в этот срок бесплатно и тратит '
                 'действие: возвращает HP до запомненного значения, если оно ниже, и очищает снимаемые дебаффы. '
+                'После возврата или истечения записи восстанавливается 5 собственных ходов. '
                 'Не воскрешает; не возвращает энергию, перезарядки и потраченные одноразовые навыки. '
                 'Не продаётся у торговца и не создаётся в кузнице.',
 )
@@ -1037,11 +1038,7 @@ def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
         return "Два применения в этом бою уже потрачены."
     if "fourth_action" in skill.tags and (side.get("own_turns", 0) if own_turns is None else own_turns) < 3:
         return "Доступно с четвёртого собственного действия."
-    amendment_return = False
-    if skill.skill_id == 'last_amendment':
-        from arena_chaplain import amendment_active
-        amendment_return = bool(amendment_active(side))
-    if not amendment_return and any(t in skill.tags for t in ('once_per_battle', 'once_on_hit')) and skill.skill_id in side.get(
+    if any(t in skill.tags for t in ('once_per_battle', 'once_on_hit')) and skill.skill_id in side.get(
         "used_skills", []
     ):
         return "Уже использован в этом бою."
@@ -1072,6 +1069,9 @@ def _tick(side: dict, *, tick_dot=True, preserve_rally=False) -> None:
         if e["duration"] > 1
     ]
     side["cooldowns"] = {k: v - 1 for k, v in side["cooldowns"].items() if v > 1}
+    if side.get('mechanics', {}).get('last_amendment'):
+        from arena_chaplain import amendment_tick
+        amendment_tick(side)
     # Regeneration belongs to the next turn's start, not to paid actions/ticks.
 
 
@@ -1491,10 +1491,16 @@ def resolve_skill(
     rpg_received_damage(target,min(before[other]['hp'],damage),before[other]['hp'],rpg_context['action_id'],raid_context,blocked=blocked_contact)
     rpg_context['blocked_contact'] = blocked_contact
     amendment_note = ''
+    amendment_returned = False
     if skill_id == 'last_amendment':
-        from arena_chaplain import amendment_action
+        from arena_chaplain import amendment_action, amendment_active
+        amendment_returned = bool(amendment_active(actor))
         amendment_note = amendment_action(actor)
     _tick(actor,tick_dot=False,preserve_rally=True)
+    if amendment_returned:
+        # Start after this action's tick: all five subsequent own turns count.
+        from arena_chaplain import AMENDMENT_COOLDOWN
+        actor['cooldowns'][skill_id] = AMENDMENT_COOLDOWN
     effects_text = []
     if amendment_note:
         effects_text.append(amendment_note)
@@ -1599,7 +1605,7 @@ def resolve_skill(
             if not e.get("consume_on_hit")
             or ("negative_combo" in skill.tags and temporary_debuff(e))
         ]
-    if skill.cooldown:
+    if skill.cooldown and skill_id != 'last_amendment':
         actor["cooldowns"][skill_id] = skill.cooldown
     class_after_action(actor, target, skill, hit, dodged, adored, charmed)
     gift_after_action(actor, target, skill, hit, damage, actual_cost, bleeding, charmed)

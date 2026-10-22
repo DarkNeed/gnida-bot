@@ -228,7 +228,7 @@ class ChaplainEngineTests(unittest.TestCase):
         f['resource'] = 0
         f['cooldowns']['mana_shot'] = 5
         f['potion_used'] = True
-        f['used_skills'].append('solar_eclipse')
+        f.setdefault('used_skills', []).append('solar_eclipse')
         f['effects'].append(dict(id='bleed',kind='bleed',value=2,duration=4))
         self.assertEqual(effective_skill(pair,'a','last_amendment').cost,0)
         resolve_skill(pair,'a','last_amendment',BUILTIN_SKILLS,FixedRoll(),advance_turn=False)
@@ -238,7 +238,9 @@ class ChaplainEngineTests(unittest.TestCase):
         self.assertTrue(f['potion_used'])
         self.assertIn('solar_eclipse',f['used_skills'])
         self.assertFalse(any(e['kind']=='bleed' for e in f['effects']))
-        with self.assertRaisesRegex(ValueError,'Уже использован'):
+        self.assertEqual(f['cooldowns']['last_amendment'], 5)
+        f['resource'] = 100
+        with self.assertRaisesRegex(ValueError,'восстанавливается'):
             validate_skill(pair,'a','last_amendment')
 
     def test_amendment_expires_after_two_following_actions(self):
@@ -251,6 +253,74 @@ class ChaplainEngineTests(unittest.TestCase):
         _tick(f)
         with self.assertRaises(ValueError):
             validate_skill(pair,'a','last_amendment')
+        self.assertNotIn('last_amendment', f['mechanics'])
+        self.assertEqual(f['cooldowns']['last_amendment'], 5)
+
+    def test_amendment_repeats_after_exactly_five_own_turns(self):
+        d = encounter()
+        f = d['players']['10']['fighter']
+        pair = pair_state(f, d['boss'])
+        # Old saved once-per-battle markers must not lock the updated skill.
+        f['used_skills'] = ['last_amendment', 'solar_eclipse']
+        for cycle in range(3):
+            f['resource'] = 100
+            resolve_skill(pair, 'a', 'last_amendment', rng=FixedRoll(), advance_turn=False)
+            self.assertNotIn('last_amendment', f['cooldowns'])
+            self.assertEqual(f['resource'], 50)
+            f['hp'] = max(1, f['hp']-10)
+            resolve_skill(pair, 'a', 'last_amendment', rng=FixedRoll(), advance_turn=False)
+            self.assertEqual(f['resource'], 50)
+            self.assertEqual(f['cooldowns']['last_amendment'], 5)
+            for left in (4, 3, 2, 1):
+                _tick(f)
+                self.assertEqual(f['cooldowns']['last_amendment'], left)
+                with self.assertRaisesRegex(ValueError, 'восстанавливается'):
+                    validate_skill(pair, 'a', 'last_amendment')
+            _tick(f)
+            self.assertEqual(validate_skill(pair, 'a', 'last_amendment').cost, 50)
+        self.assertIn('solar_eclipse', f['used_skills'])
+
+    def test_amendment_expiration_also_allows_a_new_paid_record_after_five_turns(self):
+        d = encounter()
+        f = d['players']['10']['fighter']
+        pair = pair_state(f, d['boss'])
+        resolve_skill(pair, 'a', 'last_amendment', rng=FixedRoll(), advance_turn=False)
+        saved_hp = f['hp']
+        f['hp'] = max(1, f['hp']-20)
+        _tick(f)
+        _tick(f)
+        self.assertEqual(f['cooldowns']['last_amendment'], 5)
+        for _ in range(5):
+            _tick(f)
+        self.assertEqual(f['hp'], max(1, saved_hp-20))
+        self.assertEqual(validate_skill(pair, 'a', 'last_amendment').cost, 50)
+        resolve_skill(pair, 'a', 'last_amendment', rng=FixedRoll(), advance_turn=False)
+        self.assertEqual(f['resource'], 0)
+        self.assertEqual(effective_skill(pair, 'a', 'last_amendment').cost, 0)
+
+    def test_rewind_preserves_current_amendment_window_and_cooldown_not_saved_ones(self):
+        from arena_chaplain import _restore_fighter, amendment_active
+        d = encounter()
+        f = d['players']['10']['fighter']
+        pair = pair_state(f, d['boss'])
+        saved_before = deepcopy(f)
+        resolve_skill(pair, 'a', 'last_amendment', rng=FixedRoll(), advance_turn=False)
+        _restore_fighter(f, saved_before)
+        self.assertIsNotNone(amendment_active(f))
+        saved_active = deepcopy(f)
+        resolve_skill(pair, 'a', 'last_amendment', rng=FixedRoll(), advance_turn=False)
+        _tick(f)
+        self.assertEqual(f['cooldowns']['last_amendment'], 4)
+        saved_cooling = deepcopy(f)
+        _restore_fighter(f, saved_active)
+        self.assertIsNone(amendment_active(f))
+        self.assertEqual(f['cooldowns']['last_amendment'], 4)
+        for _ in range(4):
+            _tick(f)
+        _restore_fighter(f, saved_cooling)
+        self.assertNotIn('last_amendment', f['cooldowns'])
+        self.assertIsNone(amendment_active(f))
+        self.assertEqual(validate_skill(pair, 'a', 'last_amendment').cost, 50)
 
 
 class ChaplainStoreTests(unittest.IsolatedAsyncioTestCase):
