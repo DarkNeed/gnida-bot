@@ -11,6 +11,7 @@ from arena_engine import (BUILTIN_SKILLS, FIGHTER_CLASSES, resolve_skill, effect
 from arena_raid_engine import create_raid_state, resolve_round, pair_state, finish_if_needed
 from arena_chaplain import set_intent, anchor, rewind, action_before, record_action
 from arena_raid_web import raid_view
+from handlers.raids import RAID_RE, raid_boss_id, RaidPublisher
 from test_arena_rebalance import FixedRoll
 import test_arena
 
@@ -31,6 +32,14 @@ def choose(data, skill='defend'):
 
 
 class ChaplainEngineTests(unittest.TestCase):
+    def test_command_aliases(self):
+        for command in ('/рейд капеллан', '/РЕЙД КАПЕЛЛАН', '/raid chaplain',
+                        '/рейд@TestBot Капеллан', ' /рейд каппеллан  '):
+            match = RAID_RE.fullmatch(command)
+            self.assertIsNotNone(match, command)
+            self.assertEqual(raid_boss_id(match), 'chaplain', command)
+        self.assertIsNone(RAID_RE.fullmatch('/рейд капеллан лишнее'))
+
     def test_fixed_level_hp_and_no_entry_gate(self):
         for size in (1, 2, 3):
             d = encounter(size)
@@ -252,6 +261,11 @@ class ChaplainStoreTests(unittest.IsolatedAsyncioTestCase):
         for actor in (10, 20):
             self.assertLess(self.db._arena_profile_locked(1, actor, True)['level'], 20)
         row = await self.db.arena_raid_create(1, 10, boss_id='chaplain')
+        body = await RaidPublisher(self.db, self.bot, 'TestBot').body(row)
+        self.assertIn('Капеллан', body)
+        self.assertIn('Последняя поправка', body)
+        self.assertNotIn('поступи тигробоя', body)
+        self.assertIn('Вход без ограничения уровня', body)
         row = await self.db.arena_raid_setup(row['token'], 20, 'join')
         row = await self.db.arena_raid_setup(row['token'], 10, 'start')
         self.assertEqual(row['status'], 'active')
