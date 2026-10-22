@@ -31,15 +31,17 @@ def choose(data, skill='defend'):
 
 
 class ChaplainEngineTests(unittest.TestCase):
-    def test_fixed_level_hp_and_gate(self):
+    def test_fixed_level_hp_and_no_entry_gate(self):
         for size in (1, 2, 3):
             d = encounter(size)
             self.assertEqual(d['boss']['level'], 25)
             self.assertEqual(d['boss']['hp'], 720 + 360 * (size - 1))
             self.assertEqual(d['chaplain']['recoveries'], 0)
-        with self.assertRaises(ValueError):
-            create_raid_state([dict(actor_id=10, fighter_id=10, personal=True, slave_owner=10)],
-                [dict(owner_id=10, slave_id=10, class_id='mage', level=19)], FIGHTER_CLASSES, BUILTIN_SKILLS, 'chaplain')
+        for level in (1, 5, 19):
+            d = create_raid_state([dict(actor_id=10, fighter_id=10, personal=True, slave_owner=10)],
+                [dict(owner_id=10, slave_id=10, class_id='mage', level=level)], FIGHTER_CLASSES, BUILTIN_SKILLS, 'chaplain')
+            self.assertEqual(d['boss']['level'], 25)
+            self.assertEqual(d['boss']['stats']['max_hp'], 720)
 
     def test_three_full_heals_touch_only_boss_and_armor_decreases(self):
         from arena_chaplain import transition, INCOMING
@@ -245,6 +247,19 @@ class ChaplainEngineTests(unittest.TestCase):
 class ChaplainStoreTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = test_arena.ArenaStoreTests.asyncSetUp
     asyncTearDown = test_arena.ArenaStoreTests.asyncTearDown
+
+    async def test_low_level_players_can_create_join_and_start(self):
+        for actor in (10, 20):
+            self.assertLess(self.db._arena_profile_locked(1, actor, True)['level'], 20)
+        row = await self.db.arena_raid_create(1, 10, boss_id='chaplain')
+        row = await self.db.arena_raid_setup(row['token'], 20, 'join')
+        row = await self.db.arena_raid_setup(row['token'], 10, 'start')
+        self.assertEqual(row['status'], 'active')
+        view = await raid_view(self.db, row, 10)
+        self.assertEqual(view['min_level'], 1)
+        self.assertEqual(view['recommended_level'], 20)
+        self.assertEqual(view['data']['boss']['level'], 25)
+        self.assertNotIn('С 20 уровня.', view['encounter_rules'])
 
     async def start(self):
         self.db._arena_profile_locked(1, 10, True)

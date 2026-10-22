@@ -30,7 +30,7 @@ BOSS_NAME = "Железный сборщик"
 BOSSES = {
     'chaplain': dict(name='Капеллан — Хранитель последней редакции',
                       sprite='/static/assets/chaplain.png', skills=tuple(CHAPLAIN_SKILLS),
-                      recommended_level=20, min_level=20, fixed_level=CHAPLAIN_LEVEL,
+                      recommended_level=20, min_level=1, fixed_level=CHAPLAIN_LEVEL,
                       phase_count=4, phase_sprites={'1': '/static/assets/chaplain.png',
                           '2': '/static/assets/chaplain.png', '3': '/static/assets/chaplain_phase_three.png',
                           '4': '/static/assets/chaplain_phase_four.png'},
@@ -270,8 +270,6 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
             raise ValueError('Китобой доступен каждому участнику с 20 уровня.')
         level = WHALER_LEVEL
     if boss_id == 'chaplain':
-        if min(s['level'] for s in sources) < 20:
-            raise ValueError('Капеллан доступен с 20 уровня.')
         level = CHAPLAIN_LEVEL
     enemy = dict(
         slave_id=0,
