@@ -492,6 +492,15 @@ BUILTIN_SKILLS['swamp_miasma'] = Skill(
                 'очищение или отдельное действие восстановления энергии снимает всю чуму. '
                 'Пассивная регенерация не очищает. Не создаёт Кару болот и не замедляет управление.',
 )
+BUILTIN_SKILLS['last_amendment'] = Skill(
+    'last_amendment', 'Последняя поправка', 'raid', 20, None, 0, 100, 50, 0,
+    rarity='legendary', tags=('raid_loot', 'once_per_battle'),
+    description='Трофей Капеллана. Один раз за бой: за 50 энергии запоминает своё HP на два '
+                'следующих собственных действия. Повторное применение в этот срок бесплатно и тратит '
+                'действие: возвращает HP до запомненного значения, если оно ниже, и очищает снимаемые дебаффы. '
+                'Не воскрешает; не возвращает энергию, перезарядки и потраченные одноразовые навыки. '
+                'Не продаётся у торговца и не создаётся в кузнице.',
+)
 VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _finger_classes.items()})
 # Old names remain valid input; stable IDs keep inventory and saved builds intact.
 VISIBLE_CLASS_ALIASES.update(
@@ -981,7 +990,12 @@ def effective_skill(state: dict, side_key: str, skill_id: str, skills=None) -> S
     skill = skill_variant(skill, actor, target, completed_turns(state, side_key))
     skill = rpg_variant(skill, actor, target)
     skill = mastery_variant(skill, actor, target)
-    return adaptive_skill(skill, actor, effective_stat)
+    skill = adaptive_skill(skill, actor, effective_stat)
+    if skill_id == 'last_amendment':
+        from arena_chaplain import amendment_active
+        if amendment_active(actor):
+            skill = replace(skill, name='Последняя поправка · вернуть мгновение', cost=0)
+    return skill
 
 
 def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Skill:
@@ -1023,7 +1037,11 @@ def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
         return "Два применения в этом бою уже потрачены."
     if "fourth_action" in skill.tags and (side.get("own_turns", 0) if own_turns is None else own_turns) < 3:
         return "Доступно с четвёртого собственного действия."
-    if any(t in skill.tags for t in ('once_per_battle', 'once_on_hit')) and skill.skill_id in side.get(
+    amendment_return = False
+    if skill.skill_id == 'last_amendment':
+        from arena_chaplain import amendment_active
+        amendment_return = bool(amendment_active(side))
+    if not amendment_return and any(t in skill.tags for t in ('once_per_battle', 'once_on_hit')) and skill.skill_id in side.get(
         "used_skills", []
     ):
         return "Уже использован в этом бою."
@@ -1357,7 +1375,7 @@ def resolve_skill(
     if skill.cost:
         actor['effects']=[e for e in actor['effects'] if e.get('kind')!='skill_cost_flat']
     horizon_note=rpg_paid_action(actor,target,actual_cost,raid_context)
-    if "once_per_battle" in skill.tags or 'once_on_hit' in skill.tags and hit:
+    if ("once_per_battle" in skill.tags or 'once_on_hit' in skill.tags and hit) and skill_id not in actor.get('used_skills', []):
         actor.setdefault("used_skills", []).append(skill_id)
     order_note = obey_enemy_prescript(actor, skill_id,target,raid_context)
     damage = 0
@@ -1386,6 +1404,7 @@ def resolve_skill(
                 * mastery_multiplier
                 * parry_multiplier
                 * actor.get("raid_damage_multiplier", 1)
+                * target.get('chaplain_damage_taken', 1)
                 * rpg_incoming_multiplier(target,rpg_branch(target))
                 * math.prod(max(.1, e.get("value", 1)) for e in target["effects"] if e.get("kind") == "incoming_damage_multiplier")
                 * math.prod(
@@ -1471,8 +1490,14 @@ def resolve_skill(
         ]
     rpg_received_damage(target,min(before[other]['hp'],damage),before[other]['hp'],rpg_context['action_id'],raid_context,blocked=blocked_contact)
     rpg_context['blocked_contact'] = blocked_contact
+    amendment_note = ''
+    if skill_id == 'last_amendment':
+        from arena_chaplain import amendment_action
+        amendment_note = amendment_action(actor)
     _tick(actor,tick_dot=False,preserve_rally=True)
     effects_text = []
+    if amendment_note:
+        effects_text.append(amendment_note)
     charmed = False
     restored = 0
     if hit:

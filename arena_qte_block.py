@@ -31,7 +31,7 @@ def parameters(p, stats):
         perfectWindow=clamp(0.16 + strength * 0.18 - accuracy * 0.0004, 0.12, 0.28),
         recovery=32 + strength * 22,
         rotation=math.pi * 4 * clamp(stats.get('controlScale', 1), .5, 1),
-        warning=0.95 - accuracy * 0.003 + stats.get('extraWarning', 0),
+        warning=max(.36, (0.95 - accuracy * 0.003) * (1 - .05 * max(0, p.get('chaplain', 0)-1))) + stats.get('extraWarning', 0),
         pressure=clamp((attack + 20) / (armor + 30), 0.65, 1.5),
         blockReduction=0.75,
     )
@@ -62,7 +62,7 @@ def threats(p, seed, params):
         "mirror",
     )
     count = int(
-        clamp((12 if shot else 8) + p["strikes"] + (2 if p["kit"] else 0), 8, 20)
+        clamp((12 if shot else 8) + p["strikes"] + (2 if p["kit"] else 0) + 2 * max(0,p.get('chaplain',0)-1), 8, 24)
     )
     offset = math.floor(next(random) * 8)
     result = []

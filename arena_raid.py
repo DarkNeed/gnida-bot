@@ -481,7 +481,7 @@ class RaidMixin:
                 self._raid_validate_fighter_locked(chat, actor, actor, True, "")
                 profile = self._arena_profile_locked(chat, actor, True)
                 if profile['level'] < BOSSES[boss_id].get('min_level', 1):
-                    raise ValueError('Китобой доступен с 20 уровня.')
+                    raise ValueError(f"{BOSSES[boss_id]['name']}: нужен {BOSSES[boss_id]['min_level']} уровень.")
                 now, token = int(time.time()), secrets.token_urlsafe(12)
                 self.connection.execute(
                     "INSERT INTO arena_raids(token,chat_id,creator_id,created_at,deadline,boss_id,silent) VALUES(?,?,?,?,?,?,?)",
@@ -533,7 +533,7 @@ class RaidMixin:
                     )
                     profile = self._arena_profile_locked(row["chat_id"], fighter, personal)
                     if profile['level'] < BOSSES[row['boss_id']].get('min_level', 1):
-                        raise ValueError('Каждый участник Китобоя должен иметь 20 уровень.')
+                        raise ValueError(f"Каждому участнику нужен {BOSSES[row['boss_id']]['min_level']} уровень.")
                     self.connection.execute(
                         """INSERT INTO arena_raid_players VALUES(?,?,?,?,?) ON CONFLICT(token,actor_id)
                            DO UPDATE SET fighter_id=excluded.fighter_id,personal=excluded.personal,slave_owner=excluded.slave_owner""",
@@ -641,7 +641,10 @@ class RaidMixin:
                 else:
                     if not isinstance(skill, str):
                         raise ValueError("Некорректный навык.")
-                    if skill != "defend":
+                    if skill.startswith('chaplain_anchor:'):
+                        from arena_chaplain import validate_anchor
+                        validate_anchor(data, skill)
+                    elif skill != "defend":
                         _, skills = self._fighter_catalog_locked()
                         validate_skill(
                             pair_state(player["fighter"], data["boss"]),

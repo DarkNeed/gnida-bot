@@ -45,8 +45,9 @@ let t=0;while(!E.attackFrame(model.sim).canHit||Math.abs(E.attackFrame(model.sim
 }
 model=W.extendReplay(model,{id:'boundary',tick:t,clicks:[t],ended:true});W.stepReplay(model,t);
 assert.deepEqual(model.sim.results,[true]);
-assert.match(W.buttons('battle','x"<',[{actor:10,name:'<img onerror="x">'}],{10:'<&'}),/&lt;img/);
-assert.equal(W.buttons('battle','x',[]),'');
+assert.match(W.buttons('battle','x"<',[],{10:'<img onerror="x">'}),/&lt;img/);
+assert.match(W.buttons('battle','x',[]),/Автопросмотр мини-игр/);
+assert.match(W.buttons('battle','x',[]),/aria-pressed="false"/);
 assert.doesNotThrow(()=>W.source({version:2},{token:'x'},()=>{throw Error('unused');}).finish());
 // Real browser publisher path: no event upload before demand; errors cannot
 // prevent the player's proof from finishing. Fake only the network/timers.

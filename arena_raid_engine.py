@@ -21,12 +21,20 @@ from arena_kit import (KIT_LEVEL, KIT_STATS, KIT_SKILLS, set_kit_intent,
                        resolve_kit_action, kit_prepare_action, kit_finish_action,
                        kit_react, kit_defend)
 from arena_whaler import WHALER_SKILLS, WHALER_LEVEL
+from arena_chaplain import CHAPLAIN_LEVEL, CHAPLAIN_SKILLS
 
 RAID_SIZE = 3
 RAID_ROUND_SECONDS = 120
 RAID_MAX_ROUNDS = 100
 BOSS_NAME = "Железный сборщик"
 BOSSES = {
+    'chaplain': dict(name='Капеллан — Хранитель последней редакции',
+                      sprite='/static/assets/chaplain.png', skills=tuple(CHAPLAIN_SKILLS),
+                      recommended_level=20, min_level=20, fixed_level=CHAPLAIN_LEVEL,
+                      phase_count=4, phase_sprites={'1': '/static/assets/chaplain.png',
+                          '2': '/static/assets/chaplain.png', '3': '/static/assets/chaplain_phase_three.png',
+                          '4': '/static/assets/chaplain_phase_four.png'},
+                      difficulty='Разрыв регламента', loot_skill='last_amendment'),
     'whaler': dict(name='Китобой — Чумной ловчий', sprite='/static/assets/whaler.png',
                    skills=tuple(WHALER_SKILLS), recommended_level=20, min_level=20,
                    fixed_level=WHALER_LEVEL, difficulty='Чумной рейд', loot_skill='swamp_miasma'),
@@ -90,6 +98,7 @@ BOSS_SKILLS = {
 BOSS_SKILLS.update(DOOF_SKILLS)
 BOSS_SKILLS.update(KIT_SKILLS)
 BOSS_SKILLS.update(WHALER_SKILLS)
+BOSS_SKILLS.update(CHAPLAIN_SKILLS)
 
 
 def raid_boss_sprite(boss_id, phase=1):
@@ -158,6 +167,10 @@ def set_intent(data):
         return
     boss = data["boss"]
     boss["is_boss"] = True
+    if data.get('boss_id') == 'chaplain':
+        from arena_chaplain import set_intent as chaplain_intent
+        chaplain_intent(data)
+        return
     if data.get('boss_id') == 'whaler':
         from arena_whaler import set_intent as whaler_intent
         whaler_intent(data)
@@ -232,7 +245,7 @@ def set_intent(data):
     data["intent"] = intent
 
 
-AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz", "kit", "whaler")
+AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz", "kit", "whaler", "chaplain")
 
 
 def raid_boss_level(levels):
@@ -256,6 +269,10 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
         if any(s['level'] < 20 for s in sources):
             raise ValueError('Китобой доступен каждому участнику с 20 уровня.')
         level = WHALER_LEVEL
+    if boss_id == 'chaplain':
+        if min(s['level'] for s in sources) < 20:
+            raise ValueError('Капеллан доступен с 20 уровня.')
+        level = CHAPLAIN_LEVEL
     enemy = dict(
         slave_id=0,
         owner_id=0,
@@ -311,6 +328,11 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
         boss['hp'] = boss['stats']['max_hp']
         boss['raid_damage_multiplier'] = 1
     boss["name"] = BOSSES[boss_id]["name"]
+    if boss_id == 'chaplain':
+        boss['stats'].update(max_hp=720 + 360 * (len(participants) - 1),
+                             physical_attack=14, magic_attack=18,
+                             physical_defense=12, magic_defense=12, evasion=8, speed=12)
+        boss.update(hp=boss['stats']['max_hp'], effects=[], raid_damage_multiplier=1.0)
     boss["mechanics"] = {}
     boss["is_boss"] = True
     data = dict(
@@ -327,6 +349,9 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
         control_resistance=0,
         control_lock=0,
     )
+    if boss_id == 'chaplain':
+        from arena_chaplain import initialize
+        initialize(data)
     set_intent(data)
     return data
 
@@ -358,7 +383,7 @@ def log_event(data, actor, target, text, **extra):
             text=text,
             seq=data["event_seq"],
             after=raid_snapshot(data),
-            **({"before": data["round_before"]} if first else {}),
+            **({"before": data.get("round_before") or raid_snapshot(data)} if first else {}),
             **extra,
         )
     )
@@ -387,6 +412,9 @@ def defend(fighter,opponent=None,raid_context=None):
 
 
 def finish_if_needed(data):
+    if data.get('boss_id') == 'chaplain' and not data.get('finished'):
+        from arena_chaplain import intercept_end
+        intercept_end(data)
     living = alive_players(data)
     if data["boss"]["hp"] <= 0 or not living:
         data["finished"] = True
@@ -423,7 +451,7 @@ def resolve_round(data, skills, rng=None):
         living, key=lambda k: (-effective_stat(living[k]["fighter"], "speed"), int(k))
     )
     for key in order:
-        if finish_if_needed(data):
+        if finish_if_needed(data) or data.get('_chaplain_rewound'):
             break
         player = living[key]
         actor = player["fighter"]
@@ -442,6 +470,10 @@ def resolve_round(data, skills, rng=None):
             _tick(actor)
             log_event(data, key, key, "Ошеломление: действие пропущено.")
             continue
+        if data.get('boss_id') == 'chaplain' and isinstance(selected, str) and selected.startswith('chaplain_anchor:'):
+            from arena_chaplain import anchor
+            anchor(data, key, selected)
+            continue
         if selected is None or selected == "defend":
             player["previous_skill"] = None
             if data.get('boss_id') == 'kit':
@@ -459,6 +491,10 @@ def resolve_round(data, skills, rng=None):
         # change the applicable variant before this fighter acts: do not charge
         # or execute an unaffordable ability, and never abort the whole round.
         prepared = None
+        chaplain_before = None
+        if data.get('boss_id') == 'chaplain':
+            from arena_chaplain import action_before
+            chaplain_before = action_before(data)
         try:
             if data.get('boss_id') == 'kit':
                 prepared = kit_prepare_action(data, key, effective_skill(pair_state(actor, boss), 'a', selected, skills))
@@ -475,6 +511,10 @@ def resolve_round(data, skills, rng=None):
             continue
         if prepared:
             kit_finish_action(data, key, event, prepared)
+        if data.get('boss_id') == 'chaplain':
+            from arena_chaplain import marked_cost, record_action
+            record_action(data, chaplain_before)
+            marked_cost(data, key, selected)
         if data.get('boss_id') == 'whaler':
             data.setdefault('whaler_restored', {})[key] = event.get('deliberate_resource_restored', 0)
         log_event(
@@ -539,8 +579,11 @@ def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
         poison = begin_turn(boss)
         if poison:
             log_event(data, 'boss', 'boss', f'Чума: −{poison} HP.', damage=poison)
+    if data.get('boss_id') == 'chaplain':
+        from arena_chaplain import transition
+        transition(data)
     data['_qte_boss_phase']=True
-    if not finish_if_needed(data):
+    if not finish_if_needed(data) and not data.get('_chaplain_rewound') and not data.get('_chaplain_transitioned'):
         if stunned:
             from arena_archclasses import obey_enemy_prescript
             obey_enemy_prescript(boss,None,next(iter(living.values()))['fighter'],data)
@@ -557,6 +600,9 @@ def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
             from arena_whaler import resolve_action
             resolve_action(data, rng)
             data['control_lock'] = max(0, data['control_lock'] - 1)
+        elif data.get('boss_id') == 'chaplain' and data['intent']['kind'] == 'chaplain_rewind':
+            from arena_chaplain import rewind
+            rewind(data)
         else:
             intent = data["intent"]
             if intent["kind"] == "shield":
@@ -611,7 +657,7 @@ def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
                                 duration=1,
                             )
                         )
-                    if intent["phase"] == 2:
+                    if intent["phase"] == 2 and data.get('boss_id') != 'chaplain':
                         attacker["effects"].append(
                             dict(
                                 id="raid_fury",
@@ -716,6 +762,8 @@ def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
         data.pop('round_before', None)
         if not finish_if_needed(data):
             set_intent(data)
+    data.pop('_chaplain_rewound', None)
+    data.pop('_chaplain_transitioned', None)
     if data.get('boss_id') == 'whaler' and data.get('won'):
         data['dialogue'] = dict(speaker='КИТОБОЙ', text='Агх… Вы сильнее Кита. Хотя я не один там был… Встретимся во время чумы.', warning='', persistent=True)
     return data

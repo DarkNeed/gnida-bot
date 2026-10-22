@@ -120,7 +120,7 @@ class WatchHub:
         except (ConnectionError, RuntimeError, asyncio.TimeoutError):
             await socket.close()
 
-    def join(self, key, socket, actor, role, selected):
+    def join(self, key, socket, actor, role, selected, follow=False):
         if key not in self.rooms:
             if len(self.rooms) >= MAX_ROOMS:
                 raise ValueError('Слишком много трансляций. Попробуй позже.')
@@ -130,7 +130,7 @@ class WatchHub:
             raise ValueError('В этой трансляции уже много зрителей.')
         if sum(p['actor'] == actor for p in room['peers'].values()) >= 3:
             raise ValueError('Закрой лишние окна трансляции.')
-        room['peers'][socket] = dict(actor=actor, role=role, selected=selected)
+        room['peers'][socket] = dict(actor=actor, role=role, selected=selected, follow=follow)
         return room
 
     async def broadcast(self, room, actor, data):
@@ -156,6 +156,35 @@ class WatchHub:
         if previous != actor:
             await self.demand(room, actor)
 
+    def live(self, stream):
+        return stream and not stream.ended and not stream.socket.closed and stream.stage['expires'] > time.time()
+
+    async def follow(self, room, socket):
+        peer = room['peers'].get(socket)
+        if not peer or not peer['follow'] or peer['role'] != 'watch':
+            return
+        selected = peer['selected']
+        if selected != peer['actor'] and self.live(room['streams'].get(selected)):
+            return
+        selected = next((actor for actor, stream in room['streams'].items()
+                         if actor != peer['actor'] and self.live(stream)), 0)
+        if selected == peer['selected'] == 0:
+            return
+        await self.select(room, socket, selected)
+
+    async def available(self, room):
+        for socket, peer in list(room['peers'].items()):
+            if peer['role'] == 'watch' and peer['follow']:
+                stages = [dict(actor=actor, name=s.stage['name']) for actor, s in room['streams'].items()
+                          if actor != peer['actor'] and self.live(s)]
+                await self.send(socket, dict(type='available', stages=stages))
+
+    async def advance(self, room, actor):
+        for socket, peer in list(room['peers'].items()):
+            if peer['role'] == 'watch' and peer['follow'] and (not peer['selected'] or peer['selected'] == actor):
+                await self.follow(room, socket)
+        await self.available(room)
+
     async def leave(self, key, socket):
         self.connections.discard(socket)
         room = self.rooms.get(key)
@@ -169,6 +198,7 @@ class WatchHub:
                     stream.ended, stream.aborted = True, True
                     await self.broadcast(room, peer['actor'], dict(type='end', id=stream.stage['id']))
                 stream.retire_at = time.monotonic() + 2
+                await self.advance(room, peer['actor'])
         if peer and peer['role'] == 'watch':
             await self.demand(room, peer['selected'])
         if not room['peers']:
@@ -182,6 +212,7 @@ class WatchHub:
                     if stream.stage['expires'] <= time.time() or stream.retire_at and stream.retire_at <= time.monotonic():
                         room['streams'].pop(actor, None)
                         await self.broadcast(room, actor, dict(type='end', id=stream.stage['id']))
+                        await self.advance(room, actor)
                 if not room['peers']:
                     self.rooms.pop(key, None)
 
@@ -214,25 +245,35 @@ def add_qte_watch_routes(app, db, read_member, authenticate):
             row = await row_for(scope, token)
             await read_member(row['chat_id'], actor)
             role = hello['role']
+            follow = hello.get('follow', False)
+            if type(follow) is not bool:
+                raise ValueError('Некорректный режим наблюдения.')
             stage = None
             if role == 'source':
                 stage = await db.arena_qte_stream_stage(scope, token, actor, hello.get('challenge'))
                 selected = actor
             else:
-                selected = integer(hello.get('actor'), 1, 2**63 - 1)
+                selected = integer(hello.get('actor', 0), 0 if follow else 1, 2**63 - 1)
                 available = await db.arena_qte_watchables(scope, token, actor)
                 if selected not in {s['actor'] for s in available}:
-                    raise ValueError('У этого игрока нет доступной мини-игры.')
-            room = hub.join(key, ws, actor, role, selected)
+                    if follow:
+                        selected = 0
+                    else:
+                        raise ValueError('У этого игрока нет доступной мини-игры.')
+            room = hub.join(key, ws, actor, role, selected, follow=follow)
             if role == 'source':
                 old = room['streams'].get(actor)
                 if old and not old.ended and not old.socket.closed:
                     raise ValueError('Трансляция этого игрока уже открыта.')
                 room['streams'][actor] = Stream(stage, ws)
                 await hub.broadcast(room, actor, dict(type='begin', stage=stage))
+                await hub.advance(room, actor)
                 await hub.demand(room, actor)
             else:
                 await hub.select(room, ws, selected)
+                if follow:
+                    await hub.follow(room, ws)
+                    await hub.available(room)
 
             async def recheck():
                 while not ws.closed:
@@ -267,6 +308,8 @@ def add_qte_watch_routes(app, db, read_member, authenticate):
                         raise ValueError('Трансляция уже закрыта.')
                     packet = stream.accept(data)
                     await hub.broadcast(room, actor, packet)
+                    if stream.ended:
+                        await hub.advance(room, actor)
                 elif data.get('type') == 'select':
                     if time.monotonic() - last_select < .3:
                         raise ValueError('Слишком частое переключение.')

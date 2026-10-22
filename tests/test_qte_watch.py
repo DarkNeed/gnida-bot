@@ -68,9 +68,11 @@ class StreamTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('node'), 'Node required')
     def test_browser_replay_matches_live_simulations(self):
-        result=subprocess.run([shutil.which('node'),str(Path(__file__).with_name('qte_watch.cjs'))],
-                              capture_output=True,text=True,encoding='utf-8',timeout=30)
-        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        for name in ('qte_watch.cjs','qte_watch_follow.cjs'):
+            with self.subTest(script=name):
+                result=subprocess.run([shutil.which('node'),str(Path(__file__).with_name(name))],
+                                      capture_output=True,text=True,encoding='utf-8',timeout=30)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
 
 class WatchTests(unittest.IsolatedAsyncioTestCase):
@@ -153,6 +155,40 @@ class WatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await self.packet(source,'demand'))['active'])
         await source.close()
 
+    async def test_follow_waits_before_first_stage_and_follows_next_actor(self):
+        row=await self.duel()
+        watch=await self.socket(row,'watch',40,follow=True,actor=0)
+        await self.packet(watch,'waiting')
+        for actor in (10,20):
+            row=await self.db.arena_interactive_action(row['token'],actor,row['revision'],'skill','bum_punch')
+            stage=(await self.db.arena_qte_view('battle',row['token'],actor))['challenge']
+            source=await self.socket(row,'source',actor,challenge=stage['id'])
+            self.assertEqual((await self.packet(watch,'begin'))['stage']['actor'],actor)
+            self.assertTrue((await self.packet(source,'demand'))['active'])
+            await source.send_json(dict(type='data',id=stage['id'],tick=0,ended=True,aborted=True))
+            self.assertTrue((await self.packet(watch,'data'))['reset'])
+            await self.packet(watch,'waiting')
+            await source.close()
+            row=await self.db.arena_interactive_action(row['token'],actor,row['revision'],'qte',
+                proof=dict(abort=True),challenge_id=stage['id'])
+        self.assertFalse(watch.closed)
+        await watch.close()
+
+    async def test_follow_never_subscribes_to_own_stage_and_rejects_bad_mode(self):
+        row=await self.duel()
+        watch=await self.socket(row,'watch',10,follow=True)
+        await self.packet(watch,'waiting')
+        row=await self.db.arena_interactive_action(row['token'],10,row['revision'],'skill','bum_punch')
+        stage=(await self.db.arena_qte_view('battle',row['token'],10))['challenge']
+        source=await self.socket(row,'source',10,challenge=stage['id'])
+        self.assertFalse((await self.packet(source,'demand'))['active'])
+        self.assertEqual((await self.packet(watch,'available'))['stages'],[])
+        room=self.hub.rooms[('battle',row['token'])]
+        self.assertEqual([p['selected'] for p in room['peers'].values() if p['role']=='watch'],[0])
+        bad=await self.socket(row,'watch',40,follow=1,actor=0)
+        self.assertEqual((await bad.receive_json(timeout=3))['type'],'error')
+        await bad.close();await watch.close();await source.close()
+
     async def test_rejects_forged_auth_wrong_actor_outsiders_and_viewer_controls(self):
         row,stage=await self.stage()
         for role,user,extra in [('source',20,dict(challenge=stage['id'])),
@@ -193,6 +229,12 @@ class WatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.packet(watch,'begin'))['stage']['actor'],20)
         self.assertFalse((await self.packet(sources[10],'demand'))['active'])
         self.assertTrue((await self.packet(sources[20],'demand'))['active'])
+        auto=await self.socket(row,'watch',50,scope='raid',follow=True)
+        self.assertEqual((await self.packet(auto,'begin'))['stage']['actor'],10)
+        await sources[10].close()
+        self.assertEqual((await self.packet(auto,'begin'))['stage']['actor'],20)
+        self.assertFalse(auto.closed)
+        await auto.close()
         await watch.close()
         for ws in sources.values():await ws.close()
 
@@ -234,7 +276,7 @@ class WatchTests(unittest.IsolatedAsyncioTestCase):
             html=await page.text()
             self.assertEqual(page.status,200)
             self.assertEqual(html.count('silent=1'),1)
-            self.assertIn('&player=20&silent=1',html)
+            self.assertIn('&player=30&silent=1',html)
             self.assertIn('&player=10"></iframe>',html)
             player=await demo.get('/watch-client?player=10')
             watcher=await demo.get('/watch-client?player=20&silent=1')

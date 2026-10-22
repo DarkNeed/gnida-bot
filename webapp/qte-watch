@@ -37,8 +37,8 @@
   }
   const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function buttons(scope,token,stages,names={}){
-    if(!stages?.length)return '';
-    return '<div class="qte-watch-buttons row">'+stages.map(s=>'<button class="small" data-qte-watch="'+esc(scope)+'" data-watch-token="'+esc(token)+'" data-watch-actor="'+s.actor+'">▶ Смотреть · '+esc(names[s.actor]||'Игрок '+s.actor)+' · '+esc(s.name)+'</button>').join('')+'</div>';
+    const enabled=!!(viewer?.scope===scope&&viewer?.token===token);
+    return '<div class="qte-watch-buttons row"><button class="small" data-qte-watch="'+esc(scope)+'" data-watch-token="'+esc(token)+'" data-watch-names="'+esc(JSON.stringify(names))+'" aria-pressed="'+enabled+'">'+(enabled?'■ Отключить автопросмотр':'▶ Автопросмотр мини-игр')+'</button></div>';
   }
   function socket(scope,token){
     const scheme=root.location.protocol==='https:'?'wss:':'ws:';
@@ -71,23 +71,49 @@
     return {finish(options={}){if(closed||done)return;done=true;aborted=!!options.abort;flush();}};
   }
   function close(){viewer?.close();}
-  function watch(scope,token,actor,choices){
+  function context(scope,token,active=true){if(viewer&&(!active||viewer.scope!==scope||viewer.token!==token))close();}
+  function refreshButtons(){
+    if(!root.document)return;
+    for(const button of root.document.querySelectorAll('[data-qte-watch]')){
+      const enabled=viewer?.scope===button.dataset.qteWatch&&viewer?.token===button.dataset.watchToken;
+      button.textContent=enabled?'■ Отключить автопросмотр':'▶ Автопросмотр мини-игр';
+      button.setAttribute('aria-pressed',String(!!enabled));
+      button.title=enabled?'Следующие мини-игры откроются автоматически. Нажми, чтобы отключить.':'Включить до конца боя или закрытия просмотра';
+    }
+  }
+  function watch(scope,token,actor=0,choices=[],names={}){
     if(root.ArenaMiniGames?.active)return;
     close();
     const cover=root.document.createElement('div');cover.className='qte-cover qte-pattern qte-spectator';
-    cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Просмотр мини-игры"><div class="qte-heading"><div><p class="qte-eyebrow">НАБЛЮДЕНИЕ · ТОЛЬКО ПРОСМОТР</p><h2>Подключаемся…</h2></div><button class="qte-watch-close" aria-label="Закрыть просмотр">Закрыть</button></div><div class="qte-watch-players row"></div><p class="qte-help">Трансляция с небольшой задержкой. Управление остаётся у игрока.</p><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="320" aria-label="Мини-игра другого игрока без управления"></canvas></div><p class="qte-live-status" role="status">Ожидаем действия игрока…</p><p class="qte-info">Изображение — предварительный расчёт. Итог боя проверяет сервер. Запись не сохраняется.</p></section>';
+    cover.hidden=true;
+    cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Просмотр мини-игры"><div class="qte-heading"><div><p class="qte-eyebrow">АВТОПРОСМОТР · ТОЛЬКО ПРОСМОТР</p><h2>Подключаемся…</h2></div><button class="qte-watch-close" aria-label="Отключить автопросмотр">Закрыть</button></div><div class="qte-watch-players row"></div><p class="qte-help">Следующие мини-игры откроются сами. Закрытие отключает автопросмотр.</p><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="320" aria-label="Мини-игра другого игрока без управления"></canvas></div><p class="qte-live-status" role="status">Ожидаем действия игрока…</p><p class="qte-info">Трансляция с небольшой задержкой. Итог боя проверяет сервер. Запись не сохраняется.</p></section>';
     root.document.body.append(cover);
-    const previous=root.document.activeElement,unlock=root.QTETouch?.lockViewport(cover)||(()=>{}),canvas=cover.querySelector('canvas'),ctx=canvas.getContext('2d');
+    const canvas=cover.querySelector('canvas'),ctx=canvas.getContext('2d');
     const status=cover.querySelector('.qte-live-status'),title=cover.querySelector('h2'),players=cover.querySelector('.qte-watch-players');
     let ws,model=null,raf,heartbeat,closed=false,selected=actor,lastFrame=0,budget=0,seek=true;
+    let paused=false,unlock=null,previous=null,hideTimer=null,retry=null,attempts=0;
     const abort=new AbortController();
-    function finish(){if(closed)return;closed=true;root.cancelAnimationFrame(raf);root.clearInterval(heartbeat);abort.abort();ws?.close();cover.remove();unlock();viewer=null;previous?.isConnected&&previous.focus?.({preventScroll:true});}
-    viewer={close:finish,scope,token};
+    function hide(){
+      root.clearTimeout(hideTimer);hideTimer=null;root.cancelAnimationFrame(raf);raf=null;
+      cover.hidden=true;model=null;unlock?.();unlock=null;
+      if(previous?.isConnected)previous.focus?.({preventScroll:true});previous=null;
+    }
+    function show(){
+      root.clearTimeout(hideTimer);hideTimer=null;
+      if(cover.hidden){previous=root.document.activeElement;cover.hidden=false;unlock=root.QTETouch?.lockViewport(cover)||(()=>{});cover.querySelector('.qte-watch-close').focus();}
+      if(raf==null){lastFrame=0;raf=root.requestAnimationFrame(frame);}
+    }
+    function disconnect(){const old=ws;ws=null;root.clearInterval(heartbeat);root.clearTimeout(retry);old?.close();}
+    function finish(){if(closed)return;closed=true;disconnect();hide();abort.abort();cover.remove();viewer=null;refreshButtons();}
+    function pause(){paused=true;disconnect();hide();}
+    function resume(){if(closed)return;paused=false;connect();}
+    viewer={close:finish,pause,resume,scope,token};refreshButtons();
     cover.querySelector('.qte-watch-close').addEventListener('click',finish,{signal:abort.signal});
     root.addEventListener('keydown',event=>{
+      if(cover.hidden)return;
       if(event.code==='Escape'){event.preventDefault();finish();}
       if(event.code==='Tab'){
-        const list=[...cover.querySelectorAll('button')],i=list.indexOf(root.document.activeElement);event.preventDefault();
+        const list=[...cover.querySelectorAll('button')].filter(b=>b.offsetParent&&!b.disabled),i=list.indexOf(root.document.activeElement);event.preventDefault();
         list[event.shiftKey?(i<=0?list.length-1:i-1):(i+1)%list.length]?.focus();
       }
     },{signal:abort.signal});
@@ -101,25 +127,40 @@
       const b=event.target.closest('[data-watch-select]');if(!b||ws?.readyState!==1)return;
       selected=Number(b.dataset.watchSelect);ws.send(JSON.stringify({type:'select',actor:selected}));model=null;chooseButtons();
     },{signal:abort.signal});
-    try{ws=socket(scope,token);}catch{status.textContent='Не удалось подключиться. Закрой окно и попробуй снова.';return;}
-    ws.onopen=()=>ws.send(JSON.stringify({role:'watch',auth:auth(),actor:selected}));
-    ws.onmessage=event=>{
+    function connect(){
+      if(closed||paused||ws)return;
+      let connection;try{connection=socket(scope,token);ws=connection;}catch{finish();return;}
+      connection.onopen=()=>{
+        if(closed||paused||ws!==connection){connection.close();return;}
+        connection.send(JSON.stringify({role:'watch',auth:auth(),actor:selected,follow:true}));
+      };
+      connection.onmessage=event=>{
+      if(closed||paused||ws!==connection)return;
       try{
         const d=JSON.parse(event.data);
         if(d.type==='begin'){
+          if(root.ArenaMiniGames?.active){pause();return;}
+          attempts=0;selected=d.stage.actor;
           model=createReplay(d.stage);seek=true;cover.classList.toggle('qte-block',d.stage.version===3);canvas.height=d.stage.version===3?400:320;
-          title.textContent=d.stage.name;status.textContent='Получаем действия игрока…';
+          title.textContent=(names[selected]?names[selected]+' · ':'')+d.stage.name;status.textContent='Получаем действия игрока…';chooseButtons();show();
         }else if(d.type==='data'&&model){model=extendReplay(model,d);if(d.reset)seek=true;}
         else if(d.type==='end'&&model&&d.id===model.stage.id){model.ended=true;status.textContent='Мини-игра завершена. Ждём следующий ход.';}
-        else if(d.type==='waiting'){model=null;title.textContent='Ожидаем трансляцию';status.textContent='Игрок ещё не открыл мини-игру или не подключился к трансляции.';}
-        else if(d.type==='error')status.textContent=d.message||'Трансляция недоступна.';
+        else if(d.type==='waiting'){attempts=0;if(model)model.ended=true;else hide();}
+        else if(d.type==='available'){choices=d.stages.map(s=>({actor:s.actor,label:(names[s.actor]||'Игрок '+s.actor)+' · '+s.name}));chooseButtons();}
+        else if(d.type==='error'){finish();}
       }catch{status.textContent='Не удалось прочитать трансляцию.';}
-    };
-    ws.onclose=()=>{status.textContent='Трансляция отключена. Закрой окно и нажми «Смотреть» снова.';root.clearInterval(heartbeat);};
-    ws.onerror=()=>{status.textContent='Не удалось подключиться к трансляции.';};
-    heartbeat=root.setInterval(()=>{if(ws.readyState===1)ws.send(JSON.stringify({type:'ping'}));},10000);
+      };
+      connection.onclose=event=>{
+        if(ws!==connection||closed||paused)return;
+        ws=null;root.clearInterval(heartbeat);hide();
+        if(event.code===1008||attempts>=3){finish();return;}
+        retry=root.setTimeout(connect,1000*2**attempts++);
+      };
+      connection.onerror=()=>{};
+      heartbeat=root.setInterval(()=>{if(connection.readyState===1)connection.send(JSON.stringify({type:'ping'}));},10000);
+    }
     function frame(now){
-      if(closed)return;
+      if(closed||paused||cover.hidden)return;
       const elapsed=lastFrame?Math.min(.1,(now-lastFrame)/1000):0;lastFrame=now;
       if(model){
         const target=model.ended?model.knownTick:Math.max(0,model.knownTick-36);
@@ -131,19 +172,22 @@
           stepReplay(model,Math.min(target,model.tick+ticks));
         }
         (model.stage.version===3?root.QTEBlockView:root.QTEView)?.draw(ctx,canvas,model.sim);
-        if(model.tick>=model.knownTick&&model.ended)status.textContent=model.aborted?'Мини-игра остановлена. Итог рассчитает сервер.':'Мини-игра завершена. Ждём следующий ход.';
+        if(model.tick>=model.knownTick&&model.ended){
+          status.textContent='Мини-игра завершена. Следующая откроется автоматически.';
+          if(hideTimer==null)hideTimer=root.setTimeout(hide,650);
+        }
         else status.textContent='Игрок проходит '+(model.stage.version===3?'блокирование':model.stage.kind==='attack'?'проверку попадания':'уклонение')+' · '+(model.tick/120).toFixed(1)+' с · HP '+model.sim.hp+' / '+model.sim.initialHp;
       }
       raf=root.requestAnimationFrame(frame);
     }
-    cover.querySelector('.qte-watch-close').focus();raf=root.requestAnimationFrame(frame);
+    connect();
   }
   if(root.document)root.document.addEventListener('click',event=>{
     const b=event.target.closest?.('[data-qte-watch]');if(!b)return;
     event.preventDefault();
-    const choices=[...root.document.querySelectorAll('[data-qte-watch]')].filter(n=>n.dataset.watchToken===b.dataset.watchToken)
-      .map(n=>({actor:Number(n.dataset.watchActor),label:n.textContent.replace(/^▶ Смотреть · /,'')}));
-    watch(b.dataset.qteWatch,b.dataset.watchToken,Number(b.dataset.watchActor),choices);
+    if(viewer?.scope===b.dataset.qteWatch&&viewer?.token===b.dataset.watchToken){close();return;}
+    let names={};try{names=JSON.parse(b.dataset.watchNames||'{}');}catch{}
+    watch(b.dataset.qteWatch,b.dataset.watchToken,0,[],names);
   });
-  return {buttons,source,watch,close,createReplay,extendReplay,stepReplay,get active(){return !!viewer;}};
+  return {buttons,source,watch,close,context,pause(){viewer?.pause();},resume(){viewer?.resume();},createReplay,extendReplay,stepReplay,get active(){return !!viewer;}};
 });

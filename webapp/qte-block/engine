@@ -9,13 +9,13 @@
     const strength=armor/(armor+enemyAttack+20);
     return {armor,strength,armorMultiplier:100/(100+4*armor),maxStamina:70+strength*90,
       arc:(90+strength*100)*Math.PI/180,perfectWindow:clamp(.16+strength*.18-accuracy*.0004,.12,.28),
-      recovery:32+strength*22,rotation:Math.PI*4*clamp(stats.controlScale??1,.5,1),warning:.95-accuracy*.003+(stats.extraWarning||0),
+      recovery:32+strength*22,rotation:Math.PI*4*clamp(stats.controlScale??1,.5,1),warning:Math.max(.36,(.95-accuracy*.003)*(1-.05*Math.max(0,(p.chaplain||0)-1)))+(stats.extraWarning||0),
       pressure:clamp((enemyAttack+20)/(armor+30),.65,1.5),blockReduction:.75};
   }
   function threats(p,seed,params,preparation,activeDuration){
     const random=E.rng((seed^p.seed)>>>0),shot=['gun','mana','charm','stars','paint','death','ice','coins','script','hack'].includes(p.kind);
     const area=['fire','void','eclipse','holy','portal','dust','lightning','mirror'].includes(p.kind);
-    const count=clamp((shot?12:8)+p.strikes+(p.kit?2:0),8,20),result=[];
+    const count=clamp((shot?12:8)+p.strikes+(p.kit?2:0)+2*Math.max(0,(p.chaplain||0)-1),8,24),result=[];
     const offset=Math.floor(random()*8),sweep=p.polarity;
     for(let i=0;i<count;i++){
       const wave=area&&(i%3===2||p.kind==='void'&&i%3===1);

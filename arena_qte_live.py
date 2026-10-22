@@ -586,9 +586,12 @@ class ArenaQteMixin:
                     fighter = player["fighter"]
                     boss = data["boss"]
                     _, skills = self._fighter_catalog_locked()
+                    if isinstance(skill, str) and skill.startswith('chaplain_anchor:'):
+                        from arena_chaplain import validate_anchor
+                        validate_anchor(data, skill)
                     used = (
                         None
-                        if skill == "defend"
+                        if skill == "defend" or isinstance(skill, str) and skill.startswith('chaplain_anchor:')
                         else validate_skill(
                             pair_state(fighter, boss), "a", skill, skills
                         )

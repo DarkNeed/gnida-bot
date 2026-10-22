@@ -42,3 +42,4 @@
 .qte-spectator .qte-window{display:flex;flex-direction:column;width:min(760px,100%);gap:10px}
 .qte-spectator .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 270px) * 1.8));align-self:center}
 .qte-watch-players{gap:6px;flex-wrap:wrap}.qte-watch-players:has(button:only-child){display:none}.qte-watch-close{flex-shrink:0;min-height:40px}
+.qte-spectator[hidden]{display:none!important}.qte-watch-buttons [aria-pressed=true]{border-color:#e6b963;color:#e6b963}

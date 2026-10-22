@@ -774,7 +774,7 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         try:
             self.assertEqual((await client.post(path, json={"action": "raid_create", "boss": "iron"})).status, 400)
             response = await client.get(path, headers=headers)
-            self.assertEqual({b["id"] for b in (await response.json())["raid_bosses"]}, {"lei_heng", "doofenshmirtz", "kit", "whaler"})
+            self.assertEqual({b["id"] for b in (await response.json())["raid_bosses"]}, {"lei_heng", "doofenshmirtz", "kit", "whaler", "chaplain"})
             self.assertEqual((await client.post(path, headers=headers, json={"action":"raid_create","boss":"iron"})).status,400)
             self.assertEqual((await client.post(path, headers=headers, json={"action": "raid_create", "boss": "unknown"})).status, 400)
             self.bot.get_chat_member.return_value.status = "left"

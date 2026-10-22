@@ -13,6 +13,23 @@
     function heart(x,y,size,c){ctx.save();ctx.translate(x,y);ctx.scale(size/12,size/12);ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(0,5);ctx.bezierCurveTo(-16,-3,-6,-15,0,-6);ctx.bezierCurveTo(6,-15,16,-3,0,5);ctx.fill();ctx.restore();}
     ctx.clearRect(0,0,720,320);ctx.fillStyle='#09111d';ctx.fillRect(0,0,720,320);
     ctx.strokeStyle='#1b3040';ctx.lineWidth=1;for(let x=20;x<720;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,320);ctx.stroke();}for(let y=20;y<320;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(720,y);ctx.stroke();}
+    if(p.chaplain>=2){
+      ctx.save();ctx.globalAlpha=.35;arc(600,155,115,0,Math.PI*2,'#e5c98b',2);
+      for(let i=0;i<12;i++){const a=i*Math.PI/6-Math.PI/2;text(String(i||12),600+Math.cos(a)*100,160+Math.sin(a)*100,'#e5c98b',12,'center');}
+      text('SYSTEM / REVISION '+p.chaplain,20,23,'#ead9ae',12);ctx.restore();
+      if(s.kind==='defense'&&t>=s.preparation&&!s.hazards.some(h=>h.motif==='clock_hand'&&t>=h.at&&t<h.end)){
+        // The clock counts down to a real hazard, rather than an unrelated animation.
+        const pending=s.hazards.filter(h=>!h.disabled&&h.start>t).map(h=>h.start);
+        const event=s.events.find(e=>!e.ready);
+        if(event)pending.push(event.at+s.d.warning);
+        if(pending.length){
+          const left=Math.max(0,Math.min(...pending)-t),progress=E.clamp(1-left/s.d.warning,0,1),angle=-Math.PI/2+progress*Math.PI*2;
+          ctx.save();ctx.globalAlpha=.85;ctx.strokeStyle='#91c4d5';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(600,155);ctx.lineTo(600+Math.cos(angle)*83,155+Math.sin(angle)*83);ctx.stroke();
+          ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(600,155);ctx.lineTo(600,110);ctx.stroke();dot(600,155,5,'#91c4d5');
+          text('ДО УДАРА '+left.toFixed(1)+' с',600,278,'#a7d5e2',11,'center');ctx.restore();
+        }
+      }
+    }
     if(s.kind==='defense'&&t<s.preparation){
       ctx.save();ctx.translate(s.player.x,s.player.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#92e2ce';ctx.fillRect(-5,-5,10,10);ctx.restore();
       text('ПРИГОТОВЬСЯ',450,108,'#e8c17c',25,'center');text((s.preparation-t).toFixed(1)+' с',450,160,'#e9f4fb',28,'center');
@@ -55,14 +72,33 @@
         if(h.type==='bullet'){
           if(warning){const len=Math.hypot(h.vx,h.vy)||1;ctx.globalAlpha=.3;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(h.x,h.y);ctx.lineTo(h.x+h.vx/len*900,h.y+h.vy/len*900);ctx.stroke();}
           else if(g.motif==='heart')heart(g.x,g.y,g.r*2,c);
+          else if(g.motif==='clock'){arc(g.x,g.y,g.r+3,0,Math.PI*2,c,2);ctx.beginPath();ctx.moveTo(g.x,g.y-g.r);ctx.lineTo(g.x,g.y);ctx.lineTo(g.x+g.r,g.y);ctx.stroke();}
           else if(g.motif==='star'){ctx.translate(g.x,g.y);ctx.rotate(t*3);ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-10,0);ctx.lineTo(10,0);ctx.moveTo(0,-10);ctx.lineTo(0,10);ctx.stroke();}
           else if(['bone','ice','train'].includes(g.motif)){ctx.translate(g.x,g.y);ctx.rotate(Math.atan2(g.vy,g.vx));ctx.fillRect(-g.r*2,-g.r,g.r*4,g.r*2);}
           else{dot(g.x,g.y,g.r,c);if(g.motif==='ghost')arc(g.x,g.y,g.r+4,0,Math.PI*2,c,1);if(g.motif==='orb')arc(g.x,g.y,g.r+5,0,Math.PI*2,c,2);}
         }else if(h.type==='line'){
           ctx.lineWidth=warning?2:g.r*2;ctx.beginPath();ctx.moveTo(g.ax,g.ay);ctx.lineTo(g.bx,g.by);ctx.stroke();
           if(warning){ctx.globalAlpha=.1;ctx.setLineDash([]);ctx.lineWidth=g.r*2;ctx.stroke();}
+          if(g.motif==='clock_hand'){
+            // The shaft is the actual collision segment; the tip is clipped only for drawing.
+            const dx=g.bx-g.ax,dy=g.by-g.ay,length=Math.hypot(dx,dy)||1;
+            let k=1;
+            if(dx>0)k=Math.min(k,(712-g.ax)/dx);else if(dx<0)k=Math.min(k,(8-g.ax)/dx);
+            if(dy>0)k=Math.min(k,(312-g.ay)/dy);else if(dy<0)k=Math.min(k,(8-g.ay)/dy);
+            const tx=g.ax+dx*k,ty=g.ay+dy*k,ux=dx/length,uy=dy/length;
+            ctx.setLineDash([]);ctx.globalAlpha=spent?.12:warning?.8:1;
+            dot(g.ax,g.ay,9,c);arc(g.ax,g.ay,14,0,Math.PI*2,c,2);
+            ctx.beginPath();ctx.moveTo(tx,ty);ctx.lineTo(tx-ux*19-uy*7,ty-uy*19+ux*7);ctx.lineTo(tx-ux*19+uy*7,ty-uy*19-ux*7);ctx.closePath();ctx.fill();
+            if(warning){
+              const angle=Math.atan2(dy,dx),endAngle=angle+h.clockTurn*(h.end-h.start),end=E.geometry(h,h.end);
+              ctx.globalAlpha=.35;ctx.lineWidth=2;ctx.setLineDash([4,5]);
+              ctx.beginPath();ctx.moveTo(end.ax,end.ay);ctx.lineTo(end.bx,end.by);ctx.stroke();
+              ctx.beginPath();ctx.arc(g.ax,g.ay,80,Math.min(angle,endAngle),Math.max(angle,endAngle));ctx.stroke();
+              text('ХОД СТРЕЛОК · '+Math.max(0,h.start-t).toFixed(1)+' с',600,278,c,11,'center');
+            }
+          }
           if(p.kind==='eclipse'){const x=E.clamp(g.ax,20,700),y=E.clamp(g.ay,20,300);ctx.setLineDash([]);ctx.globalAlpha=.9;arc(x,y,12,0,Math.PI*2,c,2);dot(x,y,4,c);}
-        }else if(h.type==='rect'){ctx.lineWidth=2;ctx.strokeRect(g.x,g.y,g.w,g.h);ctx.globalAlpha=warning?.08:spent?.05:.35;ctx.fillRect(g.x,g.y,g.w,g.h);}
+        }else if(h.type==='rect'){ctx.lineWidth=2;ctx.strokeRect(g.x,g.y,g.w,g.h);ctx.globalAlpha=warning?.08:spent?.05:.35;ctx.fillRect(g.x,g.y,g.w,g.h);if(h.label){ctx.globalAlpha=warning?.65:.9;text(h.label,g.x+5,g.y+18,c,10);}}
         else if(h.type==='ring')arc(g.x,g.y,warning?h.r:g.r,g.gap+g.gapWidth/2,g.gap+Math.PI*2-g.gapWidth/2,c,warning?2:g.thickness*2);
         else{
           ctx.lineWidth=2;ctx.beginPath();ctx.arc(g.x,g.y,g.r,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=warning?.08:spent?.05:.28;ctx.fill();
@@ -72,6 +108,7 @@
       }
       for(const h of s.hazards)if(t>=h.at&&t<h.start)hazard(h);
       for(const h of s.hazards)if(t>=h.start&&t<h.end)hazard(h);
+      for(const mark of s.relocations||[])if(!mark.done&&t>=mark.warning){arc(mark.x,mark.y,15,0,Math.PI*2,'#d9c7ff',2);text('ВОЗВРАТ',mark.x,mark.y-22,'#e2d5ff',11,'center');}
       ctx.save();ctx.translate(s.player.x,s.player.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#92e2ce';ctx.shadowColor='#87dbc7';ctx.shadowBlur=12;ctx.fillRect(-5,-5,10,10);ctx.restore();
       text('КАСАНИЯ '+s.contacts.length,690,299,s.contacts.length?'#ecaaa5':'#9eccc3',11,'right');
     }

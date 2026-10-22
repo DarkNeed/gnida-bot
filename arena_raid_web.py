@@ -119,6 +119,10 @@ async def raid_view(db, row, actor):
             )
         )
     if data:
+        # Authoritative full combat checkpoints are private and can be large.
+        data.pop('_chaplain_snapshot', None)
+        data.pop('_chaplain_results', None)
+        data.pop('_chaplain_previous', None)
         await decorate(data["boss"], 0, True)
         for key, player in data["players"].items():
             player.pop('qte_result',None)
@@ -152,7 +156,12 @@ async def raid_view(db, row, actor):
         encounter_rules=('С 20 уровня. 600/900/1200 HP на 1/2/3 бойцов, обе защиты 0, уклонение 5%. '
                          'Кара — по восстановившему больше всех, один раз за раунд; пассивные 8% не учитываются. '
                          'На последней четверти HP: восстановите 30 энергии на живого участника за раунд, добейте босса или защищайтесь от Гнили.'
-                         if row.get('boss_id')=='whaler' else ''),
+                         if row.get('boss_id')=='whaler' else
+                         'С 20 уровня. Обычный откат — отдельное объявленное действие раз в 5–7 раундов. '
+                         'Закрепление тратит действие, действует три раунда и сохраняет выбранный результат. '
+                         'Восстановление на 30% HP возвращает только здоровье босса, не состояние игроков. '
+                         'Помеченный навык отнимает ещё 10% максимального HP, но не убивает. Предел — 100 реальных раундов.'
+                         if row.get('boss_id')=='chaplain' else ''),
         difficulty=boss_info.get('difficulty', ''),
         phase_count=boss_info.get('phase_count', 2),
         boss_sprites=dict(boss_info.get('phase_sprites', {})),

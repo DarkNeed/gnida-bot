@@ -3,7 +3,7 @@
   'use strict';
   let active = null;
   window.ArenaMiniGames = {play, get active(){return !!active;}};
-  function play(challenge,context){window.ArenaQTEWatch?.close();return challenge.version===3&&challenge.defense_mode==='block'?playBlock(challenge,context):challenge.version===2?playPatterns(challenge,context):playLegacy(challenge);}
+  function play(challenge,context){window.ArenaQTEWatch?.pause();return challenge.version===3&&challenge.defense_mode==='block'?playBlock(challenge,context):challenge.version===2?playPatterns(challenge,context):playLegacy(challenge);}
   function playBlock(challenge,context){
     if(active)return Promise.reject(new Error('Другая мини-игра уже открыта.'));
     const B=window.QTEBlock,V=window.QTEBlockView;

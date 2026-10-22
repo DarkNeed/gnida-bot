@@ -45,6 +45,14 @@ def family(s):
     def contains(*words):
         return any(word in n for word in words)
 
+    if ident.startswith('chaplain_p'):
+        return ('coins', 'script', 'holy')[int(ident.rsplit('_', 1)[1])]
+    if ident == 'chaplain_hand':
+        return 'coins'
+    if ident == 'chaplain_chime':
+        return 'holy'
+    if ident == 'chaplain_verdict':
+        return 'void'
     if ident == 'whaler_harpoon':
         return 'thrust'
     if ident == 'whaler_staff':
@@ -193,6 +201,7 @@ def profile(skill):
         kit=skill.get("base_id", "").startswith("kit_"),
         moon=skill.get("base_id") == "arch_hunter_moon",
         hunterShot=skill.get("base_id") == "hunter_shot",
+        chaplain=(int(skill['base_id'][10]) if skill.get('base_id', '').startswith('chaplain_p') else 0),
         phase=next(r) * TAU,
         polarity=-1 if next(r) < 0.5 else 1,
         speed=0.94 + next(r) * 0.18,
@@ -319,6 +328,12 @@ def defense(p, stats, seed, enabled=None, preparation=1):
     if p["moon"] or p['hunterShot']:
         d["speed"] *= 1.12
         d["warning"] = max(0.32, d["warning"] * 0.96)
+    if p.get('chaplain', 0) >= 2:
+        phase = p['chaplain']
+        d['speed'] *= 1 + .10 * (phase - 1)
+        d['warning'] = max(.28, d['warning'] * (1 - .06 * (phase - 1)))
+    if p['skill'].get('base_id') == 'chaplain_p4_1':
+        d['warning'] = max(.65, d['warning'] + .22)
     count = (
         3
         if p["basic"]
@@ -342,6 +357,8 @@ def defense(p, stats, seed, enabled=None, preparation=1):
             )
         )
     )
+    if p['skill'].get('base_id') == 'chaplain_p4_1':
+        count = 4
     if p["basic"]:
         d["warning"] = max(0.66, d["warning"])
         d["size"] = 24 + 8 * d["intensity"]
@@ -486,7 +503,10 @@ def prepare(s, e):
         beam(cx - dx, cy - dy, cx + dx, cy + dy, width, delay)
 
     k = p["kind"]
-    if k == "slash":
+    if p.get('chaplain', 0) >= 2:
+        from arena_chaplain_qte import prepare as chaplain_prepare
+        chaplain_prepare(s, e, add, beam, circle, bullet)
+    elif k == "slash":
         diagonal((i * 0.61 + p["phase"]) % math.pi, 16 + d["pressure"] * 4)
     elif k == "thrust":
         diagonal(
@@ -733,6 +753,13 @@ def prepare(s, e):
 
 def geometry(h, t):
     age = max(0, t - h["start"])
+    if h.get('freezeFor') and age > h['freezeAt']:
+        age = h['freezeAt'] + max(0, age-h['freezeAt']-h['freezeFor'])
+    if h['type'] == 'line' and h.get('clockTurn'):
+        a = h['clockTurn'] * age
+        cs, sn = math.cos(a), math.sin(a)
+        dx, dy = h['bx']-h['ax'], h['by']-h['ay']
+        return dict(h, bx=h['ax']+dx*cs-dy*sn, by=h['ay']+dx*sn+dy*cs)
     if h["type"] == "bullet":
         if h.get("turn"):
             a = h["turn"] * age
@@ -822,6 +849,11 @@ def defense_step(s, control):
             prepare(s, e)
     old = dict(s["player"])
     p = s["player"]
+    for mark in s.get('relocations', []):
+        if not mark['done'] and s['time'] >= mark['at']:
+            p['x'], p['y'] = mark['x'], mark['y']
+            old = dict(p)
+            mark['done'] = True
     if "target" in control:
         dx, dy = control["target"][0] - old["x"], control["target"][1] - old["y"]
     else:
@@ -842,6 +874,9 @@ def defense_step(s, control):
     p["y"] = clamp(p["y"], 12, H - 12)
     p["vx"] = (p["x"] - old["x"]) / dt
     p["vy"] = (p["y"] - old["y"]) / dt
+    if s['p'].get('chaplain', 0) >= 2:
+        s.setdefault('history', []).append(dict(t=s['time'], x=p['x'], y=p['y']))
+        s['history'] = s['history'][-720:]
     for h in s["hazards"]:
         if (
             h["disabled"]
