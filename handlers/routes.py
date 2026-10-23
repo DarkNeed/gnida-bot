@@ -60,6 +60,8 @@ from custom_commands import (
     command_responses,
     normalize_custom_trigger,
     parse_response_lines,
+    custom_command_allowed,
+    resolve_command_access,
     render_custom_template,
     template_placeholders,
 )
@@ -2775,6 +2777,10 @@ def create_router(
             f"ID {row['exclusive_user_id']}"
             if row["exclusive_user_id"] is not None else "все"
         )
+        rules = json.loads(row['access_rules'])
+        if rules:
+            exclusive = ('только перечисленные; ' if any(rules.values()) else 'все, кроме запрещённых; ')
+            exclusive += ', '.join(('✅ ' if allowed else '⛔ ')+'ID '+uid for uid,allowed in rules.items())
         body = (
             f"<b>⚙️ {html.escape(str(row['trigger']))}</b>\n"
             f"Чат: {html.escape(str(row['chat_title'] or row['chat_id']))}\n"
@@ -3018,7 +3024,9 @@ def create_router(
         await state.set_state(CustomCommandForm.exclusive)
         await message.answer(
             "Шаг 4/6. Кто сможет вызывать команду?\n"
-            "Напиши <code>нет</code>, чтобы разрешить всем, либо @username/Telegram ID одного пользователя.",
+            "Напиши <code>нет</code> для всех, либо список: <code>@user1 @user2 -@user3</code>. "
+            "Без минуса — разрешить только им; с минусом — запретить. Можно указать Telegram ID. "
+            "Если только запреты — остальные могут использовать команду. До 50 пользователей.",
             parse_mode="HTML",
         )
 
@@ -3030,22 +3038,15 @@ def create_router(
             return
         data = await state.get_data()
         chat_id = int(data["chat_id"])
-        exclusive_user_id: int | None = None
-        if value.casefold() not in {"нет", "-", "все", "всем"}:
-            row = await database.resolve_user(chat_id, value)
-            if row:
-                exclusive_user_id = int(row["user_id"])
-            elif value.lstrip("-").isdigit():
-                exclusive_user_id = int(value)
-            else:
-                await message.answer(
-                    "Я ещё не видел этого @username в чате. Пришли числовой Telegram ID или «нет»."
-                )
-                return
-        await state.update_data(exclusive_user_id=exclusive_user_id)
+        try:
+            rules = await resolve_command_access(value,lambda name: database.resolve_user(chat_id,name))
+        except ValueError as error:
+            await message.answer(str(error));return
+        await state.update_data(exclusive_user_id=None,access_rules=rules)
         await state.set_state(CustomCommandForm.successes)
         await message.answer(
-            "Шаг 5/6. Пришли варианты УСПЕХА — каждый с новой строки (до 20).\n\n"
+            "Шаг 5/6. Пришли варианты УСПЕХА (до 20). Для многострочных вариантов разделяй их строкой <code>---</code> "
+            "(добавь такую строку и после единственного многострочного ответа). Без разделителя каждая строка — отдельный вариант.\n\n"
             + custom_placeholder_hint() + "\nТакже работают (тег1), (тег2), (тег) и (рандомный тег).",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=custom_placeholder_buttons()),
@@ -3059,12 +3060,12 @@ def create_router(
             return
         responses = parse_response_lines(value)
         if responses is None:
-            await message.answer("Нужно от 1 до 20 непустых строк, не длиннее 1000 символов каждая.")
+            await message.answer("Нужно от 1 до 20 вариантов, до 1000 символов каждый, включая переносы. Многострочные блоки разделяй строкой ---.")
             return
         await state.update_data(success_responses=responses)
         await state.set_state(CustomCommandForm.failures)
         await message.answer(
-            "Шаг 6/6. Пришли варианты НЕУДАЧИ — каждый с новой строки. "
+            "Шаг 6/6. Пришли варианты НЕУДАЧИ — по строкам, либо многострочные блоки с разделителем <code>---</code>. "
             "Если шанс успеха 100%, можно написать «нет».\n"
             + custom_placeholder_hint(),
             parse_mode="HTML",
@@ -3087,7 +3088,7 @@ def create_router(
                 return
         responses = parse_response_lines(value, allow_empty=True)
         if responses is None:
-            await message.answer("Нужно до 20 непустых строк, не длиннее 1000 символов каждая.")
+            await message.answer("Нужно до 20 вариантов, до 1000 символов каждый. Многострочные блоки разделяй строкой ---.")
             return
         if int(data["success_chance"]) < 100 and not responses:
             await message.answer("При шансе ниже 100% нужен хотя бы один вариант неудачи.")
@@ -3103,6 +3104,7 @@ def create_router(
                 responses,
                 data.get("exclusive_user_id"),
                 actor_id,
+                access_rules=data.get('access_rules',{}),
             )
         except ValueError:
             await message.answer("Фраза запуска уже занята другой командой. Отмени создание и выбери другую.")
@@ -3190,7 +3192,7 @@ def create_router(
             return
         field = str(data["field"])
         if field == "response":
-            if "\n" in value or len(value) > MAX_RESPONSE_LENGTH:
+            if len(value) > MAX_RESPONSE_LENGTH:
                 await message.answer(f"Пришли один вариант одним сообщением до {MAX_RESPONSE_LENGTH} символов.")
                 return
             result = await database.modify_custom_command_response(
@@ -3218,20 +3220,11 @@ def create_router(
                 parsed = -1
             result = await database.update_custom_command_setting(command_id, "success_chance", parsed)
         elif field == "exclusive":
-            if value.casefold() in {"нет", "-", "все", "всем"}:
-                exclusive_id = None
-            else:
-                user = await database.resolve_user(int(row["chat_id"]), value)
-                if user:
-                    exclusive_id = int(user["user_id"])
-                elif value.isdigit():
-                    exclusive_id = int(value)
-                else:
-                    await message.answer("Не знаю этот @username в чате. Пришли Telegram ID или «нет».")
-                    return
-            result = await database.update_custom_command_setting(
-                command_id, "exclusive_user_id", exclusive_id
-            )
+            try:
+                rules=await resolve_command_access(value,lambda name: database.resolve_user(int(row['chat_id']),name))
+            except ValueError as error:
+                await message.answer(str(error));return
+            result = await database.update_custom_command_access(command_id,rules)
         elif field == "trigger":
             result = await database.update_custom_command_setting(command_id, "trigger", value)
         else:
@@ -3394,7 +3387,7 @@ def create_router(
                         prompts = {
                             "cost": "Напиши новую цену в франках (0–1 000 000).",
                             "chance": "Напиши новый шанс успеха (0–100%).",
-                            "exclusive": "Пришли Telegram ID, известный боту @username или «нет» для всех.",
+                            "exclusive": "Пришли до 50 пользователей: @user1 @user2 -@user3 (или ID / -ID). Без минуса — только им; минус запрещает. Только минусы — всем остальным можно. «Нет» сбросит ограничения. Список заменяет прежний.",
                             "trigger": "Напиши новую фразу команды (до 80 символов).",
                         }
                         prompt = prompts[field]
@@ -3412,11 +3405,11 @@ def create_router(
                             await callback.answer("Уже есть 20 вариантов. Удали один перед добавлением.", show_alert=True)
                             return
                         prompt = (
-                            "Пришли новый вариант одним сообщением (до 1000 символов).\n"
+                            "Пришли новый вариант одним сообщением (до 1000 символов). Переносы строк сохраняются.\n"
                             + custom_placeholder_hint()
                             if action == "editresp" else
                             "Пришли вариант одним сообщением (до 1000 символов). "
-                            "Затем можно присылать следующие по одному.\n"
+                            "Переносы строк сохраняются. Затем можно присылать следующие по одному.\n"
                             + custom_placeholder_hint()
                         )
                     await state.clear()
@@ -6772,8 +6765,7 @@ def create_router(
         command = await database.get_custom_command(message.chat.id, trigger_key)
         if command is None:
             return
-        exclusive_user_id = command["exclusive_user_id"]
-        if exclusive_user_id is not None and sender.id != int(exclusive_user_id):
+        if not custom_command_allowed(command,sender.id):
             return
 
         success = random.randint(1, 100) <= int(command["success_chance"])

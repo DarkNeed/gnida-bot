@@ -14,12 +14,20 @@ from custom_commands import (
     parse_response_lines,
     render_custom_template,
     template_placeholders,
+    custom_command_allowed,
+    resolve_command_access,
 )
 from database import Database
 from handlers.routes import create_router
 
 
 class CustomCommandTemplateTests(unittest.TestCase):
+    def test_response_blocks_preserve_newlines_and_legacy_format(self):
+        self.assertEqual(parse_response_lines('Первая\nстрока\n\nабзац\n---\nВторая\nстрока'),['Первая\nстрока\n\nабзац','Вторая\nстрока'])
+        self.assertEqual(parse_response_lines('-10 HP\nЕщё строка\n---'),['-10 HP\nЕщё строка'])
+        self.assertIsNone(parse_response_lines('x'*1001+'\n---'))
+        self.assertIsNone(parse_response_lines('\n---\n'))
+
     def test_trigger_normalization_ignores_case_spacing_and_final_punctuation(self):
         self.assertEqual(
             normalize_custom_trigger("  Послать   ОМОНА!!!  "),
@@ -48,6 +56,41 @@ class CustomCommandTemplateTests(unittest.TestCase):
 
 
 class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_access_lists_persist_filter_menu_and_reset_legacy_access(self):
+        cid=await self.database.save_custom_command(1,'Доступ','доступ',0,100,['Да'],[],99,CUSTOM_COMMAND_OWNER_ID)
+        self.assertFalse(custom_command_allowed(await self.database.get_custom_command_by_id(cid),10))
+        await self.database.update_custom_command_access(cid,{'10':True,'20':False})
+        row=await self.database.get_custom_command_by_id(cid)
+        self.assertTrue(custom_command_allowed(row,10))
+        self.assertFalse(custom_command_allowed(row,20));self.assertFalse(custom_command_allowed(row,30))
+        self.assertEqual([r['id'] for r in await self.database.list_available_custom_commands(10)],[cid])
+        await self.database.update_custom_command_access(cid,{'10':False})
+        self.assertEqual(await self.database.list_available_custom_commands(10),[])
+        await self.database.close();await self.database.connect()
+        row=await self.database.get_custom_command(1,'доступ')
+        self.assertFalse(custom_command_allowed(row,10));self.assertTrue(custom_command_allowed(row,20))
+        await self.database.update_custom_command_access(cid,{})
+        self.assertTrue(custom_command_allowed(await self.database.get_custom_command(1,'доступ'),10))
+        self.assertEqual(await self.database.update_custom_command_access(cid,{'-1':True}),'invalid')
+
+    async def test_access_parser_resolves_lists_denial_priority_and_unknown_user(self):
+        async def resolve(name):return await self.database.resolve_user(1,name)
+        rules=await resolve_command_access('@actor -@actor, 20; +30 -40',resolve)
+        self.assertEqual(rules,{'10':False,'20':True,'30':True,'40':False})
+        self.assertEqual(await resolve_command_access('нет',resolve),{})
+        for text in ('@unknown','--10','0','-0',str(2**63),'@actor ??'):
+            with self.assertRaises(ValueError):await resolve_command_access(text,resolve)
+
+    async def test_denied_command_alias_never_spends_francs_or_responds(self):
+        cid=await self.database.save_custom_command(1,'Тест запрета','тест запрета',10,100,['Ответ'],[],None,CUSTOM_COMMAND_OWNER_ID,access_rules={'10':False})
+        await self.database.modify_custom_command_alias(cid,'add',trigger='Альтернатива')
+        await self.database.credit_francs(1,10,50)
+        router=create_router(self.database)
+        handler=next(item.callback for item in router.message.handlers if item.callback.__name__=='run_custom_command')
+        message=SimpleNamespace(text='Альтернатива',caption=None,chat=SimpleNamespace(id=1,type='supergroup'),from_user=User(id=10,is_bot=False,first_name='Игрок'),answer=AsyncMock())
+        await handler(message,SimpleNamespace())
+        message.answer.assert_not_awaited();self.assertEqual(await self.database.franc_balance(1,10),50)
+
     async def asyncSetUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.database = Database(Path(self.temp_dir.name) / "custom.sqlite3")
@@ -284,7 +327,7 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Пришли вариант", menu_message.answer.await_args.args[0])
         response_message = SimpleNamespace(
-            text="Второй вариант", caption=None,
+            text="Второй вариант\nС новой строки", caption=None,
             chat=SimpleNamespace(type="private"),
             from_user=callback.from_user, answer=AsyncMock(),
         )
@@ -294,7 +337,7 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         row = await self.database.get_custom_command_by_id(command_id)
         self.assertEqual(
             command_responses(row, "success_responses"),
-            ["Первый вариант", "Второй вариант"],
+            ["Первый вариант", "Второй вариант\nС новой строки"],
         )
         self.assertIn("✅ Вариант добавлен", response_message.answer.await_args.args[0])
         self.assertEqual(state.clear.await_count, 1)
@@ -304,7 +347,7 @@ class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
         row = await self.database.get_custom_command_by_id(command_id)
         self.assertEqual(
             command_responses(row, "success_responses"),
-            ["Первый вариант", "Второй вариант", "Третий вариант"],
+            ["Первый вариант", "Второй вариант\nС новой строки", "Третий вариант"],
         )
         self.assertEqual(state.clear.await_count, 1)
 

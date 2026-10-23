@@ -31,13 +31,47 @@ def parse_response_lines(value: str, *, allow_empty: bool = False) -> list[str] 
     stripped = value.strip()
     if allow_empty and stripped.casefold() in {"-", "нет", "none"}:
         return []
-    responses = [line.strip().removeprefix("-").strip() for line in stripped.splitlines()]
+    # Explicit separators preserve paragraphs; legacy one-line variants still work.
+    blocks = bool(re.search(r'(?m)^\s*---\s*$', stripped))
+    chunks = re.split(r'(?m)^\s*---\s*$', stripped) if blocks else stripped.splitlines()
+    responses = [line.strip() if blocks else line.strip().removeprefix("-").strip() for line in chunks]
     responses = [line for line in responses if line]
     if not responses or len(responses) > MAX_RESPONSES_PER_OUTCOME:
         return None
     if any(len(line) > MAX_RESPONSE_LENGTH for line in responses):
         return None
     return responses
+
+
+def custom_command_allowed(row: Mapping[str, object], user_id: int) -> bool:
+    rules = json.loads(row['access_rules']) if 'access_rules' in row.keys() else {}
+    key = str(user_id)
+    if key in rules:return rules[key] is True
+    if any(rules.values()):return False
+    return row['exclusive_user_id'] is None or int(row['exclusive_user_id']) == user_id
+
+
+async def resolve_command_access(value, resolve_user):
+    if value.strip().casefold() in {'нет','-','все','всем'}:return {}
+    tokens = re.split(r'[\s,;]+',value.strip())
+    if not tokens or len(tokens)>50:raise ValueError('Укажи до 50 пользователей через пробел или запятую.')
+    rules = {}
+    for token in tokens:
+        allowed = not token.startswith('-')
+        name = token[1:] if token[:1] in ('-','+') else token
+        if not re.fullmatch(r'@[A-Za-z0-9_]{1,32}|[0-9]{1,19}',name):
+            raise ValueError('Формат: @user, -@user, Telegram ID или -ID.')
+        user = await resolve_user(name) if name.startswith('@') else None
+        uid = int(user['user_id']) if user else int(name) if name.isdigit() else 0
+        if not 0<uid<2**63:raise ValueError('Не знаю '+name+'. Пришли положительный Telegram ID или дождись сообщения пользователя в чате.')
+        rules[str(uid)] = rules.get(str(uid),True) and allowed
+    return rules
+
+
+def valid_command_access(rules):
+    return isinstance(rules,dict) and len(rules)<=50 and all(
+        isinstance(k,str) and re.fullmatch(r'[1-9][0-9]{0,18}',k) and int(k)<2**63 and type(v) is bool
+        for k,v in rules.items())
 
 
 def command_responses(row: Mapping[str, object], field: str) -> list[str]:

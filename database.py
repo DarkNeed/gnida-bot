@@ -535,6 +535,7 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
             );
             """
         )
+        self._ensure_column("custom_commands", "access_rules", "TEXT NOT NULL DEFAULT '{}'")
         self._ensure_column("ownership", "last_forced_at", "INTEGER")
         self._ensure_column("business_workers", "wage_hours", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("businesses", "income_remainder", "INTEGER NOT NULL DEFAULT 0")
@@ -2415,11 +2416,15 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
         failure_responses: list[str],
         exclusive_user_id: int | None,
         created_by: int,
+        *, access_rules: dict | None = None,
     ) -> int:
         if cost < 0 or not 0 <= success_chance <= 100:
             raise ValueError("Invalid custom command cost or success chance")
         if not trigger_key or not success_responses:
             raise ValueError("A trigger and success response are required")
+        from custom_commands import valid_command_access
+        if access_rules is not None and not valid_command_access(access_rules):
+            raise ValueError('Invalid command access rules')
         now = utc_timestamp()
         async with self._lock:
             if self.connection.execute(
@@ -2461,6 +2466,9 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
                 "SELECT id FROM custom_commands WHERE chat_id=? AND trigger_key=?",
                 (chat_id, trigger_key),
             ).fetchone()
+            if access_rules is not None:
+                self.connection.execute('UPDATE custom_commands SET access_rules=? WHERE id=?',
+                    (json.dumps(access_rules),row['id']))
             self.connection.commit()
             return int(row["id"])
 
@@ -2576,17 +2584,28 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
     async def list_available_custom_commands(self, user_id: int) -> list[sqlite3.Row]:
         """Commands in known chats that this user may invoke; caller verifies membership."""
         async with self._lock:
-            return self.connection.execute(
-                """SELECT cmd.id, cmd.chat_id, cmd.trigger, cmd.cost,
-                          cmd.success_chance, chats.title AS chat_title
+            rows = self.connection.execute(
+                """SELECT cmd.*,
+                          chats.title AS chat_title
                    FROM custom_commands cmd
                    JOIN users u ON u.chat_id=cmd.chat_id AND u.user_id=?
                    LEFT JOIN chats ON chats.chat_id=cmd.chat_id
                    WHERE cmd.enabled=1
-                     AND (cmd.exclusive_user_id IS NULL OR cmd.exclusive_user_id=?)
                    ORDER BY cmd.chat_id, cmd.trigger_key""",
-                (user_id, user_id),
+                (user_id,),
             ).fetchall()
+            from custom_commands import custom_command_allowed
+            return [row for row in rows if custom_command_allowed(row,user_id)]
+
+    async def update_custom_command_access(self, command_id: int, rules: dict) -> str:
+        from custom_commands import valid_command_access
+        if not valid_command_access(rules):return 'invalid'
+        async with self._lock:
+            cursor=self.connection.execute('''UPDATE custom_commands SET access_rules=?,
+                exclusive_user_id=NULL, updated_at=? WHERE id=? AND enabled=1''',
+                (json.dumps(rules),utc_timestamp(),command_id))
+            self.connection.commit()
+            return 'updated' if cursor.rowcount else 'not_found'
 
     async def list_custom_command_chats(self, owner_id: int) -> list[sqlite3.Row]:
         async with self._lock:
