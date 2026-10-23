@@ -211,6 +211,9 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
         bonus=1.25 if has_trait(actor,'rpg_merciful') and recipient['hp']<=recipient['stats']['max_hp']*.40 else 1
         healed=min(recipient['stats']['max_hp']-recipient['hp'],round(recipient['stats']['max_hp']*item['value']*bonus))
         recipient['hp']+=healed
+        if item['value'] > 0:
+            from arena_plague import actively_healed
+            actively_healed(recipient)
         if branch(actor)=='priest_bishop' and healed:
             recipient['effects']=[e for e in recipient['effects'] if e.get('id')!='bishop_guard']
             recipient['effects'].append(dict(id='bishop_guard',kind='incoming_damage_multiplier',value=.85,duration=1))
@@ -237,6 +240,8 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
         if raid_context is not None and dead and not raid_context.get('rpg_revive_used'):
             restored=dead[0]
             restored['hp']=max(1,round(restored['stats']['max_hp']*.30))
+            from arena_plague import actively_healed
+            actively_healed(restored)
             restored['effects']=[e for e in restored['effects'] if e['kind'] not in ('bleed','burn','stun')]
             raid_context['rpg_revive_used']=True
             note=f'союзник возвращён с {restored["hp"]} HP'
@@ -246,6 +251,8 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
                 if restored['hp']<=0: continue
                 amount=min(restored['stats']['max_hp']-restored['hp'],round(restored['stats']['max_hp']*(.25 if allies else .50)))
                 restored['hp']+=amount;total+=amount
+                from arena_plague import actively_healed
+                actively_healed(restored)
                 buff(restored,'dawn_guard','incoming_damage_multiplier',.70,1)
             note=f'рассветное исцеление: +{total} HP'
         m.update(dawn_used=True,faith=0)

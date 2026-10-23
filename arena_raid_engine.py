@@ -22,12 +22,14 @@ from arena_kit import (KIT_LEVEL, KIT_STATS, KIT_SKILLS, set_kit_intent,
                        kit_react, kit_defend)
 from arena_whaler import WHALER_SKILLS, WHALER_LEVEL
 from arena_chaplain import CHAPLAIN_LEVEL, CHAPLAIN_SKILLS
+from arena_encounters import MOB_SKILLS
 
 RAID_SIZE = 3
 RAID_ROUND_SECONDS = 120
 RAID_MAX_ROUNDS = 100
 BOSS_NAME = "Железный сборщик"
 BOSSES = {
+    'encounter': dict(name='РП-встреча', skills=tuple(MOB_SKILLS), phase_count=1),
     'chaplain': dict(name='Капеллан — Хранитель последней редакции',
                       sprite='/static/assets/chaplain.png', skills=tuple(CHAPLAIN_SKILLS),
                       recommended_level=20, min_level=1, fixed_level=CHAPLAIN_LEVEL,
@@ -99,6 +101,7 @@ BOSS_SKILLS.update(DOOF_SKILLS)
 BOSS_SKILLS.update(KIT_SKILLS)
 BOSS_SKILLS.update(WHALER_SKILLS)
 BOSS_SKILLS.update(CHAPLAIN_SKILLS)
+BOSS_SKILLS.update(MOB_SKILLS)
 
 
 def raid_boss_sprite(boss_id, phase=1):
@@ -162,6 +165,9 @@ def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True
 
 
 def set_intent(data):
+    if data.get('kind') == 'encounter':
+        from arena_encounters import set_intents
+        return set_intents(data)
     living = alive_players(data)
     if not living:
         return
@@ -359,6 +365,7 @@ def raid_snapshot(data):
     fighters = {"boss": data["boss"]} | {
         k: p["fighter"] for k, p in data["players"].items()
     }
+    fighters.update(data.get('enemies', {}))
     return {
         k: deepcopy(
             {
@@ -410,6 +417,9 @@ def defend(fighter,opponent=None,raid_context=None):
 
 
 def finish_if_needed(data):
+    if data.get('kind') == 'encounter':
+        from arena_encounters import finish
+        return finish(data)
     if data.get('boss_id') == 'chaplain' and not data.get('finished'):
         from arena_chaplain import intercept_end
         intercept_end(data)
@@ -427,6 +437,9 @@ def finish_if_needed(data):
 
 
 def resolve_round(data, skills, rng=None):
+    if data.get('kind') == 'encounter':
+        from arena_encounters import resolve
+        return resolve(data, skills, rng)
     if data["finished"]:
         raise ValueError("Рейд завершён.")
     rng = rng or random.SystemRandom()

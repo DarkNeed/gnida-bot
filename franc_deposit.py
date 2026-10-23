@@ -151,6 +151,9 @@ class DepositMixin:
                 if balance>MAX_FRANC_BALANCE-4*stake:
                     raise ValueError('Возможный выигрыш превысит лимит кошелька. Уменьши ставку.')
                 won=rng.randrange(100)<20
+                if won:
+                    self.connection.execute('''INSERT INTO arena_casino_unlocks(user_id,invited) VALUES(?,1)
+                        ON CONFLICT(user_id) DO UPDATE SET invited=1''',(user,))
                 payout=stake*5 if won else 0
                 after=balance-stake+payout
                 phrase=rng.choice(WIN_PHRASES if won else LOSS_PHRASES)

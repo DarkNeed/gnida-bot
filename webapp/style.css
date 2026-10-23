@@ -182,3 +182,33 @@ dialog.audio-dialog,dialog.stats-dialog,dialog.holdings-dialog{
 .stats-overlay .stats-dialog{max-height:calc(100dvh - var(--app-inset-top) - var(--app-inset-bottom) - 24px)}
 @media(max-width:400px){.top{padding-left:14px;padding-right:14px;gap:8px}.top h1{font-size:18px}.top .eyebrow{font-size:9px;letter-spacing:1px}.top-tools>.small,.top-tools>.pill{font-size:10px;padding:7px 9px}.content{padding-left:12px;padding-right:12px}}
 .move-choice{border:1px solid #62748b;border-radius:22px;overflow:hidden;background:#142033;box-shadow:0 16px 60px #0005}.move-choice-header{display:flex;align-items:center;gap:20px;padding:20px;background:#1c2d44;border-bottom:2px solid #f7ca75}.move-choice-avatar{height:110px;width:90px;object-fit:contain;flex-shrink:0}.move-choice-header h2{margin:5px 0}.move-choice-header p{color:#b9cde0;font-size:13px}.move-choice-columns{display:grid;grid-template-columns:minmax(180px,1fr) 2fr;gap:20px;padding:20px}.move-new{background:#29344a;border:1px solid #f7ca75;border-radius:16px;padding:18px}.move-new h3{margin:10px 0}.move-choice-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.move-old{text-align:left;white-space:normal;min-width:0;padding:15px}.move-old>b{display:block;margin-bottom:5px}.move-old:hover,.move-old:focus-visible{border-color:#f7ca75;background:#304263}.move-dialogue{padding:20px;background:#0e192a;border-top:1px solid #62748b;display:flex;gap:12px;flex-wrap:wrap}.move-dialogue button{flex:1 1 180px}.move-choice .muted{font-size:12px;line-height:1.5}@media(max-width:600px){.move-choice-columns{grid-template-columns:1fr;padding:14px;gap:14px}.move-choice-grid{grid-template-columns:1fr}.move-choice-header{gap:12px;padding:14px}.move-choice-avatar{height:85px;width:65px}.move-dialogue{padding:14px}}
+.encounter-target-note{margin:0 0 12px;color:#e9d4a6;font-size:13px}
+.encounter-target-note small{display:block;margin-top:3px;color:#a7b9ce;font-size:11px}
+.encounter-field button.encounter-target{width:100%;min-width:0;min-height:0;margin:0;padding:0;border:0;border-radius:10px;background:none;color:inherit;box-shadow:none;touch-action:manipulation;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.encounter-field button.encounter-target:focus-visible{outline:2px solid #f0c574;outline-offset:3px}
+.encounter-field button.encounter-target:disabled{cursor:default;opacity:1}
+.encounter-field button.encounter-target:hover:not(:disabled) .raid-ground{border-color:#f0c574}
+.encounter-field .encounter-selected .raid-ground{border-color:#f0c574;background:#f0c57426;box-shadow:0 0 16px #f0c57455}
+.encounter-field{height:620px;background:radial-gradient(ellipse at 30% 95%,#496453,transparent 70%),linear-gradient(#172b30,#2e4249 60%,#364943)}
+/* Match the allies' diagonal step, shifted to the opposing upper-right side. */
+.encounter-field .encounter-enemy{width:23%;left:auto}
+.encounter-field .enemy-0{right:50%;top:2%}
+.encounter-field .enemy-1{right:25%;top:7%}
+.encounter-field .enemy-2{right:0;top:12%}
+.encounter-field .encounter-enemy .raid-art{height:140px}
+.encounter-field .encounter-enemy .raid-hud{position:static;width:auto;max-width:100%;padding:5px;background:#101d2ac9;border-radius:8px;text-align:center}
+.encounter-field .encounter-selected .raid-hud{outline:2px solid #f0c574}
+.encounter-field .encounter-enemy .raid-effects{min-height:18px}
+.encounter-field .raid-ally{bottom:6%}
+.encounter-field .raid-ally.slot-0{left:1%;bottom:15%}
+.encounter-field .raid-ally.slot-1{left:26%;bottom:10%}
+.encounter-field .raid-ally.slot-2{left:51%;bottom:5%}
+.encounter-field .raid-enemy .raid-hud .row{justify-content:center}
+@media(max-width:550px){
+  .encounter-field{height:560px}
+  .encounter-field .encounter-enemy{width:25%}
+  .encounter-field .encounter-enemy .raid-art{height:112px}
+  .encounter-field .encounter-enemy .raid-hud{max-width:100%;width:auto}
+  .encounter-field .raid-hud strong{font-size:10px}
+  .encounter-field .raid-ally .raid-art{height:112px}
+}

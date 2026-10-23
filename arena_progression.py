@@ -18,6 +18,9 @@ def pending_choice(profile):
 
 
 def choice_avatar(class_id, archclass_id="", stage=10):
+    if class_id=='gambler' or archclass_id in ('casino_hustler','casino_lucky'):
+        key=archclass_id if archclass_id in ('casino_hustler','casino_lucky') else 'gambler'
+        return '/static/assets/casino/'+key+('_final' if key!='gambler' and stage>=20 else '')+'.png'
     if archclass_id in RPG_BRANCHES:
         suffix = '_final' if stage >= 20 else ''
         return '/static/assets/archclasses/' + archclass_id + suffix + '.png'

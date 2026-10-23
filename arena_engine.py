@@ -482,15 +482,16 @@ BUILTIN_SKILLS['solar_eclipse'] = Skill(
     tags=('raid_loot', 'hybrid_attack', 'fourth_action', 'once_on_hit'),
 )
 BUILTIN_SKILLS['swamp_miasma'] = Skill(
-    'swamp_miasma', 'Миазмы', 'raid', 20, 'magic', 10, 95, 40, 3,
-    effects=(dict(id='player_miasma', kind='plague_infect', value=3, turns=3, target='enemy'),),
+    'swamp_miasma', 'Миазмы', 'raid', 20, 'magic', 5, 95, 40, 3,
+    effects=(dict(id='player_miasma', kind='plague_infect', value=4, turns=3, target='enemy', plague_variant='trophy'),),
     rarity='epic', tags=('raid_loot', 'hybrid_attack'),
-    description='Трофей Китобоя. 40 энергии, перезарядка 3 хода. Магическая атака от большей из двух атак. '
-                'Попадание накладывает лихорадку: −3 HP в начале каждого из трёх следующих ходов цели, '
-                'и +1 стак Болотных спор (до 3): −1 HP за стак в начале хода до снятия. '
-                'Лихорадка обновляется, не складывается. Полезное лечение снимает один стак спор; '
-                'очищение или отдельное действие восстановления энергии снимает всю чуму. '
-                'Пассивная регенерация не очищает. Не создаёт Кару болот и не замедляет управление.',
+    description='Трофей Китобоя. 40 энергии, перезарядка 3 хода. Магическая атака от большей из двух атак; '
+                'прямой урон уменьшен вдвое. Попадание накладывает лихорадку: −4 HP в начале каждого '
+                'из трёх следующих ходов цели, и +1 стак Болотных спор (до 3): −2 HP за стак в начале хода '
+                'до снятия, максимум −6 HP за ход от спор. Лихорадка обновляется, не складывается. '
+                'Активное восстановление энергии снимает один стак спор, но не лихорадку. '
+                'Лечебный навык и очищение снимают всю чуму; пассивный хил, вампиризм и реген не очищают. '
+                'Не создаёт Кару болот и не замедляет управление.',
 )
 BUILTIN_SKILLS['last_amendment'] = Skill(
     'last_amendment', 'Последняя поправка', 'raid', 20, None, 0, 100, 50, 5,
@@ -613,6 +614,10 @@ BUILTIN_PASSIVES.update(_epic_passives)
 _rpg_classes, _rpg_skills = build_rpg_catalog(FighterClass, Skill, effect)
 FIGHTER_CLASSES.update(_rpg_classes)
 BUILTIN_SKILLS.update(_rpg_skills)
+from arena_casino import build_catalog as build_casino_catalog
+_casino_classes, _casino_skills = build_casino_catalog(FighterClass, Skill, effect)
+FIGHTER_CLASSES.update(_casino_classes)
+BUILTIN_SKILLS.update(_casino_skills)
 BUILTIN_SKILLS.update(build_mastery_skills(Skill))
 VISIBLE_CLASS_ALIASES.update({c.name.casefold():k for k,c in _rpg_classes.items()})
 
@@ -941,6 +946,8 @@ def create_battle_state(
         if pet_snapshot(source.get("pet")):
             sides[side]["pet"] = pet_snapshot(source["pet"])
             sides[side]["pet_state"] = {}
+        if class_id=='gambler':
+            sides[side]['_casino_roll_seed']=format(random.SystemRandom().getrandbits(128),'032x')
     return {
         "turn": 1,
         "sides": sides,
@@ -992,6 +999,8 @@ def effective_skill(state: dict, side_key: str, skill_id: str, skills=None) -> S
     skill = rpg_variant(skill, actor, target)
     skill = mastery_variant(skill, actor, target)
     skill = adaptive_skill(skill, actor, effective_stat)
+    from arena_casino import variant as casino_variant
+    skill = casino_variant(skill, actor)
     if skill_id == 'last_amendment':
         from arena_chaplain import amendment_active
         if amendment_active(actor):
@@ -1031,6 +1040,9 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
 
 
 def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
+    from arena_casino import restriction as casino_restriction
+    reason=casino_restriction(side,skill)
+    if reason:return reason
     reason = rpg_restriction(side, skill)
     if reason:
         return reason
@@ -1088,7 +1100,9 @@ def restore_turn_resource(side: dict) -> int:
         return 0
     side["resource_regen_turn"] = turn
     maximum = side["stats"]["resource_max"]
-    gain = min(maximum - side["resource"], max(1, round(maximum * BASE_RESOURCE_REGEN)))
+    from arena_casino import repay_regen
+    budget=repay_regen(side,max(1, round(maximum * BASE_RESOURCE_REGEN)))
+    gain = min(maximum - side["resource"], budget)
     gain = max(0, gain)
     side["resource"] += gain
     return gain
@@ -1121,6 +1135,7 @@ def battle_status_snapshot(state: dict) -> dict:
             "rpg_state": deepcopy(side.get("rpg_state", {})),
             "final_state": deepcopy(side.get("final_state", {})),
             "mastery_state": deepcopy(side.get("mastery_state", {})),
+            "casino_state": deepcopy(side.get("casino_state", {})),
             **({"pet": deepcopy(side["pet"]), "pet_state": deepcopy(side.get("pet_state", {}))}
                if side.get("pet") else {}),
             "effects": deepcopy(
@@ -1247,6 +1262,8 @@ def resolve_skill(
     other = "b" if side_key == "a" else "a"
     target = state["sides"][other]
     final_before=final_context(actor,target)
+    from arena_casino import roll_action as casino_roll
+    skill,casino_context=casino_roll(actor,skill,rng,(qte or {}).get('pattern_attack',{}).get('casino'))
     mastery_before=mastery_context(actor,target)
     mastery_allies = [dict(hp=p['hp']) for p in (allies or [])]
     rpg_context = rpg_action_context(actor,target)
@@ -1365,6 +1382,11 @@ def resolve_skill(
                                 if 0 <= c['strike'] < len(parts) and parts[c['strike']]['hit'] and (not block_pattern or c['weight']>0)]
             strike_results=parts
             strike_count=len(parts)
+    if casino_context and casino_context.get('chance',{} ) and casino_context['chance']['factor']==0:
+        hit=dodged=False
+        if strike_results:
+            for part in strike_results:part.update(hit=False,dodged=False)
+        if pattern_contacts is not None:pattern_contacts=[]
     if parried:
         blocked_contact = False
         hit = dodged = False
@@ -1542,13 +1564,17 @@ def resolve_skill(
                     restored += max(0, actor['resource'] - resource_before_effect)
             elif effect["kind"] == "heal_pct":
                 recipient["hp"] = min(recipient["stats"]["max_hp"], recipient["hp"] + round(recipient["stats"]["max_hp"] * effect["value"]))
+                if effect['value'] > 0:
+                    from arena_plague import actively_healed
+                    actively_healed(recipient)
             elif effect["kind"] == "cleanse_one":
                 from arena_plague import clear
                 clear(recipient)
                 cleanse_one(recipient, rng)
             elif effect['kind'] == 'plague_infect':
                 from arena_plague import infect
-                infect(recipient, fever=int(effect['value']), turns=int(effect.get('turns', 3)))
+                infect(recipient, fever=int(effect['value']), turns=int(effect.get('turns', 3)),
+                       variant=effect.get('plague_variant', 'boss'))
             elif effect["kind"] == "dispel_buffs":
                 recipient["effects"] = [e for e in recipient["effects"] if not temporary_buff(e)]
             else:
@@ -1651,12 +1677,14 @@ def resolve_skill(
     arch_notes += final_notes
     pet_notes += rpg_notes
     pet_notes += epic_after_action(actor, target, skill, hit, rng)
-    from arena_plague import clear as clear_plague, healed as heal_plague, deliberate_restore
+    from arena_casino import after_action as casino_after_action
+    pet_notes += casino_after_action(actor,skill,hit,casino_context,restored)
+    from arena_plague import actively_restored, healed as heal_plague, deliberate_restore
     # Count the actual dedicated restoration, not refunds from traits/pets or
     # passive regeneration. Direct self-restores and blood bullets are explicit.
     restored = restored if hit and deliberate_restore(skill) else 0
     if restored:
-        clear_plague(actor)
+        actively_restored(actor)
     plague_healed_seen = set()
     for who, old_hp in [(actor,before[side_key]['hp']), (target,before[other]['hp'])] + plague_allies_before:
         if who['hp'] > old_hp and id(who) not in plague_healed_seen:

@@ -133,6 +133,8 @@ from arena_rpg_paths import PATHS
 
 ARCHCLASSES.update({key:branch(cid,name,PATHS[key][0],PATHS[key][1],PATHS[key][5])
     for key,(cid,name,description) in RPG_BRANCHES.items()})
+from arena_casino import BRANCHES as CASINO_BRANCHES
+ARCHCLASSES.update(CASINO_BRANCHES)
 from arena_finals import FINALS
 for _key, (_class, _title, _description) in FINALS.items():
     ARCHCLASSES[_key].update(final_name=_title,final_description=_description)
@@ -191,6 +193,7 @@ def e(key, kind, value, turns=0, target="enemy"):
 
 
 def arch_rule(skill, source):
+    if source.get('class_id')=='gambler':return None
     entry = selected_branch(source)
     if not entry or skill.class_id != source["class_id"]:
         return None

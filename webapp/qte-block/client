@@ -21,6 +21,7 @@
     const p=B.parameters(selected,stats());
     $('class-name').textContent=selected.skill.class_name;$('skill-name').textContent=selected.skill.name;
     $('pattern-name').textContent='Перехват · '+selected.title+' · '+(selected.skill.damage_type==='magic'?'магическая атака':'физическая атака');
+    if(B.casinoHint(selected))$('feedback').textContent=B.casinoHint(selected);
     for(const id of Object.keys(modes))$(id+'-value').textContent=$(id).value+(id==='accuracy'?'%':'');
     $('armor-info').textContent=p.armor+' · −'+Math.round((1-p.armorMultiplier)*100)+'% урона';
     $('arc-info').textContent=Math.round(p.arc*180/Math.PI)+'°';$('perfect-info').textContent=p.perfectWindow.toFixed(2)+' с';
@@ -122,6 +123,7 @@
   }
   function draw(){
     const s=sim||B.create(selected,stats(),seed(),options()),cx=B.W/2,cy=B.H/2,t=s.time;
+    if(window.QTECasinoView?.drawBlock(ctx,canvas,s))return;
     ctx.clearRect(0,0,B.W,B.H);ctx.fillStyle='#09131f';ctx.fillRect(0,0,B.W,B.H);
     for(let x=0;x<=B.W;x+=40)line(x,0,x,B.H,'#162b3b');for(let y=0;y<=B.H;y+=40)line(0,y,B.W,y,'#162b3b');
     arc(cx,cy,145,0,Math.PI*2,'#263c4b');arc(cx,cy,92,0,Math.PI*2,'#213945');
@@ -138,7 +140,10 @@
           const radius=162-progress*113,x=cx+Math.cos(event.angle)*radius,y=cy+Math.sin(event.angle)*radius;
           ctx.setLineDash([5,6]);line(cx+Math.cos(event.angle)*160,cy+Math.sin(event.angle)*160,cx+Math.cos(event.angle)*52,cy+Math.sin(event.angle)*52,color);ctx.setLineDash([]);
           ctx.translate(x,y);ctx.rotate(event.angle+Math.PI);ctx.fillStyle=color;
-          if(event.kind==='slash'){ctx.fillRect(-16,-4,32,8);ctx.fillRect(3,-10,3,20);}
+          if(event.motif==='casino_card'){ctx.fillRect(-10,-7,20,14);ctx.fillStyle='#14251e';ctx.fillRect(-2,-2,4,4);}
+          else if(event.motif==='casino_coin'){ctx.strokeStyle=color;ctx.beginPath();ctx.arc(0,0,9,0,Math.PI*2);ctx.stroke();ctx.fillRect(-2,-4,4,8);}
+          else if(event.motif==='casino_reel'){ctx.strokeStyle=color;ctx.strokeRect(-12,-12,24,24);text('7',0,5,color,18);}
+          else if(event.kind==='slash'){ctx.fillRect(-16,-4,32,8);ctx.fillRect(3,-10,3,20);}
           else{ctx.beginPath();ctx.moveTo(11,0);ctx.lineTo(-7,-6);ctx.lineTo(-7,6);ctx.closePath();ctx.fill();}
         }ctx.restore();
       }
@@ -161,5 +166,7 @@
     if(!paused){if(dt>.35){pause();}else{B.step(sim,dt,input());hud(sim);draw();if(sim.ended){finish();return;}}}
     frameId=requestAnimationFrame(frame);
   }
+  const query=new URLSearchParams(location.search).get('skill');
+  const deep=profiles.find(p=>p.id===query||p.skill.name===query||p.skill.base_id===query);if(deep)selected=deep;
   fillSkills();settings();draw();
 })();

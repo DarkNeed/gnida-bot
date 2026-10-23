@@ -267,6 +267,11 @@ def upgrade_description(branch_id):
 
 def milestones(source):
     key = source["archclass_id"]
+    if key.startswith('casino_'):
+        sid='casino_house' if key=='casino_hustler' else 'casino_deposit'
+        return [dict(level=12,description='Родные атаки: сила +1.',unlocked=source['level']>=12),
+                dict(level=15,description='Новый навык: '+('Казино всегда в плюсе' if key=='casino_hustler' else 'Последний депозит'),skill_id=sid,unlocked=source['level']>=15),
+                dict(level=18,description='Игровой стол: урон +20%.' if key=='casino_hustler' else 'Подготовь три джекпота и семь фишек для 777.',unlocked=source['level']>=18)]
     if key in RPG_BRANCHES:
         from arena_rpg_paths import path_milestones
         return path_milestones(source)

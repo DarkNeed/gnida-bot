@@ -3,7 +3,23 @@
   'use strict';
   let active = null;
   window.ArenaMiniGames = {play, get active(){return !!active;}};
-  function play(challenge,context){window.ArenaQTEWatch?.pause();return challenge.version===3&&challenge.defense_mode==='block'?playBlock(challenge,context):challenge.version===2?playPatterns(challenge,context):playLegacy(challenge);}
+  function play(challenge,context){window.ArenaQTEWatch?.pause();return challenge.casino_mode?playChance(challenge,context):challenge.version===3&&challenge.defense_mode==='block'?playBlock(challenge,context):challenge.version===2?playPatterns(challenge,context):playLegacy(challenge);}
+  function playChance(challenge,context){
+    if(active)return Promise.reject(new Error('Другая мини-игра уже открыта.'));
+    if(!window.QTECasinoChance||!context?.casinoRoll)return Promise.reject(new Error('Обнови арену: казино не загрузилось.'));
+    return new Promise(resolve=>{
+      const cover=document.createElement('div');cover.className='qte-cover qte-pattern qte-attack';
+      cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Случайная атака казино"><div class="qte-heading"><div><p class="qte-eyebrow">СЛУЧАЙНЫЙ БРОСОК · НЕ QTE</p><h2></h2></div></div><div class="casino-host"></div><button class="qte-abort">Пропустить</button></section>';
+      cover.querySelector('h2').textContent=challenge.name;document.body.append(cover);
+      const previous=document.activeElement,unlock=QTETouch.lockViewport(cover);
+      active={challenge:challenge.id};let finished=false;
+      const widget=QTECasinoChance.mount(cover.querySelector('.casino-host'),challenge,choice=>context.casinoRoll(challenge.id,choice),()=>finish());
+      function finish(){if(finished)return;finished=true;clearInterval(timer);widget.destroy();cover.remove();unlock();active=null;previous?.isConnected&&previous.focus?.({preventScroll:true});resolve(widget.committed?{casino_launch:true}:{abort:true});}
+      cover.querySelector('.qte-abort').onclick=finish;
+      const deadline=performance.now()+Math.max(0,(challenge.expires-(challenge.server_now||Date.now()/1000))*1000);
+      const timer=setInterval(()=>{if(performance.now()>=deadline)finish();},200);
+    });
+  }
   function playBlock(challenge,context){
     if(active)return Promise.reject(new Error('Другая мини-игра уже открыта.'));
     const B=window.QTEBlock,V=window.QTEBlockView;
@@ -15,6 +31,7 @@
       const find=q=>cover.querySelector(q),canvas=find('canvas'),ctx=canvas.getContext('2d'),previousFocus=document.activeElement;
       find('h2').textContent=challenge.name;
       if(s.chaplain){find('.qte-help-full').textContent=s.chaplain.hint;find('.qte-help-compact').textContent=s.chaplain.hint;}
+      if(B.casinoHint(s.p)){find('.qte-help-full').textContent=B.casinoHint(s.p);find('.qte-help-compact').textContent=B.casinoHint(s.p);}
       document.body.append(cover);
       const unlock=QTETouch.lockViewport(cover),abort=new AbortController(),on=(el,name,fn)=>el.addEventListener(name,fn,{signal:abort.signal});
       const proof={ticks:1140,inputs:[]};let tick=0,accumulator=0,last=0,lastInput='',lastAngle=0,done=false,raf,watch,aim=null,canvasPointer=null;
@@ -91,6 +108,7 @@
       find('.qte-abort').title=defense?'Пропуск или истечение времени засчитывают все снаряды как попадания.':'Пропуск расходует действие и не даёт попаданий.';
       for(const selector of ['.qte-live-pad','.qte-stick','.qte-touch-help'])find(selector).hidden=!defense;
       find('.qte-hit').hidden=defense;
+      if(!defense&&p.kind.startsWith('casino_'))find('.qte-hit').textContent=p.kind==='casino_roulette'?'СТОП · ШАРИК':p.kind==='casino_cards'?'БРОСИТЬ КАРТУ':['casino_slots','casino_jackpot'].includes(p.kind)?'ОСТАНОВИТЬ БАРАБАН':'БРОСИТЬ КУБИК';
       const previousFocus=document.activeElement;
       document.body.append(cover);const unlockViewport=window.QTETouch.lockViewport(cover);canvas.focus({preventScroll:true});
       const abort=new AbortController(),on=(el,name,fn)=>el.addEventListener(name,fn,{signal:abort.signal});

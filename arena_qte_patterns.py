@@ -41,6 +41,10 @@ def random_values(seed):
 def family(s):
     ident, n = s.get("base_id", ""), s.get("name", "").lower()
     branch, cls = s.get("branch", ""), s.get("class_id")
+    if ident.startswith('casino_') or cls=='gambler':
+        return ('casino_dice' if ident=='mastery_gambler' else
+                'casino_jackpot' if ident=='casino_deposit' and s.get('name','').startswith('777') else
+                'casino_slots' if ident=='casino_deposit' else 'casino_roulette' if ident=='casino_all_in' else 'casino_cards')
 
     def contains(*words):
         return any(word in n for word in words)
@@ -155,6 +159,7 @@ def family(s):
 
 
 STYLES = dict(
+    casino_cards='bar',casino_roulette='orbit',casino_slots='scan',casino_dice='bar',casino_jackpot='scan',
     slash="arc",
     thrust="bar",
     impact="pulse",
@@ -201,6 +206,7 @@ def profile(skill):
         kit=skill.get("base_id", "").startswith("kit_"),
         moon=skill.get("base_id") == "arch_hunter_moon",
         hunterShot=skill.get("base_id") == "hunter_shot",
+        casinoJackpot=skill.get('name','').startswith('777'),
         chaplain=(int(skill['base_id'][10]) if skill.get('base_id', '').startswith('chaplain_p') else 0),
         phase=next(r) * TAU,
         polarity=-1 if next(r) < 0.5 else 1,
@@ -307,6 +313,7 @@ def attack_frame(s):
 
 
 def duration(challenge):
+    if challenge.get('casino_mode'): return 30
     return (
         6.8 + challenge.get("defense_preparation", 0)
         if challenge["kind"] == "defense"
@@ -318,6 +325,9 @@ def duration(challenge):
 
 def defense(p, stats, seed, enabled=None, preparation=1):
     d, r = difficulty(stats), random_values(seed ^ p["seed"])
+    if p.get('casinoJackpot'):
+        d['speed']*=1.10
+        d['warning']=max(.30,d['warning']*.94)
     if p["kit"]:
         d["warning"] *= 0.92
         d["speed"] *= 1.08
@@ -359,6 +369,8 @@ def defense(p, stats, seed, enabled=None, preparation=1):
     )
     if p['skill'].get('base_id') == 'chaplain_p4_1':
         count = 4
+    if p['kind']=='casino_jackpot':count=6
+    if p['kind']=='casino_dice':count=4
     if p["basic"]:
         d["warning"] = max(0.66, d["warning"])
         d["size"] = 24 + 8 * d["intensity"]
@@ -401,6 +413,8 @@ def defense(p, stats, seed, enabled=None, preparation=1):
         )
         for i in range(count)
     ]
+    if p['kind']=='casino_jackpot':
+        for i,event in enumerate(events):event['at']=preparation+.18+i*4.1/5
     return dict(
         p=p,
         d=d,
@@ -503,7 +517,10 @@ def prepare(s, e):
         beam(cx - dx, cy - dy, cx + dx, cy + dy, width, delay)
 
     k = p["kind"]
-    if p.get('chaplain', 0) >= 2:
+    if k.startswith('casino_'):
+        from arena_casino_qte import prepare as casino_prepare
+        casino_prepare(s,e,add,beam,circle,bullet)
+    elif p.get('chaplain', 0) >= 2:
         from arena_chaplain_qte import prepare as chaplain_prepare
         chaplain_prepare(s, e, add, beam, circle, bullet)
     elif k == "slash":

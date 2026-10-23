@@ -158,12 +158,11 @@ class WhalerTests(unittest.TestCase):
         fever = next(
             e for e in s["sides"]["b"]["effects"] if e["kind"] == "plague_fever"
         )
-        self.assertEqual((fever["value"], fever["duration"]), (3, 3))
+        self.assertEqual((fever["value"], fever["duration"]), (4, 3))
         s["sides"]["b"]["resource"] = 50
         resolve_skill(s, "b", "mana_focus", rng=FixedRoll())
-        self.assertFalse(
-            any(e["kind"].startswith("plague_") for e in s["sides"]["b"]["effects"])
-        )
+        self.assertFalse(any(e['kind'] == 'plague_spores' for e in s['sides']['b']['effects']))
+        self.assertTrue(any(e['kind'] == 'plague_fever' for e in s['sides']['b']['effects']))
 
     def test_healing_removes_one_spore_and_cleanse_removes_both(self):
         from arena_epic import cleanse_one

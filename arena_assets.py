@@ -20,6 +20,9 @@ def render_arena_index(root: Path) -> str:
         "qte-input.css",
         "qte-unique/engine",
         "qte-view",
+        "qte-casino-view",
+        "qte-casino-chance",
+        "qte-casino-chance.css",
         "qte-block/engine",
         "qte-block-view",
     ):
@@ -42,6 +45,9 @@ def render_arena_index(root: Path) -> str:
             'src="/static/qte-engine.js"', f'src="/static/qte-engine.js?v={version}"'
         )
         .replace('src="/static/qte-view.js"', f'src="/static/qte-view.js?v={version}"')
+        .replace('src="/static/qte-casino-view.js"', f'src="/static/qte-casino-view.js?v={version}"')
+        .replace('src="/static/qte-casino-chance.js"', f'src="/static/qte-casino-chance.js?v={version}"')
+        .replace('href="/static/qte-casino-chance.css"', f'href="/static/qte-casino-chance.css?v={version}"')
         .replace('src="/qte-lab/block/engine.js"', f'src="/qte-lab/block/engine.js?v={version}"')
         .replace('src="/static/qte-block-view.js"', f'src="/static/qte-block-view.js?v={version}"')
         .replace('src="/qte-lab/engine.js"', f'src="/qte-lab/engine.js?v={version}"')

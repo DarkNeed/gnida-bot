@@ -16,6 +16,11 @@
   function hash(value){let n=2166136261;for(const c of String(value)){n=Math.imul(n^c.charCodeAt(0),16777619);}return n>>>0;}
   function rng(seed){let n=seed>>>0;return()=>{n=(Math.imul(n,1664525)+1013904223)>>>0;return n/4294967296;};}
   const FAMILIES={
+    casino_cards:['Краплёная колода','#e9c17a','Карты идут веерами с двух сторон. Не двигайся всё время в одном направлении.','bar'],
+    casino_roulette:['Рулетка ва-банк','#e2ad88','Выйди через отмеченный разрыв кольца. Берегись монеты от крупье.','orbit'],
+    casino_slots:['Три барабана · 777','#f4d784','Смещайся в проход барабана; после него идёт тяжёлая монета джекпота.','scan'],
+    casino_dice:['Грани вероятности','#b7dbcc','Точки кубика становятся опасными лунками. Читай грань, затем уходи от летящей кости.','bar'],
+    casino_jackpot:['777 · банк сорван','#ffe0a0','Вертикальный проход → горизонтальный. Сразу покидай середину прохода: его перечёркивает золотой луч.','scan'],
     slash:['Рубящие дуги','#f0a88c','Уходи поперёк отмеченного разреза. Следующий клинок меняет угол.','arc'],
     thrust:['Выпады','#d5dae4','Уйди с линии выпада до рывка; острие фиксирует цель заранее.','bar'],
     impact:['Удары и ударные волны','#e5b077','Выйди из области удара, затем пропусти волну через разрыв.','pulse'],
@@ -45,6 +50,7 @@
     tiger:['Поступь тигробоя','#e8b786','Шесть разрезов: горизонталь, вертикаль, диагонали и финальная пара.','arc'],
   };
   function family(skill){
+    if((skill.base_id||'').startsWith('casino_')||skill.class_id==='gambler')return skill.base_id==='mastery_gambler'?'casino_dice':skill.base_id==='casino_deposit'?((skill.name||'').startsWith('777')?'casino_jackpot':'casino_slots'):skill.base_id==='casino_all_in'?'casino_roulette':'casino_cards';
     if((skill.base_id||'').startsWith('chaplain_p'))return ['coins','script','holy'][Number(skill.base_id.split('_').at(-1))];
     if(skill.base_id==='chaplain_hand')return 'coins';
     if(skill.base_id==='chaplain_chime')return 'holy';
@@ -97,9 +103,9 @@
     const basic=skill.base_id==='bum_punch'&&skill.name==='Удар бомжа';
     return {id,seed,kind,title:basic?'Простой удар':entry[0],color:entry[1],hint:basic?'Три коротких замаха без ударных волн. Выйди из небольшого отмеченного круга.':entry[2],style:entry[3],skill,basic,
       strikes:clamp(skill.strikes||1,1,6),kit:(skill.base_id||'').startsWith('kit_'),
-      moon:skill.base_id==='arch_hunter_moon',hunterShot:skill.base_id==='hunter_shot',chaplain,phase:r()*TAU,polarity:r()<.5?-1:1,
+      moon:skill.base_id==='arch_hunter_moon',hunterShot:skill.base_id==='hunter_shot',casinoJackpot:(skill.name||'').startsWith('777'),chaplain,phase:r()*TAU,polarity:r()<.5?-1:1,
       speed:.94+r()*.18,spread:.78+r()*.34,interval:.8+r()*.4,drift:r()>.6,
-      attackHint:'Секунда подготовки и короткий сигнал перед ударом. Одно нажатие на каждый удар: неточное нажатие засчитывается как промах без повторной попытки.'};
+      attackHint:kind==='casino_cards'?'Брось карту в золотое окно кассы. Пунктир показывает место приземления. Одна карта — одна попытка.':kind==='casino_roulette'?'Останови шарик в золотом секторе рулетки. Одна ставка, без повторного запуска.':['casino_slots','casino_jackpot'].includes(kind)?'Останови каждый барабан на семёрке: по одному нажатию на барабан. Время семёрки зависит от точности.':kind==='casino_dice'?'Брось кубик в золотой лоток. Призрачная кость показывает место приземления; промах перебросить нельзя.':'Секунда подготовки и короткий сигнал перед ударом. Одно нажатие на каждый удар: неточное нажатие засчитывается как промах без повторной попытки.'};
   }
   function difficulty(stats){
     const attack=clamp((stats.accuracy-stats.enemyEvasion)/100,-1,1),pressure=clamp((stats.enemyAccuracy-stats.evasion)/100,-1,1);
@@ -141,17 +147,19 @@
   }
   function hit(s){if(s.ended)return null;const f=attackFrame(s);if(!f.canHit)return null;
     const i=f.index,ok=Math.abs(f.cursor-f.center)<=f.width/2;s.attempts[i]++;s.lastAttempt[i]=s.time;
+    if(s.p.kind.startsWith('casino_'))(s.casinoThrows??=[]).push({index:i,time:s.time,cursor:f.cursor,center:f.center,width:f.width,ok});
     if(ok){
       s.results[i]=true;const force={...impact(s.p,i),weight:attackWeights(s.p)[i]},raw=attackDamage(s,i),damage=Math.min(s.hp,raw);
       s.hp-=damage;s.damage+=damage;s.contacts.push({id:'strike:'+i,time:s.time,damage,raw,...force,x:360,y:160});
     }else s.results[i]=false;
-    if(s.hp<=0&&s.endOnDeath||i===s.results.length-1&&s.results[i]!==null)s.ended=true;return ok;}
+    if(s.hp<=0&&s.endOnDeath||!s.p.kind.startsWith('casino_')&&i===s.results.length-1&&s.results[i]!==null)s.ended=true;return ok;}
   function attackStep(s,dt){if(s.ended)return;s.time=Math.min(s.duration,s.time+dt);let end=s.preparation;
     s.slots.forEach((slot,i)=>{end+=slot;if(s.time>=end-1e-8&&s.results[i]===null)s.results[i]=false;});
     if(s.time>=s.duration-1e-8)s.ended=true;}
   function attackResult(s){return {hits:s.results.filter(Boolean).length,total:s.results.length,mask:s.results.map(Boolean),damage:s.damage,hp:s.hp};}
   function defenseDifficulty(p,stats){
     const d=difficulty(stats);
+    if(p.casinoJackpot){d.speed*=1.10;d.warning=Math.max(.30,d.warning*.94);}
     if(p.kit){d.warning*=.92;d.speed*=1.08;}
     if(p.skill.class_id==='thumb'){d.speed*=1.16;d.warning=Math.max(.30,d.warning*.94);d.beamScale*=1.12;}
     if(p.moon||p.hunterShot){d.speed*=1.12;d.warning=Math.max(.32,d.warning*.96);}
@@ -163,12 +171,12 @@
   }
   function defense(p,stats,seed=1,options={}){
     const d=defenseDifficulty(p,stats),r=rng(seed^p.seed);
-    const count=p.skill.base_id==='chaplain_p4_1'?4:p.basic?3:p.kind==='tiger'?12:p.kind==='train'?6:Math.max(p.strikes,4+(p.seed%3)+(d.intensity>.75?1:d.intensity<.25?-1:0)+(p.skill.class_id==='thumb'?1:0));
+    const count=p.kind==='casino_jackpot'?6:p.kind==='casino_dice'?4:p.skill.base_id==='chaplain_p4_1'?4:p.basic?3:p.kind==='tiger'?12:p.kind==='train'?6:Math.max(p.strikes,4+(p.seed%3)+(d.intensity>.75?1:d.intensity<.25?-1:0)+(p.skill.class_id==='thumb'?1:0));
     const staticOnly=p.skill.base_id!=='mother_joke'&&['slash','thrust','grapple','hack','script','edict','holy','lightning','portal','coins','tiger'].includes(p.kind);
     const span=(p.basic?4.8:staticOnly?5.1:p.kind==='fire'?4.3:p.kind==='impact'?4:3.5)*(.94+(p.interval-.8)*.15)*(p.kit?.96:1)*(p.basic?1:1-.08*d.intensity);
     const model=damageModel(options),preparation=clamp(options.preparation??1,0,3);
     return {kind:'defense',p,d,...model,preparation,activeDuration:6.8,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:preparation+6.8,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
-      events:Array.from({length:count},(_,i)=>({at:preparation+.18+i*span/Math.max(1,count-1),strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/count)),index:i,
+      events:Array.from({length:count},(_,i)=>({at:preparation+.18+i*(p.kind==='casino_jackpot'?4.1:span)/Math.max(1,count-1),strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/count)),index:i,
         jitter:r(),angle:r()*TAU,ready:false})),received:[]};
   }
   function line(ax,ay,bx,by,r,extra={}){return {type:'line',ax,ay,bx,by,r,...extra};}
@@ -197,7 +205,30 @@
       fan(bx,by,Math.atan2(ty-by,tx-bx),n,spread,delay,motif);};
     const cross=(radius=17,delay=0)=>{beam(x,0,x,H,radius,delay);beam(0,y,W,y,radius,delay+.12);};
     const diagonal=(theta,width=18,delay=0)=>{const dx=Math.cos(theta)*900,dy=Math.sin(theta)*900,cx=x+(tx-x)*.6,cy=y+(ty-y)*.6;beam(cx-dx,cy-dy,cx+dx,cy+dy,width,delay);};
-    if(p.chaplain>=2){
+    if(p.kind==='casino_cards'){
+      let bx=odd?35:685,by=40+e.jitter*240,theta=Math.atan2(y-by,x-bx);
+      for(let j=-2;j<=2;j++){const a=theta+j*(.18-.04*d.intensity);bullet(bx,by,Math.cos(a)*d.speed*.92,Math.sin(a)*d.speed*.92,j===0?6:4,0,{motif:'casino_card',tier:j===0?'normal':'minor',weight:j===0?.30:.08});}
+      if(odd){bx=720-bx;theta=Math.atan2(y-160,x-bx);bullet(bx,160,Math.cos(theta)*d.speed*.85,Math.sin(theta)*d.speed*.85,6,.24,{motif:'casino_card',weight:.30});}
+    }else if(p.kind==='casino_roulette'){
+      add({type:'ring',x,y,r:22,speed:250+85*d.intensity,gap:angle,gapWidth:1.8-.35*d.intensity,thickness:9,motif:'casino_roulette',weight:.6,tier:'heavy'},0,1.25);
+      const bx=odd?35:685,a=Math.atan2(y-160,x-bx);bullet(bx,160,Math.cos(a)*d.speed*.78,Math.sin(a)*d.speed*.78,5,.38,{motif:'casino_coin',weight:.12,tier:'minor'});
+    }else if(p.kind==='casino_slots'){
+      const half=72-18*d.intensity,gap=clamp(y+(odd?-1:1)*48,half+12,H-half-12);
+      for(const [top,height] of [[0,gap-half],[gap+half,H-gap-half]])add({type:'rect',x:0,y:top,w:W,h:height,label:'7',motif:'casino_reel',weight:.35,tier:'normal'},0,.18);
+      const bx=odd?35:685,theta=Math.atan2(gap-160,x-bx);
+      for(const j of [-1,0,1]){const a=theta+j*.19;bullet(bx,160,Math.cos(a)*d.speed*.90,Math.sin(a)*d.speed*.90,j===0?8:4,.30,{motif:'casino_coin',weight:j===0?(i===s.events.length-1?.75:.3):.08,tier:j===0?'heavy':'minor'});}
+    }else if(p.kind==='casino_dice'){
+      const face=2+i%5,pips={2:[[-1,-1],[1,1]],3:[[-1,-1],[0,0],[1,1]],4:[[-1,-1],[1,-1],[-1,1],[1,1]],5:[[-1,-1],[1,-1],[0,0],[-1,1],[1,1]]}[face];
+      for(const [dx,dy] of pips)add({type:'circle',x:x+dx*38,y:y+dy*38,r:18,motif:'casino_pip',face,weight:.22,tier:'normal'},0,.28);
+      const bx=odd?40:680,by=odd?40:280,a=Math.atan2(y-by,x-bx);bullet(bx,by,Math.cos(a)*d.speed*.80,Math.sin(a)*d.speed*.80,12,.42,{motif:'casino_die',face,weight:.45,tier:'heavy'});
+    }else if(p.kind==='casino_jackpot'){
+      const vertical=i%2===0,half=58-8*d.intensity,axis=vertical?W:H,at=vertical?x:y,gap=clamp(at+(i%4<2?-1:1)*50,half+12,axis-half-12);
+      for(const [lo,length] of [[0,gap-half],[gap+half,axis-gap-half]])add({type:'rect',x:vertical?lo:0,y:vertical?0:lo,w:vertical?length:W,h:vertical?H:length,label:'7',motif:'casino_reel',weight:.35,tier:'normal'},0,.16);
+      if(vertical)beam(gap,0,gap,H,9,.32,.14);else beam(0,gap,W,gap,9,.32,.14);
+      const bx=odd?32:688,by=i%3?48:272,a=Math.atan2(y-by,x-bx);
+      for(const j of [-1,0,1]){const theta=a+j*.17;bullet(bx,by,Math.cos(theta)*d.speed,Math.sin(theta)*d.speed,6,.49,{motif:'casino_coin',weight:j===0?.25:.10,tier:j===0?'normal':'minor'});}
+      if(i===5)add({type:'ring',x,y,r:22,speed:290,gap:angle,gapWidth:1.6,thickness:10,motif:'casino_jackpot',weight:.8,tier:'critical'},.50,1.0);
+    }else if(p.chaplain>=2){
       const phase=p.chaplain,move=Number(id.split('_').at(-1)),old=[...(s.history||[])].reverse().find(v=>v.t<=s.time-.6)||{x,y};
       const hand=(theta,length,turn,delay=0,duration=.36)=>add(line(600,155,600+Math.cos(theta)*length,155+Math.sin(theta)*length,8*d.beamScale,{motif:'clock_hand',clockTurn:turn}),delay,duration);
       if(phase===2&&move===0){

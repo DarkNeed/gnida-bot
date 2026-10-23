@@ -109,6 +109,11 @@ def challenge(kind, attacker, target, skill, actor):
                               or skill.skill_id in {'whaler_punishment','whaler_rot'}):
         result['stats']['controlScale'] = .8
         result['stats']['extraWarning'] = .15
+    if kind == 'attack':
+        from arena_casino_chance import mode
+        casino_mode = mode(descriptor)
+        if casino_mode:
+            result.update(casino_mode=casino_mode, _casino_chance_seed=secrets.token_hex(32))
     return result
 
 
@@ -134,6 +139,11 @@ def damage_preview(attacker, target, skill):
         winner=None,
     )
     try:
+        from arena_casino_chance import mode
+        casino_mode = mode(dict(base_id=skill.skill_id,name=skill.name))
+        forecast = dict(attack=[True] * strike_count(skill), luck_evasion=False)
+        if casino_mode:
+            forecast['pattern_attack'] = dict(casino=dict(mode=casino_mode,factor=1,face=3,sector=1,color='red',reels=[7,1,2]))
         event = resolve_skill(
             state,
             "a",
@@ -142,7 +152,7 @@ def damage_preview(attacker, target, skill):
             random.Random(0),
             advance_turn=False,
             tick_actor_bleed=False,
-            qte=dict(attack=[True] * strike_count(skill), luck_evasion=False),
+            qte=forecast,
         )
         return event["damage"]
     except ValueError:
@@ -242,7 +252,9 @@ class ArenaQteMixin:
         now = time.time()
         stage = flow["stages"][0]
         if new_stage:
-            if stage.get("version") == 3:
+            if stage.get('casino_mode'):
+                duration = 30
+            elif stage.get("version") == 3:
                 duration = 9.5
             elif stage.get("version") == 2:
                 from arena_qte_patterns import duration as pattern_duration
@@ -383,6 +395,11 @@ class ArenaQteMixin:
             flow["result"]["pattern_" + key] = result
             if stage.get("subskills"):
                 flow["result"]["guard_subskills"] = stage["subskills"]
+        if stage.get('encounter_enemy') and stage['kind'] == 'defense':
+            guard = dict(dodge=mask)
+            if isinstance(result, dict):
+                guard['pattern_dodge'] = result
+            flow['result'].setdefault('encounter_guards', {})[stage['encounter_enemy']] = guard
         flow["stages"].pop(0)
         if flow["scope"] == "battle" and stage["kind"] == "attack" and not any(mask):
             flow["stages"] = [s for s in flow["stages"] if s["kind"] != "defense"]
@@ -393,6 +410,8 @@ class ArenaQteMixin:
                     and following["kind"] == "defense"
                 ):
                     following["enabled_strikes"] = mask
+                    if stage.get('casino_result'):
+                        following['damage_base'] = round(following['damage_base'] * stage['casino_result']['factor'])
         if flow["stages"]:
             self._qte_save_locked(flow, True)
             return
@@ -431,7 +450,8 @@ class ArenaQteMixin:
             )
             result = dict(flow["result"], guard_skill=flow.get("guard_skill"))
             self._arena_raid_action_locked(
-                flow["token"], flow["owner"], flow["turn"], flow["skill"], _qte=result
+                flow["token"], flow["owner"], flow["turn"], flow["skill"], _qte=result,
+                target=flow.get('target'),
             )
 
     def _qte_expire_locked(self, scope, token=None):
@@ -458,7 +478,8 @@ class ArenaQteMixin:
             if not flow or not self._qte_valid_locked(flow):
                 return None
             stage = flow["stages"][0]
-            public = deepcopy(stage)
+            from arena_casino_chance import public as casino_public
+            public = casino_public(deepcopy(stage))
             public["server_now"] = time.time()
             return dict(
                 waiting=True,
@@ -494,7 +515,23 @@ class ArenaQteMixin:
                 raise ValueError('Транслировать можно только собственную текущую мини-игру.')
             if stage['expires'] <= time.time():
                 raise ValueError('Время мини-игры истекло.')
-            return deepcopy(stage)
+            from arena_casino_chance import public as casino_public
+            return casino_public(deepcopy(stage))
+
+    async def arena_qte_casino_roll(self, scope, token, actor, ident, choice):
+        from arena_casino_chance import commit
+        if scope not in ('battle', 'raid'): raise ValueError('Неизвестный бой.')
+        async with self._lock:
+            with self.connection:
+                self._qte_expire_locked(scope, token)
+                flow = self._qte_load_locked(scope, token, actor if scope == 'raid' else 0)
+                if not flow or not self._qte_valid_locked(flow): raise ValueError('Мини-игра уже завершена.')
+                stage = flow['stages'][0]
+                if stage['actor'] != actor or stage['id'] != ident or not stage.get('casino_mode'):
+                    raise ValueError('Это не твой текущий бросок.')
+                outcome = commit(stage, choice)
+                self._qte_save_locked(flow)
+                return outcome
 
     async def arena_interactive_action(
         self, token, actor, revision, action, skill="", proof=None, challenge_id=None
@@ -542,7 +579,7 @@ class ArenaQteMixin:
             return self._arena_row_locked(token)
 
     async def arena_interactive_raid(
-        self, token, actor, round_number, skill="", proof=None, challenge_id=None
+        self, token, actor, round_number, skill="", proof=None, challenge_id=None, target=None
     ):
         from arena_engine import validate_skill
         from arena_raid_engine import pair_state, BOSS_SKILLS
@@ -585,6 +622,9 @@ class ArenaQteMixin:
                     stages = []
                     fighter = player["fighter"]
                     boss = data["boss"]
+                    if data.get('kind') == 'encounter':
+                        from arena_encounters import target_enemy
+                        target, boss = target_enemy(data, target)
                     _, skills = self._fighter_catalog_locked()
                     if isinstance(skill, str) and skill.startswith('chaplain_anchor:'):
                         from arena_chaplain import validate_anchor
@@ -601,17 +641,16 @@ class ArenaQteMixin:
                             stages.append(
                                 challenge("attack", fighter, boss, used, actor)
                             )
-                        intent = data["intent"]
-                        incoming = BOSS_SKILLS.get(intent.get("skill"))
-                        if (
-                            incoming
-                            and incoming.hostile
-                            and str(actor)
-                            in [str(k) for k in intent.get("targets", [])]
-                        ):
-                            stages.append(
-                                challenge("defense", boss, fighter, incoming, actor)
-                            )
+                        intents = data.get('enemy_intents', {}) if data.get('kind') == 'encounter' else {'boss': data['intent']}
+                        for enemy_key, intent in intents.items():
+                            incoming = BOSS_SKILLS.get(intent.get('skill'))
+                            if incoming and incoming.hostile and str(actor) in [str(k) for k in intent.get('targets', [])]:
+                                attacker = data['enemies'][enemy_key] if data.get('kind') == 'encounter' else boss
+                                defense = challenge('defense', attacker, fighter, incoming, actor)
+                                if data.get('kind') == 'encounter':
+                                    defense['encounter_enemy'] = enemy_key
+                                    defense['name'] = attacker['name'] + ' · ' + incoming.name
+                                stages.append(defense)
                     if stages:
                         flow = dict(
                             scope="raid",
@@ -623,10 +662,11 @@ class ArenaQteMixin:
                             stages=stages,
                             result={},
                             guard_skill=data["intent"].get("skill"),
+                            target=target,
                         )
                         self._qte_save_locked(flow, True)
                     else:
                         self._arena_raid_action_locked(
-                            token, actor, round_number, skill
+                            token, actor, round_number, skill, target=target
                         )
             return self._raid_row_locked(token)

@@ -4,7 +4,7 @@
   const E=window.QTEUnique,$=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d');
   const catalog=JSON.parse($('catalog').textContent),profiles=catalog.map(E.profile),byId=new Map(profiles.map(p=>[p.id,p]));
   const statIds=['accuracy','evasion','enemy-accuracy','enemy-evasion'];
-  let selected=profiles.find(p=>p.skill.base_id==='tigerslayer_flurry')||profiles[0],filtered=[],mode='defense',sim=null,paused=false,lastFrame=0,record=null,attempt=0;
+  let selected=profiles.find(p=>p.skill.base_id==='tigerslayer_flurry')||profiles[0],filtered=[],mode=new URLSearchParams(location.search).get('mode')==='attack'?'attack':'defense',sim=null,paused=false,lastFrame=0,record=null,attempt=0;
   let keys=new Set(),pointers=new Map();
   const touch=window.QTETouch.attach({canvas,stick:$('stick'),getPlayer:()=>sim.player,
     isDefense:()=>mode==='defense',enabled:()=>!!sim&&!paused,onTap:hit,
@@ -43,6 +43,7 @@
     $('pattern-name').textContent=mode==='defense'?selected.title:'Попадание · '+selected.title;
     $('strike-count').textContent=selected.strikes+' '+(selected.strikes===1?'удар':selected.strikes<5?'удара':'ударов');
     $('instruction').textContent=mode==='defense'?selected.hint:selected.attackHint;
+    $('hit').textContent=selected.kind==='casino_roulette'?'Стоп · шарик':selected.kind==='casino_cards'?'Бросить карту':['casino_slots','casino_jackpot'].includes(selected.kind)?'Остановить барабан':selected.kind==='casino_dice'?'Бросить кубик':'Удар · пробел / касание';
     const d=E.defenseDifficulty(selected,stats());$('zone').textContent=Math.round(d.zone*100)+'% шкалы';$('warning').textContent=d.warning.toFixed(2)+' с';$('hits').textContent=selected.strikes;
     statIds.forEach(id=>$(id+'-value').textContent=$(id).value+'%');
     document.querySelectorAll('[data-example]').forEach(b=>b.classList.toggle('active',b.dataset.example===selected.skill.base_id));
@@ -75,6 +76,7 @@
   function mark(x,y,r,color){ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,E.TAU||Math.PI*2);ctx.fill();}
   function heart(x,y,size,color){ctx.save();ctx.translate(x,y);ctx.scale(size/12,size/12);ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(0,5);ctx.bezierCurveTo(-16,-3,-6,-15,0,-6);ctx.bezierCurveTo(6,-15,16,-3,0,5);ctx.fill();ctx.restore();}
   function drawAttack(s){
+    if(window.QTECasinoView?.drawAttack(ctx,canvas,s))return;
     background();const f=E.attackFrame(s),style=selected.style,gold='#e8c17c',white='#e9f4fb';
     if(f.phase==='ready'){
       text('ПРИГОТОВЬСЯ',360,116,gold,25,'center');text(f.remaining.toFixed(1)+' с',360,164,white,28,'center');
@@ -124,6 +126,8 @@
         const distance=Math.hypot(h.vx,h.vy)||1;
         ctx.globalAlpha=.3;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(h.x,h.y);ctx.lineTo(h.x+h.vx/distance*900,h.y+h.vy/distance*900);ctx.stroke();
       }else if(g.motif==='heart')heart(g.x,g.y,g.r*2,color);
+      else if(g.motif==='casino_card'){ctx.save();ctx.translate(g.x,g.y);ctx.rotate(Math.atan2(g.vy,g.vx)+Math.PI/2);ctx.fillStyle=color;ctx.fillRect(-g.r,-g.r*1.5,g.r*2,g.r*3);ctx.fillStyle='#13251d';ctx.fillRect(-2,-2,4,4);ctx.restore();}
+      else if(g.motif==='casino_coin'){arc(g.x,g.y,g.r,0,Math.PI*2,color,3);mark(g.x,g.y,2,color);}
       else if(g.motif==='star'){
         ctx.translate(g.x,g.y);ctx.rotate(t*3);ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-10,0);ctx.lineTo(10,0);ctx.moveTo(0,-10);ctx.lineTo(0,10);ctx.stroke();
       }else if(g.motif==='bone'||g.motif==='ice'||g.motif==='train'){
@@ -151,6 +155,7 @@
     ctx.restore();
   }
   function drawDefense(s){
+    if(s.p.kind.startsWith('casino_')&&window.QTEView){window.QTEView.draw(ctx,canvas,s);return;}
     background();
     if(s.time<s.preparation){
       const p=s.player;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#92e2ce';ctx.fillRect(-5,-5,10,10);ctx.restore();
@@ -164,6 +169,9 @@
   }
   function begin(){
     if(sim||!filtered.length)return;
+    if(mode==='attack'&&['casino_roulette','casino_dice','casino_jackpot'].includes(selected.kind)){
+      location.href='/qte-lab/casino/?skill='+encodeURIComponent(selected.id);return;
+    }
     record=null;clearInput();paused=document.hidden;
     sim=mode==='defense'?E.defense(selected,stats(),seed(),model()):E.attack(selected,stats(),seed(),model());lastFrame=0;
     labels();controls();health(sim);feedback(mode==='defense'?'Секунда подготовки, затем атака. Золотые угрозы сильнее мелких.':'Подготовься. На каждый удар — одно нажатие без повторной попытки.');

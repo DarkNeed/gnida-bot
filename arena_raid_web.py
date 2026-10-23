@@ -13,6 +13,8 @@ from arena_mastery import view as mastery_view
 from arena_raid_engine import BOSSES, BOSS_SKILLS, pair_state, raid_boss_sprite
 from arena_mirror_effects import gift_cost
 from arena_pets import pet_cost
+from arena_encounters import MOBS
+from arena_casino import public_state as casino_public_state
 
 
 async def raid_view(db, row, actor):
@@ -20,16 +22,17 @@ async def raid_view(db, row, actor):
     data = json.loads(row["data_json"]) if row["data_json"] else None
     boss_info = BOSSES.get(row.get("boss_id", "iron"), BOSSES["iron"])
 
-    async def decorate(side, fighter, boss=False, character_slot=1):
+    async def decorate(side, fighter, boss=False, character_slot=1, mob=False):
+        mob_info = MOBS.get(side.get('mob_id')) if mob else None
         cls = classes.get(side["class_id"], classes["ragamuffin"])
         user = await db.get_user(row["chat_id"], fighter) if fighter else None
         side.update(
             name=(
-                boss_info["name"]
+                side['name'] if mob else boss_info["name"]
                 if boss
                 else user["display_name"] if user else str(fighter)
             ),
-            class_name="Рейдовый босс" if boss else class_title(side, cls.name),
+            class_name=mob_info['role'] if mob_info else 'Рейдовый босс' if boss else class_title(side, cls.name),
             class_avatar_url=choice_avatar(
                 side["class_id"], side.get("archclass_id", ""), 20 if side.get('level', 0) >= 20 and side.get('archclass_stage', 20) >= 20 else 10
             ),
@@ -56,6 +59,8 @@ async def raid_view(db, row, actor):
             side.update(await db.arena_character_sprite_info(fighter,character_slot))
         elif boss_info.get("sprite"):
             side["class_avatar_url"] = raid_boss_sprite(row.get('boss_id', 'iron'), data.get('phase', 1))
+        if mob_info:
+            side['class_avatar_url'] = mob_info['sprite']
         if boss and boss_info.get("ally_sprite"):
             side["resource_name"] = "Заряд инатора"
         side["skill_details"] = []
@@ -123,7 +128,12 @@ async def raid_view(db, row, actor):
         data.pop('_chaplain_snapshot', None)
         data.pop('_chaplain_results', None)
         data.pop('_chaplain_previous', None)
-        await decorate(data["boss"], 0, True)
+        if data.get('kind') == 'encounter':
+            for enemy in data['enemies'].values():
+                await decorate(enemy, 0, True, mob=True)
+            data['boss'] = next(iter(data['enemies'].values()))
+        else:
+            await decorate(data['boss'], 0, True)
         for key, player in data["players"].items():
             player.pop('qte_result',None)
             await decorate(player["fighter"], player["fighter_id"],character_slot=player.get('character_slot',1))
@@ -131,15 +141,23 @@ async def raid_view(db, row, actor):
             # Other players see only readiness, not the selected ability.
             if player["actor_id"] != actor:
                 player["selected"] = None
+                player.pop('selected_target', None)
     choices = []
     if row["status"] == "lobby":
         choices.append(
             dict(fighter_id=actor, personal=True, name="Мой личный персонаж")
         )
+    config = json.loads(row['encounter_json']) if row.get('encounter_json') else None
+    master = await db.get_user(row['chat_id'], row['creator_id']) if config else None
     return dict(
         token=row["token"],
         chat_id=row["chat_id"],
         creator_id=row["creator_id"],
+        kind='encounter' if config else 'raid',
+        master_name=master['display_name'] if master else str(row['creator_id']),
+        is_master=bool(config and actor == row['creator_id']),
+        encounter_roster=([dict(id=mob, name=MOBS[mob]['name']) for mob in config['roster']] if config else []),
+        rewards_enabled=not bool(config),
         actor_id=actor,
         qte=await db.arena_qte_view('raid',row['token'],actor),
         qte_watch=await db.arena_qte_watchables('raid',row['token'],actor),
@@ -171,6 +189,6 @@ async def raid_view(db, row, actor):
         ),
         participants=participants,
         choices=choices,
-        reward_status=(await db.arena_raid_reward_status(actor))[row.get("boss_id", "iron")],
-        data=data,
+        reward_status=dict(disabled=True) if config else (await db.arena_raid_reward_status(actor))[row.get('boss_id', 'iron')],
+        data=casino_public_state(data),
     )

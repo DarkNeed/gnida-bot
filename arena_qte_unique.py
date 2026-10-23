@@ -127,6 +127,14 @@ def review_catalog():
                 for skill in BUILTIN_SKILLS.values():
                     if skill.class_id != cls or skill.unlock_level > level:
                         continue
+                    if cls=='gambler':
+                        from arena_casino import variant as casino_variant
+                        from arena_archprogress import branch_skill_allowed
+                        if branch_skill_allowed(skill,branch,level):
+                            add(casino_variant(skill,actor),title+f' · {level}',branch)
+                            if stage==20:
+                                add(casino_variant(skill,dict(actor,casino_state=dict(sevens=3,chips=7))),title+' · 777',branch)
+                        continue
                     entry = arch_rule(skill, actor)
                     if entry and level >= entry.get("min_level", 10):
                         add(
@@ -169,6 +177,7 @@ def add_unique_qte_routes(app, root):
     async def page(request):
         version = hashlib.sha256(
             (root / "qte-input").read_bytes()
+            + (root / 'qte-casino-view').read_bytes() + (root / 'qte-view').read_bytes()
             + (root / "qte-input.css").read_bytes()
             + b"".join(
                 (folder / name).read_bytes()
@@ -209,6 +218,7 @@ def add_block_qte_routes(app, root):
     async def page(request):
         version = hashlib.sha256(
             (root / "qte-input").read_bytes()
+            + (root / 'qte-casino-view').read_bytes()
             + (root / "qte-input.css").read_bytes()
             + (root / "qte-unique" / "engine").read_bytes()
             + b"".join(

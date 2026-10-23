@@ -39,6 +39,7 @@ from arena_evolution import evolution_info
 from arena_rpg_descriptions import skill_description as rpg_skill_description
 from arena_archclasses import archclass_view, class_title, branch_options
 from arena_progression import pending_choice, choice_avatar
+from arena_casino import public_state as casino_public_state
 from arena_mastery import view as mastery_view, street_stats, variant as mastery_variant, BASE, BASE_FINAL, BRANCHES
 from arena_raid_web import raid_view
 from arena_raid_engine import BOSSES, AVAILABLE_BOSSES
@@ -267,7 +268,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
         a_character_slot=row.get('a_character_slot',1),
         b_character_slot=row.get('b_character_slot',1),
         server_time=int(time.time()),
-        state=state,
+        state=casino_public_state(state),
         names=names,
         own_side=own_side,
         consent_side=consent,
@@ -343,6 +344,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
         profile['loadout']=[k for k in profile['loadout'] if k in skills and (skills[k].class_id in enabled_classes or skills[k].class_id not in classes)]
         async with db._lock:
             class_grants = db._granted_content_locked(chat, profile["user_id"], "class")
+            secret_classes=db._arena_secret_classes_locked(actor)
         from arena_rpg import branch as rpg_branch, rpg_variant
         def profile_skill(skill):
             if rpg_branch(profile) and skill.class_id==profile['class_id']:
@@ -379,7 +381,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
             )
             for k, c in classes.items()
             if k in enabled_classes and ((k in set(VISIBLE_CLASS_ALIASES.values()) and k != "ragamuffin")
-            or k in class_grants)
+            or k in class_grants or k in secret_classes)
         ]
         stage = pending_choice(profile)
         pending_at = profile.get("progression_pending_at")
@@ -452,6 +454,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
     result['characters']=await db.arena_characters(actor)
     result["max_level"] = MAX_FIGHTER_LEVEL
     result.update(await db.arena_market_view(chat, actor))
+    result['casino']=await db.arena_casino_view(chat,actor)
     result["mirror_runs"] = mirror_runs
     result["raids"] = await db.arena_raid_list(chat, actor)
     reward_status = await db.arena_raid_reward_status(actor)
@@ -632,6 +635,15 @@ def create_arena_app(
         await read_member(row["chat_id"], request[ACTOR])
         return web.json_response(await battle_view(db, row, request[ACTOR]))
 
+    async def casino_roll(request):
+        scope, ident = request.match_info['scope'], request.match_info['token']
+        row = await (db.arena_get(ident) if scope == 'battle' else db.arena_raid_get(ident))
+        await read_member(row['chat_id'], request[ACTOR])
+        body = await request.json()
+        if not isinstance(body, dict): raise ValueError('Некорректный запрос.')
+        result = await db.arena_qte_casino_roll(scope, ident, request[ACTOR], body.get('challenge_id'), body.get('choice'))
+        return web.json_response(result)
+
     async def post_battle(request):
         row = await db.arena_get(request.match_info["token"])
         actor = request[ACTOR]
@@ -706,6 +718,7 @@ def create_arena_app(
             row = await db.arena_interactive_raid(
                 row["token"], actor, int_field(body, "round"), body.get("skill"),
                 proof=body.get('proof'),challenge_id=body.get('challenge_id') if action=='qte' else None,
+                target=body.get('target'),
             )
         else:
             personal = body.get("personal", True)
@@ -844,6 +857,9 @@ def create_arena_app(
         if action == "forge":
             notice = await db.arena_forge_action(chat, actor, body)
             return web.json_response({"notice": notice, "menu": await app_menu(chat, actor)})
+        if action == 'casino':
+            notice=await db.arena_casino_action(chat,actor,body,expected_slot)
+            return web.json_response(dict(notice=notice,menu=await app_menu(chat,actor)))
         if action == "raid_create":
             if member.user.is_bot:
                 raise ValueError("Боты не участвуют в рейдах.")
@@ -984,6 +1000,7 @@ def create_arena_app(
     app.router.add_get('/static/holdings.css',holdings_style)
     app.router.add_static("/static/", ROOT, show_index=False)
     app.router.add_get("/api/battle/{token}", get_battle)
+    app.router.add_post('/api/qte-casino/{scope:battle|raid}/{token}', casino_roll)
     app.router.add_post("/api/battle/{token}", post_battle)
     app.router.add_get("/api/raid/{token}", get_raid)
     app.router.add_post("/api/raid/{token}", post_raid)

@@ -1,0 +1,103 @@
+/* Casino-specific presentation. Hit and block outcomes remain server-replayed. */
+(()=>{
+  'use strict';
+  const TAU=Math.PI*2,gold='#f0cc83',ink='#10241e',ivory='#f4e8cf',red='#ac4654',green='#72c6a5';
+  function kit(ctx,canvas,height){
+    const font=(value,x,y,color=ivory,size=16)=>{ctx.fillStyle=color;ctx.font=`600 ${Math.max(size,Math.min(22,7200/Math.max(1,canvas.clientWidth)))}px Segoe UI,sans-serif`;ctx.textAlign='center';ctx.fillText(value,x,y);};
+    const line=(ax,ay,bx,by,c=gold,w=2)=>{ctx.strokeStyle=c;ctx.lineWidth=w;ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();};
+    const arc=(x,y,r,a,b,c=gold,w=2)=>{ctx.strokeStyle=c;ctx.lineWidth=w;ctx.beginPath();ctx.arc(x,y,Math.max(0,r),a,b);ctx.stroke();};
+    const dot=(x,y,r,c=gold)=>{ctx.fillStyle=c;ctx.beginPath();ctx.arc(x,y,r,0,TAU);ctx.fill();};
+    ctx.clearRect(0,0,720,height);ctx.fillStyle=ink;ctx.fillRect(0,0,720,height);
+    ctx.strokeStyle='#47614c';ctx.lineWidth=2;ctx.strokeRect(10,10,700,height-20);
+    return {font,line,arc,dot};
+  }
+  function die(ctx,x,y,size,face=6,rotation=0,c=ivory){
+    const pips={1:[[0,0]],2:[[-1,-1],[1,1]],3:[[-1,-1],[0,0],[1,1]],4:[[-1,-1],[1,-1],[-1,1],[1,1]],5:[[-1,-1],[1,-1],[0,0],[-1,1],[1,1]],6:[[-1,-1],[1,-1],[-1,0],[1,0],[-1,1],[1,1]]};
+    ctx.save();ctx.translate(x,y);ctx.rotate(rotation);ctx.fillStyle=c;ctx.fillRect(-size/2,-size/2,size,size);ctx.strokeStyle=gold;ctx.lineWidth=2;ctx.strokeRect(-size/2,-size/2,size,size);
+    ctx.fillStyle=ink;for(const [dx,dy] of pips[face]||pips[6]){ctx.beginPath();ctx.arc(dx*size*.27,dy*size*.27,Math.max(1.5,size*.075),0,TAU);ctx.fill();}ctx.restore();
+  }
+  function card(ctx,x,y,size,rotation=0){
+    ctx.save();ctx.translate(x,y);ctx.rotate(rotation);ctx.fillStyle=ivory;ctx.fillRect(-size*.36,-size*.5,size*.72,size);ctx.strokeStyle=gold;ctx.strokeRect(-size*.36,-size*.5,size*.72,size);
+    ctx.fillStyle=red;ctx.font=`bold ${size*.55}px Georgia`;ctx.textAlign='center';ctx.fillText('A',0,size*.15);ctx.restore();
+  }
+  function wheel(ctx,cx,cy,r,k){
+    for(let j=0;j<16;j++){const a=j*TAU/16;ctx.fillStyle=j===0?'#296c50':j%2?red:'#18211e';ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,a,a+TAU/16);ctx.closePath();ctx.fill();}
+    k.arc(cx,cy,r,0,TAU,gold,3);k.arc(cx,cy,r*.66,0,TAU,gold,1);
+  }
+  function drawAttack(ctx,canvas,s){
+    if(!s.p.kind.startsWith('casino_'))return false;
+    const E=window.QTEUnique,f=E.attackFrame(s),k=kit(ctx,canvas,320),p=s.p;
+    k.font(p.kind==='casino_roulette'?'ВА-БАНК · ОДИН ЗАПУСК':p.kind==='casino_dice'?'БРОСОК ВЕРОЯТНОСТИ':p.kind==='casino_cards'?'ТУЗ В ЗОЛОТОЕ ОКНО':'ОСТАНОВИ ТРИ БАРАБАНА',360,37,gold,19);
+    if(f.phase==='ready'){k.font('ПРИГОТОВЬСЯ',360,140,gold,28);k.font(f.remaining.toFixed(1)+' с',360,189,ivory,30);k.font(p.attackHint.split('.')[0],360,268,'#b3c8b9',14);return true;}
+    const shot=(s.casinoThrows||[]).find(v=>v.index===f.index),result=s.results[f.index];
+    if(p.kind==='casino_roulette'){
+      const cx=360,cy=164,r=93;wheel(ctx,cx,cy,r,k);
+      const center=(shot?shot.center:f.center)*TAU-Math.PI/2,width=(shot?shot.width:f.width)*TAU;
+      k.arc(cx,cy,r+6,center-width/2,center+width/2,gold,13);
+      const a=(shot?shot.cursor:f.cursor)*TAU-Math.PI/2;k.dot(cx+Math.cos(a)*(r-13),cy+Math.sin(a)*(r-13),10,shot?(shot.ok?green:red):ivory);
+      k.dot(cx,cy,23,ink);k.font('СТОП',cx,cy+5,gold,14);k.font('Шарик должен оказаться в золотом секторе',360,285,'#b3c8b9',14);
+    }else if(['casino_slots','casino_jackpot'].includes(p.kind)){
+      for(let i=0;i<3;i++){
+        const x=190+i*170,active=i===f.index,ok=s.results[i],value=ok===true?'7':ok===false?'×':active&&f.phase==='active'?(Math.abs(f.cursor-f.center)<=f.width/2?'7':String(1+Math.floor(f.cursor*5))):'?';
+        ctx.fillStyle=active?'#304d38':'#182d25';ctx.fillRect(x-65,85,130,145);ctx.strokeStyle=active?gold:'#4f6654';ctx.lineWidth=active?4:2;ctx.strokeRect(x-65,85,130,145);
+        k.font(value,x,184,ok===false?red:value==='7'?gold:ivory,80);k.font(String(i+1),x,254,'#b3c8b9',14);
+      }
+      k.font(result===null?'Поймай 7 на барабане '+(f.index+1):'Барабан '+(f.index+1)+' остановлен',360,286,gold,16);
+    }else{
+      const land=80+(shot?shot.cursor:f.cursor)*560,center=80+(shot?shot.center:f.center)*560,width=(shot?shot.width:f.width)*560;
+      ctx.fillStyle='#f0cc8324';ctx.fillRect(center-width/2,205,width,58);ctx.strokeStyle=gold;ctx.lineWidth=3;ctx.strokeRect(center-width/2,205,width,58);
+      k.font(p.kind==='casino_dice'?'ЛОТОК':'КАССА',center,286,gold,13);
+      if(!shot){
+        ctx.save();ctx.setLineDash([5,8]);for(let j=0;j<15;j++){const u=j/14;k.dot(360+(land-360)*u,72+150*u-Math.sin(u*Math.PI)*70,2,'#85b29a');}ctx.restore();
+        ctx.save();ctx.globalAlpha=.38;if(p.kind==='casino_cards')card(ctx,land,230,28);else die(ctx,land,230,26,6);ctx.restore();
+      }
+      const u=shot?E.clamp((s.time-shot.time)/.45,0,1):0,x=360+(land-360)*u,y=72+158*u-Math.sin(u*Math.PI)*70;
+      if(p.kind==='casino_cards')card(ctx,x,y,46,u*TAU);else die(ctx,x,y,40,shot?6:1+Math.floor((s.time*9)%6),u*TAU);
+      if(!shot)k.font('Пунктир — куда приземлится '+(p.kind==='casino_cards'?'карта':'кость'),360,175,'#b3c8b9',14);
+    }
+    k.font(f.phase==='cue'?'СИГНАЛ · СЕЙЧАС НАЧНЁТСЯ':result===null?'ОДИН БРОСОК · ПРОБЕЛ / КАСАНИЕ':result?'СТАВКА СЫГРАЛА':'СТАВКА НЕ СЫГРАЛА',360,309,result===null?ivory:result?green:red,13);
+    return true;
+  }
+  function drawBlock(ctx,canvas,s){
+    if(!s.p.kind.startsWith('casino_'))return false;
+    const E=window.QTEUnique,k=kit(ctx,canvas,400),cx=360,cy=200,t=s.time,roulette=s.p.kind==='casino_roulette',dice=s.p.kind==='casino_dice',slots=['casino_slots','casino_jackpot'].includes(s.p.kind);
+    const next=s.events.find(e=>!e.resolved&&(!s.enabledStrikes||s.enabledStrikes[e.strike]));
+    k.font(roulette?'РУЛЕТКА · НЕ СТАВЬ НА НОЛЬ':dice?'ПРОЧИТАЙ КОСТЬ':s.p.kind==='casino_jackpot'?'777 · СОБЕРИ ТРИ ЗАЩИТЫ':slots?'БЛОКИРУЙ БАРАБАНЫ':'ПЕРЕХВАТИ КОЛОДУ',360,33,gold,19);
+    if(roulette)wheel(ctx,cx,cy,128,k);
+    else{k.arc(cx,cy,136,0,TAU,'#435e4d',1);k.arc(cx,cy,83,0,TAU,'#31483c',1);}
+    if(dice&&next){die(ctx,91,200,58,next.face||1);k.font('УДАР '+(next.pip||1)+' / '+(next.face||1),91,260,gold,13);}
+    if(slots)for(let i=0;i<3;i++){
+      const contacts=s.contacts.filter(c=>s.events.find(e=>e.id===c.id)?.reel===i+1),active=next?.reel===i+1;
+      ctx.fillStyle=active?'#38573c':'#142b23';ctx.fillRect(230+i*90,55,76,45);k.font(contacts.some(c=>c.reduction===0)?'×':contacts.length===3?'7':active?'7':'?',268+i*90,87,active?gold:'#94b49e',30);
+    }
+    if(t<s.preparation){k.font('ПРИГОТОВЬСЯ',360,173,gold,26);k.font((s.preparation-t).toFixed(1)+' с',360,221,ivory,30);return true;}
+    for(const e of s.events){
+      if(s.enabledStrikes&&!s.enabledStrikes[e.strike]||t<e.at-e.warning||t>e.at+.25)continue;
+      const v=E.clamp((t-e.at+e.warning)/e.warning,0,1),c=e.kind==='feint'?green:e.tier==='critical'?'#fff2af':e.tier==='minor'?'#bdd7c7':gold;
+      ctx.save();ctx.globalAlpha=e.resolved?.15:1;
+      if(e.kind==='wave')k.arc(cx,cy,155-v*106,0,TAU,c,5);
+      else if(roulette){
+        k.arc(cx,cy,132,e.angle-.16,e.angle+.16,c,8);
+        const a=e.originAngle===undefined?e.angle:e.originAngle+(e.angle-e.originAngle)*v;
+        const x=cx+Math.cos(a)*110,y=cy+Math.sin(a)*110;k.dot(x,y,e.kind==='feint'?15:10,c);if(e.kind==='feint')k.font('0',x,y+6,ink,18);
+      }else{
+        const r=160-v*110,x=cx+Math.cos(e.angle)*r,y=cy+Math.sin(e.angle)*r;
+        k.line(cx+Math.cos(e.angle)*150,cy+Math.sin(e.angle)*150,cx+Math.cos(e.angle)*53,cy+Math.sin(e.angle)*53,c,2);
+        if(e.motif==='casino_die')die(ctx,x,y,28,e.face||1,t*.8);
+        else if(e.motif==='casino_card')card(ctx,x,y,32,e.angle);
+        else if(e.kind==='feint'){k.dot(x,y,16,green);k.font('0',x,y+6,ink,18);}
+        else{k.dot(x,y,e.weight>=.6?12:7,c);if(e.motif==='casino_reel')k.font('7',x,y+6,ink,16);}
+      }
+      ctx.restore();
+    }
+    if(next&&t>=next.at-next.warning)k.font(next.label||'ПЕРЕХВАТИ СТАВКУ',360,365,next.kind==='feint'?green:gold,14);
+    else k.font('ОТПУСКАЙ ЩИТ МЕЖДУ СТАВКАМИ',360,365,'#b3c8b9',13);
+    k.dot(cx,cy,10,green);
+    const broken=t<s.brokenUntil;
+    k.arc(cx,cy,48,s.angle-s.params.arc/2,s.angle+s.params.arc/2,broken?red:s.active?(t<=s.perfectUntil?'#fff6c2':gold):'#789486',s.active?9:3);
+    for(const c of s.contacts){const age=t-c.time;if(age<0||age>.65)continue;ctx.save();ctx.globalAlpha=1-age/.65;
+      k.font(c.outcome==='feint'?'0 · НЕ СТАВЬ ЩИТ':c.outcome==='perfect'?'ТОЧНО':c.damage?'−'+c.damage:'БЛОК',360,cy-60-age*30,c.outcome==='perfect'?green:c.damage?red:gold,17);ctx.restore();}
+    return true;
+  }
+  window.QTECasinoView={drawAttack,drawBlock,die};
+})();

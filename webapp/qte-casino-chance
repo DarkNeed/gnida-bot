@@ -1,0 +1,55 @@
+/* One launch, authoritative result; animation never decides the payout. */
+(()=>{
+  'use strict';
+  const TAU=Math.PI*2,red=new Set([1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]);
+  const order=[0,32,15,19,4,21,2,25,17,34,6,27,13,36,11,30,8,23,10,5,24,16,33,1,20,14,31,9,22,18,29,7,28,12,35,3,26];
+  const color=n=>n===0?'green':red.has(n)?'red':'black';
+  function mount(host,stage,launch,done){
+    host.innerHTML='<div class="casino-chance"><canvas width="720" height="420" aria-label="Случайный результат казино"></canvas><p class="casino-rules"></p><div class="casino-choice"></div><p class="casino-status" role="status"></p></div>';
+    const root=host.firstElementChild,c=root.querySelector('canvas'),ctx=c.getContext('2d'),buttons=root.querySelector('.casino-choice'),status=root.querySelector('.casino-status');
+    const kind=stage.casino_mode;let result=null,start=0,raf,closed=false,pending=false,choice=null;
+    const labels=kind==='roulette'?[['red','Красное · ×2'],['black','Чёрное · ×2'],['green','Зелёное · ×30']]:[['launch',kind==='dice'?'Бросить кубик':'Запустить 777']];
+    root.querySelector('.casino-rules').textContent=kind==='roulette'?'Выбери цвет. Шарик выпадает сам: 18 красных, 18 чёрных и 1 зелёный сектор. Не совпало — урон 0.':kind==='dice'?'1 → ×0,25 · 2 → ×0,5 · 3 → ×0,75 · 4 → ×1 · 5 → ×1,5 · 6 → ×2,5. Подгадывать момент не нужно.':'Все три барабана останавливаются сами. На каждом равновероятны 7 / ♦ / ♠ / ♥. 777 → ×8; три одинаковых → ×3; две семёрки → ×2; одна → ×1; без комбинации → ×0,35.';
+    function text(t,x,y,size=22,fill='#f0cc83'){ctx.fillStyle=fill;ctx.font=`600 ${size}px Segoe UI,sans-serif`;ctx.textAlign='center';ctx.fillText(t,x,y);}
+    function symbol(v){return ({7:'7',1:'♦',2:'♠',3:'♥'})[v];}
+    function draw(now){
+      if(closed)return;
+      const elapsed=start?(now-start)/1000:0,progress=Math.min(1,elapsed/2.8),settled=!!result&&progress>=1;
+      ctx.fillStyle='#10241e';ctx.fillRect(0,0,720,420);ctx.strokeStyle='#486248';ctx.lineWidth=3;ctx.strokeRect(8,8,704,404);
+      text(kind==='roulette'?'ВА-БАНК':kind==='dice'?'ПРОВЕРКА ВЕРОЯТНОСТИ':'ФОРТУНА СНИМАЕТ ОГРАНИЧЕНИЯ',360,40,24);
+      if(kind==='roulette'){
+        const cx=360,cy=216,r=136;
+        for(let i=0;i<37;i++){const a=-Math.PI/2+i*TAU/37;ctx.fillStyle=color(order[i])==='red'?'#a73b4d':color(order[i])==='green'?'#2a9666':'#17201f';ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,a,a+TAU/37);ctx.closePath();ctx.fill();const mid=a+TAU/74;text(String(order[i]),cx+Math.cos(mid)*112,cy+Math.sin(mid)*112+4,12,'#fff0d0');}
+        const end=result?order.indexOf(result.sector)*TAU/37+TAU/74-Math.PI/2:0;
+        const a=start?end-TAU*5*Math.pow(1-progress,3):-Math.PI/2;
+        ctx.beginPath();ctx.arc(cx+Math.cos(a)*86,cy+Math.sin(a)*86,9,0,TAU);ctx.fillStyle='#fff0d0';ctx.fill();
+        ctx.fillStyle='#10241e';ctx.beginPath();ctx.arc(cx,cy,47,0,TAU);ctx.fill();text(settled?String(result.sector):'?',cx,cy+10,32);
+      }else if(kind==='dice'){
+        const face=settled?result.face:start?1+Math.floor(elapsed*15)%6:1;
+        window.QTECasinoView.die(ctx,360,210,112,face,start&&!settled?Math.sin(elapsed*7)*.35:0);
+      }else{
+        for(let i=0;i<3;i++){
+          const stop=1.45+i*.55,reelSettled=result&&elapsed>=stop;
+          const v=reelSettled?result.reels[i]:start?[7,1,2,3][Math.floor(elapsed*13+i*1.7)%4]:7;
+          ctx.fillStyle='#254231';ctx.fillRect(135+i*160,125,130,160);ctx.strokeStyle='#f0cc83';ctx.lineWidth=3;ctx.strokeRect(135+i*160,125,130,160);text(symbol(v),200+i*160,235,80,v===7?'#f0cc83':'#e4d6b9');
+        }
+      }
+      text(settled?'УРОН ×'+String(result.factor).replace('.',','):start?'СТАВКА ПРИНЯТА · ОЖИДАЙ РЕЗУЛЬТАТ':'ОДИН ЗАПУСК · БЕЗ ПРОВЕРКИ РЕАКЦИИ',360,379,20,settled&&result.factor===0?'#e89999':'#f0cc83');
+      if(settled){
+        status.textContent=(kind==='roulette'?'Выпало '+result.sector+' · '+({red:'красное',black:'чёрное',green:'зелёное'})[result.color]:kind==='dice'?'На кубике '+result.face:result.reels.map(symbol).join(' · '))+' → ×'+result.factor+' урона. Блок и уклонение цели сохраняются.';
+        if(!root.querySelector('.casino-continue')){const b=document.createElement('button');b.className='casino-continue';b.textContent='Продолжить';b.onclick=()=>done(result);buttons.append(b);}
+      }
+      raf=requestAnimationFrame(draw);
+    }
+    async function run(value){
+      if(pending||result||closed)return;pending=true;choice=value;buttons.querySelectorAll('button').forEach(b=>b.disabled=true);status.textContent='Ставка принимается сервером…';
+      try{result=await launch(value);if(closed)return;start=performance.now();status.textContent='Бросок запущен. Остановить или перебросить нельзя.';}
+      catch(error){if(closed)return;status.textContent=error.message;pending=false;buttons.querySelectorAll('button').forEach(b=>b.disabled=false);}
+    }
+    for(const [value,label] of labels){const b=document.createElement('button');b.textContent=label;b.dataset.color=value;b.onclick=()=>run(value);buttons.append(b);}
+    if(stage.casino_result){result=stage.casino_result;choice=stage.casino_choice;start=performance.now();buttons.querySelectorAll('button').forEach(b=>b.disabled=true);}
+    raf=requestAnimationFrame(draw);
+    return {destroy(){closed=true;cancelAnimationFrame(raf);},get committed(){return !!result;},get choice(){return choice;}};
+  }
+  window.QTECasinoChance={mount};
+})();

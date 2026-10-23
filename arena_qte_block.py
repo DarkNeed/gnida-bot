@@ -38,6 +38,9 @@ def parameters(p, stats):
 
 
 def threats(p, seed, params):
+    from arena_casino_qte import block_threats
+    casino=block_threats(p,seed,params)
+    if casino is not None:return casino
     from arena_chaplain_block import threats as chaplain_threats
     special = chaplain_threats(p, seed, params)
     if special is not None:

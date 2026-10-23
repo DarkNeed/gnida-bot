@@ -21,7 +21,7 @@ def victory_xp(enemy_level: int) -> int:
 def enemy_source(level: int, previous_class: str | None = None, rng=None, *, enabled_classes=None) -> dict:
     rng = rng or random.SystemRandom()
     level = max(1, min(MAX_FIGHTER_LEVEL, int(level)))
-    pool = [key for key, cls in FIGHTER_CLASSES.items() if cls.base_level <= level and (enabled_classes is None or key in enabled_classes)]
+    pool = [key for key, cls in FIGHTER_CLASSES.items() if key!='gambler' and cls.base_level <= level and (enabled_classes is None or key in enabled_classes)]
     if not pool:
         pool = ['ragamuffin']
     if len(pool) > 1 and previous_class in pool:

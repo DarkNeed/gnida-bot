@@ -2,6 +2,7 @@
 (()=>{
   window.QTEBlockView={draw};
   function draw(ctx,canvas,s){
+    if(window.QTECasinoView?.drawBlock(ctx,canvas,s))return;
     const E=QTEUnique,cx=360,cy=200,t=s.time,C=s.chaplain;
     function text(value,x,y,color='#b9cddd',size=15){ctx.font=`500 ${Math.max(size,Math.min(23,7200/Math.max(1,canvas.clientWidth)))}px Segoe UI,Arial,sans-serif`;ctx.fillStyle=color;ctx.textAlign='center';ctx.fillText(value,x,y);}
     function line(x,y,x2,y2,c,w=1){ctx.strokeStyle=c;ctx.lineWidth=w;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x2,y2);ctx.stroke();}
@@ -62,7 +63,10 @@
         const r=162-v*113,x=cx+Math.cos(e.angle)*r,y=cy+Math.sin(e.angle)*r;
         ctx.setLineDash([5,6]);line(cx+Math.cos(e.angle)*160,cy+Math.sin(e.angle)*160,cx+Math.cos(e.angle)*52,cy+Math.sin(e.angle)*52,c);ctx.setLineDash([]);
         ctx.translate(x,y);ctx.rotate(e.angle+Math.PI);ctx.fillStyle=c;
-        if(e.kind==='slash'){ctx.fillRect(-16,-4,32,8);ctx.fillRect(3,-10,3,20);}else{ctx.beginPath();ctx.moveTo(11,0);ctx.lineTo(-7,-6);ctx.lineTo(-7,6);ctx.closePath();ctx.fill();}
+        if(e.motif==='casino_card'){ctx.fillRect(-10,-7,20,14);ctx.fillStyle='#14251e';ctx.fillRect(-2,-2,4,4);}
+        else if(e.motif==='casino_coin'){ctx.beginPath();ctx.arc(0,0,9,0,Math.PI*2);ctx.stroke();ctx.fillRect(-2,-4,4,8);}
+        else if(e.motif==='casino_reel'){ctx.strokeRect(-12,-12,24,24);text('7',0,5,c,18);}
+        else if(e.kind==='slash'){ctx.fillRect(-16,-4,32,8);ctx.fillRect(3,-10,3,20);}else{ctx.beginPath();ctx.moveTo(11,0);ctx.lineTo(-7,-6);ctx.lineTo(-7,6);ctx.closePath();ctx.fill();}
       }ctx.restore();
     }
     ctx.save();ctx.translate(cx,cy);ctx.rotate(Math.PI/4);ctx.fillStyle='#9cd9c9';ctx.shadowColor='#84ceb8';ctx.shadowBlur=14;ctx.fillRect(-9,-9,18,18);ctx.restore();

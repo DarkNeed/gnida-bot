@@ -1588,7 +1588,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     raise ValueError("Класс выбирается один раз, с 5 уровня.")
                 allowed = set(
                     VISIBLE_CLASS_ALIASES.values()
-                ) | self._granted_content_locked(chat, user, "class")
+                ) | self._granted_content_locked(chat, user, "class") | self._arena_secret_classes_locked(user)
                 chosen = next(
                     (
                         k

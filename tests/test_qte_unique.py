@@ -71,7 +71,8 @@ class UniqueReviewTests(unittest.IsolatedAsyncioTestCase):
             capture_output=True,
             text=True,
             encoding="utf-8",
-            timeout=180,
+            # Exhaustive route search now covers 32 distinct attack families.
+            timeout=300,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

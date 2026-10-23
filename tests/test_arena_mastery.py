@@ -20,7 +20,7 @@ import test_arena_market_client as client_tests
 
 PRIMARY = dict(ragamuffin='bum_punch',cutie='meow',jock='smack',nerd='humiliate',
     thumb='senior_verdict',index='last_line',middle='whole_family',ring='last_stroke',
-    pinky='moon_arc',warrior='warrior_execute',mage='mana_overload',priest='holy_judgment',hunter='hunter_cut')
+    pinky='moon_arc',warrior='warrior_execute',mage='mana_overload',priest='holy_judgment',hunter='hunter_cut',gambler='casino_bet')
 
 
 class MasteryEngineTests(unittest.TestCase):
@@ -42,6 +42,7 @@ class MasteryEngineTests(unittest.TestCase):
             prescript=BRANCHES[a['archclass_id']][0] if branch else 'last_line')
         a['rpg_state']=dict(onslaught=3,steadfast=3,souls=3,summon=3,summon_power=6,
             faith=3,retribution=3,beast=3,echo_ready=True,visceral_ready=True,visceral_until=4,moon_mark=True)
+        a['casino_state']=dict(last_die=1)
         b['effects']=[dict(id='adoration',kind='damage_pct',value=-.4,duration=3),
             dict(id='doxxing_magic',kind='magic_defense_pct',value=-.2,duration=3),
             dict(id='rpg_burn',kind='burn',value=3,duration=3),
@@ -122,6 +123,7 @@ class MasteryEngineTests(unittest.TestCase):
                     if cls=='priest':state['sides']['a']['hp']=500
                     v=effective_skill(state,'a',sid)
                     expected=BUILTIN_SKILLS[sid].power+(4 if level==18 and v.damage_type else 0)
+                    if cls=='gambler':expected+=1  # Native level-12 casino milestone.
                     self.assertEqual(v.power,expected)
                     event=self.tap(state,sid)
                     self.assertTrue(event['hit'])

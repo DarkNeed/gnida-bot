@@ -27,6 +27,7 @@ from arena_engine import (
 from arena_archprogress import branch_skill_allowed, skill_branch
 from arena_forge import ForgeMixin
 from arena_global import RPG_SCOPE
+from arena_casino_unlock import CasinoUnlockMixin
 
 MSK = timezone(timedelta(hours=3))
 MERCHANT_DURATION = 2 * 3600
@@ -51,8 +52,9 @@ def merchant_is_open(now: int) -> bool:
     )
 
 
-class ArenaMarketMixin(ForgeMixin):
+class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
     def _connect_arena_market(self):
+        self._connect_casino()
         self._connect_forge()
         for table in ("slave_profiles", "personal_profiles"):
             self._ensure_column(table, "passive_loadout", "TEXT NOT NULL DEFAULT '[]'")
@@ -456,7 +458,7 @@ class ArenaMarketMixin(ForgeMixin):
 
     def _arena_shop_catalog_locked(self):
         classes, skills = self._fighter_catalog_locked()
-        public_classes = set(FIGHTER_CLASSES) | {
+        public_classes = (set(FIGHTER_CLASSES)-{'gambler'}) | {
             r["class_id"]
             for r in self.connection.execute(
                 "SELECT class_id FROM custom_fighter_classes WHERE hidden=0"
@@ -466,7 +468,7 @@ class ArenaMarketMixin(ForgeMixin):
         public_skills = {
             k
             for k, s in BUILTIN_SKILLS.items()
-            if not skill_branch(s) and "raid_loot" not in s.tags and not any(t.startswith('mastery:') for t in s.tags)
+            if s.class_id!='gambler' and not skill_branch(s) and "raid_loot" not in s.tags and not any(t.startswith('mastery:') for t in s.tags)
         }
         for row in self.connection.execute(
             "SELECT skill_id,definition_json FROM custom_fighter_skills"

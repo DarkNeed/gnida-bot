@@ -3,6 +3,7 @@
   'use strict';
   window.QTEView={draw};
   function draw(ctx,canvas,s){
+    if(s.kind==='attack'&&window.QTECasinoView?.drawAttack(ctx,canvas,s))return;
     const E=window.QTEUnique,p=s.p,color=p.color,t=s.time;
     function text(value,x,y,c='#b9cddd',size=13,align='left'){
       ctx.font=`500 ${Math.max(size,Math.min(22,7200/Math.max(1,canvas.clientWidth)))}px Segoe UI,sans-serif`;
@@ -72,6 +73,9 @@
         if(h.type==='bullet'){
           if(warning){const len=Math.hypot(h.vx,h.vy)||1;ctx.globalAlpha=.3;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(h.x,h.y);ctx.lineTo(h.x+h.vx/len*900,h.y+h.vy/len*900);ctx.stroke();}
           else if(g.motif==='heart')heart(g.x,g.y,g.r*2,c);
+          else if(g.motif==='casino_card'){ctx.translate(g.x,g.y);ctx.rotate(Math.atan2(g.vy,g.vx)+Math.PI/2);ctx.fillRect(-g.r,-g.r*1.5,g.r*2,g.r*3);ctx.fillStyle='#14251e';ctx.fillRect(-2,-2,4,4);}
+          else if(g.motif==='casino_coin'){arc(g.x,g.y,g.r,0,Math.PI*2,c,3);dot(g.x,g.y,2,c);}
+          else if(g.motif==='casino_die'){window.QTECasinoView?.die(ctx,g.x,g.y,g.r*2,g.face||6,t*2,c);}
           else if(g.motif==='clock'){arc(g.x,g.y,g.r+3,0,Math.PI*2,c,2);ctx.beginPath();ctx.moveTo(g.x,g.y-g.r);ctx.lineTo(g.x,g.y);ctx.lineTo(g.x+g.r,g.y);ctx.stroke();}
           else if(g.motif==='star'){ctx.translate(g.x,g.y);ctx.rotate(t*3);ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-10,0);ctx.lineTo(10,0);ctx.moveTo(0,-10);ctx.lineTo(0,10);ctx.stroke();}
           else if(['bone','ice','train'].includes(g.motif)){ctx.translate(g.x,g.y);ctx.rotate(Math.atan2(g.vy,g.vx));ctx.fillRect(-g.r*2,-g.r,g.r*4,g.r*2);}

@@ -18,6 +18,8 @@ from arena_archprogress import skill_branch
 from arena_web import battle_view
 from database import Database
 
+PUBLIC_ENEMY_CLASSES = set(FIGHTER_CLASSES) - {'gambler'}
+
 
 class ForcedClass(random.Random):
     def __init__(self, cls):
@@ -34,7 +36,7 @@ class EnemySourceTests(unittest.TestCase):
             self.assertEqual(victory_xp(level), expected)
 
     def test_every_builtin_class_has_native_level_appropriate_build_and_passives(self):
-        for cls in FIGHTER_CLASSES:
+        for cls in PUBLIC_ENEMY_CLASSES:
             for level in (5, 6, 9, 20):
                 with self.subTest(cls=cls, level=level):
                     source = enemy_source(level, rng=ForcedClass(cls))
@@ -88,11 +90,11 @@ class EnemySourceTests(unittest.TestCase):
             self.assertNotEqual(source["class_id"], previous)
             previous = source["class_id"]
             seen.add(previous)
-        self.assertEqual(seen, set(FIGHTER_CLASSES))
+        self.assertEqual(seen, PUBLIC_ENEMY_CLASSES)
         self.assertEqual(enemy_source(1, "ragamuffin")["class_id"], "ragamuffin")
 
     def test_high_level_skills_not_lost_to_four_low_level_slots(self):
-        for cls in FIGHTER_CLASSES:
+        for cls in PUBLIC_ENEMY_CLASSES:
             rng = ForcedClass(cls)
             seen = set()
             for _ in range(40):
@@ -102,6 +104,11 @@ class EnemySourceTests(unittest.TestCase):
                 if s.class_id == cls and not skill_branch(s) and not any(t.startswith('mastery:') for t in s.tags)
             }
             self.assertTrue(native.issubset(seen), cls)
+
+    def test_secret_casino_is_never_a_random_enemy(self):
+        for level in (5,10,20):
+            self.assertNotEqual(enemy_source(level,rng=ForcedClass('gambler'))['class_id'],'gambler')
+            self.assertNotEqual(enemy_source(level,rng=ForcedClass('gambler'),enabled_classes={'gambler'})['class_id'],'gambler')
 
 
 class WastelandStoreTests(unittest.IsolatedAsyncioTestCase):
@@ -125,6 +132,7 @@ class WastelandStoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_each_class_persisted_displayed_and_ai_can_move(self):
         for cls, catalog in FIGHTER_CLASSES.items():
+            if cls not in PUBLIC_ENEMY_CLASSES:continue
             source = enemy_source(20, rng=ForcedClass(cls))
             with patch("arena_store.enemy_source", return_value=source):
                 row = await self.db.arena_wasteland(1, 10)

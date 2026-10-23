@@ -84,6 +84,8 @@ class RaidMixin:
             self.connection.execute(
                 "ALTER TABLE arena_raids ADD COLUMN silent INTEGER NOT NULL DEFAULT 0"
             )
+        if 'encounter_json' not in columns:
+            self.connection.execute('ALTER TABLE arena_raids ADD COLUMN encounter_json TEXT')
         if not self.connection.execute(
             "SELECT 1 FROM arena_raid_migrations WHERE name='daily_rewards_v1'"
         ).fetchone():
@@ -242,7 +244,7 @@ class RaidMixin:
             or self._raid_row_locked(row["token"])["status"] != "active"
         ):
             raise ValueError("Рейд уже закрыт.")
-        if data["won"]:
+        if data["won"] and row.get('boss_id') != 'encounter' and data.get('kind') != 'encounter':
             rng = random.SystemRandom()
             now = raid_reward_now()
             day = raid_day(now)
@@ -456,9 +458,10 @@ class RaidMixin:
             return [
                 dict(r)
                 for r in self.connection.execute(
-                    """SELECT DISTINCT r.token,r.status,r.round FROM arena_raids r
-                   JOIN arena_raid_players p ON p.token=r.token WHERE p.actor_id=? ORDER BY r.created_at DESC LIMIT 5""",
-                    (actor,),
+                    """SELECT DISTINCT r.token,r.status,r.round,r.boss_id,r.creator_id FROM arena_raids r
+                   LEFT JOIN arena_raid_players p ON p.token=r.token WHERE p.actor_id=?
+                   OR (r.boss_id='encounter' AND r.creator_id=?) ORDER BY r.created_at DESC LIMIT 5""",
+                    (actor, actor),
                 ).fetchall()
             ]
 
@@ -468,6 +471,29 @@ class RaidMixin:
                 "UPDATE arena_raids SET message_id=? WHERE token=?", (message, token)
             )
             self.connection.commit()
+
+    async def arena_encounter_create(self, chat, actor, roster):
+        from arena_encounters import validate_roster
+        roster = validate_roster(roster)
+        async with self._lock:
+            try:
+                self._require_feature_locked(chat, 'arena')
+                self._raid_expire_locked()
+                if self.connection.execute("""SELECT 1 FROM arena_raids WHERE chat_id=? AND creator_id=?
+                    AND boss_id='encounter' AND status IN ('lobby','active')""", (chat, actor)).fetchone():
+                    raise ValueError('Сначала завершите или отмените свою текущую встречу в этом чате.')
+                now, token = int(time.time()), secrets.token_urlsafe(12)
+                self.connection.execute('''INSERT INTO arena_raids
+                    (token,chat_id,creator_id,created_at,deadline,boss_id,encounter_json)
+                    VALUES(?,?,?,?,?,'encounter',?)''',
+                    (token, chat, actor, now, now + RAID_LOBBY_SECONDS,
+                     json.dumps(dict(roster=roster), ensure_ascii=False)))
+                # Master is not a fighter; do not reserve or even initialize a character.
+                self.connection.commit()
+                return self._raid_row_locked(token)
+            except Exception:
+                self.connection.rollback()
+                raise
 
     async def arena_raid_create(self, chat, actor, boss_id="lei_heng", *, silent=False, expected_slot=None):
         if boss_id not in AVAILABLE_BOSSES:
@@ -504,6 +530,17 @@ class RaidMixin:
             try:
                 row = self._raid_row_locked(token)
                 self._require_feature_locked(row['chat_id'], 'arena')
+                if action == 'finish' and row.get('boss_id') == 'encounter':
+                    if actor != row['creator_id']:
+                        raise ValueError('Завершить встречу может только мастер.')
+                    if row['status'] != 'active':
+                        raise ValueError('Встреча уже закрыта или ещё не началась.')
+                    data = json.loads(row['data_json'])
+                    data.update(finished=True, won=False, rewards={}, result='Мастер завершил РП-встречу. Без наград.')
+                    self.connection.execute("DELETE FROM arena_qte_flows WHERE scope='raid' AND token=?", (token,))
+                    self._raid_finish_locked(row, data)
+                    self.connection.commit()
+                    return self._raid_row_locked(token)
                 if row["status"] != "lobby":
                     raise ValueError("Состав рейда уже закрыт.")
                 if row["deadline"] <= int(time.time()):
@@ -542,7 +579,7 @@ class RaidMixin:
                 elif action == "leave":
                     if not current:
                         raise ValueError("Вы не участвуете в рейде.")
-                    if actor == row["creator_id"]:
+                    if actor == row["creator_id"] and row.get('boss_id') != 'encounter':
                         raise ValueError("Создатель может отменить сбор рейда.")
                     self.connection.execute(
                         "DELETE FROM arena_raid_players WHERE token=? AND actor_id=?",
@@ -584,9 +621,12 @@ class RaidMixin:
                                 )
                             )
                         classes, skills = self._fighter_catalog_locked()
-                        data = create_raid_state(
-                            members, sources, classes, skills, row["boss_id"]
-                        )
+                        if row.get('boss_id') == 'encounter':
+                            from arena_encounters import create_encounter
+                            data = create_encounter(members, sources, classes, skills,
+                                json.loads(row['encounter_json'])['roster'], row['creator_id'])
+                        else:
+                            data = create_raid_state(members, sources, classes, skills, row['boss_id'])
                         for player in data['players'].values():
                             player['character_slot']=self._character_active_locked(player['actor_id'])
                         data['qte_modes']={str(p['actor_id']):self._qte_enabled_locked(p['actor_id']) for p in data['players'].values()}
@@ -604,11 +644,11 @@ class RaidMixin:
                 self.connection.rollback()
                 raise
 
-    async def arena_raid_action(self, token, actor, round_number, skill):
+    async def arena_raid_action(self, token, actor, round_number, skill, *, target=None):
         async with self._lock:
-            return self._arena_raid_action_locked(token,actor,round_number,skill)
+            return self._arena_raid_action_locked(token,actor,round_number,skill,target=target)
 
-    def _arena_raid_action_locked(self,token,actor,round_number,skill,*,_qte=None):
+    def _arena_raid_action_locked(self,token,actor,round_number,skill,*,_qte=None,target=None):
         with self.connection:
             try:
                 row = self._raid_cleanup_locked(self._raid_row_locked(token))
@@ -641,18 +681,24 @@ class RaidMixin:
                 else:
                     if not isinstance(skill, str):
                         raise ValueError("Некорректный навык.")
+                    opponent = data['boss']
+                    if data.get('kind') == 'encounter':
+                        from arena_encounters import target_enemy
+                        target, opponent = target_enemy(data, target)
                     if skill.startswith('chaplain_anchor:'):
                         from arena_chaplain import validate_anchor
                         validate_anchor(data, skill)
                     elif skill != "defend":
                         _, skills = self._fighter_catalog_locked()
                         validate_skill(
-                            pair_state(player["fighter"], data["boss"]),
+                            pair_state(player["fighter"], opponent),
                             "a",
                             skill,
                             skills,
                         )
                     player["selected"] = skill
+                    if data.get('kind') == 'encounter':
+                        player['selected_target'] = target
                     if _qte:
                         player['qte_result'] = _qte
                 if finish_if_needed(data):

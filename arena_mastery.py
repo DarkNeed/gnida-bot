@@ -10,6 +10,7 @@ from arena_fingers import negative_kinds
 
 
 BASE = {
+    'gambler': ('Не уйду без выигрыша', 'После плохого броска следующая Ставка сильнее: сила 16, с 12 уровня 18. На финальном мастерстве сила 22 за 20 энергии и пробитие 25%.', 'Проверка вероятности', 'magic'),
     'ragamuffin': ('Уличный опыт', 'Грязные приёмы готовят усиленный удар; разные действия собирают уличную комбинацию.', 'Не на того напал', 'physical'),
     'cutie': ('Искусство умилять', 'Чередование Мяу и UWU усиливает следующую из этих атак на 35%, с 12 уровня на 45%.', 'Критическая милота', None),
     'jock': ('Идеальная техника', 'Подготовленный Въебать: сила 16, с 12 уровня 18; попадание оставляет защиту от прямого урона −20% на одно своё действие.', 'Без страховки', 'physical'),
@@ -26,6 +27,7 @@ BASE = {
 }
 
 BASE_FINAL = {
+    'gambler': '«Последняя ставка упрямца»: Ставка после плохого броска — сила 22 за 20 энергии, пробитие 25%. Кубик и гарантия сохраняются.',
     'ragamuffin': '«Последний из подворотни»: после трёх разных действий Удар бомжа — сила 34, 45% пробития, цена 20; попадание возвращает 10 энергии.',
     'cutie': '«Милота массового поражения»: Мяу после UWU по умилённой цели — сила 30 за 40 Любви; умиление не снимается.',
     'jock': '«Предел человеческой качалки»: подготовленный Въебать — три независимых попадания с суммарной силой 27 за 30 энергии.',
@@ -44,6 +46,8 @@ BASE_FINAL = {
 # Same lower-stage identity, no final resource and no free passive slots.
 # Each upgrade is conditional on the branch's existing loop, not +all stats.
 BRANCHES = {
+    'casino_hustler': ('casino_bet','Краплёный туз','casino_bad',20,20,'После плохого броска: Ставка силы 20 за 20 энергии, пробитие 25%. Без финального усиления игрового стола.'),
+    'casino_lucky': ('casino_bet','Ставка судьбы','casino_bad',20,20,'После плохого броска: Ставка силы 20 за 20 энергии, пробитие 25%. Без финального усиления 777.'),
     'femboy': ('air_kiss', 'Попался окончательно', 'adoration', 24, 25, 'По умилённой цели: сила 24 за 25 Любви, снижает уклонение; умиление сохраняется.'),
     'princess': ('arch_princess', 'Королевская неприкосновенность', 'always', 0, 20, 'Розовый барьер: обе защиты +45%, уклонение +12 на 2 своих действия, цена 20.'),
     'gachi_actor': ('arch_gachi_actor', 'Из захвата не вырваться', 'prepared', 26, 30, 'После напряжения или зажима: Клубный захват силы 26 за 30, снижает атаку и уклонение, не оглушает.'),
@@ -115,6 +119,7 @@ def view(source):
 
 
 TWELVE = {
+    'gambler': 'Следующая Ставка после плохого броска: сила 18 вместо 16.',
     'ragamuffin': 'Пыль в глаза дешевле на 5 энергии и снижает уклонение на 15; подготовленный удар получает силу 22.',
     'cutie': 'Бонус чередования Мяу и UWU повышается с 35% до 45%.',
     'jock': 'Подготовленный Въебать получает силу 18 вместо 16.',
@@ -157,6 +162,7 @@ def build_skills(Skill):
 
 
 SKILL_TEXT = {
+    'gambler': 'Бросок кубика без проверки реакции: 1/2/3/4/5/6 дают ×0,25/0,5/0,75/1/1,5/2,5 урона. Дополнительно даёт одну боевую фишку даже при промахе, максимум 7.',
     'ragamuffin': 'Удар с 35% пробития, подготавливает следующую уличную атаку.',
     'cutie': '90% шанса умиления: урон врага −40% на 2 действия.',
     'jock': 'Удар с 35% пробития; после попадания подготавливает следующий Въебать.',
@@ -208,6 +214,7 @@ def _trigger(name, actor, target, skill):
     m, r = actor.get('mechanics', {}), actor.get('rpg_state', {})
     effects = target.get('effects', []) if target else []
     return {
+        'casino_bad': actor.get('casino_state',{}).get('last_die',6)<=2,
         'always': True,
         'adoration': any(e.get('id') == 'adoration' and e.get('value',0)<0 for e in effects),
         'prepared': any(e.get('id') == 'evolution_prepared' for e in actor.get('effects', [])),
@@ -257,6 +264,7 @@ def _branch_changes(skill, actor, target):
     if key == 'warrior_knight':
         effects = tuple(e for e in effects if e['kind']!='incoming_damage_multiplier') + (dict(id='mastery_knight',kind='incoming_damage_multiplier',value=.65,turns=1,target='self'),)
     if key == 'mage_archmage':changes['cost']=40  # 50 minus the existing level-12 Echo discount.
+    if key.startswith('casino_'):changes['pierce']=.25
     changes['effects'] = effects
     return dict(ready=_trigger(trigger,actor,target,skill), changes=changes, min_level=20,
                 condition=description, description=description)
@@ -288,7 +296,10 @@ def rule(skill, actor, target=None):
         if cls=='warrior': effects+=(dict(id='mastery_stance_guard',kind='incoming_damage_multiplier',value=.8,turns=1,target='self'),)
         changes['effects']=effects
         return dict(ready=True, changes=changes, min_level=15, condition='Изучен навык пути мастерства', description=skill.description)
-    if cls=='ragamuffin':
+    if cls=='gambler' and sid=='casino_bet':
+        ready=actor.get('casino_state',{}).get('last_die',6)<=2
+        changes=dict(name='Последняя ставка упрямца' if final else 'Не уйду без выигрыша',power=22 if final else 18 if level>=12 else 16,cost=20 if final else skill.cost,pierce=.25 if final else skill.pierce)
+    elif cls=='ragamuffin':
         if sid=='dust_in_eyes' and level>=12:
             ready=True;changes=dict(cost=15,effects=tuple(e for e in skill.effects if e['kind']!='evasion_flat')+
                 (dict(id='street_evasion',kind='evasion_flat',value=-15,turns=2,target='enemy'),))

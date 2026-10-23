@@ -19,6 +19,7 @@ RAID_RE = re.compile(
     r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng|фуфелшмерц|фуфел|doofenshmirtz|doof|китобой|whaler|кит|kit|маэль|капеллан|каппеллан|chaplain))?\s*$",
     re.I,
 )
+ENCOUNTER_RE = re.compile(r'^\s*/(?:встреча|encounter)(?:@\w+)?(?:\s+(?P<roster>[^\n]+))?\s*$', re.I)
 
 
 def raid_boss_id(match):
@@ -61,7 +62,7 @@ class RaidPublisher:
         buttons = [
             [
                 InlineKeyboardButton(
-                    text="👹 Открыть рейд",
+                    text='⚔️ Открыть встречу' if row.get('boss_id') == 'encounter' else '👹 Открыть рейд',
                     url=arena_link(self.username, "r_" + row["token"]),
                 )
             ]
@@ -86,6 +87,8 @@ class RaidPublisher:
                     ),
                 ],
             ]
+        if row.get('boss_id') == 'encounter' and row['status'] == 'active':
+            buttons.append([InlineKeyboardButton(text='Завершить · только мастер', callback_data='rr:finish:' + row['token'])])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     async def body(self, row):
@@ -96,6 +99,29 @@ class RaidPublisher:
                 user["display_name"] if user else str(p["actor_id"])
             )
         boss = BOSSES.get(row.get("boss_id", "iron"), BOSSES["iron"])
+        if row.get('boss_id') == 'encounter':
+            from arena_encounters import roster_text
+            master = await self.db.get_user(row['chat_id'], row['creator_id'])
+            master_name = html.escape(master['display_name'] if master else str(row['creator_id']))
+            text = '⚔️ <b>РП-встреча</b> · ' + html.escape(roster_text(json.loads(row['encounter_json'])['roster']))
+            text += f'\nМастер: {master_name} · не занимает место, пока сам не вступит.\nНаграды отключены: без XP, франков, предметов и кулдаунов наград.\n'
+            if row['status'] == 'lobby':
+                return text + f'\nОтряд: {len(names)}/3\n' + '\n'.join('• ' + n for n in names.values()) + '\n\nМастер начинает бой с 1–3 участниками. До 3 врагов, уровень — средний по отряду при старте. На сбор — 10 минут.'
+            if row['status'] == 'cancelled':
+                return text + '\nСбор отменён или время истекло.'
+            data = json.loads(row['data_json'])
+            text += f'\nРаунд {data["round"]}\n' if row['status'] == 'active' else '\n' + html.escape(data['result']) + '\n'
+            for key, enemy in data['enemies'].items():
+                intent = data.get('enemy_intents', {}).get(key, {})
+                text += f'\n👹 {html.escape(enemy["name"])}: {enemy["hp"]}/{enemy["stats"]["max_hp"]} HP'
+                if row['status'] == 'active' and enemy['hp'] > 0:
+                    text += ' · ' + html.escape(intent.get('text', ''))
+                    targets = ', '.join(names.get(k, k) for k in intent.get('targets', []))
+                    if targets:
+                        text += ' → ' + targets
+            for key, player in data['players'].items():
+                text += f'\n{"🚪" if player["withdrawn"] else "⚔️"} {names.get(key, key)}: {player["fighter"]["hp"]} HP'
+            return text + '\n\nДействия и выбор цели — в мини-приложении. На выбор — 2 минуты. Мастер может завершить встречу.'
         text = f"👹 <b>{html.escape(boss['name'])}</b> · командный рейд\n"
         if row["status"] == "lobby":
             text += f"Участники: {len(names)}/3\n" + "\n".join(
@@ -191,6 +217,30 @@ class RaidPublisher:
 def create_raid_router(db, bot, enabled, publisher):
     router = Router(name="raids")
 
+    async def encounter_command(message):
+        if not message.from_user or message.from_user.is_bot:
+            return
+        if not enabled:
+            await message.answer('Арена отключена: нужно настроить WEBAPP_URL.')
+            return
+        if message.chat.type not in {'group', 'supergroup'}:
+            await message.answer('Создай РП-встречу в группе: /встреча гоблин или /встреча гоблин 2, шаман. Мастер не вступает автоматически; награды отключены.')
+            return
+        try:
+            from arena_encounters import parse_roster
+            match = ENCOUNTER_RE.fullmatch(message.text or message.caption or '')
+            roster = parse_roster(match.group('roster') or '')
+            await require_member(bot, message.chat.id, message.from_user.id)
+            row = await db.arena_encounter_create(message.chat.id, message.from_user.id, roster)
+            try:
+                sent = await message.answer(await publisher.body(row), parse_mode='HTML', reply_markup=publisher.keyboard(row))
+                await db.arena_raid_set_message(row['token'], sent.message_id)
+            except Exception:
+                await db.arena_raid_setup(row['token'], message.from_user.id, 'cancel')
+                raise
+        except ValueError as error:
+            await message.answer(str(error))
+
     @router.message(text_or_caption_regexp(RAID_RE))
     async def raid_command(message):
         if not message.from_user or message.from_user.is_bot:
@@ -228,6 +278,8 @@ def create_raid_router(db, bot, enabled, publisher):
                 raise
         except ValueError as error:
             await message.answer(str(error))
+
+    router.message.register(encounter_command, text_or_caption_regexp(ENCOUNTER_RE))
 
     @router.callback_query(F.data.startswith("rr:"))
     async def raid_callback(callback):
