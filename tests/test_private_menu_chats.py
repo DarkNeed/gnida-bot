@@ -190,6 +190,19 @@ class PrivateMenuChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await self.db.get_owner(-100, 20))["transfer_priority"])
         self.assertFalse((await self.db.get_owner(-300, 20))["transfer_priority"])
 
+    async def test_menu_in_groups_and_channels_explains_private_usage(self):
+        handler=next(item.callback for item in self.router.message.handlers if item.callback.__name__=='slave_menu')
+        self.assertTrue(any(item.callback is handler for item in self.router.channel_post.handlers))
+        for kind in ('group','supergroup','channel'):
+            message=SimpleNamespace(text='/menu@GnidoBot',caption=None,from_user=None,
+                chat=SimpleNamespace(type=kind),answer=AsyncMock())
+            await handler(message,self.bot)
+            body=message.answer.await_args.args[0]
+            self.assertIn('в личные сообщения боту',body)
+            self.assertIn('/menu@GnidoBot',body)
+            self.assertIn('выбрать чат',body)
+            self.assertEqual(message.answer.await_args.kwargs['reply_markup'].inline_keyboard[0][0].url,'https://t.me/GnidoBot')
+
     async def test_business_role_work_and_buyout_mutate_only_the_button_chat(self):
         self.assertEqual(await self.db.create_business(-100, 10, "field"), "created")
         self.assertEqual(await self.db.create_business(-200, 30, "brothel"), "created")

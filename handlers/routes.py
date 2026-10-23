@@ -3503,7 +3503,8 @@ def create_router(
                 "🎲 <b>События:</b> иногда в чате можно выиграть франки, выбрав "
                 "кнопку или ответив на сообщение бота.\n"
                 "😄 <b>Рофлы:</b> попробуй «пися», «попа» или «кто гнида».\n\n"
-                "Открой меню, чтобы посмотреть всё подробнее.",
+                "Открой меню, чтобы посмотреть всё подробнее.\n"
+                "📩 Команду <code>/menu@GnidoBot</code> нужно отправлять в личные сообщения боту, не в группу или канал.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="📋 Открыть меню", callback_data="sm:home")]
@@ -3622,8 +3623,18 @@ def create_router(
         await message.answer(body, parse_mode="HTML")
 
     @router.message(text_or_caption_regexp(SLAVE_MENU_RE))
+    @router.channel_post(text_or_caption_regexp(SLAVE_MENU_RE))
     async def slave_menu(message: Message, bot: Bot) -> None:
-        if message.chat.type != "private" or not message.from_user:
+        if message.chat.type != 'private':
+            await message.answer(
+                '📩 Команду <code>/menu@GnidoBot</code> нужно отправлять <b>в личные сообщения боту</b>, '
+                'а не в группу или канал.\n\nМеню позволяет выбрать чат и управлять ареной, франками, рабами и предприятиями. '
+                'Открой личку по кнопке ниже и отправь <code>/menu</code>.',
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text='📩 Открыть личные сообщения',url='https://t.me/GnidoBot')]]))
+            return
+        if not message.from_user:
             return
         body, keyboard = await private_menu_view(message.from_user, bot)
         await message.answer(body, reply_markup=keyboard, parse_mode="HTML")
