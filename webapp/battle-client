@@ -100,9 +100,10 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,reduced?Math.min(50,ms):
 const sprite=c=>{
   const data=c&&typeof c==="object"?c:{},id=typeof c==="object"?c?.sprite:c;
   if(/^\/sprites\/[0-9a-f]{64}\.png$/.test(data.sprite_url||""))return data.sprite_url;
-  if(/^\/static\/assets\/(?:(?:archclasses|rpg)\/)?[a-z_]+\.png$/.test(data.class_avatar_url||""))return data.class_avatar_url;
+  if(/^\/static\/assets\/(?:(?:archclasses|rpg|casino)\/)?[a-z_]+\.png$/.test(data.class_avatar_url||""))return data.class_avatar_url;
   if(/^\/static\/assets\/encounters\/(?:goblin|brute|shaman)\.svg$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(["warrior","mage","priest","hunter"].includes(id))return "/static/assets/rpg/"+id+".png";
+  if(id==='gambler')return '/static/assets/casino/gambler.png';
   return "/static/assets/"+(["cutie","jock","nerd","thumb","index","middle","ring","pinky"].includes(id)?id:"ragamuffin")+".png";
 };
 function fighterImage(p,cls="",id=""){

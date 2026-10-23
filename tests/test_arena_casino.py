@@ -129,6 +129,20 @@ class CasinoCombatTests(unittest.TestCase):
 
 
 class CasinoPatternTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'),'Node required')
+    def test_client_uses_all_casino_sprites_and_preserves_custom_priority(self):
+        from test_arena_market_client import ArenaMarketClientTests
+        runner=ArenaMarketClientTests()
+        keys=('gambler','casino_hustler','casino_lucky','casino_hustler_final','casino_lucky_final')
+        paths=['/static/assets/casino/'+key+'.png' for key in keys]
+        inputs=[dict(sprite='gambler',class_avatar_url=path) for path in paths]
+        self.assertEqual(json.loads(runner.run_client('out=JSON.stringify(input.map(sprite));',inputs)),paths)
+        custom='/sprites/'+'a'*64+'.png'
+        for item in inputs:item['sprite_url']=custom
+        self.assertEqual(json.loads(runner.run_client('out=JSON.stringify(input.map(sprite));',inputs)),[custom]*5)
+        self.assertEqual(runner.run_client('out=sprite(input);','gambler'),paths[0])
+        self.assertEqual(runner.run_client('out=sprite(input);',dict(sprite='gambler',class_avatar_url='https://example.com/other.png')),paths[0])
+
     def test_all_five_game_sprites_are_compact_transparent_exports(self):
         from PIL import Image
         from arena_progression import choice_avatar

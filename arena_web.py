@@ -134,7 +134,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side["class_rarity_name"] = RARITY_LABELS[cls.rarity]
             side["sprite"] = (
                 side["class_id"]
-                if side["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter"} | FINGER_IDS
+                if side["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter", "gambler"} | FINGER_IDS
                 else "ragamuffin"
             )
             side.update(
@@ -331,7 +331,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
         profile["catchup_level"] = level_from_total_xp(target) if target > profile["xp"] else 0
         profile["sprite"] = (
             profile["class_id"]
-            if profile["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter"} | FINGER_IDS
+            if profile["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter", "gambler"} | FINGER_IDS
             else "ragamuffin"
         )
         profile.update(await db.arena_sprite_info(chat, profile["user_id"]))
