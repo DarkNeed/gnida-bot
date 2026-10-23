@@ -11,6 +11,28 @@ MAX_TRIGGER_LENGTH = 80
 MAX_TRIGGER_VARIANTS = 20
 MAX_RESPONSE_LENGTH = 1000
 MAX_RESPONSES_PER_OUTCOME = 20
+MAX_COMMAND_COOLDOWN = 7 * 86400
+
+
+def parse_command_cooldown(value: str) -> int | None:
+    text = value.strip().casefold()
+    if text in {'нет','выкл','выключен','-'}:return 0
+    if re.fullmatch(r'[0-9]{1,7}',text):
+        seconds=int(text)
+    else:
+        parts=list(re.finditer(r'([0-9]{1,7})\s*(секунд[аыу]?|сек|с|минут[ауы]?|мин|м|час(?:а|ов)?|ч|дней|день|дня|д)',text))
+        if not parts or re.sub(r'\s+','',text) != ''.join(re.sub(r'\s+','',p.group()) for p in parts):return None
+        seconds=sum(int(p[1]) * (86400 if p[2].startswith('д') else 3600 if p[2].startswith('ч') else 60 if p[2].startswith('м') else 1) for p in parts)
+    return seconds if 0<=seconds<=MAX_COMMAND_COOLDOWN else None
+
+
+def command_cooldown_text(seconds: int) -> str:
+    if not seconds:return 'выключен'
+    parts=[]
+    for size,label in ((86400,'д'),(3600,'ч'),(60,'мин'),(1,'с')):
+        count,seconds=divmod(seconds,size)
+        if count:parts.append(f'{count} {label}')
+    return ' '.join(parts)
 
 _TRAILING_PUNCTUATION_RE = re.compile(r"[!?.…]+$")
 _PLACEHOLDER_RE = re.compile(

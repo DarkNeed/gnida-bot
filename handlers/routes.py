@@ -62,6 +62,8 @@ from custom_commands import (
     parse_response_lines,
     custom_command_allowed,
     resolve_command_access,
+    parse_command_cooldown,
+    command_cooldown_text,
     render_custom_template,
     template_placeholders,
 )
@@ -2786,6 +2788,7 @@ def create_router(
             f"Чат: {html.escape(str(row['chat_title'] or row['chat_id']))}\n"
             f"Цена: <b>{row['cost']} ₣</b> · Успех: <b>{row['success_chance']}%</b>\n"
             f"Доступ: {exclusive}\n"
+            f"Кулдаун на игрока: {command_cooldown_text(row['cooldown_seconds'])}\n"
             f"Фраз запуска: {1 + len(aliases)}\n"
             f"Ответов: успех {len(successes)}, неудача {len(failures)}\n\n"
             "Нажми на настройку, которую хочешь изменить.\n"
@@ -2794,6 +2797,7 @@ def create_router(
         buttons = [
             [InlineKeyboardButton(text="💰 Цена", callback_data=f"cc:edit:{command_id}:cost"),
              InlineKeyboardButton(text="🎲 Шанс", callback_data=f"cc:edit:{command_id}:chance")],
+            [InlineKeyboardButton(text="⏳ Кулдаун", callback_data=f"cc:edit:{command_id}:cooldown")],
             [InlineKeyboardButton(text="👤 Доступ", callback_data=f"cc:edit:{command_id}:exclusive"),
              InlineKeyboardButton(text="✏️ Фраза", callback_data=f"cc:edit:{command_id}:trigger")],
             [InlineKeyboardButton(text=f"🔀 Варианты запуска ({len(aliases)})", callback_data=f"cc:aliases:{command_id}:0")],
@@ -3213,6 +3217,9 @@ def create_router(
             except ValueError:
                 parsed = -1
             result = await database.update_custom_command_setting(command_id, "cost", parsed)
+        elif field == 'cooldown':
+            parsed=parse_command_cooldown(value)
+            result=await database.update_custom_command_setting(command_id,'cooldown_seconds',parsed)
         elif field == "chance":
             try:
                 parsed = int(value.removesuffix("%").strip())
@@ -3382,9 +3389,10 @@ def create_router(
                 else:
                     if action == "edit":
                         field = parts[3]
-                        if field not in {"cost", "chance", "exclusive", "trigger"}:
+                        if field not in {"cost", "chance", "exclusive", "trigger", "cooldown"}:
                             raise ValueError
                         prompts = {
+                            'cooldown':'Кулдаун этой команды на каждого игрока: 30с, 5м, 1ч 30м или число секунд. Максимум 7 дней. 0 или «нет» — отключить. Все фразы запуска используют один таймер; успех и неудача запускают его.',
                             "cost": "Напиши новую цену в франках (0–1 000 000).",
                             "chance": "Напиши новый шанс успеха (0–100%).",
                             "exclusive": "Пришли до 50 пользователей: @user1 @user2 -@user3 (или ID / -ID). Без минуса — только им; минус запрещает. Только минусы — всем остальным можно. «Нет» сбросит ограничения. Список заменяет прежний.",
@@ -6831,7 +6839,13 @@ def create_router(
             return
 
         cost = int(command["cost"])
-        if not await database.spend_francs(message.chat.id, sender.id, cost):
+        usage=await database.try_custom_command_use(message.chat.id,command['id'],sender.id)
+        if usage['status']=='denied':return
+        if usage['status']=='cooldown':
+            await message.answer('⏳ Команда на перезарядке. Повтори через '+command_cooldown_text(usage['remaining'])+'.')
+            return
+        if usage['status']=='funds':
+            cost=usage['cost']
             balance = await database.franc_balance(message.chat.id, sender.id)
             await message.answer(
                 f"Недостаточно франков: нужно {cost} ₣, на балансе {balance} ₣."

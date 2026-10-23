@@ -1,4 +1,5 @@
 import tempfile
+import asyncio
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,12 +17,19 @@ from custom_commands import (
     template_placeholders,
     custom_command_allowed,
     resolve_command_access,
+    parse_command_cooldown,
 )
 from database import Database
 from handlers.routes import create_router
 
 
 class CustomCommandTemplateTests(unittest.TestCase):
+    def test_cooldown_units_limits_and_disabled(self):
+        for text,value in (('0',0),('нет',0),('30',30),('30с',30),('5 минут',300),('1ч 30м',5400),('7 дней',604800)):
+            self.assertEqual(parse_command_cooldown(text),value)
+        for text in ('-1','8д','1.5ч','очень долго','1мxxx','99999999999999999999'):
+            self.assertIsNone(parse_command_cooldown(text))
+
     def test_response_blocks_preserve_newlines_and_legacy_format(self):
         self.assertEqual(parse_response_lines('Первая\nстрока\n\nабзац\n---\nВторая\nстрока'),['Первая\nстрока\n\nабзац','Вторая\nстрока'])
         self.assertEqual(parse_response_lines('-10 HP\nЕщё строка\n---'),['-10 HP\nЕщё строка'])
@@ -56,6 +64,43 @@ class CustomCommandTemplateTests(unittest.TestCase):
 
 
 class CustomCommandDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cooldown_atomic_debit_persistence_and_independence(self):
+        cid=await self.database.save_custom_command(1,'Таймер','таймер',10,100,['Да'],[],None,CUSTOM_COMMAND_OWNER_ID)
+        await self.database.update_custom_command_setting(cid,'cooldown_seconds',300)
+        result=await self.database.try_custom_command_use(1,cid,10,now=1000)
+        self.assertEqual(result['status'],'funds')
+        await self.database.credit_francs(1,10,50)
+        results=await asyncio.gather(*(self.database.try_custom_command_use(1,cid,10,now=1000) for _ in range(2)))
+        self.assertEqual(sorted(r['status'] for r in results),['cooldown','ok'])
+        self.assertEqual(await self.database.franc_balance(1,10),40)
+        await self.database.close();await self.database.connect()
+        self.assertEqual(await self.database.try_custom_command_use(1,cid,10,now=1001),dict(status='cooldown',remaining=299))
+        await self.database.credit_francs(1,20,50)
+        self.assertEqual((await self.database.try_custom_command_use(1,cid,20,now=1001))['status'],'ok')
+        other=await self.database.save_custom_command(1,'Другая','другая',0,100,['Да'],[],None,CUSTOM_COMMAND_OWNER_ID)
+        self.assertEqual((await self.database.try_custom_command_use(1,other,10,now=1001))['status'],'ok')
+        self.assertEqual((await self.database.try_custom_command_use(1,cid,10,now=1300))['status'],'ok')
+        await self.database.update_custom_command_setting(cid,'cooldown_seconds',0)
+        self.assertEqual((await self.database.try_custom_command_use(1,cid,10,now=1300))['status'],'ok')
+        await self.database.update_custom_command_access(cid,{'10':False})
+        self.assertEqual((await self.database.try_custom_command_use(1,cid,10,now=1300))['status'],'denied')
+        self.assertEqual(await self.database.update_custom_command_setting(cid,'cooldown_seconds',604801),'invalid')
+
+    async def test_alias_cannot_bypass_cooldown_and_does_not_charge_twice(self):
+        cid=await self.database.save_custom_command(1,'Таймер','таймер',10,0,['Успех'],['Неудача'],None,CUSTOM_COMMAND_OWNER_ID)
+        await self.database.update_custom_command_setting(cid,'cooldown_seconds',60)
+        await self.database.modify_custom_command_alias(cid,'add',trigger='Обход')
+        await self.database.credit_francs(1,10,50)
+        router=create_router(self.database)
+        handler=next(item.callback for item in router.message.handlers if item.callback.__name__=='run_custom_command')
+        message=SimpleNamespace(text='Таймер',caption=None,chat=SimpleNamespace(id=1,type='supergroup'),from_user=User(id=10,is_bot=False,first_name='Игрок'),reply_to_message=None,answer=AsyncMock())
+        await handler(message,SimpleNamespace())
+        self.assertEqual(message.answer.await_args.args[0],'Неудача')
+        message.text='Обход'
+        await handler(message,SimpleNamespace())
+        self.assertIn('перезарядке',message.answer.await_args.args[0])
+        self.assertEqual(await self.database.franc_balance(1,10),40)
+
     async def test_access_lists_persist_filter_menu_and_reset_legacy_access(self):
         cid=await self.database.save_custom_command(1,'Доступ','доступ',0,100,['Да'],[],99,CUSTOM_COMMAND_OWNER_ID)
         self.assertFalse(custom_command_allowed(await self.database.get_custom_command_by_id(cid),10))

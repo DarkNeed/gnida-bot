@@ -536,6 +536,11 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
             """
         )
         self._ensure_column("custom_commands", "access_rules", "TEXT NOT NULL DEFAULT '{}'")
+        self._ensure_column('custom_commands','cooldown_seconds','INTEGER NOT NULL DEFAULT 0')
+        self.connection.execute('''CREATE TABLE IF NOT EXISTS custom_command_uses (
+            command_id INTEGER NOT NULL REFERENCES custom_commands(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL, last_used INTEGER NOT NULL,
+            PRIMARY KEY(command_id,user_id))''')
         self._ensure_column("ownership", "last_forced_at", "INTEGER")
         self._ensure_column("business_workers", "wage_hours", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("businesses", "income_remainder", "INTEGER NOT NULL DEFAULT 0")
@@ -2636,7 +2641,7 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
     async def update_custom_command_setting(
         self, command_id: int, field: str, value: str | int | None
     ) -> str:
-        if field not in {"trigger", "cost", "success_chance", "exclusive_user_id"}:
+        if field not in {"trigger", "cost", "success_chance", "exclusive_user_id", "cooldown_seconds"}:
             raise ValueError("Unknown custom command setting")
         async with self._lock:
             row = self.connection.execute(
@@ -2663,6 +2668,8 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
                 except sqlite3.IntegrityError:
                     return "exists"
             else:
+                if field == 'cooldown_seconds' and (type(value) is not int or not 0<=value<=604800):
+                    return 'invalid'
                 if field == "cost" and (not isinstance(value, int) or not 0 <= value <= 1_000_000):
                     return "invalid"
                 if field == "success_chance":
@@ -2737,6 +2744,28 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
             )
             self.connection.commit()
             return cursor.rowcount > 0
+
+    async def try_custom_command_use(self, chat_id: int, command_id: int, user_id: int, *, now=None) -> dict:
+        """Fresh access check, cooldown reservation and debit are one transaction."""
+        from custom_commands import custom_command_allowed
+        now=utc_timestamp() if now is None else int(now)
+        async with self._lock:
+            with self.connection:
+                command=self.connection.execute('SELECT * FROM custom_commands WHERE id=? AND chat_id=? AND enabled=1',
+                    (command_id,chat_id)).fetchone()
+                if command is None or not custom_command_allowed(command,user_id):return dict(status='denied')
+                previous=self.connection.execute('SELECT last_used FROM custom_command_uses WHERE command_id=? AND user_id=?',
+                    (command_id,user_id)).fetchone()
+                remaining=max(0,previous['last_used']+command['cooldown_seconds']-now) if previous else 0
+                if remaining:return dict(status='cooldown',remaining=remaining)
+                cost=command['cost']
+                if cost:
+                    spent=self.connection.execute('''UPDATE franc_balances SET balance=balance-?,updated_at=?
+                        WHERE chat_id=? AND user_id=? AND balance>=?''',(cost,now,chat_id,user_id,cost))
+                    if not spent.rowcount:return dict(status='funds',cost=cost)
+                self.connection.execute('''INSERT INTO custom_command_uses VALUES(?,?,?)
+                    ON CONFLICT(command_id,user_id) DO UPDATE SET last_used=excluded.last_used''',(command_id,user_id,now))
+                return dict(status='ok')
 
     async def spend_francs(self, chat_id: int, user_id: int, amount: int) -> bool:
         """Atomically debit a balance, returning False when funds are insufficient."""
