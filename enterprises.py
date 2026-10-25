@@ -398,7 +398,8 @@ class EnterpriseMixin(SlaveIdentityMixin, SlaveTraderMixin, ExpeditionMixin, Rec
                     p['expedition_ready_at']=(last['stamp']+6*3600) if last['stamp'] is not None else 0
                     p['expedition_active']=bool(last['active'])
                     p['listed']=self._trader_listed_locked(chat,p['user_id'])
-                    p['identity']=self._slave_identity_locked(p['user_id'])
+                    p['identity']=self._trader_identity_public_locked(chat,owner,p['user_id'],p['identity'])
+                    p.pop('base_power',None)
                     delivery=self.connection.execute('SELECT delivered_at FROM slave_trader_deliveries WHERE worker_id=?',(p['user_id'],)).fetchone()
                     p['order_ready_at']=delivery['delivered_at']+7*86400 if delivery else 0
                     people.append(p)

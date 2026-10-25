@@ -103,6 +103,20 @@ class SlaveTraderMixin:
                     active=active,last_seen=r['last_seen'],power=p['power'],level=p['level'],class_name=p['class_name'],
                     rates=rates,price_low=low,price_high=round(low*1.6),identity=p['identity'])
 
+    def _trader_identity_public_locked(self,chat,owner,worker,identity=None):
+        """Paid knowledge is bound to the current owner/chat/acquisition.
+
+        Keep real modifiers internal for economy/expedition calculations. Merely
+        fetching a roster or opening a passport must never disclose the rarity.
+        """
+        identity=identity if identity is not None else self._slave_identity_locked(worker)
+        assessed=self.connection.execute('''SELECT 1 FROM slave_trader_reports r JOIN ownership o
+            ON o.chat_id=r.chat_id AND o.owner_id=r.owner_id AND o.slave_id=r.worker_id AND o.acquired_at=r.acquired_at
+            WHERE r.chat_id=? AND r.owner_id=? AND r.worker_id=?''',(chat,owner,worker)).fetchone() is not None
+        if assessed:return dict(identity,appraised=True)
+        return dict(appraised=False,permanent=True,**{k:identity[k] for k in
+            ('trait_id','trait_name','trait_flavor','trait_effect') if k in identity})
+
     def _trader_view_locked(self, chat, actor):
         self._trader_expire_locked()
         listings=[]
@@ -115,7 +129,8 @@ class SlaveTraderMixin:
             WHERE l.chat_id=? AND l.status='active' ORDER BY (l.seller_id=?) DESC,l.id DESC LIMIT 50''',(chat,actor)):
             listings.append(dict(id=r['id'],worker_id=r['worker_id'],seller_id=r['seller_id'],
                 name=r['display_name'] or r['username'] or str(r['worker_id']),seller_name=r['seller_name'] or str(r['seller_id']),
-                price=r['price'],fee=(r['price']+9)//10,expires_at=r['expires_at'],identity=self._slave_identity_locked(r['worker_id'])))
+                price=r['price'],fee=(r['price']+9)//10,expires_at=r['expires_at'],
+                identity=self._trader_identity_public_locked(chat,r['seller_id'],r['worker_id'])))
         reports=[json.loads(r['report_json']) for r in self.connection.execute('''SELECT r.report_json
             FROM slave_trader_reports r JOIN ownership o ON o.chat_id=r.chat_id AND o.slave_id=r.worker_id
             AND o.owner_id=r.owner_id AND o.acquired_at=r.acquired_at

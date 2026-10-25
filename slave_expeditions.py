@@ -157,7 +157,16 @@ class ExpeditionMixin:
         async with self._lock:
             with self.connection:
                 self._expedition_finish_due_locked()
-                return self._expedition_quote_locked(chat, owner, mission, users)
+                return self._expedition_quote_public_locked(chat,owner,self._expedition_quote_locked(chat, owner, mission, users))
+
+    def _expedition_quote_public_locked(self,chat,owner,quote):
+        public=dict(quote,members=[])
+        for member in quote['members']:
+            participant=dict(member)
+            participant['identity']=self._trader_identity_public_locked(chat,owner,member['user_id'],member.get('identity'))
+            participant.pop('base_power',None)
+            public['members'].append(participant)
+        return public
 
     async def expedition_start(self, chat, owner, mission, users, revision, nonce, rng=None):
         if not isinstance(nonce, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{16,80}', nonce):
@@ -260,4 +269,5 @@ class ExpeditionMixin:
     def _expedition_public_locked(self, chat, owner):
         rows=self.connection.execute('SELECT * FROM slave_expeditions WHERE chat_id=? AND owner_id=? ORDER BY started_at DESC,rowid DESC LIMIT 10', (chat,owner)).fetchall()
         return [dict(id=r['id'],mission=r['mission'],status=r['status'],started_at=r['started_at'],ends_at=r['ends_at'],
-                     quote=json.loads(r['quote_json']),result=json.loads(r['result_json']) if r['status']!='active' else None) for r in rows]
+                     quote=self._expedition_quote_public_locked(chat,owner,json.loads(r['quote_json'])),
+                     result=json.loads(r['result_json']) if r['status']!='active' else None) for r in rows]
