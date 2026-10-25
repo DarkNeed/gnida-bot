@@ -39,6 +39,18 @@ def register_holdings(app, db, bot, actor_key, require_member, int_field):
         body=await request.json()
         if not isinstance(body,dict):raise ValueError('Некорректный запрос.')
         kind=body.get('action');notice=''
+        if isinstance(kind,str) and kind.startswith('trader_'):
+            users=[]
+            if kind in ('trader_appraise','trader_list'):users=[body.get('worker')]
+            elif kind=='trader_order':users=body.get('users')
+            elif kind=='trader_buy':users=await db.trader_listing_members(chat,body.get('listing'))
+            if not isinstance(users,list) or len(users)>2:raise ValueError('Некорректные участники.')
+            for user in users:
+                if type(user) is not int or user<=0:raise ValueError('Некорректный участник.')
+                member=await require_member(bot,chat,user)
+                if getattr(getattr(member,'user',None),'is_bot',False):raise ValueError('Боты не участвуют в торговле.')
+            result=await db.trader_action(chat,actor,body)
+            return web.json_response(dict(**result,holdings=await db.holdings_view(chat,actor)))
         if kind=='expedition_quote':
             users=body.get('users')
             if not isinstance(users,list) or len(users)>5:raise ValueError('Отряд: от одного до пяти участников.')

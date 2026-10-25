@@ -49,7 +49,8 @@ async def enterprise_detail(db, actor, chat, site_id):
           f"{esc(CATALOG[site['business_type']]['name'])} · уровень {site['level']}\n"
           f"Занято: <b>{len(workers)}/{site['capacity']}</b>\n"
           f"{esc(producer)}: {producers} · {esc(leader)}: {leaders}\n"
-          f"Доход активного работника: {cfg['owner_per_producer']} ₣/час до налога; неактивного: {cfg['inactive_owner_per_producer']} ₣/час. Управляющий: +20% активной выручки.\n"
+          f"Базовый доход активного работника: {cfg['owner_per_producer']} ₣/час до налога; неактивного: {cfg['inactive_owner_per_producer']} ₣/час. Управляющий: +20% активной выручки.\n"
+          'Редкость и особенность усиливают активную выработку; «Прораб крематория» добавляет управляющему +5 п.п. Паспорт — во «Владения → Рабы».\n'
           'Зарплата активного работника: 1 ₣/6 ч, управляющего: 1 ₣/12 ч.\n')
     if site['description']:text+='\n'+esc(site['description'])+'\n'
     if len(workers)>site['capacity'] or leaders>1:text+='\n⚠️ Лишние назначения сохранены, но доход и зарплату дают только места в пределах вместимости и один управляющий. Распредели работников.\n'

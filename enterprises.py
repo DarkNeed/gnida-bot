@@ -7,6 +7,8 @@ from datetime import datetime
 from uuid import uuid4
 from slave_recovery import RecoveryMixin
 from slave_expeditions import ExpeditionMixin, EXPEDITIONS, digest
+from slave_trader import SlaveTraderMixin
+from slave_identity import SlaveIdentityMixin
 
 MAX_ENTERPRISES = 3
 CAPACITIES = {1: 10, 2: 15, 3: 20}
@@ -46,7 +48,7 @@ def role_labels(site):
     return (site['producer_title'] or defaults['producer'], site['leader_title'] or defaults['leader'])
 
 
-class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
+class EnterpriseMixin(SlaveIdentityMixin, SlaveTraderMixin, ExpeditionMixin, RecoveryMixin):
     async def business_for_worker(self, chat, owner, worker):
         async with self._lock:
             return self._enterprise_locked(chat,owner,worker=worker)
@@ -100,6 +102,8 @@ class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
         ''')
         self._init_recovery_events()
         self._init_expeditions()
+        self._init_slave_identities()
+        self._init_slave_trader()
 
     def _enterprise_locked(self, chat, owner, site_id=None, worker=None):
         if site_id is None and worker is not None:
@@ -144,7 +148,9 @@ class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
             result['hours']=0
             return result
         workers=self._enterprise_workers_locked(site); cfg=config(site)
-        remainder=site['income_remainder']; daily={}; wage_hours={w['worker_id']:0 for w in workers}
+        from slave_identity import identity_at,work_percent,manager_bonus
+        identity_context={w['worker_id']:self._slave_identity_context_locked(w['worker_id']) for w in workers}
+        remainder=site['income_remainder']*100+site['income_subcent']; daily={}; wage_hours={w['worker_id']:0 for w in workers}
         for hour in range(hours):
             begin=site['last_accrued']+hour*BUSINESS_HOUR_SECONDS; end=begin+BUSINESS_HOUR_SECONDS
             legacy=end<=site['rules_since']
@@ -156,9 +162,11 @@ class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
             present=[w for w in (*leaders,*producers) if not self._enterprise_away_locked(chat,owner,w['worker_id'],begin,end)]
             live_leaders=[w for w in leaders if w in present]
             bonus=sum(20//(2**i) for i in range(min(5,len(live_leaders)))) if legacy else (20 if live_leaders else 0)
-            active=sum(w['role']==cfg['producer_role'] and w['last_seen'] is not None and end<=w['last_seen']+BUSINESS_ACTIVE_SECONDS for w in present)
-            inactive=sum(w['role']==cfg['producer_role'] for w in present)-active
-            gross,remainder=divmod(active*cfg['owner_per_producer']*(100+bonus)+inactive*cfg['inactive_owner_per_producer']*100+remainder,100)
+            bonus+=sum(manager_bonus(identity_at(identity_context[w['worker_id']],begin)) for w in live_leaders[:1])
+            active=[w for w in present if w['role']==cfg['producer_role'] and w['last_seen'] is not None and end<=w['last_seen']+BUSINESS_ACTIVE_SECONDS]
+            inactive=sum(w['role']==cfg['producer_role'] for w in present)-len(active)
+            production=sum(cfg['owner_per_producer']*work_percent(identity_at(identity_context[w['worker_id']],begin),site['business_type']) for w in active)
+            gross,remainder=divmod(production*(100+bonus)+inactive*cfg['inactive_owner_per_producer']*10000+remainder,10000)
             day=datetime.fromtimestamp(end-1,BUSINESS_STATS_TZ).date().isoformat()
             daily[day]=daily.get(day,0)+gross
             for w in present:
@@ -172,7 +180,8 @@ class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
             payouts,left=divmod(w['wage_hours']+wage_hours[w['worker_id']],period)
             if payouts:self._credit_labor_income_locked(chat,w['worker_id'],payouts*cfg['leader_wage' if leader else 'producer_wage'],timestamp)
             self.connection.execute('UPDATE business_workers SET wage_hours=? WHERE chat_id=? AND owner_id=? AND worker_id=?',(left,chat,owner,w['worker_id']))
-        self.connection.execute('UPDATE businesses SET last_accrued=last_accrued+?,income_remainder=? WHERE id=?',(hours*BUSINESS_HOUR_SECONDS,remainder,site['id']))
+        cents,subcent=divmod(remainder,100)
+        self.connection.execute('UPDATE businesses SET last_accrued=last_accrued+?,income_remainder=?,income_subcent=? WHERE id=?',(hours*BUSINESS_HOUR_SECONDS,cents,subcent,site['id']))
         return result
 
     def _enterprise_settle_owner_locked(self, chat, owner, timestamp):
@@ -296,7 +305,9 @@ class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
         absent=[tuple(r) for r in self.connection.execute('''SELECT slave_id,status,revision FROM slave_recovery_events
             WHERE chat_id=? AND owner_id=? AND status IN ('announcing','pending','playing') ORDER BY id''',(chat,owner))]
         trips=[tuple(r) for r in self.connection.execute('SELECT user_id,expedition_id FROM slave_expedition_members WHERE chat_id=? AND owner_id=? AND active=1 ORDER BY user_id',(chat,owner))]
-        return digest([sites,owned,absent,trips])
+        listings=[tuple(r) for r in self.connection.execute("SELECT id,worker_id FROM slave_trader_listings WHERE chat_id=? AND seller_id=? AND status='active' AND expires_at>? ORDER BY id",(chat,owner,now()))]
+        identities=[(r[0],self._slave_identity_locked(r[0])) for r in owned]
+        return digest([sites,owned,absent,trips,listings,identities])
 
     def _holdings_check_locked(self, chat, owner, revision):
         self._require_feature_locked(chat,'slavery')
@@ -376,7 +387,7 @@ class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
                     s['income']=[dict(r) for r in self.connection.execute('SELECT * FROM enterprise_income_daily WHERE business_id=? ORDER BY income_day DESC LIMIT 7',(s['id'],))]
                     sites.append(s)
                 people=[];catalog=self._fighter_catalog_locked()
-                for row in self.connection.execute('''SELECT o.slave_id AS user_id,u.display_name,u.username,w.business_id,w.role
+                for row in self.connection.execute('''SELECT o.slave_id AS user_id,o.acquired_at,u.last_seen,u.display_name,u.username,w.business_id,w.role
                     FROM ownership o LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.slave_id
                     LEFT JOIN business_workers w ON w.chat_id=o.chat_id AND w.owner_id=o.owner_id AND w.worker_id=o.slave_id
                     WHERE o.chat_id=? AND o.owner_id=? ORDER BY o.acquired_at DESC,o.slave_id''',(chat,owner)):
@@ -386,6 +397,10 @@ class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
                     last=self.connection.execute('SELECT MAX(started_at) AS stamp,MAX(active) AS active FROM slave_expedition_members WHERE user_id=?',(p['user_id'],)).fetchone()
                     p['expedition_ready_at']=(last['stamp']+6*3600) if last['stamp'] is not None else 0
                     p['expedition_active']=bool(last['active'])
+                    p['listed']=self._trader_listed_locked(chat,p['user_id'])
+                    p['identity']=self._slave_identity_locked(p['user_id'])
+                    delivery=self.connection.execute('SELECT delivered_at FROM slave_trader_deliveries WHERE worker_id=?',(p['user_id'],)).fetchone()
+                    p['order_ready_at']=delivery['delivered_at']+7*86400 if delivery else 0
                     people.append(p)
                 balance=self.connection.execute('SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?',(chat,owner)).fetchone()
                 chat_row=self.connection.execute('SELECT title FROM chats WHERE chat_id=?',(chat,)).fetchone()
@@ -395,6 +410,6 @@ class EnterpriseMixin(ExpeditionMixin, RecoveryMixin):
                 return dict(chat_id=chat,chat_title=chat_row['title'] if chat_row else str(chat),actor_id=owner,
                     server_time=now(),revision=self._holdings_revision_locked(chat,owner),balance=balance['balance'] if balance else 0,
                     sites=sites,people=people,expeditions=trips,other_expedition_chat=other['chat_id'] if other else None,
-                    recoveries=recovery,arena_enabled=self._feature_enabled_locked(chat,'arena'),
+                    recoveries=recovery,arena_enabled=self._feature_enabled_locked(chat,'arena'),trader=self._trader_view_locked(chat,owner),
                     catalog=[dict(id=k,**v) for k,v in CATALOG.items()],max_enterprises=MAX_ENTERPRISES,
                     missions=[dict(id=k,**v) for k,v in EXPEDITIONS.items()])

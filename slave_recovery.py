@@ -78,7 +78,9 @@ class RecoveryMixin:
                     if self.connection.execute('SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND created_at>?',(chat,now-RECOVERY_CHAT_COOLDOWN)).fetchone():continue
                     if rng.random()>=.10:continue
                     workers=self.connection.execute('''SELECT slave_id FROM ownership WHERE chat_id=? AND owner_id=?
-                        AND slave_id NOT IN (SELECT user_id FROM slave_expedition_members WHERE active=1) ORDER BY slave_id''',(chat,user)).fetchall()
+                        AND slave_id NOT IN (SELECT user_id FROM slave_expedition_members WHERE active=1)
+                        AND slave_id NOT IN (SELECT worker_id FROM slave_trader_listings WHERE chat_id=? AND status='active' AND expires_at>?)
+                        ORDER BY slave_id''',(chat,user,chat,now)).fetchall()
                     if not workers:continue
                     worker=rng.choice(workers)['slave_id'];pattern=rng.sample(range(len(RECOVERY_SYMBOLS)),RECOVERY_CODE_LENGTH)
                     cursor=self.connection.execute("INSERT INTO slave_recovery_events(chat_id,owner_id,slave_id,kind,created_at,pattern_json,game_type) VALUES(?,?,?,?,?,?,'code')",(chat,user,worker,rng.choice(('escaped','kidnapped')),now,json.dumps(pattern)))

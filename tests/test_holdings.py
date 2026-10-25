@@ -30,6 +30,9 @@ class HoldingsTests(unittest.IsolatedAsyncioTestCase):
                 await self.db.upsert_user(chat,user,'user'+str(user),'Участник '+str(user))
             await self.db.credit_francs(chat,10,10000)
             for user in range(100,112):await self.db.force_enslave(chat,user,10)
+        # Baseline economy fixtures: no rarity/work bonuses; identity effects have their own suite.
+        self.db.connection.execute("UPDATE slave_identities SET luck=0,trait='survivor',rarity='common' WHERE user_id<>1980056841")
+        self.db.connection.commit()
         self.bot=SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status='member',user=SimpleNamespace(is_bot=False))))
         self.client=TestClient(TestServer(create_arena_app(self.db,self.bot,TOKEN)))
         await self.client.start_server()

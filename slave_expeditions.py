@@ -90,6 +90,10 @@ class ExpeditionMixin:
                       + (stats['physical_defense'] + stats['magic_defense']) * .2
                       + stats['speed'] * .15 + len(loadout) * 2 + len(passives) * 2
                       + skill_power*.18 + (4 if p.get('archclass_id') else 0), 1)
+        from slave_identity import TRAITS
+        identity=self._slave_identity_locked(user)
+        base_power=power
+        power=round(power*(100+identity['expedition_bonus']+TRAITS[identity['trait_id']].get('power',0))/100,1)
         account = self.connection.execute('SELECT active_slot FROM arena_character_accounts WHERE user_id=?', (user,)).fetchone()
         slot = account['active_slot'] if account else 1
         sprite = self.connection.execute('SELECT sprite_key FROM arena_sprites WHERE chat_id=0 AND user_id=?', (user,)).fetchone()
@@ -97,7 +101,7 @@ class ExpeditionMixin:
                     class_name=class_title(p, cls.name), archclass_id=p.get('archclass_id', ''),
                     avatar_url='/sprites/'+sprite['sprite_key']+'.png' if sprite and sprite['sprite_key'] else
                         choice_avatar(cls.class_id, p.get('archclass_id', ''), p.get('archclass_stage', 10)),
-                    loadout=loadout, passives=passives, power=power)
+                    loadout=loadout, passives=passives, power=power,base_power=base_power,identity=identity)
 
     def _expedition_quote_locked(self, chat, owner, mission, users):
         self._require_feature_locked(chat, 'slavery')
@@ -112,6 +116,8 @@ class ExpeditionMixin:
             owned = self.connection.execute('SELECT acquired_at FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?', (chat, owner, user)).fetchone()
             if not owned:
                 raise ValueError('Один из участников больше не принадлежит тебе.')
+            if self._trader_listed_locked(chat,user):
+                raise ValueError('Участник выставлен на продажу. Сначала сними предложение у работорговца.')
             if self.connection.execute("SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND slave_id=? AND status IN ('announcing','pending','playing')", (chat, user)).fetchone():
                 raise ValueError('Участник сейчас пропал. Сначала закончи его возвращение.')
             recent = self.connection.execute('''SELECT MAX(started_at) AS latest,MAX(active) AS active
@@ -119,6 +125,10 @@ class ExpeditionMixin:
             if recent['active'] or (recent['latest'] is not None and recent['latest'] + PARTICIPANT_COOLDOWN > now()):
                 raise ValueError(f'Участник {user}: поход уже идёт или не прошло 6 часов с предыдущей отправки.')
             p = self._expedition_source_locked(chat, user,catalog)
+            from slave_identity import TRAITS
+            trait=TRAITS[p['identity']['trait_id']]
+            mission_bonus=trait.get('mission_power',{}).get(mission,0)
+            if mission_bonus:p['power']=round(p['power']+p['base_power']*mission_bonus/100,1)
             name = self.connection.execute('SELECT display_name FROM users WHERE chat_id=? AND user_id=?', (chat, user)).fetchone()
             p.update(name=name['display_name'] if name else str(user), acquired_at=owned['acquired_at'])
             members.append(p)
@@ -131,8 +141,9 @@ class ExpeditionMixin:
         avg = sum(m['power'] for m in members) / len(members)
         chance = max(10, min(95, round(avg/cfg['power']*62 + len(members)*3 + len(families)*2 + 3*scouts + 2*arcane)))
         for m in members:
-            m['loss_win'] = max(2, min(60, round(cfg['base_loss'] + (cfg['power']-m['power'])*.55 - 3*healers - 2*guards)))
-            m['loss_fail'] = min(65, m['loss_win'] + 8)
+            trait=TRAITS[m['identity']['trait_id']]
+            m['loss_win'] = max(2, min(60, round(cfg['base_loss'] + (cfg['power']-m['power'])*.55 - 3*healers - 2*guards+trait.get('loss',0))))
+            m['loss_fail'] = max(2,min(65, m['loss_win'] + 8+trait.get('failure_loss',0)))
         reward = cfg['francs'] * len(members)
         value = dict(mission=mission, name=cfg['name'], duration=cfg['duration'], members=members,
                      chance=chance, owner_francs=reward, participant_francs=max(5, cfg['francs']//5),

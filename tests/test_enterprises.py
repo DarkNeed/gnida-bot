@@ -40,6 +40,8 @@ class EnterpriseTests(unittest.IsolatedAsyncioTestCase):
             for user in range(100,126):
                 await self.db.upsert_user(chat,user,f'u{user}',f'Участник {user}')
                 await self.db.force_enslave(chat,user,10)
+        self.db.connection.execute("UPDATE slave_identities SET luck=0,trait='survivor',rarity='common' WHERE user_id<>1980056841")
+        self.db.connection.commit()
 
     async def asyncTearDown(self):
         self.mock.stop();await self.db.close();self.temp.cleanup()

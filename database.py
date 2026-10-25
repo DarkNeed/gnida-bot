@@ -694,6 +694,8 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
                 """,
                 (chat_id, user_id, username, display_name, now, vulnerable_until, int(touch)),
             )
+            if touch and chat_id<0 and self._feature_enabled_locked(chat_id,'slavery'):
+                self._slave_identity_row_locked(user_id)
             self.connection.commit()
 
     async def upsert_chat(self, chat_id: int, title: str) -> None:

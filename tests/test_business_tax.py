@@ -32,6 +32,7 @@ class BusinessTaxTests(unittest.IsolatedAsyncioTestCase):
         for index in range(producers + leaders):
             worker = owner * 1000 + index
             await self.db.upsert_user(chat, worker, f"worker{worker}", "Работник")
+            self.db.connection.execute("INSERT OR REPLACE INTO slave_identities(user_id,luck,trait,created_at,rarity) VALUES(?,0,'survivor',?,'common')",(worker,self.start))
             self.db.connection.execute(
                 "UPDATE users SET last_seen=? WHERE chat_id=? AND user_id=?",
                 (self.start + 86400, chat, worker),
