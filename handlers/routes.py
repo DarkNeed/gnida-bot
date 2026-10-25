@@ -78,7 +78,7 @@ from database import (
     utc_timestamp,
 )
 from menu_context import choose_chat_view, selected_chat, verified_selected_chat, verified_constructor_chat, manages_chat
-from franc_deposit import DEPOSIT_RE, parse_deposit
+from franc_deposit import DEPOSIT_RE, DEPOSIT_WIN_PERCENT, parse_deposit
 from parsing import (
     command_payload,
     format_duration,
@@ -3678,7 +3678,8 @@ def create_router(
             stake=result['stake'],payout=result['payout'])
         await message.answer(context+phrase+f"\n\nСтавка: <b>{result['stake']} ₣</b>.\n"+
             (f"Выплата: <b>{result['payout']} ₣</b> · чистый выигрыш: <b>+{result['payout']-result['stake']} ₣</b>." if result['won'] else f"Проиграно: <b>{result['stake']} ₣</b>.")+
-            f"\nБаланс после ставки: <b>{result['balance_after']} ₣</b>.",parse_mode='HTML')
+            f"\nБаланс после ставки: <b>{result['balance_after']} ₣</b>."+
+            f"\nШанс: {DEPOSIT_WIN_PERCENT}% · выплата ×5. Следующая ставка через {result['cooldown_seconds']//60} мин.",parse_mode='HTML')
 
     @router.message(text_or_caption_regexp(FRANCS_RE))
     async def francs(message: Message, bot: Bot) -> None:

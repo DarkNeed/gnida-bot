@@ -1,4 +1,4 @@
-"""Fictional franc wager: 20% gross x5, atomic and Telegram-message idempotent."""
+"""Fictional franc wager: 16% gross x5, stake-based account-wide cooldown."""
 
 import random
 import re
@@ -6,6 +6,8 @@ import re
 DEPOSIT_RE = re.compile(r'^\s*[!/]?депнуть(?:@\w+)?(?:\s|$)', re.IGNORECASE)
 AMOUNT_RE = re.compile(r'([0-9]{1,19})(?:(?:\s+(?:франк|франка|франков))|\s*₣)?', re.IGNORECASE)
 DEPOSIT_COOLDOWN = 60
+DEPOSIT_WIN_PERCENT = 16
+DEPOSIT_COOLDOWN_TIERS = ((50,600),(200,300),(500,120))
 DEPOSIT_ERROR_INTERVAL = 30
 
 LOSS_PHRASES = (
@@ -44,6 +46,12 @@ def parse_deposit(text):
     return value
 
 
+def deposit_cooldown(stake):
+    """Use the paid amount, not the next requested amount or the current wallet."""
+    if type(stake) is not int or stake<1:raise ValueError('Некорректная ставка.')
+    return next((seconds for upper,seconds in DEPOSIT_COOLDOWN_TIERS if stake<upper),DEPOSIT_COOLDOWN)
+
+
 class DepositMixin:
     def _init_deposits(self):
         self.connection.execute('''CREATE TABLE IF NOT EXISTS franc_deposits(
@@ -53,6 +61,9 @@ class DepositMixin:
             phrase TEXT NOT NULL,created_at INTEGER NOT NULL,
             PRIMARY KEY(message_chat_id,message_id))''')
         self._ensure_column('franc_deposits','stake_mode',"TEXT NOT NULL DEFAULT 'amount'")
+        # Preserve the original 60-second period on pre-update receipts. Never
+        # extend a past wager retroactively when deploying or restarting.
+        self._ensure_column('franc_deposits','cooldown_seconds','INTEGER NOT NULL DEFAULT 60')
         self.connection.executescript('''
             CREATE TABLE IF NOT EXISTS franc_deposit_limits(
                 user_id INTEGER PRIMARY KEY,cooldown_until INTEGER NOT NULL DEFAULT 0,
@@ -63,7 +74,7 @@ class DepositMixin:
             CREATE INDEX IF NOT EXISTS idx_deposit_user_time ON franc_deposits(user_id,created_at);
         ''')
         self.connection.execute('''INSERT OR IGNORE INTO franc_deposit_limits(user_id,cooldown_until)
-            SELECT user_id,MAX(created_at)+? FROM franc_deposits GROUP BY user_id''',(DEPOSIT_COOLDOWN,))
+            SELECT user_id,MAX(created_at+cooldown_seconds) FROM franc_deposits GROUP BY user_id''')
 
     def _deposit_seen_locked(self, user, source, message_id):
         return bool(self.connection.execute('SELECT 1 FROM franc_deposits WHERE message_chat_id=? AND message_id=?',
@@ -150,7 +161,8 @@ class DepositMixin:
                     raise ValueError(f'Не хватает франков: ставка {stake} ₣, на балансе {balance} ₣.')
                 if balance>MAX_FRANC_BALANCE-4*stake:
                     raise ValueError('Возможный выигрыш превысит лимит кошелька. Уменьши ставку.')
-                won=rng.randrange(100)<20
+                seconds=deposit_cooldown(stake)
+                won=rng.randrange(100)<DEPOSIT_WIN_PERCENT
                 if won:
                     self.connection.execute('''INSERT INTO arena_casino_unlocks(user_id,invited) VALUES(?,1)
                         ON CONFLICT(user_id) DO UPDATE SET invited=1''',(user,))
@@ -159,9 +171,9 @@ class DepositMixin:
                 phrase=rng.choice(WIN_PHRASES if won else LOSS_PHRASES)
                 self.connection.execute('UPDATE franc_balances SET balance=?,updated_at=? WHERE chat_id=? AND user_id=?',(after,utc_timestamp(),chat,user))
                 self.connection.execute('''INSERT INTO franc_deposits
-                    (message_chat_id,message_id,chat_id,user_id,stake,won,payout,balance_after,phrase,created_at,stake_mode)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?)''',
-                    (message_chat,message_id,chat,user,stake,int(won),payout,after,phrase,utc_timestamp(),mode))
+                    (message_chat_id,message_id,chat_id,user_id,stake,won,payout,balance_after,phrase,created_at,stake_mode,cooldown_seconds)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (message_chat,message_id,chat,user,stake,int(won),payout,after,phrase,stamp,mode,seconds))
                 self.connection.execute('UPDATE franc_deposit_limits SET cooldown_until=?,cooldown_warned=0 WHERE user_id=?',
-                                        (stamp+DEPOSIT_COOLDOWN,user))
+                                        (stamp+seconds,user))
                 return dict(self.connection.execute('SELECT * FROM franc_deposits WHERE message_chat_id=? AND message_id=?',(message_chat,message_id)).fetchone())

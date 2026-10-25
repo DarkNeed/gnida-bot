@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock,patch
 
 from aiogram.types import User
 from database import Database,MAX_FRANC_BALANCE
-from franc_deposit import DEPOSIT_RE,parse_deposit,WIN_PHRASES,LOSS_PHRASES
+from franc_deposit import DEPOSIT_RE,parse_deposit,WIN_PHRASES,LOSS_PHRASES,deposit_cooldown
 from handlers.routes import create_router
 
 
@@ -34,6 +34,12 @@ class DepositParserTests(unittest.TestCase):
     def test_phrase_templates(self):
         for s in WIN_PHRASES+LOSS_PHRASES:
             self.assertIn('Игрок',s.format(user='Игрок',stake=100,payout=500))
+
+    def test_cooldown_boundaries_without_gameplay_stake_cap(self):
+        for stake,seconds in ((1,600),(49,600),(50,300),(199,300),(200,120),(499,120),(500,60),(501,60),(1000000,60)):
+            self.assertEqual(deposit_cooldown(stake),seconds)
+        for stake in (0,-1,True,1.5,'100'):
+            with self.assertRaises(ValueError):deposit_cooldown(stake)
 
 
 class DepositTests(unittest.IsolatedAsyncioTestCase):
@@ -65,24 +71,24 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
             message_id=mid,answer=AsyncMock())
 
     async def test_win_is_gross_x5_not_net_x5(self):
-        result=await self.bet(roll=19)
+        result=await self.bet(roll=15)
         self.assertEqual((result['won'],result['payout'],result['balance_after']),(1,500,1400))
         self.assertEqual(await self.db.franc_balance(-200,10),1000)
 
     async def test_loss_only_loses_stake(self):
-        for roll in (20,99):
+        for roll in (16,99):
             r=await self.bet(roll=roll,mid=roll)
             self.assertEqual(r['won'],0);self.assertEqual(r['payout'],0)
-            self.clock+=60
+            self.clock+=300
         self.assertEqual(await self.db.franc_balance(-100,10),800)
 
-    async def test_exact_twenty_out_of_one_hundred_rolls(self):
+    async def test_exact_sixteen_out_of_one_hundred_rolls(self):
         wins=0
         for roll in range(100):
             wins+=(await self.bet(roll=roll,stake=1,mid=roll+1))['won']
-            self.clock+=60
-        self.assertEqual(wins,20)
-        self.assertEqual(await self.db.franc_balance(-100,10),1000)
+            self.clock+=600
+        self.assertEqual(wins,16)
+        self.assertEqual(await self.db.franc_balance(-100,10),980)
 
     async def test_duplicate_update_and_restart_do_not_reroll(self):
         r=await self.bet(roll=0)
@@ -96,7 +102,7 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
     async def test_parallel_duplicate_and_distinct_bets(self):
         a,b=await asyncio.gather(self.bet(roll=0),self.bet(roll=99))
         self.assertEqual(a,b);self.assertEqual(await self.db.franc_balance(-100,10),1400)
-        self.clock+=60
+        self.clock+=300
         out=await asyncio.gather(self.bet(stake=1000,mid=2),self.bet(stake=1000,mid=3),return_exceptions=True)
         self.assertEqual(sum(bool(r.get('blocked')) for r in out),1)
         self.assertEqual(await self.db.franc_balance(-100,10),400)
@@ -123,6 +129,8 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
         msg=self.message('депнуть 100',mid=2);await self.handler(msg,self.bot)
         self.assertIn('&lt;Игрок&gt;',msg.answer.call_args.args[0]);self.assertIn('Баланс после ставки',msg.answer.call_args.args[0])
         self.assertEqual(msg.answer.call_args.kwargs['parse_mode'],'HTML')
+        self.assertIn('Шанс: 16%',msg.answer.call_args.args[0])
+        self.assertIn('через 5 мин.',msg.answer.call_args.args[0])
 
     async def test_private_requires_explicit_verified_chat_and_scopes_receipt(self):
         msg=self.message(private=True)
@@ -204,8 +212,8 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
         rng=Fixed(0)
         first=await self.bet(chat=-200,source=-200,mid=2,rng=rng)
         second=await self.bet(stake='all',source=10,mid=3,rng=rng)
-        self.assertEqual(first,dict(blocked=True,notify=True,remaining=60))
-        self.assertEqual(second,dict(blocked=True,notify=False,remaining=60))
+        self.assertEqual(first,dict(blocked=True,notify=True,remaining=300))
+        self.assertEqual(second,dict(blocked=True,notify=False,remaining=300))
         self.assertEqual(rng.calls,0)
         self.assertEqual(await self.db.franc_balance(-200,10),1000)
         self.assertEqual(await self.db.franc_balance(-100,10),900)
@@ -213,8 +221,8 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
     async def test_attempts_never_extend_cooldown_and_rejected_message_cannot_play_later(self):
         await self.bet();self.clock+=5
         first=await self.bet(mid=2)
-        self.assertEqual(first['remaining'],55)
-        self.clock+=54
+        self.assertEqual(first['remaining'],295)
+        self.clock+=294
         self.assertEqual((await self.bet(mid=3))['remaining'],1)
         self.clock+=1
         self.assertFalse((await self.bet(mid=2))['notify']) # previously rejected message
@@ -224,8 +232,8 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
     async def test_cooldown_and_warning_survive_restart(self):
         await self.bet();await self.bet(mid=2)
         self.clock+=20;await self.db.close();await self.db.connect()
-        self.assertEqual(await self.bet(mid=3),dict(blocked=True,notify=False,remaining=40))
-        self.clock+=40
+        self.assertEqual(await self.bet(mid=3),dict(blocked=True,notify=False,remaining=280))
+        self.clock+=280
         self.assertEqual((await self.bet(mid=4))['stake'],100)
         self.assertTrue((await self.bet(mid=5))['notify'])
 
@@ -233,7 +241,7 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
         await self.bet()
         first=self.message('депнуть всё',private=True,mid=2)
         await self.handler(first,self.bot)
-        self.assertIn('60 сек.',first.answer.call_args.args[0])
+        self.assertIn('300 сек.',first.answer.call_args.args[0])
         second=self.message('депнуть мусор',private=True,mid=3)
         await self.handler(second,self.bot);second.answer.assert_not_called()
         self.bot.get_chat_member.assert_not_called()
@@ -275,7 +283,7 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
         self.db.connection.execute('DROP TABLE franc_deposit_limits')
         self.db.connection.execute('DROP TABLE franc_deposit_rejections');self.db.connection.commit()
         self.clock+=20;await self.db.close();await self.db.connect()
-        self.assertEqual(await self.bet(mid=2),dict(blocked=True,notify=True,remaining=40))
+        self.assertEqual(await self.bet(mid=2),dict(blocked=True,notify=True,remaining=280))
 
     async def test_other_accounts_have_independent_limits(self):
         await self.bet()
@@ -283,6 +291,63 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
         result=await self.db.deposit_francs(-100,20,100,-100,2,Fixed(99))
         self.assertEqual((result['stake'],result['balance_after']),(100,0))
         self.assertTrue((await self.bet(mid=3))['blocked'])
+
+    async def test_actual_paid_amount_sets_persisted_cooldown_on_every_boundary(self):
+        for index,(stake,seconds) in enumerate(((1,600),(49,600),(50,300),(199,300),(200,120),(499,120),(500,60),(1000000,60))):
+            self.db.connection.execute('UPDATE franc_balances SET balance=2000000 WHERE chat_id=-100 AND user_id=10');self.db.connection.commit()
+            stamp=self.clock
+            result=await self.bet(stake=stake,mid=index*2+1)
+            self.assertEqual(result['cooldown_seconds'],seconds)
+            limit=self.db.connection.execute('SELECT cooldown_until FROM franc_deposit_limits WHERE user_id=10').fetchone()[0]
+            self.assertEqual(limit,stamp+seconds)
+            rng=Fixed(0)
+            blocked=await self.bet(stake=1000000,mid=index*2+2,rng=rng)
+            self.assertEqual(blocked['remaining'],seconds)
+            self.assertEqual(rng.calls,0)
+            self.clock+=seconds
+
+    async def test_dynamic_modes_use_actual_stake_including_flooring_half(self):
+        for mid,(balance,mode,stake,seconds) in enumerate(((49,'all',49,600),(50,'all',50,300),
+                 (999,'half',499,120),(1001,'half',500,60),(1000000,'all',1000000,60)),1):
+            self.db.connection.execute('UPDATE franc_balances SET balance=? WHERE chat_id=-100 AND user_id=10',(balance,));self.db.connection.commit()
+            result=await self.bet(stake=mode,mid=mid)
+            self.assertEqual((result['stake'],result['cooldown_seconds']),(stake,seconds))
+            self.clock+=seconds
+
+    async def test_wins_and_losses_have_identical_cooldowns(self):
+        for mid,roll in enumerate((0,15,16,99),1):
+            result=await self.bet(stake=49,roll=roll,mid=mid)
+            self.assertEqual(result['cooldown_seconds'],600)
+            self.clock+=600
+
+    async def test_no_daily_limit_after_twenty_bets_and_large_stakes_remain_allowed(self):
+        for mid in range(1,26):
+            result=await self.bet(stake=1,mid=mid)
+            self.assertNotIn('blocked',result)
+            self.clock+=600
+        self.assertEqual(await self.db.franc_balance(-100,10),975)
+        await self.db.credit_francs(-100,10,1000000)
+        result=await self.bet(stake=1000000,mid=26)
+        self.assertEqual((result['stake'],result['cooldown_seconds']),(1000000,60))
+
+    async def test_tiered_timer_survives_restart_and_receipt_restore(self):
+        await self.bet(stake=49);self.clock+=20
+        await self.db.close();await self.db.connect()
+        self.assertEqual((await self.bet(mid=2))['remaining'],580)
+        self.db.connection.execute('DROP TABLE franc_deposit_limits');self.db.connection.commit()
+        await self.db.close();await self.db.connect()
+        self.assertEqual((await self.bet(mid=3))['remaining'],580)
+
+    async def test_pre_update_receipts_keep_sixty_seconds_and_original_payout(self):
+        original=await self.bet(roll=0)
+        self.db.connection.execute('ALTER TABLE franc_deposits DROP COLUMN cooldown_seconds')
+        self.db.connection.execute('DROP TABLE franc_deposit_limits');self.db.connection.commit()
+        self.clock+=20;await self.db.close();await self.db.connect()
+        replay=await self.bet(roll=99)
+        self.assertEqual(replay['payout'],original['payout'])
+        self.assertEqual(replay['balance_after'],original['balance_after'])
+        self.assertEqual(replay['cooldown_seconds'],60)
+        self.assertEqual((await self.bet(mid=2))['remaining'],40)
 
 
 if __name__=='__main__':unittest.main()
