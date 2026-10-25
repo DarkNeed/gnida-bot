@@ -129,8 +129,8 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
         msg=self.message('депнуть 100',mid=2);await self.handler(msg,self.bot)
         self.assertIn('&lt;Игрок&gt;',msg.answer.call_args.args[0]);self.assertIn('Баланс после ставки',msg.answer.call_args.args[0])
         self.assertEqual(msg.answer.call_args.kwargs['parse_mode'],'HTML')
-        self.assertIn('Шанс: 16%',msg.answer.call_args.args[0])
-        self.assertIn('через 5 мин.',msg.answer.call_args.args[0])
+        self.assertNotIn('Шанс:',msg.answer.call_args.args[0])
+        self.assertNotIn('Следующая ставка через',msg.answer.call_args.args[0])
 
     async def test_private_requires_explicit_verified_chat_and_scopes_receipt(self):
         msg=self.message(private=True)
