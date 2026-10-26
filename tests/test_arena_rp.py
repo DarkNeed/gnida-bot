@@ -3,6 +3,7 @@ from copy import deepcopy
 from io import BytesIO
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import time
 from types import SimpleNamespace
@@ -18,6 +19,8 @@ from arena_raid_web import raid_view
 from arena_web import create_arena_app
 from database import Database
 from handlers.rp import RP_RE, create_rp_router
+from handlers.raids import RaidPublisher
+import test_arena_market_client as client_tests
 from test_arena import signed, TOKEN
 from test_arena_rebalance import FixedRoll
 
@@ -143,12 +146,11 @@ class RPTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(row['token'], [r['token'] for r in await self.db.arena_raid_list(-100,20)])
         self.assertNotIn(row['token'], [r['token'] for r in await self.db.arena_raid_list(-100,10)])
 
-    async def test_idempotent_create_master_not_a_fighter_and_cross_mode_denial(self):
+    async def test_idempotent_create_master_not_auto_joined_and_cross_mode_denial(self):
         t = await self.character(actor=10)
         row = await self.lobby()
         self.assertEqual((await self.lobby())['token'], row['token'])
-        with self.assertRaises(ValueError):
-            await self.db.arena_raid_setup(row['token'], 10, 'join', rp_template=t['id'])
+        self.assertEqual(row['participants'], [])
         with self.assertRaises(ValueError):
             await self.db.arena_raid_setup(row['token'], 20, 'join', rp_template=t['id'])
         normal = await self.db.arena_raid_create(-100, 30)
@@ -156,6 +158,75 @@ class RPTests(unittest.IsolatedAsyncioTestCase):
             await self.db.arena_raid_setup(normal['token'], 20, 'join', rp_template=t['id'])
         with self.assertRaises(ValueError):
             await self.db.arena_rp_encounter_create(-100, 10, [dict(kind='builtin', id='brute')], 'a'*32)
+
+    async def test_master_can_join_leave_and_fight_with_normal_or_rp_character(self):
+        hero = await self.character(actor=10)
+        mob = await self.db.arena_rp_save(10, 'mob', dict(definition(), name='Тренировочная тень', stats=dict(max_hp=777)))
+        for number, selected in enumerate(({}, dict(rp_template=hero['id']))):
+            with self.subTest(rp=bool(selected)):
+                row = await self.db.arena_rp_encounter_create(-100, 10, [dict(kind='mob', id=mob['id'])], str(number)*32)
+                self.assertEqual(row['participants'], [])
+                row = await self.db.arena_raid_setup(row['token'], 10, 'join', **selected)
+                self.assertEqual([p['actor_id'] for p in row['participants']], [10])
+                self.assertTrue((await raid_view(self.db, row, 10))['is_master'])
+                self.assertIn('участвует в отряде', await RaidPublisher(self.db, self.bot, 'TestBot').body(row))
+                row = await self.db.arena_raid_setup(row['token'], 10, 'leave')
+                self.assertEqual(row['participants'], [])
+                self.assertTrue((await raid_view(self.db, row, 10))['is_master'])
+                row = await self.db.arena_raid_setup(row['token'], 10, 'join', **selected)
+                row = await self.db.arena_raid_setup(row['token'], 10, 'start')
+                data = json.loads(row['data_json'])
+                self.assertEqual(set(data['players']), {'10'})
+                self.assertEqual(data['enemies']['e1']['hp'], 777)
+                self.assertEqual(bool(data['players']['10']['fighter'].get('rp_sandbox')), bool(selected))
+                await self.db.arena_interactive_raid(row['token'], 10, 1, 'bum_punch', target='e1')
+                self.assertIsNotNone(self.db._qte_load_locked('raid', row['token'], 10))
+                with self.assertRaises(ValueError):
+                    await self.db.arena_raid_setup(row['token'], 20, 'finish')
+                finished = await self.db.arena_raid_setup(row['token'], 10, 'finish')
+                self.assertEqual(finished['status'], 'finished')
+                self.assertEqual(json.loads(finished['data_json'])['rewards'], {})
+                self.assertIsNone(self.db._qte_load_locked('raid', row['token'], 10))
+
+    async def test_master_counts_towards_three_places_and_keeps_control_outside_party(self):
+        row = await self.lobby()
+        await self.db.upsert_user(-100, 40, '40', 'Четвёртый')
+        for actor in (20, 30, 40):
+            await self.db.arena_raid_setup(row['token'], actor, 'join')
+        with self.assertRaisesRegex(ValueError, 'три места'):
+            await self.db.arena_raid_setup(row['token'], 10, 'join')
+        await self.db.arena_raid_setup(row['token'], 40, 'leave')
+        row = await self.db.arena_raid_setup(row['token'], 10, 'join')
+        self.assertEqual(len(row['participants']), 3)
+        with self.assertRaises(ValueError):
+            await self.db.arena_raid_setup(row['token'], 20, 'start')
+        row = await self.db.arena_raid_setup(row['token'], 10, 'leave')
+        self.assertEqual(len(row['participants']), 2)
+        row = await self.db.arena_raid_setup(row['token'], 10, 'start')
+        self.assertNotIn('10', json.loads(row['data_json'])['players'])
+        self.assertEqual((await self.db.arena_raid_setup(row['token'], 10, 'finish'))['status'], 'finished')
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required for client rendering')
+    async def test_master_lobby_shows_join_choices_and_active_combat_and_controls(self):
+        hero = await self.character(actor=10)
+        row = await self.lobby()
+        renderer = client_tests.ArenaMarketClientTests()
+        render = 'document.querySelector=()=>null;document.getElementById=()=>null;raidScreen(input);'
+        view = await raid_view(self.db, row, 10)
+        html = renderer.run_client(render, view)
+        self.assertIn('Присоединиться самому', html)
+        self.assertIn('Мой личный персонаж', html)
+        self.assertIn('joinrp:' + hero['id'], html)
+        self.assertIn('Начать встречу', html)
+        row = await self.db.arena_raid_setup(row['token'], 10, 'join', rp_template=hero['id'])
+        html = renderer.run_client(render, await raid_view(self.db, row, 10))
+        self.assertIn('Выйти из отряда', html)
+        self.assertIn('Участвует в отряде', html)
+        row = await self.db.arena_raid_setup(row['token'], 10, 'start')
+        html = renderer.run_client(render, await raid_view(self.db, row, 10))
+        self.assertIn('Выбери действие', html)
+        self.assertIn('Управление мастера', html)
+        self.assertIn('Завершить встречу', html)
 
     async def test_free_skills_still_pay_energy_and_respect_conditions_and_qte(self):
         row, _ = await self.start()

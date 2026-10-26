@@ -108,7 +108,7 @@ class RaidPublisher:
             master_name = html.escape(master['display_name'] if master else str(row['creator_id']))
             config = json.loads(row['encounter_json'])
             text = '⚔️ <b>РП-встреча</b> · ' + html.escape(roster_text(config['roster']))
-            role = 'наблюдает, не участвует в бою' if config.get('rp') else 'не занимает место, пока сам не вступит'
+            role = 'участвует в отряде' if any(p['actor_id'] == row['creator_id'] for p in row['participants']) else 'не занимает место, пока сам не вступит'
             text += f'\nМастер: {master_name} · {role}.\nНаграды отключены: без XP, франков, предметов и кулдаунов наград.\n'
             if row['status'] == 'lobby':
                 return text + f'\nОтряд: {len(names)}/3\n' + '\n'.join('• ' + n for n in names.values()) + '\n\nМастер начинает бой с 1–3 участниками. До 3 врагов. Свои мобы сохраняют настройки мастера; готовые подстраиваются под отряд. На сбор — 10 минут.'

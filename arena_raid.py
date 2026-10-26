@@ -562,9 +562,6 @@ class RaidMixin:
                 members = row["participants"]
                 current = next((p for p in members if p["actor_id"] == actor), None)
                 if action == "join":
-                    config = json.loads(row['encounter_json']) if row.get('encounter_json') else {}
-                    if config.get('rp') and actor == row['creator_id']:
-                        raise ValueError('Мастер наблюдает за встречей и не занимает место бойца.')
                     if type(personal) is not bool or type(fighter) is not int:
                         raise ValueError("Некорректный выбор бойца.")
                     fighter = fighter or actor

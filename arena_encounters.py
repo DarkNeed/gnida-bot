@@ -1,4 +1,4 @@
-"""Reward-free RP encounters: a non-playing master and independent enemies."""
+"""Reward-free RP encounters: an optional playing master and independent enemies."""
 
 import random
 import re

@@ -135,7 +135,7 @@ def register_rp(app, db, bot, actor_key, require_member, read_member, raid_chang
         await authorized(chat, actor, True)
         async with publication_lock:
             row = await db.arena_rp_encounter_create(chat, actor, body.get('roster'), body.get('nonce'))
-            notice = 'Встреча создана. Мастер не участвует в бою.'
+            notice = 'Встреча создана. Мастер может остаться наблюдателем или вступить в отряд.'
             if publisher and row['status'] == 'lobby' and row['message_id'] is None:
                 try:
                     sent = await bot.send_message(chat, await publisher.body(row), reply_markup=publisher.keyboard(row), parse_mode='HTML')

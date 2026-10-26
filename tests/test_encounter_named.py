@@ -71,12 +71,10 @@ class NamedEncounterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row['message_id'], 202)
         self.assertEqual(row['participants'], [])
         self.assertIn('Лесной разбойник', message.answer.await_args.args[0])
-        self.assertIn('не участвует в бою', message.answer.await_args.args[0])
+        self.assertIn('не занимает место, пока сам не вступит', message.answer.await_args.args[0])
         await handler(message)
         self.assertEqual(len(self.rows()), 1)
         message.answer.assert_awaited_once()
-        with self.assertRaises(ValueError):
-            await self.db.arena_raid_setup(row['token'], 10, 'join')
         hero = await self.db.arena_rp_save(20, 'character', rp_tests.definition())
         await self.db.arena_raid_setup(row['token'], 20, 'join', rp_template=hero['id'])
         row = await self.db.arena_raid_setup(row['token'], 10, 'start')
