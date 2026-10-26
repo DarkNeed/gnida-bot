@@ -25,13 +25,14 @@ function record(c){
     for(let tick=0;tick<=Math.ceil(s.duration*120);tick++){
       E.attackStep(s,Math.min(s.duration,tick/120)-s.time);const f=E.attackFrame(s);
       const miss=c.miss_first&&!missedFirst&&f.canHit&&Math.abs(f.cursor-f.center)>f.width;
-      if(f.canHit&&(miss||Math.abs(f.cursor-f.center)<f.width/3)){
+      const aim=c.critical_aim?f.criticalWidth/3:f.width/3;
+      if(f.canHit&&(miss||Math.abs(f.cursor-f.center)<aim)){
         E.hit(s);proof.clicks.push(tick);if(miss)missedFirst=true;
       }
       if(s.ended){proof.ticks=tick;break;}
     }
     const mask=s.results.map(Boolean);
-    return {proof,result:{mask,weights:mask.map((v,i)=>v?E.attackWeights(p)[i]:0)}};
+    return {proof,result:{mask,weights:mask.map((v,i)=>v?E.attackWeights(p)[i]:0),criticals:s.criticals.slice()}};
   }
   let route;if(c.perfect){route=safeRoute(s)||safeRoute(s,110);if(!route)throw new Error('No safe route '+p.skill.name);}
   const proof={ticks:Math.round(s.duration*120),inputs:[]},readyTicks=Math.round(s.preparation*120);let last='';

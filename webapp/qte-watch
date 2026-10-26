@@ -8,7 +8,7 @@
   let viewer=null;
   function createReplay(stage){
     const options={damageBase:stage.damage_base,hp:stage.target_hp,referenceDamage:stage.damage_base,
-      endOnDeath:false,enabledStrikes:stage.enabled_strikes,preparation:stage.defense_preparation??0};
+      endOnDeath:false,criticalBase:stage.critical_base,criticalStrikes:stage.critical_strikes,enabledStrikes:stage.enabled_strikes,preparation:stage.defense_preparation??0};
     const sim=stage.version===3?B.create(stage.profile,stage.stats,stage.seed,options):
       (stage.kind==='defense'?E.defense:E.attack)(E.profile(stage.profile),stage.stats,stage.seed,options);
     return {stage,sim,tick:0,knownTick:0,inputs:[],clicks:[],inputIndex:0,clickIndex:0,control:{},ended:false,aborted:false};

@@ -396,6 +396,9 @@ class RaidMixin:
             self._raid_save_locked(row, data)
             return
         _, skills = self._fighter_catalog_locked()
+        if data.get('kind') == 'encounter':
+            from arena_rp import rp_skills
+            skills = rp_skills(skills)
         resolve_round(data, skills)
         if data["finished"]:
             self._raid_finish_locked(row, data)
@@ -459,8 +462,10 @@ class RaidMixin:
                 dict(r)
                 for r in self.connection.execute(
                     """SELECT DISTINCT r.token,r.status,r.round,r.boss_id,r.creator_id FROM arena_raids r
-                   LEFT JOIN arena_raid_players p ON p.token=r.token WHERE p.actor_id=?
-                   OR (r.boss_id='encounter' AND r.creator_id=?) ORDER BY r.created_at DESC LIMIT 5""",
+                   LEFT JOIN arena_raid_players p ON p.token=r.token WHERE (p.actor_id=?
+                   OR (r.boss_id='encounter' AND r.creator_id=?))
+                   AND NOT EXISTS(SELECT 1 FROM arena_rp_requests rp WHERE rp.token=r.token)
+                   ORDER BY r.created_at DESC LIMIT 5""",
                     (actor, actor),
                 ).fetchall()
             ]
@@ -524,11 +529,13 @@ class RaidMixin:
                 raise
 
     async def arena_raid_setup(
-        self, token, actor, action, fighter=0, personal=True, expected_revision=None
+        self, token, actor, action, fighter=0, personal=True, expected_revision=None, *, rp_template=None
     ):
         async with self._lock:
             try:
                 row = self._raid_row_locked(token)
+                if rp_template is not None and row.get('boss_id') != 'encounter':
+                    raise ValueError('RP-сборки доступны только во встречах без наград.')
                 self._require_feature_locked(row['chat_id'], 'arena')
                 if action == 'finish' and row.get('boss_id') == 'encounter':
                     if actor != row['creator_id']:
@@ -555,6 +562,9 @@ class RaidMixin:
                 members = row["participants"]
                 current = next((p for p in members if p["actor_id"] == actor), None)
                 if action == "join":
+                    config = json.loads(row['encounter_json']) if row.get('encounter_json') else {}
+                    if config.get('rp') and actor == row['creator_id']:
+                        raise ValueError('Мастер наблюдает за встречей и не занимает место бойца.')
                     if type(personal) is not bool or type(fighter) is not int:
                         raise ValueError("Некорректный выбор бойца.")
                     fighter = fighter or actor
@@ -568,8 +578,14 @@ class RaidMixin:
                     owner = self._raid_validate_fighter_locked(
                         row["chat_id"], actor, fighter, personal, token
                     )
-                    profile = self._arena_profile_locked(row["chat_id"], fighter, personal)
-                    if profile['level'] < BOSSES[row['boss_id']].get('min_level', 1):
+                    if rp_template is not None:
+                        profile = self._rp_template_locked(actor, rp_template, 'character')['definition']
+                        self.connection.execute('INSERT INTO arena_rp_selections VALUES(?,?,?) ON CONFLICT(token,actor_id) DO UPDATE SET template_id=excluded.template_id',
+                                                (token, actor, rp_template))
+                    else:
+                        profile = self._arena_profile_locked(row["chat_id"], fighter, personal)
+                        self.connection.execute('DELETE FROM arena_rp_selections WHERE token=? AND actor_id=?', (token, actor))
+                    if profile['level'] < BOSSES.get(row['boss_id'], {}).get('min_level', 1):
                         raise ValueError(f"Каждому участнику нужен {BOSSES[row['boss_id']]['min_level']} уровень.")
                     self.connection.execute(
                         """INSERT INTO arena_raid_players VALUES(?,?,?,?,?) ON CONFLICT(token,actor_id)
@@ -585,6 +601,7 @@ class RaidMixin:
                         "DELETE FROM arena_raid_players WHERE token=? AND actor_id=?",
                         (token, actor),
                     )
+                    self.connection.execute('DELETE FROM arena_rp_selections WHERE token=? AND actor_id=?', (token, actor))
                 elif action in {"start", "cancel"}:
                     if actor != row["creator_id"]:
                         raise ValueError("Это доступно только создателю рейда.")
@@ -607,6 +624,13 @@ class RaidMixin:
                                 bool(p["personal"]),
                                 token,
                             )
+                            rp_selected = self.connection.execute('SELECT template_id FROM arena_rp_selections WHERE token=? AND actor_id=?',
+                                                                  (token, p['actor_id'])).fetchone()
+                            if rp_selected:
+                                if row.get('boss_id') != 'encounter':
+                                    raise ValueError('RP-сборки запрещены в обычных рейдах.')
+                                sources.append(self._rp_source_locked(p['actor_id'], rp_selected['template_id']))
+                                continue
                             self._arena_require_choice_locked(
                                 row["chat_id"], p["fighter_id"], bool(p["personal"])
                             )
@@ -624,11 +648,11 @@ class RaidMixin:
                         if row.get('boss_id') == 'encounter':
                             from arena_encounters import create_encounter
                             data = create_encounter(members, sources, classes, skills,
-                                json.loads(row['encounter_json'])['roster'], row['creator_id'])
+                                self._rp_roster_locked(row), row['creator_id'])
                         else:
                             data = create_raid_state(members, sources, classes, skills, row['boss_id'])
                         for player in data['players'].values():
-                            player['character_slot']=self._character_active_locked(player['actor_id'])
+                            player['character_slot']=1 if player['fighter'].get('rp_sandbox') else self._character_active_locked(player['actor_id'])
                         data['qte_modes']={str(p['actor_id']):self._qte_enabled_locked(p['actor_id']) for p in data['players'].values()}
                         self._raid_save_locked(row, data, "active")
                 else:
@@ -690,6 +714,9 @@ class RaidMixin:
                         validate_anchor(data, skill)
                     elif skill != "defend":
                         _, skills = self._fighter_catalog_locked()
+                        if data.get('kind') == 'encounter':
+                            from arena_rp import rp_skills
+                            skills = rp_skills(skills)
                         validate_skill(
                             pair_state(player["fighter"], opponent),
                             "a",

@@ -25,7 +25,7 @@
     const B=window.QTEBlock,V=window.QTEBlockView;
     if(!B||!V||!window.QTETouch?.lockViewport)return Promise.reject(new Error('Обнови арену: блокирование не загрузилось.'));
     return new Promise(resolve=>{
-      const s=B.create(challenge.profile,challenge.stats,challenge.seed,{hp:challenge.target_hp,referenceDamage:challenge.damage_base,endOnDeath:false,enabledStrikes:challenge.enabled_strikes});
+      const s=B.create(challenge.profile,challenge.stats,challenge.seed,{hp:challenge.target_hp,referenceDamage:challenge.damage_base,criticalBase:challenge.critical_base,criticalStrikes:challenge.critical_strikes,endOnDeath:false,enabledStrikes:challenge.enabled_strikes});
       const cover=document.createElement('div');cover.className='qte-cover qte-pattern qte-block qte-defense';
       cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Блокирование атаки"><div class="qte-heading"><div><p class="qte-eyebrow">ЗАЩИТА · БЛОКИРОВАНИЕ</p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"><span class="qte-help-full">Держи щит навстречу атаке. Отпускай для стойкости; новое поднятие перед ударом — точный блок.</span><span class="qte-help-compact">Держи направление — блок. Отпусти — восстанови стойкость.</span></p><div class="qte-health"><div><span>Твои HP · прогноз</span><strong class="qte-hp-value"></strong></div><div class="qte-hp-track"><i></i></div><div class="qte-block-stamina"><span>Стойкость</span><strong class="qte-stamina-value"></strong></div><div class="qte-hp-track qte-stamina-track"><i></i></div></div><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="400" tabindex="0" aria-label="Стрелки или WASD направляют щит, пробел поднимает блок"></canvas></div><div class="qte-live-status" role="status"></div><div class="qte-controls"><div class="qte-live-buttons"><button class="qte-abort">Пропустить · все попадания</button></div><button class="qte-block-raise" data-direction="raise">Держать блок</button><button class="qte-stick" aria-label="Джойстик направления щита"><span aria-hidden="true"></span></button><div class="qte-live-pad"><button data-direction="up">↑</button><button data-direction="left">←</button><button data-direction="down">↓</button><button data-direction="right">→</button></div></div><p class="qte-info">Обычный блок −75% урона после брони; точный — весь. Волна требует свежего поднятия щита. Урон и результат проверяет сервер.</p></section>';
       const find=q=>cover.querySelector(q),canvas=find('canvas'),ctx=canvas.getContext('2d'),previousFocus=document.activeElement;
@@ -95,14 +95,15 @@
     if(!E||!V||!window.QTETouch?.attach||!window.QTETouch?.lockViewport)return Promise.reject(new Error('Обнови арену: новые мини-игры не загрузились.'));
     return new Promise(resolve=>{
       const defense=challenge.kind==='defense',p=E.profile(challenge.profile);
-      const sim=(defense?E.defense:E.attack)(p,challenge.stats,challenge.seed,{damageBase:challenge.damage_base,hp:challenge.target_hp,endOnDeath:false,enabledStrikes:challenge.enabled_strikes,preparation:challenge.defense_preparation??0});
+      const sim=(defense?E.defense:E.attack)(p,challenge.stats,challenge.seed,{damageBase:challenge.damage_base,criticalBase:challenge.critical_base,criticalStrikes:challenge.critical_strikes,hp:challenge.target_hp,endOnDeath:false,enabledStrikes:challenge.enabled_strikes,preparation:challenge.defense_preparation??0});
       const cover=document.createElement('div');cover.className='qte-cover qte-pattern '+(defense?'qte-defense':'qte-attack');
       cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Боевая мини-игра"><div class="qte-heading"><div><p class="qte-eyebrow"></p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"><span class="qte-help-full"></span><span class="qte-help-compact"></span></p><div class="qte-health"><div><span class="qte-health-label"></span><strong class="qte-hp-value"></strong></div><div class="qte-hp-track"><i></i></div></div><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="320" tabindex="0" aria-label="Пробел для попадания, пальцем или WASD для уклонения"></canvas></div><div class="qte-live-status" role="status"></div><div class="qte-controls"><div class="qte-live-buttons"><button class="qte-hit">УДАР · ПРОБЕЛ / КАСАНИЕ</button><button class="qte-abort">Пропустить · неуспех</button></div><p class="qte-touch-help">Веди пальцем по полю или тяни джойстик.<small>Касание не переносит маркер под палец.</small></p><button class="qte-stick" aria-label="Джойстик уклонения"><span aria-hidden="true"></span></button><div class="qte-live-pad"><button data-direction="up" aria-label="Вверх">↑</button><button data-direction="left" aria-label="Влево">←</button><button data-direction="down" aria-label="Вниз">↓</button><button data-direction="right" aria-label="Вправо">→</button></div></div><p class="qte-info">HP — предварительный расчёт. Итоговый урон и эффекты проверяет сервер. Пропуск защиты засчитывает все угрозы.</p></section>';
       const find=s=>cover.querySelector(s),canvas=find('canvas'),ctx=canvas.getContext('2d');
       find('h2').textContent=challenge.name;
       find('.qte-eyebrow').textContent=defense?'ЗАЩИТА · '+p.title:'ТВОЯ АТАКА · ПОЙМАЙ МОМЕНТ';
-      find('.qte-help-full').textContent=defense?p.hint+' Разные снаряды ранят независимо; золотые опаснее мелких.':p.attackHint;
-      find('.qte-help-compact').textContent=defense?'Уходи от угроз. Золотые сильнее мелких. Пропуск = все касания.':'Подготовка → одно нажатие на каждый удар. Промах без повторной попытки.';
+      const criticalHint=!defense&&E.attackFrame(sim).criticalWidth?' Розовая отметка внутри зоны — крит ×1,5.':'';
+      find('.qte-help-full').textContent=defense?p.hint+' Разные снаряды ранят независимо; золотые опаснее мелких.':p.attackHint+criticalHint;
+      find('.qte-help-compact').textContent=defense?'Уходи от угроз. Золотые сильнее мелких. Пропуск = все касания.':'Одно нажатие на удар. Промах без повтора.'+criticalHint;
       find('.qte-health-label').textContent=(defense?'Твои HP':'HP цели')+' · прогноз';
       if(!defense)find('.qte-info').textContent+=' Даже после успешной отметки бот или босс может уклониться по своей характеристике.';
       find('.qte-abort').title=defense?'Пропуск или истечение времени засчитывают все снаряды как попадания.':'Пропуск расходует действие и не даёт попаданий.';
@@ -134,7 +135,7 @@
       }
       function hit(){
         if(defense||done)return;const ok=E.hit(sim);if(ok===null)return;proof.clicks.push(tick);
-        find('.qte-live-status').textContent=ok?'Попадание засчитано.':'Промах. Повторной попытки нет.';
+        find('.qte-live-status').textContent=ok?(sim.contacts.at(-1)?.critical?'Критический удар ×1,5!':'Попадание засчитано.'):'Промах. Повторной попытки нет.';
         if(ok)window.ArenaAudio?.effect?.('hit');draw();if(sim.ended)finish();
       }
       const keymap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',KeyA:'left',KeyD:'right',KeyW:'up',KeyS:'down'};

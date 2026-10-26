@@ -89,6 +89,8 @@ class RaidPublisher:
             ]
         if row.get('boss_id') == 'encounter' and row['status'] == 'active':
             buttons.append([InlineKeyboardButton(text='Завершить · только мастер', callback_data='rr:finish:' + row['token'])])
+        if row.get('boss_id') == 'encounter':
+            buttons.append([InlineKeyboardButton(text='🎭 RP-меню · свои персонажи и мобы', url=arena_link(self.username, 'rp_' + str(row['chat_id'])))])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     async def body(self, row):
@@ -103,10 +105,12 @@ class RaidPublisher:
             from arena_encounters import roster_text
             master = await self.db.get_user(row['chat_id'], row['creator_id'])
             master_name = html.escape(master['display_name'] if master else str(row['creator_id']))
-            text = '⚔️ <b>РП-встреча</b> · ' + html.escape(roster_text(json.loads(row['encounter_json'])['roster']))
-            text += f'\nМастер: {master_name} · не занимает место, пока сам не вступит.\nНаграды отключены: без XP, франков, предметов и кулдаунов наград.\n'
+            config = json.loads(row['encounter_json'])
+            text = '⚔️ <b>РП-встреча</b> · ' + html.escape(roster_text(config['roster']))
+            role = 'наблюдает, не участвует в бою' if config.get('rp') else 'не занимает место, пока сам не вступит'
+            text += f'\nМастер: {master_name} · {role}.\nНаграды отключены: без XP, франков, предметов и кулдаунов наград.\n'
             if row['status'] == 'lobby':
-                return text + f'\nОтряд: {len(names)}/3\n' + '\n'.join('• ' + n for n in names.values()) + '\n\nМастер начинает бой с 1–3 участниками. До 3 врагов, уровень — средний по отряду при старте. На сбор — 10 минут.'
+                return text + f'\nОтряд: {len(names)}/3\n' + '\n'.join('• ' + n for n in names.values()) + '\n\nМастер начинает бой с 1–3 участниками. До 3 врагов. Свои мобы сохраняют настройки мастера; готовые подстраиваются под отряд. На сбор — 10 минут.'
             if row['status'] == 'cancelled':
                 return text + '\nСбор отменён или время истекло.'
             data = json.loads(row['data_json'])

@@ -119,9 +119,9 @@
     const r=rng(seed^p.seed),d=difficulty(stats),count=p.strikes;
     const activeSlots=Array.from({length:count},()=>((count===1?1.8:1.18)/d.cursor)*(.96+r()*.08));
     const strikeReady=.25,preparation=1,slots=activeSlots.map(v=>v+strikeReady),model=damageModel(options);
-    return {kind:'attack',p,d,...model,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,damage:0,contacts:[],preparation,strikeReady,activeSlots,slots,
+    return {kind:'attack',p,d,...model,criticalBase:!!options.criticalBase,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,damage:0,contacts:[],preparation,strikeReady,activeSlots,slots,
       duration:preparation+slots.reduce((a,b)=>a+b,0),time:0,ended:false,attempts:slots.map(()=>0),lastAttempt:slots.map(()=>-1),
-      centers:slots.map(()=>.28+r()*.44),results:slots.map(()=>null)};
+      centers:slots.map(()=>.28+r()*.44),results:slots.map(()=>null),criticals:slots.map(()=>false)};
   }
   function attackWeights(p){
     const tags=p.skill.tags||[];
@@ -142,21 +142,23 @@
     if(index%2&&s.p.polarity<0)cursor=1-cursor;
     const center=s.centers[index]+(s.p.drift?.035*Math.sin(local*3+s.p.phase):0);
     const remaining=phase==='ready'?s.preparation-s.time:phase==='cue'?s.strikeReady-local:s.slots[index]-local;
-    return {index,cursor,center,width:s.d.zone,remaining:Math.max(0,remaining),phase,attemptsLeft:1-s.attempts[index],
+    const criticalWidth=s.p.skill.damage_type&&!(s.p.skill.tags||[]).includes('no_critical')&&!s.p.kind.startsWith('casino_')?s.d.zone*.2:0;
+    return {index,cursor,center,width:s.d.zone,criticalWidth,remaining:Math.max(0,remaining),phase,attemptsLeft:1-s.attempts[index],
       canHit:phase==='active'&&s.results[index]===null&&s.attempts[index]<1};
   }
   function hit(s){if(s.ended)return null;const f=attackFrame(s);if(!f.canHit)return null;
     const i=f.index,ok=Math.abs(f.cursor-f.center)<=f.width/2;s.attempts[i]++;s.lastAttempt[i]=s.time;
     if(s.p.kind.startsWith('casino_'))(s.casinoThrows??=[]).push({index:i,time:s.time,cursor:f.cursor,center:f.center,width:f.width,ok});
     if(ok){
-      s.results[i]=true;const force={...impact(s.p,i),weight:attackWeights(s.p)[i]},raw=attackDamage(s,i),damage=Math.min(s.hp,raw);
+      s.criticals[i]=!!f.criticalWidth&&Math.abs(f.cursor-f.center)<=f.criticalWidth/2;
+      s.results[i]=true;const force={...impact(s.p,i),weight:attackWeights(s.p)[i],critical:s.criticals[i]},raw=Math.round(attackDamage(s,i)*(s.criticals[i]&&!s.criticalBase?1.5:1)),damage=Math.min(s.hp,raw);
       s.hp-=damage;s.damage+=damage;s.contacts.push({id:'strike:'+i,time:s.time,damage,raw,...force,x:360,y:160});
     }else s.results[i]=false;
     if(s.hp<=0&&s.endOnDeath||!s.p.kind.startsWith('casino_')&&i===s.results.length-1&&s.results[i]!==null)s.ended=true;return ok;}
   function attackStep(s,dt){if(s.ended)return;s.time=Math.min(s.duration,s.time+dt);let end=s.preparation;
     s.slots.forEach((slot,i)=>{end+=slot;if(s.time>=end-1e-8&&s.results[i]===null)s.results[i]=false;});
     if(s.time>=s.duration-1e-8)s.ended=true;}
-  function attackResult(s){return {hits:s.results.filter(Boolean).length,total:s.results.length,mask:s.results.map(Boolean),damage:s.damage,hp:s.hp};}
+  function attackResult(s){return {hits:s.results.filter(Boolean).length,total:s.results.length,mask:s.results.map(Boolean),criticals:s.criticals.slice(),damage:s.damage,hp:s.hp};}
   function defenseDifficulty(p,stats){
     const d=difficulty(stats);
     if(p.casinoJackpot){d.speed*=1.10;d.warning=Math.max(.30,d.warning*.94);}
@@ -175,7 +177,7 @@
     const staticOnly=p.skill.base_id!=='mother_joke'&&['slash','thrust','grapple','hack','script','edict','holy','lightning','portal','coins','tiger'].includes(p.kind);
     const span=(p.basic?4.8:staticOnly?5.1:p.kind==='fire'?4.3:p.kind==='impact'?4:3.5)*(.94+(p.interval-.8)*.15)*(p.kit?.96:1)*(p.basic?1:1-.08*d.intensity);
     const model=damageModel(options),preparation=clamp(options.preparation??1,0,3);
-    return {kind:'defense',p,d,...model,preparation,activeDuration:6.8,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:preparation+6.8,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
+    return {kind:'defense',p,d,...model,criticalBase:!!options.criticalBase,criticalStrikes:options.criticalStrikes||[],preparation,activeDuration:6.8,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:preparation+6.8,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
       events:Array.from({length:count},(_,i)=>({at:preparation+.18+i*(p.kind==='casino_jackpot'?4.1:span)/Math.max(1,count-1),strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/count)),index:i,
         jitter:r(),angle:r()*TAU,ready:false})),received:[]};
   }
@@ -330,7 +332,7 @@
       const h=shapes[j];h.id='wave:'+i+':'+j;h.damageId=p.kind==='lightning'&&j<2?'wave:'+i+':bolt':h.id;
       h.disabled=!!s.enabledStrikes&&!s.enabledStrikes[h.strike];
       h.tier=h.tier||(['line','circle','rect'].includes(h.type)?'heavy':h.type==='ring'||h.type==='well'?'normal':'minor');
-      h.weight=h.weight??DAMAGE_TIERS[h.tier].weight;h.rawDamage=damageValue(s.damageBase,h.weight);
+      h.weight=h.weight??DAMAGE_TIERS[h.tier].weight;h.rawDamage=damageValue(s.damageBase,h.weight*(s.criticalStrikes[h.strike]&&!s.criticalBase?1.5:1));
       s.hazards.push(h);
     }
     s.projectileCount+=new Set(shapes.filter(h=>!h.disabled).map(h=>h.damageId)).size;

@@ -42,7 +42,8 @@
     $('class-mark').textContent=icons[selected.skill.class_id]||'◈';
     $('pattern-name').textContent=mode==='defense'?selected.title:'Попадание · '+selected.title;
     $('strike-count').textContent=selected.strikes+' '+(selected.strikes===1?'удар':selected.strikes<5?'удара':'ударов');
-    $('instruction').textContent=mode==='defense'?selected.hint:selected.attackHint;
+    const criticalHint=selected.skill.damage_type&&!(selected.skill.tags||[]).includes('no_critical')&&!selected.kind.startsWith('casino_')?' Розовая отметка внутри зоны — крит ×1,5.':'';
+    $('instruction').textContent=mode==='defense'?selected.hint:selected.attackHint+criticalHint;
     $('hit').textContent=selected.kind==='casino_roulette'?'Стоп · шарик':selected.kind==='casino_cards'?'Бросить карту':['casino_slots','casino_jackpot'].includes(selected.kind)?'Остановить барабан':selected.kind==='casino_dice'?'Бросить кубик':'Удар · пробел / касание';
     const d=E.defenseDifficulty(selected,stats());$('zone').textContent=Math.round(d.zone*100)+'% шкалы';$('warning').textContent=d.warning.toFixed(2)+' с';$('hits').textContent=selected.strikes;
     statIds.forEach(id=>$(id+'-value').textContent=$(id).value+'%');
@@ -76,6 +77,7 @@
   function mark(x,y,r,color){ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,E.TAU||Math.PI*2);ctx.fill();}
   function heart(x,y,size,color){ctx.save();ctx.translate(x,y);ctx.scale(size/12,size/12);ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(0,5);ctx.bezierCurveTo(-16,-3,-6,-15,0,-6);ctx.bezierCurveTo(6,-15,16,-3,0,5);ctx.fill();ctx.restore();}
   function drawAttack(s){
+    if(window.QTEView){window.QTEView.draw(ctx,canvas,s);return;}
     if(window.QTECasinoView?.drawAttack(ctx,canvas,s))return;
     background();const f=E.attackFrame(s),style=selected.style,gold='#e8c17c',white='#e9f4fb';
     if(f.phase==='ready'){
@@ -115,7 +117,7 @@
     for(const [index,c] of s.contacts.entries()){const age=s.time-c.time;if(age<0||age>1.1)continue;
       ctx.save();ctx.globalAlpha=Math.min(1,(1.1-age)*2);ctx.shadowColor='#050910';ctx.shadowBlur=5;
       const x=E.clamp(c.x+12+(index%3-1)*22,26,E.W-26),y=E.clamp(c.y-16-age*40-(index%2)*14,28,E.H-22);
-      text('−'+c.damage,x,y,c.tier==='critical'?'#fff0b7':c.tier==='heavy'?'#ffd5a0':'#efb7af',c.tier==='minor'?16:24,'center');ctx.restore();}
+      text('−'+c.damage,x,y,c.critical?'#ff718e':c.tier==='critical'?'#fff0b7':c.tier==='heavy'?'#ffd5a0':'#efb7af',c.tier==='minor'?16:24,'center');ctx.restore();}
   }
   function drawHazard(h,t,spent=false){
     const warning=t<h.start,g=E.geometry(h,t),major=h.tier==='heavy'||h.tier==='critical',color=major?(h.tier==='critical'?'#fff0b7':'#e8bd7c'):selected.color;
@@ -187,7 +189,7 @@
     const detail=`${selected.skill.name} · ${mode==='defense'?'уклонение':'попадание'} · узор ${seed()} · точность/уклонение ${stats().accuracy}/${stats().evasion}, враг ${stats().enemyAccuracy}/${stats().enemyEvasion} · опора ${s.damageBase}, HP ${s.initialHp} · `+Object.entries(E.DAMAGE_TIERS).map(([id,t])=>t.name+': '+s.contacts.filter(c=>c.tier===id).length).join(', ');
     record={text,detail,skill:selected.id,mode,seed:seed(),stats:stats(),aborted,damage:r.damage,hp:r.hp,damageBase:s.damageBase,initialHp:s.initialHp};health(s);sim=null;paused=false;clearInput();controls();dots(mode==='attack'?r.mask:[]);feedback(text,success?'success':'fail');$('phase-time').textContent=aborted?'ПРЕРВАНО':'ИТОГ';log(text,detail);
   }
-  function hit(){if(!sim||paused||mode!=='attack')return;const ok=E.hit(sim);if(ok===null)return;dots(sim.results);health(sim);feedback(ok?'Попадание · урон '+sim.contacts.at(-1).damage:'Промах. Повторной попытки нет.',ok?'success':'fail');drawAttack(sim);if(sim.ended)finish();}
+  function hit(){if(!sim||paused||mode!=='attack')return;const ok=E.hit(sim);if(ok===null)return;dots(sim.results);health(sim);feedback(ok?(sim.contacts.at(-1).critical?'Крит ×1,5':'Попадание')+' · урон '+sim.contacts.at(-1).damage:'Промах. Повторной попытки нет.',ok?'success':'fail');drawAttack(sim);if(sim.ended)finish();}
   function pause(){if(!sim)return;paused=true;clearInput();controls();feedback('Пауза. Нажми «Продолжить»: ожидание не засчитывает уклонение.');}
   $('resume').addEventListener('click',()=>{if(!sim)return;paused=false;lastFrame=0;clearInput();controls();canvas.focus({preventScroll:true});});
   $('start').addEventListener('click',begin);$('hit').addEventListener('click',hit);$('stop').addEventListener('click',()=>finish(true));

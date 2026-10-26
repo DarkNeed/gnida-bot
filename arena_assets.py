@@ -25,6 +25,8 @@ def render_arena_index(root: Path) -> str:
         "qte-casino-chance.css",
         "qte-block/engine",
         "qte-block-view",
+        "rp-client",
+        "rp.css",
     ):
         if (root / name).exists():
             revision.update((root / name).read_bytes())
@@ -35,6 +37,8 @@ def render_arena_index(root: Path) -> str:
         .replace('href="/static/style.css"', f'href="/static/style.css?v={version}"')
         .replace('src="/static/client.js"', f'src="/static/client.js?v={version}"')
         .replace('src="/static/audio.js"', f'src="/static/audio.js?v={version}"')
+        .replace('src="/rp/client.js"', f'src="/rp/client.js?v={version}"')
+        .replace('href="/static/rp.css"', f'href="/static/rp.css?v={version}"')
         .replace('src="/static/holdings.js"', f'src="/static/holdings.js?v={version}"')
         .replace(
             'href="/static/holdings.css"', f'href="/static/holdings.css?v={version}"'

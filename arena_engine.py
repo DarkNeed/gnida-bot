@@ -1017,17 +1017,17 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
         skill_id not in side["loadout"] and skill_id != "bum_punch"
     ) or skill_id not in catalog:
         raise ValueError("Навык недоступен.")
-    if not branch_skill_allowed(
+    if not side.get('rp_sandbox') and (not branch_skill_allowed(
         catalog[skill_id], side.get("archclass_id", ""), side["level"]
     ) or (
         skill_branch(catalog[skill_id])
         and (
             not selected_branch(side) or catalog[skill_id].class_id != side["class_id"]
         )
-    ):
+    )):
         raise ValueError("Навык недоступен этому архиклассу или уровню.")
     skill = effective_skill(state, side_key, skill_id, catalog)
-    if not mastery_allowed(skill, side):
+    if not side.get('rp_sandbox') and not mastery_allowed(skill, side):
         raise ValueError("Навык доступен только на пути мастерства своего класса.")
     restriction = skill_restriction(side, skill, completed_turns(state, side_key))
     if restriction:
@@ -1040,6 +1040,11 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
 
 
 def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
+    if side.get('rp_sandbox'):
+        from arena_rp import rp_restriction
+        reason = rp_restriction(side, skill)
+        if reason:
+            return reason
     from arena_casino import restriction as casino_restriction
     reason=casino_restriction(side,skill)
     if reason:return reason
@@ -1054,7 +1059,7 @@ def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
         "used_skills", []
     ):
         return "Уже использован в этом бою."
-    if ("raid_loot" in skill.tags or skill.class_id == "universal") and side["level"] < skill.unlock_level:
+    if not side.get('rp_sandbox') and ("raid_loot" in skill.tags or skill.class_id == "universal") and side["level"] < skill.unlock_level:
         return f"Нужен {skill.unlock_level} уровень."
     if (
         "third_action" in skill.tags
@@ -1304,6 +1309,11 @@ def resolve_skill(
     pet_context = pet_before_action(actor, target, skill, actual_cost)
     if "no_critical" in skill.tags:
         critical = False
+    timing_criticals = (
+        (qte or {}).get('pattern_attack', {}).get('criticals', [])
+        if skill.damage_type and 'no_critical' not in skill.tags and not casino_context
+        else []
+    )
     accuracy_bonus = sum(
         e.get("value", 0) for e in actor["effects"] if e.get("kind") == "accuracy_flat"
     )
@@ -1371,6 +1381,11 @@ def resolve_skill(
             # Ignore old saved attack weights that reduced complete hits to 30/60%.
             strike_results = parts
             strike_count = len(parts)
+            if timing_criticals:
+                for i, part in enumerate(parts):
+                    part['critical'] = bool(part['hit'] and (
+                        critical or i < len(timing_criticals) and timing_criticals[i] is True
+                    ))
         if 'pattern_dodge' in qte:
             # Keep the native strike groups for effects, accuracy and animation,
             # but damage every physical projectile independently. Never normalize
@@ -1452,11 +1467,12 @@ def resolve_skill(
             exact_potential = 0
             rounded_potential = 0
             for c in pattern_contacts:
-                multiplier=1
+                multiplier=(1.5 if not critical and c['strike'] < len(timing_criticals)
+                            and timing_criticals[c['strike']] is True else 1)
                 if c['strike']==strike_count-1 and any(t in skill.tags for t in ('final_train','final_execution')):
                     last_pierce=.50 if 'final_train' in skill.tags else .60
                     base_defense=effective_stat(target,'physical_defense')
-                    multiplier=(100+4*defense)/(100+4*base_defense*(1-min(.9,last_pierce+pet_pierce)))
+                    multiplier*=(100+4*defense)/(100+4*base_defense*(1-min(.9,last_pierce+pet_pierce)))
                 if block_pattern:
                     exact_potential += reference_damage*c['weight']*multiplier
                     rounded = math.floor(exact_potential+.5)
@@ -1486,6 +1502,9 @@ def resolve_skill(
                 last_pierce=.50 if 'final_train' in skill.tags else .60
                 base_defense=effective_stat(target,'physical_defense')
                 budget[-1]=round(budget[-1]*(100+4*defense)/(100+4*base_defense*(1-min(.9,last_pierce+pet_pierce))))
+            if not critical:
+                budget = [round(value * (1.5 if i < len(timing_criticals)
+                          and timing_criticals[i] is True else 1)) for i, value in enumerate(budget)]
             potential=sum(budget[i] for i,p in enumerate(strike_results) if p['hit'])
             redirected=potential-final_incoming(target,potential,actor,raid_context)
             for i, part in enumerate(strike_results):
@@ -1500,6 +1519,8 @@ def resolve_skill(
             damage = rpg_incoming(target,damage,rpg_branch(target))
             damage=final_incoming(target,damage,actor,raid_context)
             target["hp"] = max(0, target["hp"] - damage)
+    if timing_criticals:
+        critical = critical or any(part['hit'] and part.get('critical') for part in strike_results or [])
     final_received(target,actor,skill,hit,dodged,min(before[other]['hp'],damage))
     # Existing buffs expire after this action, before newly applied buffs are added.
     if skill.damage_type == "magic":

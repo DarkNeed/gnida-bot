@@ -48,7 +48,7 @@ def parse_roster(text):
 
 
 def roster_text(roster):
-    return ', '.join(MOBS[mob]['name'] for mob in roster)
+    return ', '.join(MOBS[mob]['name'] if isinstance(mob, str) else mob.get('name', mob.get('definition', {}).get('name', 'Моб')) for mob in roster)
 
 
 def alive_enemies(data):
@@ -66,11 +66,28 @@ def target_enemy(data, target=None):
 
 def create_encounter(participants, sources, classes, skills, roster, master_id):
     from arena_raid_engine import create_raid_state
-    roster = validate_roster(roster)
+    if not isinstance(roster, list) or not 1 <= len(roster) <= 3:
+        raise ValueError('Во встрече должно быть от одного до трёх мобов.')
+    from arena_rp import template_fighter, rp_skills
+    skills = rp_skills(skills)
     data = create_raid_state(participants, sources, classes, skills, 'iron')
+    for participant, source in zip(participants, sources):
+        if source.get('_rp_template'):
+            data['players'][str(participant['actor_id'])]['fighter'] = template_fighter(
+                source['_rp_template'], participant['actor_id'], classes, skills)
+    # Normal combat sources remain capped; only separately stored RP templates
+    # can create a sandbox fighter. Consumables and grants never enter this path.
+    data['rp_mode'] = True
     level = max(1, round(sum(s['level'] for s in sources) / len(sources)))
     enemies = {}
     for index, mob in enumerate(roster, 1):
+        if isinstance(mob, dict):
+            fighter = template_fighter(mob, -index, classes, skills)
+            fighter.update(mob_id='custom', enemy_id=f'e{index}', controller_id=0, is_boss=False)
+            enemies[f'e{index}'] = fighter
+            continue
+        if mob not in MOBS:
+            raise ValueError('Неизвестный моб.')
         info = MOBS[mob]
         source = dict(slave_id=-index, owner_id=0, class_id='ragamuffin', level=level,
                       passive_details=[], loadout=['bum_punch'])
@@ -87,16 +104,41 @@ def create_encounter(participants, sources, classes, skills, roster, master_id):
         enemies[f'e{index}'] = fighter
     data.update(kind='encounter', boss_id='encounter', master_id=master_id,
                 enemies=enemies, boss=next(iter(enemies.values())), rewards_enabled=False)
-    set_intents(data)
+    set_intents(data, skills)
     return data
 
 
-def set_intents(data):
+def set_intents(data, skills=None):
     from arena_raid_engine import alive_players
     players = list(alive_players(data))
     intents = {}
     for index, (key, fighter) in enumerate(alive_enemies(data).items()):
         mob = fighter['mob_id']
+        if mob == 'custom':
+            from arena_engine import BUILTIN_SKILLS, validate_skill
+            from arena_raid_engine import pair_state
+            from arena_rp import rp_skills
+            catalog = rp_skills(skills or BUILTIN_SKILLS)
+            targets = players[(data['round'] + index - 1) % len(players):][:1] if players else []
+            opponent = data['players'][targets[0]]['fighter'] if targets else fighter
+            ids = fighter['loadout']
+            usable = []
+            for sid in ids:
+                try:
+                    validate_skill(pair_state(fighter, opponent), 'a', sid, catalog)
+                    usable.append(sid)
+                except ValueError:
+                    pass
+            if fighter['rp_ai'] == 'sequence' and usable:
+                start = fighter.get('rp_ai_index', 0) % len(ids)
+                position = next((start + j) % len(ids) for j in range(len(ids)) if ids[(start + j) % len(ids)] in usable)
+                selected = ids[position]
+                fighter['rp_ai_index'] = position + 1
+            else:
+                selected = (random.SystemRandom().choice(usable) if fighter['rp_ai'] == 'random' else usable[0]) if usable else 'bum_punch'
+            kind, text = 'attack', catalog[selected].name
+            intents[key] = dict(kind=kind, skill=selected, targets=targets, text=text)
+            continue
         if mob == 'shaman' and data['round'] % 3 == 0:
             kind, targets, text = 'heal', [], 'Лечебный настой: восстановит 25% HP раненому союзнику'
         elif mob == 'brute' and data['round'] % 3 == 1:
@@ -133,6 +175,8 @@ def resolve(data, skills, rng=None):
     if data.get('finished'):
         raise ValueError('Встреча завершена.')
     rng = rng or random.SystemRandom()
+    from arena_rp import rp_skills
+    skills = rp_skills(skills)
     # JSON does not retain shared object references. Bind the compatibility alias.
     data['boss'] = next(iter(data['enemies'].values()))
     data['round_before'] = raid_snapshot(data)
@@ -228,7 +272,15 @@ def resolve(data, skills, rng=None):
                 if 'pattern_dodge' in guard:
                     fighter['_qte_guard']['pattern_dodge'] = guard['pattern_dodge']
             data['intent'] = intent
-            event = native_attack(enemy, fighter, intent['skill'], MOB_SKILLS, rng, raid_context=data)
+            try:
+                event = native_attack(enemy, fighter, intent['skill'], skills if enemy.get('rp_sandbox') else MOB_SKILLS,
+                                      rng, allies=list(alive_enemies(data).values()), raid_context=data)
+            except ValueError:
+                # An announced resource-dependent ability may become unavailable
+                # after a player's drain/stun; never replace it with an unseen hit.
+                defend(enemy, fighter, data)
+                log_event(data, enemy_key, enemy_key, 'Намерение стало недоступно: защита вместо атаки.')
+                break
             fighter.pop('_qte_guard', None)
             log_event(data, enemy_key, key, event['text'], skill=intent['skill'],
                       **{field: event[field] for field in ('damage', 'self_damage', 'bleed_damage', 'damage_type', 'hit', 'critical', 'hits', 'hit_results') if field in event})
@@ -249,5 +301,7 @@ def resolve(data, skills, rng=None):
                 restore_turn_resource(player['fighter'])
         data.pop('round_before', None)
         if not finish(data):
-            set_intents(data)
+            for enemy in alive_enemies(data).values():
+                restore_turn_resource(enemy)
+            set_intents(data, skills)
     return data

@@ -66,15 +66,21 @@ def challenge(kind, attacker, target, skill, actor):
         "whaler_punishment": ["whaler_punishment", "whaler_punishment_magic"],
         "whaler_rot": ["whaler_rot", "whaler_rot_magic"],
     }.get(skill.skill_id)
+    if attacker.get('rp_sandbox'):
+        # RP equips the individual attack, not a boss script that executes two
+        # different actions. Do not invent a second defensive strike group.
+        subskills = None
     if kind == "defense" and subskills:
         n = descriptor["strikes"] = 2
         descriptor["id"] = f"{skill.skill_id}:{skill.name}:2:{skill.damage_type}"
+    forecast = damage_preview(attacker, target, skill, details=True)
     result = dict(
         version=2,
         defense_preparation=1 if kind == "defense" else 0,
         profile=descriptor,
         subskills=subskills if kind == "defense" else None,
-        damage_base=damage_preview(attacker, target, skill),
+        damage_base=forecast['damage'],
+        critical_base=forecast['critical'],
         target_hp=target["hp"],
         id=secrets.token_hex(16),
         kind=kind,
@@ -117,14 +123,14 @@ def challenge(kind, attacker, target, skill, actor):
     return result
 
 
-def damage_preview(attacker, target, skill):
+def damage_preview(attacker, target, skill, *, details=False):
     """Read-only estimate for immediate HP feedback; the paid action is resolved later.
 
     Raid ally effects, defenses and critical rolls can change before the boss acts.
     No guessed HP or result from the client is ever persisted.
     """
     if not skill.damage_type:
-        return 0
+        return dict(damage=0, critical=False) if details else 0
     from arena_engine import resolve_skill, BUILTIN_SKILLS
 
     a, b = deepcopy(attacker), deepcopy(target)
@@ -154,9 +160,10 @@ def damage_preview(attacker, target, skill):
             tick_actor_bleed=False,
             qte=forecast,
         )
-        return event["damage"]
+        return dict(damage=event['damage'], critical=event['critical']) if details else event['damage']
     except ValueError:
-        return max(1, round(skill.power))
+        damage = max(1, round(skill.power))
+        return dict(damage=damage, critical=False) if details else damage
 
 
 class ArenaQteMixin:
@@ -410,6 +417,8 @@ class ArenaQteMixin:
                     and following["kind"] == "defense"
                 ):
                     following["enabled_strikes"] = mask
+                    if isinstance(result, dict) and result.get('criticals'):
+                        following['critical_strikes'] = result['criticals']
                     if stage.get('casino_result'):
                         following['damage_base'] = round(following['damage_base'] * stage['casino_result']['factor'])
         if flow["stages"]:
@@ -626,6 +635,9 @@ class ArenaQteMixin:
                         from arena_encounters import target_enemy
                         target, boss = target_enemy(data, target)
                     _, skills = self._fighter_catalog_locked()
+                    if data.get('kind') == 'encounter':
+                        from arena_rp import rp_skills
+                        skills = rp_skills(skills)
                     if isinstance(skill, str) and skill.startswith('chaplain_anchor:'):
                         from arena_chaplain import validate_anchor
                         validate_anchor(data, skill)
@@ -643,7 +655,7 @@ class ArenaQteMixin:
                             )
                         intents = data.get('enemy_intents', {}) if data.get('kind') == 'encounter' else {'boss': data['intent']}
                         for enemy_key, intent in intents.items():
-                            incoming = BOSS_SKILLS.get(intent.get('skill'))
+                            incoming = (skills if data.get('kind') == 'encounter' else BOSS_SKILLS).get(intent.get('skill'))
                             if incoming and incoming.hostile and str(actor) in [str(k) for k in intent.get('targets', [])]:
                                 attacker = data['enemies'][enemy_key] if data.get('kind') == 'encounter' else boss
                                 defense = challenge('defense', attacker, fighter, incoming, actor)

@@ -19,6 +19,9 @@ from arena_casino import public_state as casino_public_state
 
 async def raid_view(db, row, actor):
     classes, skills = await db.get_fighter_catalog()
+    if row.get('boss_id') == 'encounter':
+        from arena_rp import rp_skills
+        skills = rp_skills(skills)
     data = json.loads(row["data_json"]) if row["data_json"] else None
     boss_info = BOSSES.get(row.get("boss_id", "iron"), BOSSES["iron"])
 
@@ -28,11 +31,11 @@ async def raid_view(db, row, actor):
         user = await db.get_user(row["chat_id"], fighter) if fighter else None
         side.update(
             name=(
-                side['name'] if mob else boss_info["name"]
+                side['name'] if mob or side.get('rp_sandbox') else boss_info["name"]
                 if boss
                 else user["display_name"] if user else str(fighter)
             ),
-            class_name=mob_info['role'] if mob_info else 'Рейдовый босс' if boss else class_title(side, cls.name),
+            class_name=mob_info['role'] if mob_info else class_title(side, cls.name) if side.get('rp_sandbox') else 'Рейдовый босс' if boss else class_title(side, cls.name),
             class_avatar_url=choice_avatar(
                 side["class_id"], side.get("archclass_id", ""), 20 if side.get('level', 0) >= 20 and side.get('archclass_stage', 20) >= 20 else 10
             ),
@@ -55,7 +58,7 @@ async def raid_view(db, row, actor):
             * side.get("raid_damage_multiplier", 1)
             - 1
         )
-        if not boss:
+        if not boss and not side.get('rp_sandbox'):
             side.update(await db.arena_character_sprite_info(fighter,character_slot))
         elif boss_info.get("sprite"):
             side["class_avatar_url"] = raid_boss_sprite(row.get('boss_id', 'iron'), data.get('phase', 1))
@@ -69,7 +72,10 @@ async def raid_view(db, row, actor):
             if not boss
             else next(iter(data["players"].values()))["fighter"]
         )
-        catalog = BOSS_SKILLS if boss else skills
+        catalog = skills if side.get('rp_sandbox') else BOSS_SKILLS if boss else skills
+        if side.get('rp_sandbox'):
+            from arena_rp import appearance
+            side.update(appearance(side))
         pair = pair_state(side, target)
         ids = list(side["loadout"])
         if (
@@ -112,14 +118,24 @@ async def raid_view(db, row, actor):
     for p in row["participants"]:
         user = await db.get_user(row["chat_id"], p["actor_id"])
         fighter = await db.get_user(row["chat_id"], p["fighter_id"])
+        rp_template = None
+        if row.get('boss_id') == 'encounter':
+            async with db._lock:
+                selected = db.connection.execute('SELECT template_id FROM arena_rp_selections WHERE token=? AND actor_id=?', (row['token'], p['actor_id'])).fetchone()
+                if selected:
+                    try:
+                        rp_template = db._rp_template_locked(p['actor_id'], selected['template_id'])
+                    except ValueError:
+                        rp_template = dict(id=selected['template_id'], definition=dict(name='Удалённый RP-шаблон'))
         participants.append(
             dict(
                 actor_id=p["actor_id"],
                 fighter_id=p["fighter_id"],
                 personal=bool(p["personal"]),
+                rp_template=rp_template['id'] if rp_template else None,
                 name=user["display_name"] if user else str(p["actor_id"]),
                 fighter_name=(
-                    fighter["display_name"] if fighter else str(p["fighter_id"])
+                    rp_template['definition']['name'] if rp_template else fighter["display_name"] if fighter else str(p["fighter_id"])
                 ),
             )
         )
@@ -147,6 +163,11 @@ async def raid_view(db, row, actor):
         choices.append(
             dict(fighter_id=actor, personal=True, name="Мой личный персонаж")
         )
+        if row.get('boss_id') == 'encounter':
+            for template in await db.arena_rp_templates(actor):
+                if template['kind'] == 'character':
+                    choices.append(dict(fighter_id=actor, personal=True, rp_template=template['id'],
+                                        name='🎭 ' + template['definition']['name'] + ' · Lv.' + str(template['definition']['level'])))
     config = json.loads(row['encounter_json']) if row.get('encounter_json') else None
     master = await db.get_user(row['chat_id'], row['creator_id']) if config else None
     return dict(
@@ -154,9 +175,10 @@ async def raid_view(db, row, actor):
         chat_id=row["chat_id"],
         creator_id=row["creator_id"],
         kind='encounter' if config else 'raid',
+        rp_menu=bool(config and config.get('rp')),
         master_name=master['display_name'] if master else str(row['creator_id']),
         is_master=bool(config and actor == row['creator_id']),
-        encounter_roster=([dict(id=mob, name=MOBS[mob]['name']) for mob in config['roster']] if config else []),
+        encounter_roster=([dict(id=mob, name=MOBS[mob]['name']) if isinstance(mob, str) else dict(id=mob['id'], name=mob['name']) for mob in config['roster']] if config else []),
         rewards_enabled=not bool(config),
         actor_id=actor,
         qte=await db.arena_qte_view('raid',row['token'],actor),

@@ -10,6 +10,18 @@ HZ = 120
 TAU = math.tau
 W, H = 720, 320
 TIERS = dict(minor=0.1, normal=0.3, heavy=0.6, critical=1)
+CRITICAL_ZONE_RATIO = 0.2
+
+
+def critical_zone(p, width):
+    """The centre fifth of a damaging timing mark; casino uses its own rules."""
+    return (
+        width * CRITICAL_ZONE_RATIO
+        if p["skill"].get("damage_type")
+        and "no_critical" not in p["skill"].get("tags", ())
+        and not p["kind"].startswith("casino_")
+        else 0
+    )
 
 
 def clamp(v, a, b):
@@ -279,6 +291,7 @@ def attack(p, stats, seed):
         slots=slots,
         centers=[0.28 + next(r) * 0.44 for _ in slots],
         results=[None] * n,
+        criticals=[False] * n,
         attempts=[0] * n,
         lastAttempt=[-1] * n,
     )
@@ -305,6 +318,7 @@ def attack_frame(s):
         cursor=cursor,
         center=center,
         width=s["d"]["zone"],
+        criticalWidth=critical_zone(s["p"], s["d"]["zone"]),
         phase=phase,
         canHit=phase == "active"
         and s["results"][i] is None
@@ -927,7 +941,7 @@ def replay(challenge, proof, elapsed):
     total = math.ceil(duration(challenge) * HZ - 1e-7)
     if proof.get("abort") is True:
         if is_attack:
-            return dict(mask=[False] * n, weights=[0] * n)
+            return dict(mask=[False] * n, weights=[0] * n, criticals=[False] * n)
         # Skipping must never deal less damage than playing and getting hit.
         s = defense(
             p,
@@ -984,6 +998,10 @@ def replay(challenge, proof, elapsed):
             s["lastAttempt"][i] = s["time"]
             if abs(f["cursor"] - f["center"]) <= f["width"] / 2:
                 s["results"][i] = True
+                s["criticals"][i] = bool(
+                    f["criticalWidth"]
+                    and abs(f["cursor"] - f["center"]) <= f["criticalWidth"] / 2
+                )
             else:
                 s["results"][i] = False
         # A closed tab is failure, not a way to shorten unplayed marks.
@@ -993,6 +1011,7 @@ def replay(challenge, proof, elapsed):
         return dict(
             mask=mask,
             weights=[attack_weights(p)[i] if v else 0 for i, v in enumerate(mask)],
+            criticals=s["criticals"],
         )
     if ticks != total:
         raise ValueError("Защиту нужно пройти полностью.")

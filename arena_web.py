@@ -470,7 +470,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
 
 
 def create_arena_app(
-    db, bot, token: str, changed=None, raid_changed=None, *, pets_payments_enabled=False
+    db, bot, token: str, changed=None, raid_changed=None, *, pets_payments_enabled=False, rp_publisher=None
 ) -> web.Application:
     member_cache: dict[tuple[int, int], float] = {}
 
@@ -742,6 +742,7 @@ def create_arena_app(
                 fighter,
                 personal,
                 row["revision"] if action == "start" else None,
+                rp_template=body.get('rp_template'),
             )
         if raid_changed:
             await raid_changed(row["token"])
@@ -1014,4 +1015,6 @@ def create_arena_app(
     app.router.add_get("/sprites/{key}.png", get_sprite)
     from holdings_web import register_holdings
     register_holdings(app,db,bot,ACTOR,require_member,int_field)
+    from arena_rp_web import register_rp
+    register_rp(app, db, bot, ACTOR, require_member, read_member, raid_changed, rp_publisher)
     return app

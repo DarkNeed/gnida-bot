@@ -43,6 +43,7 @@ from arena_pet_store import PetMixin
 from arena_global import GlobalArenaMixin, RPG_SCOPE
 from arena_characters import CharacterMixin
 from arena_qte_live import ArenaQteMixin
+from arena_rp import RPMixin
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -55,9 +56,10 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin, ArenaQteMixin):
+class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin, ArenaQteMixin, RPMixin):
     def _connect_arena(self) -> None:
         self._connect_qte()
+        self._connect_rp()
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (
                 chat_id INTEGER NOT NULL,
