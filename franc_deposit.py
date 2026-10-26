@@ -169,7 +169,10 @@ class DepositMixin:
                 payout=stake*5 if won else 0
                 after=balance-stake+payout
                 phrase=rng.choice(WIN_PHRASES if won else LOSS_PHRASES)
-                self.connection.execute('UPDATE franc_balances SET balance=?,updated_at=? WHERE chat_id=? AND user_id=?',(after,utc_timestamp(),chat,user))
+                self.connection.execute('UPDATE franc_balances SET balance=balance-?,updated_at=? WHERE chat_id=? AND user_id=?',(stake,utc_timestamp(),chat,user))
+                if payout:
+                    self._add_francs_locked(chat,user,payout)
+                after=self.connection.execute('SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?',(chat,user)).fetchone()['balance']
                 self.connection.execute('''INSERT INTO franc_deposits
                     (message_chat_id,message_id,chat_id,user_id,stake,won,payout,balance_after,phrase,created_at,stake_mode,cooldown_seconds)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''',

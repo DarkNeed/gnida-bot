@@ -24,6 +24,7 @@ from handlers.character_grants import create_character_grant_router
 from handlers.pet_grants import create_pet_grant_router
 from handlers.enterprises import create_enterprise_router, sweep_recovery_events
 from handlers.rp import create_rp_router
+from handlers.slave_finance import sweep_finance, create_finance_router
 
 
 def pet_sales_enabled() -> bool:
@@ -79,6 +80,7 @@ async def main() -> None:
     )
     dispatcher.include_router(create_pet_router(database, username, pets_payments_enabled))
     dispatcher.include_router(create_franc_event_router(database))
+    dispatcher.include_router(create_finance_router(database))
     dispatcher.include_router(create_enterprise_router(database))
     dispatcher.include_router(create_rp_router(database, bot, username, bool(webapp_url)))
     dispatcher.include_router(
@@ -106,6 +108,7 @@ async def main() -> None:
                 create=current-last_create>=60
                 if create:last_create=current
                 await sweep_recovery_events(database,bot,create=create)
+                await sweep_finance(database,bot)
                 for trip in await database.expedition_sweep():
                     try:
                         await bot.send_message(trip['owner_id'],

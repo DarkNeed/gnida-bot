@@ -2117,6 +2117,8 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
     def _force_enslave_locked(self, chat_id: int, slave_id: int, owner_id: int) -> str:
         if not self._feature_enabled_locked(chat_id, 'slavery'):
             return 'module_disabled'
+        if self._npc_reserved_locked(chat_id,slave_id):
+            return 'protected_slave'
         if slave_id == owner_id:
             return "self"
         owner = self.connection.execute(
@@ -2799,7 +2801,7 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
                 return None
             self._add_francs_locked(chat_id, user_id, amount)
             self.connection.commit()
-            return balance + amount
+            return int(self.connection.execute('SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?', (chat_id,user_id)).fetchone()['balance'])
 
     async def franc_balance(self, chat_id: int, user_id: int) -> int:
         async with self._lock:
@@ -3116,17 +3118,20 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
             ).fetchone()
             if owned is None:
                 return "not_owned"
+            if self._npc_reserved_locked(chat_id,slave_id):
+                return 'npc_buyout'
+            cost=self._finance_buyout_cost_locked(chat_id,slave_id,owner_id)
             balance = self.connection.execute(
                 "SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?",
                 (chat_id, slave_id),
             ).fetchone()
-            if not balance or int(balance["balance"]) < BUYOUT_COST_FRANCS:
+            if not balance or int(balance["balance"]) < cost:
                 return "insufficient"
             now = utc_timestamp()
             self.connection.execute(
                 """UPDATE franc_balances SET balance=balance-?, updated_at=?
                    WHERE chat_id=? AND user_id=?""",
-                (BUYOUT_COST_FRANCS, now, chat_id, slave_id),
+                (cost, now, chat_id, slave_id),
             )
             self._settle_materials_locked(chat_id, owner_id)
             self.connection.execute(
@@ -3325,6 +3330,8 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
     async def release_slave(self, chat_id: int, owner_id: int, slave_id: int) -> bool:
         async with self._lock:
             self._require_feature_locked(chat_id, 'slavery')
+            if self._npc_reserved_locked(chat_id,slave_id):
+                return False
             self._settle_materials_locked(chat_id, owner_id)
             cursor = self.connection.execute(
                 "DELETE FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?",

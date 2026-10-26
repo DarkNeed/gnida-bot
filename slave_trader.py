@@ -139,7 +139,8 @@ class SlaveTraderMixin:
         return dict(appraisal_price=APPRAISAL_PRICE,commission=10,max_listings=MAX_LISTINGS,
                     listing_hours=24,listings=listings,reports=reports,
                     orders=[dict(id=k,**v) for k,v in ORDERS.items()],day=day(),identity_rules=self._trader_identity_rules_locked(),
-                    completed=json.loads(completed['result_json']) if completed else None)
+                    completed=json.loads(completed['result_json']) if completed else None,
+                    finance=self._finance_view_locked(chat,actor))
 
     def _trader_identity_rules_locked(self):
         from slave_identity import RARITIES,TRAITS,RARITY_CHANCES

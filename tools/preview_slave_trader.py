@@ -18,7 +18,7 @@ from arena_web import create_arena_app
 from database import Database
 
 
-async def application():
+async def application(finance=False):
     temp=tempfile.TemporaryDirectory(prefix='gnida-trader-review-')
     db=Database(Path(temp.name)/'trader.sqlite3');await db.connect()
     chat=-100
@@ -46,6 +46,14 @@ async def application():
     db.connection.commit()
     v=await db.holdings_view(chat,20)
     await db.trader_action(chat,20,dict(action='trader_list',worker=100,price=240,confirm=True,nonce='s'*32,revision=v['revision']))
+    if finance:
+        # Disposable fixture only: a previously warned overdue borrower.
+        await db.finance_action(chat,20,dict(action='finance_borrow',amount=1000,confirm=True,nonce='f'*32))
+        stamp=int(time.time())
+        db.connection.execute('''UPDATE npc_loans SET created_at=?,due_at=?,warned_at=?,enforce_after=?
+            WHERE user_id=20''',(stamp-73*3600,stamp-3600,stamp-7200,stamp-3600))
+        db.connection.commit()
+        await db.finance_sweep()
     token='local-trader-review-no-production-credentials'
     bot=SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status='member',user=SimpleNamespace(is_bot=False))))
     app=create_arena_app(db,bot,token)
@@ -74,6 +82,16 @@ async def application():
             </script></body></html>''',content_type='text/html')
 
     app.router.add_get('/trader-review',review)
+    async def finance_review(request):
+        return web.Response(text='''<!doctype html><html lang="ru"><meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1"><title>Деп рабов и займы · демо</title>
+            <style>body{margin:0;background:#080f1a;color:#c8d4eb;font:13px system-ui}header{padding:10px;text-align:center}button{margin-left:8px;padding:8px;background:#25334c;color:inherit;border:1px solid #536480;border-radius:8px}iframe{display:block;border:0;width:100%;max-width:100%;height:calc(100dvh - 65px);margin:auto}</style>
+            <header>Только тестовые деньги и работники
+            <button onclick="document.getElementById('finance-frame').style.width='390px'">390px</button>
+            <button onclick="document.getElementById('finance-frame').style.width='100%'">ПК</button></header>
+            <iframe id="finance-frame" name="finance" src="/trader-review" title="Игровой работорговец"></iframe>
+            </html>''',content_type='text/html')
+    app.router.add_get('/finance-review',finance_review)
     async def cleanup(app):
         await db.close();temp.cleanup()
     app.on_cleanup.append(cleanup)
@@ -82,4 +100,6 @@ async def application():
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--port',type=int,default=8126)
-    web.run_app(application(),host='127.0.0.1',port=parser.parse_args().port)
+    parser.add_argument('--finance',action='store_true',help='Show NPC inventory and overdue debt in the disposable demo')
+    args=parser.parse_args()
+    web.run_app(application(finance=args.finance),host='127.0.0.1',port=args.port)

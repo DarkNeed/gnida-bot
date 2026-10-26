@@ -1993,17 +1993,18 @@ def create_router(
         buttons: list[list[InlineKeyboardButton]] = []
         for owner in owners:
             owner_name = owner["username"] and "@" + owner["username"] or owner["display_name"] or str(owner["owner_id"])
+            cost = await database.slave_buyout_cost(int(owner['chat_id']),user_id,int(owner['owner_id']))
             buttons.append(
                 [
                     InlineKeyboardButton(
-                        text=f"🔓 Выкупиться у {owner_name} · {BUYOUT_COST_FRANCS} ₣"[:60],
+                        text=f"🔓 Выкупиться у {owner_name} · {cost} ₣"[:60],
                         callback_data=f"sm:buy:{owner['chat_id']}:{owner['owner_id']}",
                     )
                 ]
             )
         buttons.append([InlineKeyboardButton(text="← Меню", callback_data="sm:home")])
         return (
-            f"<b>🔓 Выкуп из рабства</b>\nКаждый выкуп стоит {BUYOUT_COST_FRANCS} ₣.",
+            '<b>🔓 Выкуп из рабства</b>\nОбычный выкуп — 100 ₣. После покупки должника у NPC цена временно выше и снижается за 72 часа. У NPC выкупайся через Владения → Торговец.',
             InlineKeyboardMarkup(inline_keyboard=buttons),
         )
 
@@ -4265,13 +4266,16 @@ def create_router(
                 await callback.answer("Некорректная кнопка.", show_alert=True)
                 return
             await database.settle_businesses_for_user(user_id)
+            buyout_cost = await database.slave_buyout_cost(chat_id,user_id,owner_id)
             result = await database.buyout_slave(chat_id, owner_id, user_id)
             body, keyboard = await slave_menu_buyout(user_id, menu_chat_id)
             if result == "released":
                 notice = "Выкуп успешен. Ты свободен."
-                body = f"✅ <b>Свобода за {BUYOUT_COST_FRANCS} ₣</b>\n\n{body}"
+                body = f"✅ <b>Свобода за {buyout_cost} ₣</b>\n\n{body}"
             elif result == "insufficient":
-                notice = f"Нужно {BUYOUT_COST_FRANCS} ₣."
+                notice = f"Нужно {buyout_cost} ₣."
+            elif result == 'npc_buyout':
+                notice = 'Выкуп у NPC доступен во Владения → Торговец.'
             else:
                 notice = "Эта связь рабства уже изменилась."
         elif action.startswith("p:"):

@@ -9,6 +9,7 @@ from slave_recovery import RecoveryMixin
 from slave_expeditions import ExpeditionMixin, EXPEDITIONS, digest
 from slave_trader import SlaveTraderMixin
 from slave_identity import SlaveIdentityMixin
+from slave_finance import SlaveFinanceMixin
 
 MAX_ENTERPRISES = 3
 CAPACITIES = {1: 10, 2: 15, 3: 20}
@@ -48,7 +49,7 @@ def role_labels(site):
     return (site['producer_title'] or defaults['producer'], site['leader_title'] or defaults['leader'])
 
 
-class EnterpriseMixin(SlaveIdentityMixin, SlaveTraderMixin, ExpeditionMixin, RecoveryMixin):
+class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, ExpeditionMixin, RecoveryMixin):
     async def business_for_worker(self, chat, owner, worker):
         async with self._lock:
             return self._enterprise_locked(chat,owner,worker=worker)
@@ -104,6 +105,7 @@ class EnterpriseMixin(SlaveIdentityMixin, SlaveTraderMixin, ExpeditionMixin, Rec
         self._init_expeditions()
         self._init_slave_identities()
         self._init_slave_trader()
+        self._init_slave_finance()
 
     def _enterprise_locked(self, chat, owner, site_id=None, worker=None):
         if site_id is None and worker is not None:
@@ -376,6 +378,7 @@ class EnterpriseMixin(SlaveIdentityMixin, SlaveTraderMixin, ExpeditionMixin, Rec
             with self.connection:
                 self._require_feature_locked(chat,'slavery')
                 self._expedition_finish_due_locked()
+                self._finance_tick_locked()
                 self._enterprise_settle_owner_locked(chat,owner,now())
                 sites=[]
                 for row in self.connection.execute('SELECT * FROM businesses WHERE chat_id=? AND owner_id=? ORDER BY id',(chat,owner)):
