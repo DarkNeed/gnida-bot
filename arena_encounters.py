@@ -47,6 +47,50 @@ def parse_roster(text):
     return validate_roster(roster)
 
 
+def parse_named_roster(text, templates):
+    """Resolve only the caller's mob templates; exact names precede count suffixes."""
+    normalize = lambda name: ' '.join(name.casefold().split())
+    own = {}
+    for template in templates:
+        if template['kind'] == 'mob':
+            own.setdefault(normalize(template['definition']['name']), []).append(template)
+    builtin = {normalize(alias): key for key, mob in MOBS.items() for alias in mob['aliases']}
+
+    def resolve(name):
+        matches = own.get(normalize(name), [])
+        if len(matches) > 1:
+            raise ValueError('У тебя несколько мобов с названием «' + name.strip() + '». '
+                             'Переименуй их в /рп → Мои мобы или выбери нужного через RP-меню.')
+        if matches:
+            return dict(kind='mob', id=matches[0]['id'])
+        if normalize(name) in builtin:
+            return dict(kind='builtin', id=builtin[normalize(name)])
+        return None
+
+    if not text.strip():
+        raise ValueError('Пример: /встреча гоблин 2, шаман или /встреча название своего моба. '
+                         'Сохрани своих мобов в /рп → Мои мобы. До 3 врагов, без наград.')
+    # An exact saved name may itself contain a comma or end in a number.
+    exact = resolve(text)
+    if exact:
+        return [exact]
+    roster = []
+    for part in text.split(','):
+        item, count = resolve(part), 1
+        if item is None:
+            match = re.fullmatch(r'\s*(.+?)\s+([1-3])\s*', part)
+            if match:
+                item, count = resolve(match[1]), int(match[2])
+        if item is None:
+            raise ValueError('Неизвестный моб: «' + part.strip() + '». '
+                             'Доступны гоблин, громила, шаман и твои сохранённые мобы из /рп. '
+                             'Пример: /встреча Лесной разбойник 2, шаман. До 3 врагов.')
+        roster.extend(dict(item) for _ in range(count))
+        if len(roster) > 3:
+            raise ValueError('Во встрече может быть от 1 до 3 противников.')
+    return roster
+
+
 def roster_text(roster):
     return ', '.join(MOBS[mob]['name'] if isinstance(mob, str) else mob.get('name', mob.get('definition', {}).get('name', 'Моб')) for mob in roster)
 

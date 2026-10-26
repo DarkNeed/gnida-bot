@@ -54,7 +54,8 @@
       const groups=new Map();for(const s of shown){const group=cls(s.class_id)?.name||'Общие навыки';if(!groups.has(group))groups.set(group,[]);groups.get(group).push(s);}
       document.getElementById('rp-skills').innerHTML=[...groups].map(([group,items])=>'<details class="rp-skill-group" open><summary>'+esc(group)+' · '+items.length+'</summary><div class="rp-skill-list">'+items.map(s=>'<label class="rp-skill'+(selected.includes(s.skill_id)?' selected':'')+'"><input type="checkbox" data-rp-skill="'+esc(s.skill_id)+'"'+(selected.includes(s.skill_id)?' checked':'')+'><span><b>'+esc(s.name)+'</b><small>'+esc(s.description||'Эффекты: '+(s.effects||[]).map(e=>e.kind+' '+e.value).join(', '))+'</small>'+(picker==='skills'?'<small>Энергия '+s.cost+' · сила '+s.power+' · точность '+s.accuracy+'% · КД '+s.cooldown+'</small>':'')+(s.scripted?'<em>Сценарное действие: отдельно не применяется</em>':'')+'</span></label>').join('')+'</div></details>').join('')||'<p class="muted">Навыки не найдены.</p>';
     }
-    function schedulePreview(){clearTimeout(previewTimer);previewTimer=setTimeout(preview,250);}
+    function fieldValue(el){return el.type==='checkbox'?el.checked:el.type==='number'||el.dataset.field==='archclass_stage'?Number(el.value):el.value;}
+    function schedulePreview(){previewRequest++;clearTimeout(previewTimer);previewTimer=setTimeout(preview,250);}
     async function preview(){
       if(!editing||abort.signal.aborted)return;
       const seq=++previewRequest;
@@ -67,7 +68,12 @@
         if(!focused)target.innerHTML='<div class="rp-stat-grid">'+Object.entries(result.stats).filter(([k])=>names[k]).map(([key,value])=>'<label>'+names[key]+(section==='mob'?'<input type="number" min="'+(['max_hp','resource_max'].includes(key)?1:0)+'" max="'+(key==='evasion'?100:key==='max_hp'?100000:10000)+'" data-stat="'+key+'" value="'+value+'">':'<b>'+value+'</b>')+'</label>').join('')+'</div>'+(section==='mob'?button('Пересчитать по классу','reset-stats','small'):'');
         const notes=[...new Set(result.skills.flatMap(s=>[...(s.warnings||[]),...(s.unavailable_reason?[s.name+': '+s.unavailable_reason]:[])]))];
         document.getElementById('rp-warnings').innerHTML=notes.length?'<details class="rp-warning"><summary>Условия и совместимость · '+notes.length+'</summary>'+notes.map(n=>'<p>'+esc(n)+'</p>').join('')+'</details>':'<p class="rp-valid">✓ Сборка проверена</p>';
-      }catch(error){if(seq===previewRequest&&document.getElementById('rp-warnings'))document.getElementById('rp-warnings').textContent=error.message;}
+      }catch(error){
+        if(seq!==previewRequest||!editing||abort.signal.aborted)return;
+        const target=document.getElementById('rp-stats');
+        if(target)target.innerHTML='<p>Не удалось рассчитать характеристики.</p>'+button('Повторить расчёт','retry-preview','small');
+        const warnings=document.getElementById('rp-warnings');if(warnings)warnings.textContent=error.message;
+      }
     }
     async function renderEncounters(){
       if(!chat){shell('<div class="rp-empty"><h2>Выбери чат для встречи</h2><p>Создателем может стать любой участник. Он будет мастером, а не бойцом.</p></div>');return;}
@@ -96,6 +102,7 @@
         if(action==='picker'){picker=id;editor();return;}
         if(action==='move'){const direction=Number(args.pop()),sid=args.join(':'),list=editing.definition.skills,index=list.indexOf(sid),other=index+direction;if(index>=0&&other>=0&&other<list.length)[list[index],list[other]]=[list[other],list[index]];renderSkills();return;}
         if(action==='reset-stats'){editing.definition.stats={};await preview();return;}
+        if(action==='retry-preview'){schedulePreview();return;}
         if(action==='reset-art'){editing.definition.avatar_key=editing.definition.sprite_key='';editor();return;}
         if(action==='add-enemy'){if(roster.length>=3)return;const [kind,key]=document.getElementById('rp-enemy').value.split(':');roster.push({kind,id:key,name:kind==='builtin'?catalog.mobs.find(m=>m.id===key).name:templates.find(t=>t.id===key).definition.name});nonce=crypto.randomUUID();await renderEncounters();return;}
         if(action==='remove-enemy'){roster.splice(Number(id),1);nonce=crypto.randomUUID();await renderEncounters();return;}
@@ -109,7 +116,7 @@
       if(!editing)return;
       if(el.dataset.stat){editing.definition.stats[el.dataset.stat]=Number(el.value);schedulePreview();return;}
       const key=el.dataset.field;if(!key)return;
-      editing.definition[key]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
+      editing.definition[key]=fieldValue(el);
       if(key==='flip'||key==='scale')document.getElementById('rp-art').style.transform='scaleX('+(editing.definition.flip?-1:1)+') scale('+editing.definition.scale+')';
       schedulePreview();
     },{signal:abort.signal});
@@ -120,6 +127,7 @@
         if(el.id==='rp-filter'){filter=el.value;renderSkills();return;}
         if(el.id==='rp-only'){onlySelected=el.checked;renderSkills();return;}
         if(!editing)return;
+        if(el.dataset.field)editing.definition[el.dataset.field]=fieldValue(el);
         if(el.dataset.rpSkill){const ids=editing.definition[picker],id=el.dataset.rpSkill;if(el.checked&&!ids.includes(id))ids.push(id);if(!el.checked)editing.definition[picker]=ids.filter(k=>k!==id);renderSkills();schedulePreview();return;}
         if(['class_id','level','archclass_id','archclass_stage'].includes(el.dataset.field)){
           const v=editing.definition;if(v.level<10||el.dataset.field==='class_id')v.archclass_id='';if(v.level<20)v.archclass_stage=10;

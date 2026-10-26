@@ -2,6 +2,7 @@
 
 import asyncio
 import html
+import hashlib
 import json
 import logging
 import re
@@ -220,6 +221,7 @@ class RaidPublisher:
 
 def create_raid_router(db, bot, enabled, publisher):
     router = Router(name="raids")
+    encounter_lock = asyncio.Lock()
 
     async def encounter_command(message):
         if not message.from_user or message.from_user.is_bot:
@@ -228,20 +230,28 @@ def create_raid_router(db, bot, enabled, publisher):
             await message.answer('Арена отключена: нужно настроить WEBAPP_URL.')
             return
         if message.chat.type not in {'group', 'supergroup'}:
-            await message.answer('Создай РП-встречу в группе: /встреча гоблин или /встреча гоблин 2, шаман. Мастер не вступает автоматически; награды отключены.')
+            await message.answer('Создай РП-встречу в группе: /встреча гоблин 2, шаман или /встреча название своего моба. Свои мобы — в /рп → Мои мобы. Мастер не вступает автоматически; награды отключены.')
             return
         try:
-            from arena_encounters import parse_roster
+            from arena_encounters import parse_named_roster
             match = ENCOUNTER_RE.fullmatch(message.text or message.caption or '')
-            roster = parse_roster(match.group('roster') or '')
             await require_member(bot, message.chat.id, message.from_user.id)
-            row = await db.arena_encounter_create(message.chat.id, message.from_user.id, roster)
-            try:
-                sent = await message.answer(await publisher.body(row), parse_mode='HTML', reply_markup=publisher.keyboard(row))
-                await db.arena_raid_set_message(row['token'], sent.message_id)
-            except Exception:
-                await db.arena_raid_setup(row['token'], message.from_user.id, 'cancel')
-                raise
+            templates = await db.arena_rp_templates(message.from_user.id)
+            roster = parse_named_roster(match.group('roster') or '', templates)
+            async with encounter_lock:
+                if any(item['kind'] == 'mob' for item in roster):
+                    nonce = hashlib.sha256(f'encounter:{message.chat.id}:{message.message_id}'.encode()).hexdigest()
+                    row = await db.arena_rp_encounter_create(message.chat.id, message.from_user.id, roster, nonce)
+                    if row['status'] != 'lobby' or row['message_id'] is not None:
+                        return  # A redelivered Telegram message must not publish a second lobby.
+                else:
+                    row = await db.arena_encounter_create(message.chat.id, message.from_user.id, [item['id'] for item in roster])
+                try:
+                    sent = await message.answer(await publisher.body(row), parse_mode='HTML', reply_markup=publisher.keyboard(row))
+                    await db.arena_raid_set_message(row['token'], sent.message_id)
+                except Exception:
+                    await db.arena_raid_setup(row['token'], message.from_user.id, 'cancel')
+                    raise
         except ValueError as error:
             await message.answer(str(error))
 
