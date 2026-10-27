@@ -1,5 +1,7 @@
 <!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0c1420">
+<script src="/static/nazarick-qte.js?v=__REV__"></script>
+<script src="/static/qte-block-view.js?v=__REV__"></script>
 <title>Блокирование · лаборатория Гнида-бота</title>
 <link rel="stylesheet" href="/static/qte-input.css?v=__REV__"><link rel="stylesheet" href="/static/qte-block/style.css?v=__REV__">
 <script id="catalog" type="application/json">__CATALOG__</script><script defer src="/static/qte-input.js?v=__REV__"></script><script defer src="/qte-lab/unique/engine.js?v=__REV__"></script><script defer src="/qte-lab/block/engine.js?v=__REV__"></script><script defer src="/qte-lab/block/client.js?v=__REV__"></script></head>
@@ -24,7 +26,7 @@
 <label for="magic">Магическая защита <output id="magic-value">35</output></label><input id="magic" type="range" min="0" max="100" value="35">
 <label for="attack">Атакующая характеристика врага <output id="attack-value">30</output></label><input id="attack" type="range" min="0" max="100" value="30">
 <label for="accuracy">Точность врага <output id="accuracy-value">85%</output></label><input id="accuracy" type="range" min="0" max="100" value="85">
-<div class="numbers"><p><span>Защита против этой атаки</span><b id="armor-info"></b></p><p><span>Сектор блока</span><b id="arc-info"></b></p><p><span>Окно точного блока</span><b id="perfect-info"></b></p><p><span>Подготовка + бой</span><b>1 + 8,5 с</b></p></div>
+<div class="numbers"><p><span>Защита против этой атаки</span><b id="armor-info"></b></p><p><span>Сектор блока</span><b id="arc-info"></b></p><p><span>Окно точного блока</span><b id="perfect-info"></b></p><p><span>Подготовка + бой</span><b id="defense-length">1 + 8,5 с</b></p></div>
 <label for="power">Сила атаки (тестовая)</label><input id="power" type="number" min="1" max="1000" value="30"><label for="hp">Тестовые HP</label><input id="hp" type="number" min="1" max="5000" value="200"><label for="seed">Номер узора</label><input id="seed" type="number" min="1" max="999999" value="17">
 <p class="muted">Уклонение не используется. Броня снижает урон и улучшает стойкость, сектор и точность блока. Основная энергия не расходуется.</p>
 </div></details><details class="rules"><summary>Правила прототипа</summary><p>Обычный блок снимает 75% урона после брони. Точный блок снимает весь урон и возвращает немного стойкости. При недостатке стойкости защита частично поглощает удар и ломается на 0,65 с. Опущенная защита восстанавливается.</p><p>Удержание и поворот не обновляют точный блок. Для новой попытки опусти щит хотя бы на 0,1 с; между точными поднятиями минимум 0,32 с.</p><p>Блоки, волны, броня и все числа здесь тестовые. Прогрессия, Обиды, Стойкость класса и Воздаяние не начисляются. Данных аккаунта и наград нет.</p></details></aside></div>

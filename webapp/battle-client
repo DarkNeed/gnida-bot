@@ -103,6 +103,7 @@ const sprite=c=>{
   if(/^\/sprites\/[0-9a-f]{64}\.png$/.test(data.sprite_url||""))return data.sprite_url;
   if(/^\/rp\/images\/[0-9a-f]{64}\.png$/.test(data.sprite_url||''))return data.sprite_url;
   if(/^\/rp\/images\/[0-9a-f]{64}\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
+  if(/^\/static\/assets\/nazarick\/[a-z0-9_]+\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(/^\/static\/assets\/(?:(?:archclasses|rpg|casino)\/)?[a-z_]+\.png$/.test(data.class_avatar_url||""))return data.class_avatar_url;
   if(/^\/static\/assets\/encounters\/(?:goblin|brute|shaman)\.svg$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(["warrior","mage","priest","hunter"].includes(id))return "/static/assets/rpg/"+id+".png";
@@ -167,7 +168,7 @@ function describeEffect(e){
 }
 const statusIcons={bleed:1,stun:2,accuracy_flat:3,damage_pct:4,physical_attack_pct:4,magic_attack_pct:5,physical_defense_pct:6,magic_defense_pct:6,evasion_flat:7,speed_pct:8,resource:9,resource_leech:9,prepared_attack:10,next_physical_damage:10,next_magic_damage:5};
 Object.assign(statusIcons,{plague_fever:1,plague_spores:12});
-const statusStatNames={accuracy_flat:'точности',damage_pct:'урона',physical_attack_pct:'физ. атаки',magic_attack_pct:'маг. атаки',physical_defense_pct:'физ. защиты',magic_defense_pct:'маг. защиты',evasion_flat:'уклонения',speed_pct:'скорости',next_physical_damage:'следующей физ. атаки',next_magic_damage:'следующей маг. атаки'};
+const statusStatNames={accuracy_flat:'точности',damage_pct:'урона',damage_taken_pct:'входящего урона',physical_attack_pct:'физ. атаки',magic_attack_pct:'маг. атаки',physical_defense_pct:'физ. защиты',magic_defense_pct:'маг. защиты',evasion_flat:'уклонения',speed_pct:'скорости',next_physical_damage:'следующей физ. атаки',next_magic_damage:'следующей маг. атаки'};
 const statusColors=['#ef5366','#ef5366','#f4cb75','#93d9ef','#93d9ef','#c59bf1','#93d9ef','#93d9ef','#93d9ef','#c59bf1','#f4cb75','#f4cb75','#ef5366','#c59bf1','#f4cb75','#93d9ef'];
 function statusIcon(index,direction=''){
   const glyph=Number.isInteger(index)&&index>=0&&index<statusColors.length?index:15;
@@ -178,13 +179,13 @@ function fighterStatuses(side){
   const items=[];
   for(const e of side.effects||[]){
     const duration=Number(e.duration),kind=String(e.kind||'effect');
-    if(!Number.isFinite(duration)||duration<=0||duration>=10000||['resource','resource_leech'].includes(kind))continue;
+    if(!Number.isFinite(duration)||duration<=0||duration>=10000&&e.id!=='nz_plot_armor'||['resource','resource_leech'].includes(kind))continue;
     const direction=e.id==='pet_guard'?'':kind==='damage_taken_pct'?'down':statusStatNames[kind]&&Number(e.value)!==0&&Number.isFinite(Number(e.value))?(Number(e.value)<0?'down':'up'):'';
     const specialNames={mana_barrier:'Мановый барьер',priest_ward:'Оберег',bishop_guard:'Благословение',knight_guard:'Страж клинка',hunter_parry:'Прерывающий выстрел',counter_lunge:'Ответный выпад',knight_counter:'Контрудар рыцаря',rpg_burn:'Горение',rpg_frost:'Обморожение',berserk_risk:'Уязвимость берсерка'};
-    const name=specialNames[e.id]|| (e.id==='adoration'?'Умиление':kind==='incoming_damage_multiplier'?'Защита от урона':e.name||(direction?(direction==='down'?'Понижение ':'Повышение ')+statusStatNames[kind]:effectNames[kind]||'Особый эффект'));
+    const name=specialNames[e.id]|| (e.id==='nz_plot_armor'?'Сюжетная броня':e.id==='adoration'?'Умиление':e.name||(kind==='incoming_damage_multiplier'?'Защита от урона':direction?(direction==='down'?'Понижение ':'Повышение ')+statusStatNames[kind]:effectNames[kind]||'Особый эффект'));
     let detail=e.description?esc(e.description):kind==='stun'?'Пропускает ход из-за ошеломления.':kind==='bleed'?'Кровотечение: '+esc(e.value)+' урона при атаке этого бойца.':kind==='prepared_attack'?'Усилена следующая подходящая атака; подготовка расходуется по условиям навыка.':describeEffect({...e,target:'self',turns:0,chance:1});
-    detail+=kind==='plague_spores'?'<br>Стаков: '+esc(e.value)+' / 3. Урон спор: '+esc(Number(e.value)*Number(e.damage_per_stack||1))+' HP за ход. Действует до снятия.':'<br>Осталось ходов этого бойца: '+esc(duration)+'.';
-    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:kind==='incoming_damage_multiplier'?6:e.id==='pet_guard'?6:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:String(kind==='plague_spores'?e.value:duration),detail});
+    detail+=e.id==='nz_plot_armor'?'<br>До конца этого похода.':kind==='plague_spores'?'<br>Стаков: '+esc(e.value)+' / 3. Урон спор: '+esc(Number(e.value)*Number(e.damage_per_stack||1))+' HP за ход. Действует до снятия.':'<br>Осталось ходов этого бойца: '+esc(duration)+'.';
+    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:kind==='incoming_damage_multiplier'?6:e.id==='pet_guard'?6:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:e.id==='nz_plot_armor'?'∞':String(kind==='plague_spores'?e.value:duration),detail});
   }
   const m=side.mechanics||{};
   if(m.chaplain_incoming)items.push({id:'mechanic:chaplain_revision',name:'Сопротивление редакции',icon:6,count:'×'+m.chaplain_incoming,detail:'Множитель получаемого прямого урона. Это свойство текущей редакции, а не снимаемый эффект.'});
@@ -703,7 +704,12 @@ function menuScreen(data){
   }else if(page==="classConfirm"){
     const row=(data.inventory||[]).find(i=>i.id===classUsePending?.item);
     if(!row){page='inventory';menuScreen(data);return;}
+    if(row.kind==='class_ticket'){
+      const p=data.personal,options=(p.classes||[]).filter(c=>c.id!==p.class_id);
+      body+='<div class="card"><h2>Сменить класс без потери уровня</h2><p>Персонаж: '+esc(classUsePending.name)+' · Lv.'+p.level+'</p>'+itemInfo(row)+'<label for="ticket-class">Новый класс</label><select id="ticket-class">'+options.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>').join('')+'</select><div class="stack">'+button('Подтвердить · потратить один билет','confirmticket','primary',!options.length)+button('Отмена — сохранить билет','tab:inventory')+'</div></div>';
+    }else{
     body+='<div class="card"><h2>Сменить класс на '+esc(row.name)+'?</h2><p>Боец: '+esc(classUsePending.name)+'</p><p class="danger-text">Уровень станет 5, прежние изученные активные и пассивные навыки исчезнут. Инвентарь, питомцы и спрайт сохранятся. Трактат будет потрачен.</p><p>Боевой опыт ×2 до возвращения прежнего уровня. Бонусы не складываются. Смена доступна с 5 уровня.</p><div class="stack">'+button('Сменить класс и сбросить развитие','confirmitem','danger')+button('Не менять','tab:inventory')+'</div></div>';
+    }
   }else if(page==="appearance"){
     const p=data.personal;
     body+='<div class="card"><h2>Свой спрайт</h2><div class="sprite-preview">'+fighterImage(p,"", "upload-preview")+'</div>'+button('↔ Отразить по горизонтали','flip_sprite','small',!p.sprite_url)+'<p class="note">Лучше, чтобы спрайт смотрел вправо →. В бою противник автоматически разворачивается к твоему персонажу. Кнопка отражения меняет только внешний вид; нажми «Сохранить спрайт», чтобы применить.</p><p class="muted">PNG с прозрачным фоном, до 2 МБ. Каждая сторона — от 16 до 1024 пикселей. Одна поза; пропорции сохраняются. Картинка общая для выбранного персонажа во всех чатах. На характеристики она не влияет.</p><input type="file" id="sprite-file" accept="image/png,.png" hidden><label class="check"><input type="checkbox" id="sprite-pixels"'+(!p.sprite_url||p.pixel_art?' checked':'')+'> Пиксельный рисунок — без сглаживания</label><p class="muted" id="sprite-filename">Файл не выбран.</p><div class="stack">'+button("Выбрать PNG","choose_sprite")+button("Сохранить спрайт","upload_sprite","primary",true)+(p.sprite_url?button("Вернуть стандартный","reset_sprite"):"")+button("Назад","tab:personal")+'</div></div>';
@@ -867,7 +873,7 @@ app.addEventListener("click",async event=>{
     const item=(menu.inventory||[]).find(i=>i.id===Number(arg));if(!item)return;
     const [mode,id]=document.getElementById('item-target-'+arg).value.split(':');
     const target=[menu.personal].filter(Boolean).find(p=>p.user_id===Number(id)&&p.personal===(mode==='p'));
-    if(item.kind==='class'){classUsePending={item:item.id,user:Number(id),personal:mode==='p',name:target?.name||(mode==='p'?'Мой личный персонаж':'Мой персонаж-раб')};page='classConfirm';menuScreen(menu);return;}
+    if(['class','class_ticket'].includes(item.kind)){classUsePending={item:item.id,user:Number(id),personal:mode==='p',name:target?.name||(mode==='p'?'Мой личный персонаж':'Мой персонаж-раб')};page='classConfirm';menuScreen(menu);return;}
     if(target&&(item.kind==='skill'||item.kind==='passive')){
       const known=item.kind==='skill'?target.skills:(target.passives||[]),limit=learnedLimit(item.kind);
       if(known.length>=limit&&!known.some(s=>s.skill_id===item.content_id)){
@@ -877,6 +883,7 @@ app.addEventListener("click",async event=>{
     await menuAction('use_item',{item:item.id,user:Number(id),personal:mode==='p'});return;
   }
   if(cmd==="confirmitem"){const pending=classUsePending;if(!pending)return;page='inventory';await menuAction('use_item',{item:pending.item,user:pending.user,personal:pending.personal,confirm:true});return;}
+  if(cmd==='confirmticket'){const pending=classUsePending;if(!pending)return;const chosen=document.getElementById('ticket-class')?.value;if(!chosen)return;if(await menuAction('use_item',{item:pending.item,user:pending.user,personal:pending.personal,confirm:true,new_class:chosen})){classUsePending=null;page='inventory';menuScreen(menu);}return;}
   if(cmd==='replaceitem'){const pending=skillUsePending;if(!pending)return;if(await menuAction('use_item',{...pending,replace_skill:arg})){skillUsePending=null;page='inventory';menuScreen(menu);}return;}
   if(['offerlearn','offerskip','offerswap'].includes(cmd)){
     const p=menu.personal,s=p.skill_offers?.[0];if(!s)return;
@@ -1019,6 +1026,12 @@ function raidRewardStatus(status){
   return 'Повторная награда 20%'+(remaining>0?' · полная через '+Math.ceil(remaining/60)+' мин.':'');
 }
 function raidButton(label,action,cls='',disabled=false){return '<button data-raid="'+esc(action)+'" class="'+cls+'"'+(disabled?' disabled':'')+'>'+label+'</button>';}
+function nazarickBlessingPanel(data){
+  const offer=data.data?.nazarick?.blessing_offer;if(!offer)return '';
+  const eligible=offer.eligible.includes(String(data.actor_id)),voted=offer.votes[String(data.actor_id)];
+  const votes=offer.eligible.map(k=>'<p>'+esc(data.data.players[k].fighter.name)+' · '+(offer.votes[k]?'✓ Принимает':'ожидает решения')+'</p>').join('');
+  return '<div class="'+(eligible?'nz-blessing-overlay':'card')+'"><section class="nz-blessing-card"'+(eligible?' role="dialog" aria-modal="true" aria-labelledby="nz-blessing-title"':'')+'><span class="eyebrow">ПОСЛЕДНИЙ ШАНС · РЕШЕНИЕ ВСЕГО ОТРЯДА</span><h2 id="nz-blessing-title">Принять благословение?</h2><div class="nz-blessing-copy"><p>Текущий босс начнётся заново с первой фазы и полным HP. Все участники восстановятся и получат <b>«Сюжетную броню»: входящий урон −50%</b> до конца этого похода.</p><p class="danger-text">Цена для всего отряда: билет на смену класса больше не выпадет. Случайная трофейная пассивка и обычные награды сохраняются. Нужны голоса всех; отказ одного завершает поход.</p>'+votes+'</div><div id="raid-timer" class="turn-timer"></div>'+(eligible?'<div class="stack">'+raidButton(voted?'✓ Ты принимаешь · ждём остальных':'Принять · отказаться от билета','blessing:accept','primary',voted)+raidButton('Отказаться · завершить поход','blessing:decline','danger')+'</div>':'<p>Ты наблюдатель и не участвуешь в голосовании.</p>')+'</section></div>';
+}
 function raidBar(value,max,label,cls=''){return '<div class="barline"><span>'+esc(label)+'</span><span>'+value+' / '+max+'</span></div><div class="bar '+cls+'"><i style="width:'+Math.max(0,Math.min(100,100*value/max))+'%"></i></div>';}
 function raidDialogue(data){
   const d=data.data?.dialogue;if(!d||data.status!=='active'&&!(data.boss_id==='whaler'&&data.status==='finished'))return '';
@@ -1059,6 +1072,7 @@ function chaplainArt(f,key){
   return {...f,class_avatar_url:other.class_avatar_url,sprite_url:other.sprite_url,pixel_art:other.pixel_art};
 }
 function raidPhaseLabel(data){
+  const nz=data.data?.nazarick_view;if(nz)return 'НАЗАРИК · БОСС '+nz.stage+' / 5 · '+nz.phase_name+' · РАУНД '+nz.stage_round;
   if(data.kind==='encounter')return 'РП-ВСТРЕЧА · РАУНД '+data.data.round;
   const d=data.data;return (data.boss_id==='chaplain'&&d.phase<3?'РЕГЛАМЕНТ':('ФАЗА '+d.phase+' / '+(data.phase_count||d.phase_count||2)))+' · РАУНД '+d.round;
 }
@@ -1080,6 +1094,7 @@ function raidPhaseSprite(data){
 }
 function raidSoundtrack(data){
   if(data.status!=='active')return data.status==='lobby'?'menu':'';
+  if(data.data?.nazarick_view)return data.data.nazarick_view.music;
   if(data.boss_id==='chaplain'){
     const phase=Number(data.data?.phase||1);
     return phase>=4?'chaplain_root':phase>=3?'chaplain_override':phase>=2?'chaplain_fault':'chaplain';
@@ -1095,14 +1110,16 @@ function raidPortrait(f,key,player=null,index=0,spriteTarget=null){
   const effects=fighterStatuses(f).map(e=>'<span class="raid-effect" title="'+esc(e.name)+'">'+statusIcon(e.icon,e.direction)+'<span class="status-count">'+esc(e.count)+'</span></span>').join('');
   const own=key===String(raidCurrent.actor_id),boss=key==='boss'||!!raidCurrent.data?.enemies?.[key];
   const art=spriteTarget?'<button type="button" class="raid-art encounter-target" data-raid="target:'+esc(key)+'" aria-label="Выбрать цель: '+esc(f.name)+'" aria-pressed="'+(key===encounterTarget)+'"'+(disabled?' disabled':'')+'>':'<div class="raid-art">';
-  return '<article id="raid-fighter-'+esc(key)+'" class="raid-fighter '+(boss?'raid-enemy':'raid-ally slot-'+index)+(own?' raid-own':'')+(disabled?' defeated':'')+(player?.deported_round===raidCurrent.data.round?' raid-deported':'')+'">'+art+fighterImage(chaplainArt(f,key),'raid-sprite')+'<div class="raid-ground"></div>'+(spriteTarget?'</button>':'</div>')+'<div class="raid-effects">'+effects+'</div><div class="raid-hud"><div class="row"><strong title="'+esc(f.name)+'">'+esc(f.name)+'</strong>'+raidButton('ⓘ','inspect:'+key,'stat-button')+'</div><div class="muted">'+esc(f.class_name)+' · Lv.'+f.level+'</div>'+raidBar(f.hp,f.stats.max_hp,'HP')+(boss&&raidCurrent.boss_id!=='doofenshmirtz'?'':raidBar(f.resource,f.stats.resource_max,f.resource_name,'mana'))+(player?'<div class="raid-ready">'+(player.withdrawn?'Покинул рейд':f.hp<=0?'Боец повержен':player.deported_round===raidCurrent.data.round?'Вернётся в следующем раунде':player.ready?'✓ Готов':own?'Твой боец':'Выбирает навык')+'</div>':'')+'</div></article>';
+  const floatingStaff=key==='boss'&&raidCurrent.data?.nazarick_view?.floating_staff?'<img class="nz-floating-staff" src="/static/assets/nazarick/staff_floating.png" alt="" aria-hidden="true">':'';
+  return '<article id="raid-fighter-'+esc(key)+'" class="raid-fighter '+(boss?'raid-enemy':'raid-ally slot-'+index)+(own?' raid-own':'')+(disabled?' defeated':'')+(player?.deported_round===raidCurrent.data.round?' raid-deported':'')+'">'+art+fighterImage(chaplainArt(f,key),'raid-sprite')+floatingStaff+'<div class="raid-ground"></div>'+(spriteTarget?'</button>':'</div>')+'<div class="raid-effects">'+effects+'</div><div class="raid-hud"><div class="row"><strong title="'+esc(f.name)+'">'+esc(f.name)+'</strong>'+raidButton('ⓘ','inspect:'+key,'stat-button')+'</div><div class="muted">'+esc(f.class_name)+' · Lv.'+f.level+'</div>'+raidBar(f.hp,f.stats.max_hp,'HP')+(boss&&raidCurrent.boss_id!=='doofenshmirtz'?'':raidBar(f.resource,f.stats.resource_max,f.resource_name,'mana'))+(player?'<div class="raid-ready">'+(player.withdrawn?'Покинул рейд':f.hp<=0?'Боец повержен':player.deported_round===raidCurrent.data.round?'Вернётся в следующем раунде':player.ready?'✓ Готов':own?'Твой боец':'Выбирает навык')+'</div>':'')+'</div></article>';
 }
 function encounterCanTarget(data=raidCurrent){
   const own=data?.data?.players?.[String(data.actor_id)];
-  return !!(data?.kind==='encounter'&&data.status==='active'&&!raidPlaying&&!data.qte?.waiting&&own&&!own.withdrawn&&own.fighter.hp>0&&!own.ready);
+  return !!((data?.kind==='encounter'||data?.data?.multi_enemy)&&data.status==='active'&&!raidPlaying&&!data.qte?.waiting&&own&&!own.withdrawn&&own.fighter.hp>0&&!own.ready);
 }
 function encounterPortrait(f,key,index){
-  return raidPortrait(f,key,null,index,encounterCanTarget()).replace('raid-enemy','raid-enemy encounter-enemy enemy-'+index+(key===encounterTarget?' encounter-selected':''));
+  const size=['lich','demon_mage'].includes(f.nz_sprite)?' nz-small-summon':['knight','demon_guard'].includes(f.nz_sprite)?' nz-large-summon':'';
+  return raidPortrait(f,key,null,index,encounterCanTarget()).replace('raid-enemy','raid-enemy encounter-enemy enemy-'+index+size+(key===encounterTarget?' encounter-selected':''));
 }
 function selectEncounterTarget(key){
   if(!encounterCanTarget()||!raidCurrent.data.enemies[key]||raidCurrent.data.enemies[key].hp<=0)return;
@@ -1121,7 +1138,7 @@ function encounterLobby(data){
 }
 function raidScreen(data){
   if(data.token!==raidCurrent?.token)encounterTarget='';
-  if(data.kind==='encounter'&&data.data&&!data.data.enemies[encounterTarget]?.hp)encounterTarget=Object.keys(data.data.enemies).find(k=>data.data.enemies[k].hp>0)||'';
+  if((data.kind==='encounter'||data.data?.multi_enemy)&&data.data&&!data.data.enemies[encounterTarget]?.hp)encounterTarget=Object.keys(data.data.enemies).find(k=>data.data.enemies[k].hp>0)||'';
   window.ArenaQTEWatch?.context('raid',data.token,data.status==='active');
   if(data.qte?.challenge)setTimeout(runPendingMiniGames,0);
   raidPhaseSprite(data);
@@ -1132,6 +1149,7 @@ function raidScreen(data){
   if(data.status==='lobby'){
     body='<div class="card"><h2>'+esc(data.boss_name)+'</h2>'+(data.loot_name?'<p class="muted">'+esc(data.loot_name)+': 70% при полной награде; пятая такая победа без выпадения гарантирует трактат. '+esc(data.encounter_rules||(data.fixed_level?'Фиксированный уровень '+data.fixed_level+', без подстройки характеристик под отряд.':'Уровень босса подстраивается под отряд и выше самого сильного бойца.'))+'</p>':'')+'<p>Отряд: '+data.participants.length+' / 3</p><div class="stack">'+data.participants.map(p=>'<div>'+esc(p.name)+' · '+(p.personal?'личный персонаж':'раб: '+esc(p.fighter_name))+'</div>').join('')+'</div><p class="muted">От 1 до 3 игроков против одного босса. Можно начать в одиночку или вдвоём. Вход бесплатный. Каждый выбирает одно действие за раунд одновременно с остальными.</p><p class="muted">На сбор — 10 минут. На выбор в бою — 2 минуты. После трёх пропусков подряд награды отключаются; для награды нужны минимум два ручных действия.</p><p>'+esc(raidRewardStatus(data.reward_status))+'</p><p class="muted">Кулдаун полной награды — 1 час на аккаунт и босса, общий для всех чатов и бойцов. Поражение и повторные победы не продлевают его.</p></div>';
     if(data.kind==='encounter')body=encounterLobby(data);
+    if(data.boss_id==='nazarick')body='<div class="card"><span class="eyebrow">НАЗАРИК · ПЯТЬ ПОЛНОЦЕННЫХ БОССОВ</span><h2>'+esc(data.boss_name)+'</h2><p>Шалтир → Демиург → Альбедо → ложный король → Аинз. У каждого две фазы. От одного до трёх игроков, противники сменяют друг друга.</p><p>После каждого из трёх стражей отряд полностью восстанавливается, включая погибших. Между фазами и после Пандоры восстановления нет. После поражения можно единогласно принять благословение: переиграть текущего босса с «Сюжетной бронёй», отказавшись от билета для всей группы. Только один раз за поход.</p><p>Полная награда за весь рейд: одна случайная легендарная пассивка и 70% на билет смены класса без потери уровня. До 100 раундов на каждого противника.</p><p>Отряд: '+data.participants.length+' / 3</p>'+data.participants.map(p=>'<p>'+esc(p.name)+'</p>').join('')+'</div>';
     body+='<div class="card"><h3>'+(me?'Твой боец':data.is_master?'Присоединиться самому · необязательно':'Присоединиться')+'</h3><div class="stack">'+data.choices.map(c=>raidButton(esc(c.name),c.rp_template?'joinrp:'+c.rp_template:'join:'+(c.personal?'p':'s')+':'+c.fighter_id,me?.fighter_id===c.fighter_id&&me?.personal===c.personal&&(me?.rp_template||null)===(c.rp_template||null)?'primary':'',!me&&data.participants.length>=3)).join('')+'</div><p class="muted">'+(data.kind==='encounter'?'Обычный персонаж использует текущую сборку; RP-персонаж — отдельный шаблон из /рп. Изменения сохраняются только внутри встречи.':'Перед стартом заверши обязательный выбор класса в меню арены. В рейде участвует твой личный персонаж.')+'</p></div>';
     if(data.actor_id===data.creator_id)body+='<div class="row">'+raidButton(data.kind==='encounter'?'Начать встречу':'Начать рейд','start','primary',data.participants.length<1||data.participants.length>3)+raidButton('Отменить сбор','cancel','danger')+'</div>';
     if(me&&(data.actor_id!==data.creator_id||data.kind==='encounter'))body+=raidButton('Выйти из отряда','leave');
@@ -1145,14 +1163,19 @@ function raidScreen(data){
       body='<div class="raid-intent"><span class="eyebrow">'+raidPhaseLabel(data)+'</span><h3>Намерения противников</h3>'+intents+'<small>Мастер: '+esc(data.master_name)+' · награды отключены</small></div><div class="raid-field encounter-field" aria-label="Отряд слева внизу, противники справа вверху">'+Object.entries(d.enemies).map(([key,f],i)=>encounterPortrait(f,key,i)).join('')+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
     }
     body+=chaplainPanel(data,own);
-    if(data.status==='active'){
+    if(d.nazarick_view){
+      const n=d.nazarick_view,intents=Object.entries(d.enemy_intents||{}).filter(([key])=>d.enemies[key]?.hp>0).map(([key,i])=>'<p><b>'+esc(d.enemies[key].name)+'</b>: '+esc(i.text)+'</p>').join('');
+      body='<div class="raid-intent"><span class="eyebrow">'+esc(raidPhaseLabel(data))+'</span><h3>'+esc(n.title)+'</h3>'+intents+'<small>'+esc(n.hint)+'</small>'+(n.guardian==='albedo'?'<p>Давление на стойку: '+n.pressure+' / '+n.pressure_max+(n.exposed?' · СТОЙКА РАЗРУШЕНА':'')+'</p>':'')+'</div><div class="raid-field encounter-field nazarick-field" data-guardian="'+esc(n.guardian)+'" data-phase="'+n.phase+'">'+Object.entries(d.enemies).filter(([,f])=>f.hp>0).map(([key,f],i)=>encounterPortrait(f,key,i)).join('')+raidDialogue(data)+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
+    }
+    if(d.nazarick?.blessing_offer){body+=nazarickBlessingPanel(data);}
+    else if(data.status==='active'){
       body+='<div id="raid-timer" class="turn-timer"></div><div class="card raid-actions">';
       if(own&&!own.withdrawn&&own.fighter.hp>0){
         if(data.qte?.waiting)body+='<h3>Заверши мини-игру</h3><p class="muted">После неё действие будет принято. По истечении времени — неуспех.</p>';
         else if(own.ready)body+='<h3>Действие принято — ждём отряд</h3><p class="muted">Когда все выберут навыки, раунд разыграется по скорости.</p>';
         else{
           const f=own.fighter;
-          if(data.kind==='encounter')body+='<p class="encounter-target-note" role="status">Цель: <strong id="encounter-target-name">'+esc(d.enemies[encounterTarget]?.name||'—')+'</strong><small>Нажми на спрайт врага на арене, чтобы сменить цель.</small></p>';
+          if(data.kind==='encounter'||d.multi_enemy)body+='<p class="encounter-target-note" role="status">Цель: <strong id="encounter-target-name">'+esc(d.enemies[encounterTarget]?.name||'—')+'</strong><small>Нажми на спрайт врага на арене, чтобы сменить цель.</small></p>';
           body+='<h3>Выбери действие</h3><div class="raid-skillgrid">'+chaplainSkills(data,f)+'</div>'+raidButton('Защищаться · +35% защит','skill:defend');
           if(data.boss_id==='chaplain')body+='<div class="chaplain-anchors"><h3>Закрепить мгновение · вместо навыка</h3><p class="muted">Выбранный результат отряда переживёт откат. Действует три раунда. Не отменяет фазовое восстановление HP босса.</p><div class="row">'+[['damage','Урон боссу'],['healing','Лечение'],['cleanse','Очищение']].map(([kind,label])=>raidButton('◷ '+label,'skill:chaplain_anchor:'+kind,'small')).join('')+'</div></div>';
         }
@@ -1160,9 +1183,9 @@ function raidScreen(data){
       }else body+='<h3>Наблюдение за рейдом</h3><p class="muted">'+(own?'Твой боец выбыл. Отряд может продолжить бой.':'Ты зритель. Выбор действий доступен участникам отряда.')+'</p>';
       body+=(window.ArenaQTEWatch?.buttons('raid',data.token,data.qte_watch,Object.fromEntries(Object.values(d.players).map(p=>[p.actor_id,p.fighter.name])))||'')+'</div>';
     }else{
-      body+='<div class="card"><h2>'+esc(d.result)+'</h2>'+Object.entries(d.rewards).map(([key,r])=>'<p>'+esc(d.players[key].fighter.name)+': +'+r.francs+' ₣ · +'+r.xp+' XP'+(r.full_reward===false?' · повторная награда 20%':r.full_reward?' · полная награда':'')+(r.loot?' · 📜 '+esc(r.loot):'')+(r.forge_seal?' · ⚒️ '+esc(r.forge_seal)+' +1':'')+'</p>').join('')+'</div>';
+      body+='<div class="card"><h2>'+esc(d.result)+'</h2>'+Object.entries(d.rewards).map(([key,r])=>'<p>'+esc(d.players[key].fighter.name)+': +'+r.francs+' ₣ · +'+r.xp+' XP'+(r.full_reward===false?' · повторная награда 20%':r.full_reward?' · полная награда':'')+(r.loot?' · 📜 '+esc(r.loot):'')+(r.class_ticket?' · 🎟️ '+esc(r.class_ticket_name):'')+(r.forge_seal?' · ⚒️ '+esc(r.forge_seal)+' +1':'')+'</p>').join('')+'</div>';
     }
-    body+=(demo&&data.status==='active'?raidButton('Показать атаки · демо','preview','small'):'')+'<div class="card raid-log"><h3>Ход боя</h3>'+d.log.slice(-12).map(e=>'<p><small>Раунд '+e.round+'</small> <b>'+esc(raidName(data,e.actor))+'</b>: '+esc(e.text)+(e.target&&e.target!==e.actor?' → '+esc(raidName(data,e.target)):'')+'</p>').join('')+'</div>';
+    body+=(demo&&data.status==='active'?raidButton('Показать атаки · демо','preview','small'):'')+'<div class="card raid-log"><h3>Ход боя</h3>'+d.log.slice(-12).map(e=>'<p><small>Раунд '+e.round+'</small> <b>'+esc(e.actor_name||raidName(data,e.actor))+'</b>: '+esc(e.text)+(e.target&&e.target!==e.actor?' → '+esc(raidName(data,e.target)):'')+'</p>').join('')+'</div>';
     if(data.kind==='encounter'&&data.status==='active'&&data.is_master)body+='<div class="card"><h3>Управление мастера</h3><p class="muted">Досрочное завершение останавливает бой и текущие мини-игры. Наград нет.</p>'+raidButton('Завершить встречу','finish','danger')+'</div>';
     if(demo&&data.boss_id==='kit')body+='<div class="row">'+[1,2,3].map(n=>raidButton('Фаза '+n+' · демо','kitphase:'+n,'small')).join('')+'</div>';
   }else body='<div class="card"><h2>Сбор рейда закрыт</h2><p>Новый отряд можно собрать командой /рейд в чате.</p></div>';
@@ -1180,6 +1203,11 @@ function raidScreen(data){
     if(data.data?.chaplain?.notification){const note=document.createElement('div');note.className='chaplain-system';note.setAttribute('role','status');note.textContent='SYSTEM › '+data.data.chaplain.notification;document.querySelector('.chaplain-regulation')?.prepend(note);}
   }
   updateRaidTimer();if(raidInspect)showRaidDetails(raidInspect);
+  if(data.data?.nazarick_view){
+    const n=data.data.nazarick_view,field=document.querySelector('.nazarick-field');
+    if(field)field.style.backgroundImage='linear-gradient(#080b1720,#080b1740),url("'+n.background+'")';
+    const face=field?.querySelector('.raid-dialogue-portrait');if(face)face.style.backgroundImage='url("'+data.data.boss.class_avatar_url+'")';
+  }
   audio.refresh();
 }
 function raidNewEvents(previous,next){
@@ -1250,6 +1278,15 @@ async function slashImpact(target){
 }
 async function receiveRaid(data){
   const previous=raidCurrent,events=raidNewEvents(previous,data);
+  const nzEvent=events.find(e=>e.nazarick_event);
+  if(data.boss_id==='nazarick'&&nzEvent){
+    raidScreen(data);
+    const field=document.querySelector('.raid-field');
+    if(field){const notice=document.createElement('div');notice.className='nazarick-transition';notice.textContent=nzEvent.text;
+      if(nzEvent.nazarick_event==='reveal'){const img=document.createElement('img');img.src='/static/assets/nazarick/pandora.png';img.alt='Актёр Пандоры';notice.prepend(img);}
+      field.append(notice);setTimeout(()=>notice.remove(),nzEvent.nazarick_event==='reveal'?5000:2800);}
+    return;
+  }
   if(!events.length){raidScreen(data);return;}
   raidPlaying=true;
   try{
@@ -1282,7 +1319,7 @@ async function receiveRaid(data){
     if(previous.status==='active'&&data.status==='finished')audio.effect(data.data.won?'victory':'defeat');
   }
 }
-function updateRaidTimer(){const el=document.getElementById('raid-timer');if(!el||!raidCurrent||raidCurrent.status!=='active')return;if(raidPlaying){el.textContent='Разыгрывается раунд';el.classList.remove('urgent');return;}const left=Math.max(0,Math.ceil((raidCurrent.deadline*1000-Date.now()-serverClockOffset)/1000));el.textContent='Выбор действий: '+Math.floor(left/60)+':'+String(left%60).padStart(2,'0');el.classList.toggle('urgent',left<=20);}
+function updateRaidTimer(){const el=document.getElementById('raid-timer');if(!el||!raidCurrent||raidCurrent.status!=='active')return;if(raidPlaying){el.textContent='Разыгрывается раунд';el.classList.remove('urgent');return;}const left=Math.max(0,Math.ceil((raidCurrent.deadline*1000-Date.now()-serverClockOffset)/1000));el.textContent=(raidCurrent.data?.nazarick?.blessing_offer?'Голосование: ':'Выбор действий: ')+Math.floor(left/60)+':'+String(left%60).padStart(2,'0');el.classList.toggle('urgent',left<=20);}
 let raidDetailsCutTimer=null;
 function closeRaidDetails(){clearTimeout(raidDetailsCutTimer);raidDetailsCutTimer=null;const el=document.getElementById('raid-details');el?.close?.();el?.remove?.();raidInspect=null;}
 function showRaidDetails(key){
@@ -1336,7 +1373,8 @@ app.addEventListener('click',async event=>{
   if(cmd==='rp'){await openRP(raidCurrent.chat_id);return;}
   if(cmd==='target'){selectEncounterTarget(arg);return;}
   if(cmd==='finish'){if(confirm('Завершить РП-встречу для всего отряда?'))await raidAction('finish');return;}
-  if(cmd==='skill'){await raidAction('skill',{round:raidCurrent.data.round,skill:arg,...(raidCurrent.kind==='encounter'?{target:encounterTarget}:{})});return;}
+  if(cmd==='skill'){await raidAction('skill',{round:raidCurrent.data.round,skill:arg,...(raidCurrent.kind==='encounter'||raidCurrent.data?.multi_enemy?{target:encounterTarget}:{})});return;}
+  if(cmd==='blessing'){await raidAction(arg==='accept'?'blessing_accept':'blessing_decline',{blessing_id:raidCurrent.data?.nazarick?.blessing_offer?.id});return;}
   if(['start','cancel','leave'].includes(cmd)){await raidAction(cmd);}
 });
 setInterval(updateRaidTimer,1000);

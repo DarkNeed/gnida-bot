@@ -42,6 +42,8 @@ def challenge(kind, attacker, target, skill, actor):
     bonuses += class_modifiers(a, b, skill)[0] + epic_modifiers(a, b, skill)[0]
     bonuses += rpg_modifiers(a, b, skill)[0] + mastery_modifiers(a, b, skill)[0]
     bonuses += gift_modifiers(a, b)[0] + pet_modifiers(a, skill)[0]
+    from arena_relics import modifiers as relic_modifiers
+    bonuses+=relic_modifiers(a,b,skill)[0]
     accuracy = max(0, min(100, skill.accuracy + bonuses))
     evasion = max(0, min(100, effective_stat(b, "evasion")))
     n = strike_count(skill)
@@ -57,7 +59,11 @@ def challenge(kind, attacker, target, skill, actor):
         damage_type=skill.damage_type,
         strikes=n,
         tags=list(skill.tags),
+        description=skill.description,
     )
+    if skill.skill_id=='nz_pandora_p2_1' and attacker.get('nz_copy'):
+        descriptor['copy_skill']=deepcopy(attacker['nz_copy'])
+        descriptor['name']+=' — '+attacker['nz_copy']['name']
     # Kit's announced reflection/coins consist of two different native actions.
     # One pattern, two groups: do not apply the same collisions to both actions.
     subskills = {
@@ -262,7 +268,9 @@ class ArenaQteMixin:
             if stage.get('casino_mode'):
                 duration = 30
             elif stage.get("version") == 3:
-                duration = 9.5
+                from arena_nazarick_patterns import block_duration
+                from arena_qte_patterns import profile
+                duration = block_duration(profile(stage['profile']))
             elif stage.get("version") == 2:
                 from arena_qte_patterns import duration as pattern_duration
 
@@ -631,7 +639,7 @@ class ArenaQteMixin:
                     stages = []
                     fighter = player["fighter"]
                     boss = data["boss"]
-                    if data.get('kind') == 'encounter':
+                    if data.get('kind') == 'encounter' or data.get('boss_id') == 'nazarick':
                         from arena_encounters import target_enemy
                         target, boss = target_enemy(data, target)
                     _, skills = self._fighter_catalog_locked()
@@ -653,13 +661,14 @@ class ArenaQteMixin:
                             stages.append(
                                 challenge("attack", fighter, boss, used, actor)
                             )
-                        intents = data.get('enemy_intents', {}) if data.get('kind') == 'encounter' else {'boss': data['intent']}
+                        multi = data.get('kind') == 'encounter' or data.get('boss_id') == 'nazarick'
+                        intents = data.get('enemy_intents', {}) if multi else {'boss': data['intent']}
                         for enemy_key, intent in intents.items():
                             incoming = (skills if data.get('kind') == 'encounter' else BOSS_SKILLS).get(intent.get('skill'))
                             if incoming and incoming.hostile and str(actor) in [str(k) for k in intent.get('targets', [])]:
-                                attacker = data['enemies'][enemy_key] if data.get('kind') == 'encounter' else boss
+                                attacker = data['enemies'][enemy_key] if multi else boss
                                 defense = challenge('defense', attacker, fighter, incoming, actor)
-                                if data.get('kind') == 'encounter':
+                                if multi:
                                     defense['encounter_enemy'] = enemy_key
                                     defense['name'] = attacker['name'] + ' · ' + incoming.name
                                 stages.append(defense)

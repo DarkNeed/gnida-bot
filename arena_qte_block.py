@@ -38,6 +38,13 @@ def parameters(p, stats):
 
 
 def threats(p, seed, params):
+    copy=p['skill'].get('copy_skill')
+    if p['skill'].get('base_id')=='nz_pandora_p2_1' and copy and copy.get('base_id')!='mana_shot' and not copy.get('base_id','').startswith('nz_'):
+        return threats(profile(copy),seed,dict(params,warning=params['warning']+.20))
+    from arena_nazarick_patterns import block_threats as nazarick_threats
+    nazarick = nazarick_threats(p, seed, params)
+    if nazarick is not None:
+        return nazarick
     from arena_casino_qte import block_threats
     casino=block_threats(p,seed,params)
     if casino is not None:return casino
@@ -113,10 +120,13 @@ def threats(p, seed, params):
 def create(challenge):
     p = profile(challenge["profile"])
     params = parameters(p, challenge["stats"])
+    from arena_nazarick_patterns import block_duration
     return dict(
         p=p,
         params=params,
         time=0,
+        preparation=1,
+        duration=block_duration(p),
         stamina=params["maxStamina"],
         angle=0,
         active=False,
@@ -142,13 +152,15 @@ def step(s, command):
     if s["time"] <= 1 + 1e-8:
         return
     p = s["params"]
-    if "angle" in command:
+    from arena_nazarick_patterns import time_stopped
+    frozen=time_stopped(s)
+    if "angle" in command and not frozen:
         s["angle"] += clamp(
             angle_diff(command["angle"], s["angle"]),
             -p["rotation"] * dt,
             p["rotation"] * dt,
         )
-    requested = bool(command.get("active"))
+    requested = bool(command.get("active")) and not frozen
     can_raise = requested and s["time"] >= s["brokenUntil"]
     if can_raise and not s["active"]:
         s["raisedAt"] = s["time"]
@@ -214,6 +226,7 @@ def step(s, command):
                 blocked=reduction > 0,
                 outcome=outcome,
                 tick=round(s["time"] * HZ),
+                **({'status':event['status']} if event.get('status') and reduction<1 else {}),
             )
         )
 
@@ -239,22 +252,24 @@ def replay(challenge, proof, elapsed):
                 blocked=False,
                 outcome="miss",
                 tick=round(e["at"] * HZ),
+                **({'status':e['status']} if e.get('status') else {}),
             )
             for e in s["events"]
             if s["enabled"] is None or s["enabled"][e["strike"]]
         ]
     else:
         ticks, events = proof.get("ticks"), proof.get("inputs")
-        if type(ticks) is not int or ticks != 1140 or elapsed + 0.15 < ticks / HZ:
+        total=round(s['duration']*HZ)
+        if type(ticks) is not int or ticks != total or elapsed + 0.15 < ticks / HZ:
             raise ValueError("Блокирование нужно пройти полностью.")
-        if not isinstance(events, list) or len(events) > 1140:
+        if not isinstance(events, list) or len(events) > total:
             raise ValueError("Некорректная запись управления.")
         previous = -1
         for event in events:
             if (
                 not isinstance(event, dict)
                 or type(event.get("t")) is not int
-                or not previous < event["t"] < 1140
+                or not previous < event["t"] < total
             ):
                 raise ValueError("Нарушен порядок управления.")
             if type(event.get("active")) is not bool:
@@ -262,7 +277,7 @@ def replay(challenge, proof, elapsed):
             number(event.get("angle"), -math.pi, math.pi)
             previous = event["t"]
         index, command = 0, {}
-        for tick in range(1140):
+        for tick in range(total):
             if index < len(events) and events[index]["t"] == tick:
                 command = events[index]
                 index += 1

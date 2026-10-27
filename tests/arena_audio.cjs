@@ -228,6 +228,26 @@ test('Kit arrangements schedule complete evolving bars with bounded active voice
 });
 
 const chaplainThemes=['chaplain','chaplain_fault','chaplain_override','chaplain_root'];
+test('Nazarick has ten distinct bounded phase scores; Pandora is a distorted royal theme',async()=>{
+  const fingerprints=new Set();
+  for(const who of ['shalltear','demiurge','albedo','pandora','ainz'])for(const phase of [1,2]){
+    const key='nz_'+who+phase,h=harness();h.audio.scene(key);await h.click({});
+    assert.equal(h.intervals.size,1,key);let peak=0;
+    for(let i=1;i<=240;i++){
+      h.contexts[0].currentTime=i/10;for(const fn of h.intervals.values())fn();
+      for(const s of h.sources)if(!s.ended&&s.stopped<=i/10){s.ended=true;s.onended?.();}
+      peak=Math.max(peak,h.sources.filter(s=>!s.ended).length);
+    }
+    assert.ok(peak<100,key+': active voices '+peak);
+    assert.ok(h.sources.every(s=>Number.isFinite(s.started)&&s.stopped>s.started));
+    fingerprints.add(JSON.stringify(h.sources.filter(s=>s.type).slice(0,50).map(s=>[s.type,s.frequency.value,s.detune.value,s.stopped-s.started])));
+    if(who==='pandora')assert.ok(h.sources.some(s=>Math.abs(s.detune.value)===(phase===1?7:18)));
+    const count=h.sources.length;for(let i=0;i<20;i++)h.audio.scene(key);assert.equal(h.sources.length,count);
+    h.document.hidden=true;h.handlers.visibilitychange();assert.equal(h.intervals.size,0);
+    const muted=harness({saved:JSON.stringify({muted:true})});muted.audio.scene(key);await muted.click({});assert.equal(muted.intervals.size,0);
+  }
+  assert.equal(fingerprints.size,10);
+});
 test('Chaplain has four original evolving organ, choir and clock scores with bounded voices',async()=>{
   const fingerprints=new Set();
   for(const theme of chaplainThemes){

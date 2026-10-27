@@ -1,0 +1,26 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Назарик · проверка рейда</title><style>*{box-sizing:border-box}body{margin:0;background:#090c17;color:#e9d9b7;font:14px system-ui}header{padding:10px 14px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;border-bottom:1px solid #343044}button,select,a{font:inherit;background:#1c2435;color:#e9d9b7;border:1px solid #655577;border-radius:8px;padding:9px;text-decoration:none;cursor:pointer}h3{margin:0 10px 0 0}small{color:#9babc2}iframe{display:block;width:100%;max-width:100%;height:calc(100dvh - 155px);min-height:650px;margin:auto;border:0}button.primary{background:#5d426f}label{display:flex;align-items:center;gap:6px}@media(max-width:600px){header{padding:8px}iframe{height:75dvh}h3{width:100%}}</style>
+<header><h3>Назарик · пять боссов</h3><label>Босс<select id="stage"><option value="0">Шалтир</option><option value="1">Демиург</option><option value="2">Альбедо</option><option value="3">«Аинз» · Пандора</option><option value="4">Настоящий Аинз</option></select></label><label>Фаза<select id="phase"><option>1</option><option>2</option></select></label><label>Защита<select id="defense"><option value="dodge">Уклонение</option><option value="block">Блок</option></select></label><label>Отряд<select id="party"><option value="3">Трое · союзники авто</option><option value="1">Соло</option></select></label><select id="screen" aria-label="Ширина экрана"><option value="100%">ПК / адаптивный</option><option value="390px">Телефон · 390 px</option><option value="360px">Телефон · 360 px</option></select></header>
+<header><button class="primary" data-mode="fresh">Начать выбранный бой</button><button data-move="0">Атака 1</button><button data-move="1">Атака 2</button><button data-move="2">Атака 3 / особое действие</button><button data-mode="transition">Переход во вторую фазу</button><button data-mode="finish">Добивание · следующий босс</button><button data-mode="summons">Показать призывы</button><button data-mode="ritual">Ритуал Аинза</button><button id="dodge-lab">Полигон уклонения</button><button id="block-lab">Полигон блока</button><button data-mode="copy-mana">Копия маны · в бою</button><button id="music">Музыка</button></header>
+<header><small id="note">Локальная временная база. После Шалтир, Демиурга и Альбедо — полное восстановление, включая погибших. Между фазами лечения нет. Перед настоящим Аинзом после Пандоры восстановления нет. В бою нажми «Защищаться», чтобы проверить входящую атаку.</small></header>
+<header><button data-mode="blessing">Поражение · благословение</button><button id="rewards">Трофеи и билет</button><small>В демо союзники уже голосуют «за»; в игре каждый решает сам. При согласии перезапускается выбранный босс, не весь поход.</small></header>
+<iframe name="nazarick" title="Проверка Назарика" src="/nazarick-demo?party=3"></iframe>
+<script>
+const $=id=>document.getElementById(id),frame=document.querySelector('iframe'),names=['shalltear','demiurge','albedo','pandora','ainz'];let move=0;
+function start(mode='fresh'){frame.src='/nazarick-demo?'+new URLSearchParams({stage:$('stage').value,phase:$('phase').value,defense:$('defense').value,party:$('party').value,move,mode,summons:mode==='summons'?'1':'0'});}
+document.addEventListener('click',e=>{
+ const b=e.target.closest('button');if(!b)return;
+ if(b.dataset.move!==undefined){move=Number(b.dataset.move);start();}
+ else if(b.dataset.mode){if(b.dataset.mode==='copy-mana'){$('stage').value='3';$('phase').value='2';move=1;}start(b.dataset.mode);}
+ else if(b.id==='music')frame.src='/nazarick-music';
+ else if(b.id==='rewards')frame.src='/nazarick-rewards';
+ else if(b.id.endsWith('-lab')){
+  const sid='nz_'+names[Number($('stage').value)]+'_p'+$('phase').value+'_'+move;
+  if(['nz_albedo_p1_2','nz_demiurge_p2_2','nz_ainz_p1_2'].includes(sid)){
+   $('note').textContent='Это сценарный призыв или стойка, а не атакующий навык. Проверь его в бою или выбери Атаку 1 / 2 для лаборатории.';return;
+  }
+  frame.src='/qte-lab/'+(b.id==='block-lab'?'block':'unique')+'/?skill='+sid;
+ }
+});
+$('screen').onchange=e=>frame.style.width=e.target.value;
+</script></html>

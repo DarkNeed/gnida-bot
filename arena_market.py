@@ -28,6 +28,7 @@ from arena_archprogress import branch_skill_allowed, skill_branch
 from arena_forge import ForgeMixin
 from arena_global import RPG_SCOPE
 from arena_casino_unlock import CasinoUnlockMixin
+from arena_relics import RELIC_IDS,TICKET_ID,TICKET_NAME,TICKET_DESCRIPTION
 
 MSK = timezone(timedelta(hours=3))
 MERCHANT_DURATION = 2 * 3600
@@ -485,7 +486,7 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
         catalog = {}
         for kind, source, allowed in (
             ("skill", skills, public_skills),
-            ("passive", BUILTIN_PASSIVES, set(BUILTIN_PASSIVES)),
+            ("passive", BUILTIN_PASSIVES, set(BUILTIN_PASSIVES)-set(RELIC_IDS)),
             ("class", classes, public_classes),
         ):
             for key, content in source.items():
@@ -520,12 +521,15 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
 
     def _arena_describe_item_locked(self, row, catalog=None):
         catalog = catalog or self._arena_shop_catalog_locked()
+        if row['kind']=='class_ticket' and row['content_id']==TICKET_ID:
+            return dict(row,name=TICKET_NAME,rarity_name=RARITY_LABELS[row['rarity']],details=dict(description=TICKET_DESCRIPTION))
         if (row["kind"], row["content_id"]) not in catalog and row["kind"] in {
             "skill",
             "class",
+            "passive",
         }:
             classes, skills = self._fighter_catalog_locked()
-            content = (classes if row["kind"] == "class" else skills).get(
+            content = (classes if row["kind"] == "class" else BUILTIN_PASSIVES if row['kind']=='passive' else skills).get(
                 row["content_id"]
             )
             if content:
@@ -834,7 +838,7 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
         )
 
     async def arena_use_item(
-        self, chat, actor, item, user, personal=True, confirm=False, replace_skill=None, *, expected_slot=None
+        self, chat, actor, item, user, personal=True, confirm=False, replace_skill=None, *, expected_slot=None, new_class=None
     ):
         async with self._lock:
             try:
@@ -898,6 +902,26 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
                         chat, user, personal, content
                     )
                     notice = f"Новый класс: {classes[content].name}. Уровень 5; прежние навыки и пассивки забыты. Боевой опыт ×2 до возвращения прежнего уровня."
+                elif kind=='class_ticket' and content==TICKET_ID:
+                    if confirm is not True:raise ValueError('Выбери класс и подтверди использование билета.')
+                    from arena_engine import VISIBLE_CLASS_ALIASES
+                    allowed=set(VISIBLE_CLASS_ALIASES.values())|self._granted_content_locked(chat,user,'class')|self._arena_secret_classes_locked(user)
+                    if not isinstance(new_class,str) or new_class not in allowed or new_class not in classes or new_class in ('ragamuffin',profile['class_id']):
+                        raise ValueError('Выбери другой доступный класс. Билет не потрачен.')
+                    if profile['level']<classes[new_class].base_level:
+                        raise ValueError('Для этого класса сначала нужен '+str(classes[new_class].base_level)+' уровень. Билет не потрачен.')
+                    self.connection.execute('DELETE FROM arena_class_archives WHERE chat_id=? AND user_id=? AND personal=?',(chat,user,int(personal)))
+                    self.connection.execute(f'''UPDATE {table} SET class_id=?,archclass_id='',archclass_stage=10,
+                        progression_level=5,progression_pending_level=0,progression_pending_at=NULL,archclass_pending_at=NULL,
+                        class_choice_pending_at=NULL,loadout='[]',passive_loadout='[]',skill_memory=NULL,passive_memory=NULL,
+                        skill_seen='[]',passive_seen='[]',skill_offers='[]',skills_pending_at=?,updated_at=? WHERE chat_id=? AND user_id=?''',
+                        (new_class,market_now(),market_now(),chat,user))
+                    fresh=self._arena_profile_locked(chat,user,personal)
+                    known=self._arena_known_skills_locked(chat,user,personal,fresh)
+                    loadout=normalize_loadout(new_class,fresh['level'],None,skills,self._arena_grants_locked(chat,user,personal),known,'',5)
+                    self.connection.execute(f'UPDATE {table} SET loadout=? WHERE chat_id=? AND user_id=?',(json.dumps(loadout),chat,user))
+                    self._arena_equip_class_passives_locked(chat,user,personal,new_class)
+                    notice=f'Новый класс: {classes[new_class].name}. Уровень {fresh["level"]} и XP сохранены. Ветку развития выбери заново в меню.'
                 elif kind in {"skill", "passive"}:
                     catalog = skills if kind == "skill" else BUILTIN_PASSIVES
                     if content not in catalog:

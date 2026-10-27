@@ -22,6 +22,11 @@
     chaplain:'Капеллан · I · Регламент',chaplain_fault:'Капеллан · II · Несохранённый результат',
     chaplain_override:'Капеллан · III · Ручное вмешательство',chaplain_root:'Капеллан · IV · Полный доступ'};
   let prefs = {muted: false, music: 22, effects: 50};
+  for(const who of ['shalltear','demiurge','albedo','pandora','ainz'])for(const phase of [1,2]){
+    const roots=who==='shalltear'?[45,41,38,40]:who==='demiurge'?[38,39,34,37]:who==='albedo'?[33,29,36,31]:[38,34,41,36];
+    THEMES['nz_'+who+phase]={style:'nazarick',who,phase,roots,bpm:({shalltear:114,demiurge:108,albedo:88,pandora:106,ainz:106})[who]+(phase-1)*18,beats:who==='shalltear'?3:4};
+    THEME_LABELS['nz_'+who+phase]=({shalltear:'Шалтир',demiurge:'Демиург',albedo:'Альбедо',pandora:'Ложный король',ainz:'Аинз'})[who]+' · '+phase+' фаза';
+  }
   try {
     const p = JSON.parse(localStorage.getItem(KEY));
     if(p && typeof p === 'object') {
@@ -208,6 +213,36 @@
       tails.add(dispose);setTimeout(dispose,1500);
     }
   }
+  function nazarickPhrase(theme,root,within,bar,beat,tick,at){
+    const who=theme.who,phase=theme.phase,bus=musicBus,part=Math.floor(within/2),royal=[7,12,10,7,3,5,2,0];
+    if(who==='shalltear'){
+      if(within===0){tone(root,at,beat*2.7,.10,bus,'sine');pipe(root+24,at,beat*2.8,.035,bus);}
+      if(within%4===0){for(const n of[3,7])tone(root+12+n,at,beat*.5,.04,bus,'triangle');drum(at,bus,phase===2);}
+      if(within%2===0){const melody=[12,15,14,10,7,11][part%6];tone(root+24+melody,at,tick*1.8,.04,bus,'sawtooth',null,-5);tone(root+24+melody,at,tick*1.6,.025,bus,'triangle',null,5);}
+      if(phase===2&&within===6)abyssChoir(root+19,at,beat*1.5,.045,bus);
+    }else if(who==='demiurge'){
+      if(within%2===0){const n=[0,7,3,10,1,8,4,11][part];tone(root+24+n,at,.18,.055,bus,'triangle');tone(root+36+n,at,.08,.018,bus,'sine');}
+      if(within===0){tone(root,at,beat*3.6,.10,bus,'sine');pipe(root+19,at,beat*3.5,.025,bus);}
+      if(within===0||within===8)drum(at,bus,phase===2);
+      if(phase===2&&within%4===0){brass(root+12,at,.4,.055,bus);abyssChoir(root+18,at,.8,.03,bus);}
+      if(within===12)clockBell(root+36,at,.035,bus);
+    }else if(who==='albedo'){
+      if(within===0){for(const n of[0,7,12])abyssChoir(root+12+n,at,beat*3.7,.04,bus);brass(root+12,at,beat*2.5,.075,bus);}
+      if(within%4===0){drum(at,bus,true);tone(root,at,.5,.08,bus,'sine');}
+      if(within===4||within===12)pipe(root+31+(bar%2?3:0),at,beat*1.5,.04,bus);
+      if(phase===2&&within%2===0)tone(root+12+[0,7,0,3][part%4],at,.2,.045,bus,'sawtooth');
+    }else{
+      const falseKing=who==='pandora',distort=falseKing?(phase===2?18:7):0;
+      if(within===0){for(const n of[0,3,7])pipe(root+24+n,at,beat*3.5,.045,bus);abyssChoir(root+12,at,beat*3.8,.055,bus);tone(root,at,beat*3.7,.10,bus,'sine');}
+      if(within%2===0&&!(falseKing&&bar%3===2&&within===10)){
+        const n=royal[part],wrong=falseKing&&bar%4===3&&within===14?1:0;
+        tone(root+24+n+wrong,at,tick*1.7,.055,bus,falseKing?'triangle':'sawtooth',falseKing&&phase===2&&within===12?root+24+n-1:null,distort*(part%2?1:-1));
+      }
+      if(within===0||within===8||phase===2&&within===14){drum(at,bus,true);if(!falseKing)brass(root+12,at,beat*1.2,.07,bus);}
+      if(falseKing&&within===15){tone(root+39,at,.08,.03,bus,'triangle',root+36);noise(at,.035,.015,bus,1800);}
+      if(!falseKing&&phase===2&&within===12){clockBell(root+36,at,.08,bus);abyssChoir(root+19,at,beat*2,.05,bus);}
+    }
+  }
   function stopAll() {
     generation++; stopMusic();
     for(const dispose of [...tails])dispose();
@@ -220,8 +255,10 @@
     const beat = 60/theme.bpm, tick = beat/(theme.soft?2:4);
     if(next < ctx.currentTime) next = ctx.currentTime+.02;
     while(next < ctx.currentTime+.18) {
-      const bar=Math.floor(step/16),root=theme.roots[bar%theme.roots.length],within=step%16;
-      if(theme.style==='chaplain') {
+      const length=theme.beats===3?12:16,bar=Math.floor(step/length),root=theme.roots[bar%theme.roots.length],within=step%length;
+      if(theme.style==='nazarick') {
+        nazarickPhrase(theme,root,within,bar,beat,tick,next);
+      } else if(theme.style==='chaplain') {
         chaplainPhrase(theme,root,within,bar,beat,tick,next);
       } else if(theme.style==='menace') {
         // Half-time martial pulse, semitone/tritone pressure, low brass swells.

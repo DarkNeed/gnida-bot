@@ -53,6 +53,15 @@ def random_values(seed):
 def family(s):
     ident, n = s.get("base_id", ""), s.get("name", "").lower()
     branch, cls = s.get("branch", ""), s.get("class_id")
+    if ident.startswith('nz_'):
+        from arena_nazarick_patterns import identity
+        who, phase, move = identity(dict(skill=s))
+        if who=='pyromancer':return 'fire'
+        return {'shalltear': (('slash','death','edict'),('thrust','slash','beast')),
+                'demiurge': (('fire','edict','script'),('fire','script','death')),
+                'albedo': (('slash','impact','impact'),('impact','slash','impact')),
+                'pandora': (('lightning','void','death'),('thrust','mirror','charm')),
+                'ainz': (('mana','void','death'),('coins','eclipse','holy'))}.get(who,(('thrust',)*3,)*2)[phase-1][move]
     if ident.startswith('casino_') or cls=='gambler':
         return ('casino_dice' if ident=='mastery_gambler' else
                 'casino_jackpot' if ident=='casino_deposit' and s.get('name','').startswith('777') else
@@ -328,8 +337,9 @@ def attack_frame(s):
 
 def duration(challenge):
     if challenge.get('casino_mode'): return 30
+    from arena_nazarick_patterns import active_duration
     return (
-        6.8 + challenge.get("defense_preparation", 0)
+        (active_duration(profile(challenge['profile'])) if challenge.get('profile') else 6.8) + challenge.get("defense_preparation", 0)
         if challenge["kind"] == "defense"
         else attack(
             profile(challenge["profile"]), challenge["stats"], challenge["seed"]
@@ -358,6 +368,11 @@ def defense(p, stats, seed, enabled=None, preparation=1):
         d['warning'] = max(.28, d['warning'] * (1 - .06 * (phase - 1)))
     if p['skill'].get('base_id') == 'chaplain_p4_1':
         d['warning'] = max(.65, d['warning'] + .22)
+    if p['skill'].get('base_id','').startswith('nz_'):
+        from arena_nazarick_patterns import identity
+        _, phase, _ = identity(p)
+        d['warning'] = max(.48 if phase==1 else .42, d['warning'])
+        d['speed'] *= 1 if phase==1 else 1.08
     count = (
         3
         if p["basic"]
@@ -385,6 +400,7 @@ def defense(p, stats, seed, enabled=None, preparation=1):
         count = 4
     if p['kind']=='casino_jackpot':count=6
     if p['kind']=='casino_dice':count=4
+    from arena_nazarick_patterns import schedule
     if p["basic"]:
         d["warning"] = max(0.66, d["warning"])
         d["size"] = 24 + 8 * d["intensity"]
@@ -416,6 +432,7 @@ def defense(p, stats, seed, enabled=None, preparation=1):
         * (0.96 if p["kit"] else 1)
         * (1 if p["basic"] else 1 - 0.08 * d["intensity"])
     )
+    count,span=schedule(p,count,span)
     events = [
         dict(
             at=preparation + 0.18 + i * span / max(1, count - 1),
@@ -445,6 +462,15 @@ def defense(p, stats, seed, enabled=None, preparation=1):
 
 
 def prepare(s, e):
+    copy=s['p']['skill'].get('copy_skill')
+    if s['p']['skill'].get('base_id')=='nz_pandora_p2_1' and copy and copy.get('base_id')!='mana_shot' and not copy.get('base_id','').startswith('nz_'):
+        original_p,original_d=s['p'],s['d']
+        try:
+            s['p']=profile(copy)
+            s['d']=dict(original_d,speed=original_d['speed']*.80,beamScale=original_d['beamScale']*.85)
+            prepare(s,e)
+        finally:s['p'],s['d']=original_p,original_d
+        return
     x, y = s["player"]["x"], s["player"]["y"]
     p, d = s["p"], s["d"]
     tx = clamp(x + s["player"].get("vx", 0) * d["lead"], 12, W - 12)
@@ -531,7 +557,10 @@ def prepare(s, e):
         beam(cx - dx, cy - dy, cx + dx, cy + dy, width, delay)
 
     k = p["kind"]
-    if k.startswith('casino_'):
+    if ident and ident.startswith('nz_'):
+        from arena_nazarick_patterns import prepare as nazarick_prepare
+        nazarick_prepare(s, e, add)
+    elif k.startswith('casino_'):
         from arena_casino_qte import prepare as casino_prepare
         casino_prepare(s,e,add,beam,circle,bullet)
     elif p.get('chaplain', 0) >= 2:
@@ -767,7 +796,7 @@ def prepare(s, e):
     for j, h in enumerate(shapes):
         h["id"] = f"wave:{i}:{j}"
         h["damageId"] = f"wave:{i}:bolt" if k == "lightning" and j < 2 else h["id"]
-        h["disabled"] = s["enabled"] is not None and not s["enabled"][h["strike"]]
+        h["disabled"] = h.get('visualOnly',False) or s["enabled"] is not None and not s["enabled"][h["strike"]]
         h.setdefault(
             "tier",
             (
@@ -792,6 +821,13 @@ def geometry(h, t):
         dx, dy = h['bx']-h['ax'], h['by']-h['ay']
         return dict(h, bx=h['ax']+dx*cs-dy*sn, by=h['ay']+dx*sn+dy*cs)
     if h["type"] == "bullet":
+        if h.get('orbit'):
+            a=h['orbitAngle']+h['orbitSpeed']*age;r=h['orbitRadius']+h['spiral']*age
+            return dict(h,x=h['cx']+math.cos(a)*r,y=h['cy']+math.sin(a)*r,
+                vx=math.cos(a)*h['spiral']-math.sin(a)*r*h['orbitSpeed'],
+                vy=math.sin(a)*h['spiral']+math.cos(a)*r*h['orbitSpeed'])
+        if 'px' in h:
+            return dict(h, x=h['px'], y=h['py'])
         if h.get("turn"):
             a = h["turn"] * age
             cs, sn = math.cos(a), math.sin(a)
@@ -828,12 +864,18 @@ def segment_distance(ax, ay, bx, by, cx, cy, dx, dy):
 
 
 def touches(h, old, now, t, dt):
+    if h.get('pendingLaunch') and t<h['start']+h.get('freezeFor',0):return False
     g = geometry(h, t)
     r = now["r"]
     a, b, c, d = old["x"], old["y"], now["x"], now["y"]
     typ = h["type"]
     if typ == "bullet":
-        prev = geometry(h, max(h["start"], t - dt))
+        prev = dict(h, x=h['lastX'], y=h['lastY']) if 'lastX' in h else geometry(h, max(h["start"], t - dt))
+        if h.get('length'):
+            length = math.hypot(g['vx'],g['vy']) or 1
+            tail_x=g['x']-g['vx']/length*h['length']
+            tail_y=g['y']-g['vy']/length*h['length']
+            if segment_distance(a,b,c,d,tail_x,tail_y,g['x'],g['y'])<=g['r']+r:return True
         return (
             distance(0, 0, prev["x"] - a, prev["y"] - b, g["x"] - c, g["y"] - d)
             <= g["r"] + r
@@ -843,6 +885,10 @@ def touches(h, old, now, t, dt):
             segment_distance(a, b, c, d, g["ax"], g["ay"], g["bx"], g["by"])
             <= g["r"] + r
         )
+    if typ == 'polyline':
+        return any(segment_distance(a,b,c,d,*p,*q)<=g['r']+r for p,q in zip(g['points'],g['points'][1:]))
+    if typ == 'safe_zone':
+        return math.hypot(c-g['x'],d-g['y']) > g['r']-r
     if typ in ("circle", "well"):
         return distance(g["x"], g["y"], a, b, c, d) <= g["r"] + r
     if typ == "rect":
@@ -891,6 +937,9 @@ def defense_step(s, control):
         dx, dy = control.get("x", 0), control.get("y", 0)
     length = math.hypot(dx, dy)
     speed = s['d']['moveSpeed']
+    if s['p']['skill'].get('base_id','').startswith('nz_'):
+        from arena_nazarick_patterns import time_stopped
+        if time_stopped(s):speed=0
     travel = min(length, speed * dt) if "target" in control else speed * dt * min(length, 1)
     if length:
         p["x"] += dx / length * travel
@@ -909,12 +958,17 @@ def defense_step(s, control):
         s.setdefault('history', []).append(dict(t=s['time'], x=p['x'], y=p['y']))
         s['history'] = s['history'][-720:]
     for h in s["hazards"]:
+        if h.get('homing'):
+            from arena_nazarick_patterns import advance_homing
+            advance_homing(h,p,s['time'],dt)
         if (
             h["disabled"]
             or h["end"] < previous
             or h["start"] > s["time"]
             or h["damageId"] in s["hitIds"]
         ):
+            continue
+        if h.get('moveOnly') and math.hypot(p['x']-old['x'],p['y']-old['y'])<.001:
             continue
         if touches(h, old, p, s["time"], dt):
             s["hitIds"].add(h["damageId"])
@@ -925,6 +979,7 @@ def defense_step(s, control):
                     weight=h["weight"],
                     tier=h["tier"],
                     tick=jsround(s["time"] * HZ),
+                    **({'status':h['status']} if h.get('status') else {}),
                 )
             )
     s["hazards"] = [h for h in s["hazards"] if h["end"] >= s["time"]]
@@ -961,6 +1016,7 @@ def replay(challenge, proof, elapsed):
                         weight=h["weight"],
                         tier=h["tier"],
                         tick=jsround(h["start"] * HZ),
+                        **({'status':h['status']} if h.get('status') else {}),
                     )
         return dict(
             mask=[False] * n,

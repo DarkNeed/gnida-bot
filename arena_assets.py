@@ -13,6 +13,7 @@ def render_arena_index(root: Path) -> str:
             revision.update((root / name).read_bytes())
     for name in (
         "qte-live",
+        "nazarick-qte.js",
         "qte-watch",
         "qte-live.css",
         "qte-lab/engine",
@@ -37,6 +38,7 @@ def render_arena_index(root: Path) -> str:
         .replace('href="/static/style.css"', f'href="/static/style.css?v={version}"')
         .replace('src="/static/client.js"', f'src="/static/client.js?v={version}"')
         .replace('src="/static/audio.js"', f'src="/static/audio.js?v={version}"')
+        .replace('src="/static/nazarick-qte.js"', f'src="/static/nazarick-qte.js?v={version}"')
         .replace('src="/rp/client.js"', f'src="/rp/client.js?v={version}"')
         .replace('href="/static/rp.css"', f'href="/static/rp.css?v={version}"')
         .replace('src="/static/holdings.js"', f'src="/static/holdings.js?v={version}"')

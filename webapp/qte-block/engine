@@ -60,6 +60,9 @@
       pressure:clamp((enemyAttack+20)/(armor+30),.65,1.5),blockReduction:.75};
   }
   function threats(p,seed,params,preparation,activeDuration){
+    const copy=p.skill.copy_skill;
+    if(p.skill.base_id==='nz_pandora_p2_1'&&copy&&copy.base_id!=='mana_shot'&&!(copy.base_id||'').startsWith('nz_'))return threats(E.profile(copy),seed,{...params,warning:params.warning+.20},preparation,activeDuration);
+    const nz=(typeof module==='object'&&module.exports?require('../nazarick-qte.js'):globalThis.NazarickQTE)?.blockThreats(p,seed,params,E.rng);if(nz)return nz;
     if(p.kind.startsWith('casino_'))return casinoThreats(p,seed,params);
     const special=chaplainThreats(p,seed,params);if(special)return special;
     const random=E.rng((seed^p.seed)>>>0),shot=['gun','mana','charm','stars','paint','death','ice','coins','script','hack'].includes(p.kind);
@@ -115,7 +118,7 @@
   }
   function create(skill,stats,seed=17,options={}){
     const p=skill.kind&&skill.skill?skill:E.profile(skill),params=parameters(p,stats);
-    const preparation=1,activeDuration=8.5,hp=clamp(Number(options.hp)||200,1,5000);
+    const preparation=1,activeDuration=((typeof module==='object'&&module.exports?require('../nazarick-qte.js'):globalThis.NazarickQTE)?.blockDuration(p)??9.5)-1,hp=clamp(Number(options.hp)||200,1,5000);
     const power=clamp(Number(options.power)||30,1,1000),enemyAttack=Math.max(0,Number(stats.enemyAttack)||0);
     return {kind:'block',p,params,stats:{...stats},seed,preparation,activeDuration,duration:preparation+activeDuration,
       time:0,ended:false,hp,initialHp:hp,power,damageBase:power*(1+enemyAttack/20),damage:0,exactDamage:0,
@@ -126,6 +129,10 @@
       blocks:0,perfects:0,misses:0,breaks:0};
   }
   function casinoHint(p){
+    const nz=(typeof module==='object'&&module.exports?require('../nazarick-qte.js'):globalThis.NazarickQTE)?.identity(p);
+    if(nz?.who==='ainz'&&nz.phase===1&&nz.move===0)return 'Семь последовательных цветных атак. Заверши каждый этап; перед волной подними щит заново.';
+    if(nz?.who==='ainz'&&nz.phase===2&&nz.move===0)return 'Две остановки времени. Во время заморозки щит не слушается; после освобождения успей встретить залп посоха.';
+    if(nz)return ({shalltear:'Лови нити с двух сторон. Копьё двойника повторяет удар; перед импульсом взгляда подними щит заново.',demiurge:'Печати заранее показывают направление: следуй их последовательности, отпуская щит между сериями.',albedo:'Удержи тяжёлый удар, затем заново подними щит перед волной трещин. Следи за направлением лезвия.',pandora:'Маски и повторные удары меняют стороны. Музыка обманывает — ориентируйся на настоящие отметки.',ainz:'Камни посоха показывают стороны. Задержанный импульс приходит после паузы; поднимай щит у отметки.'})[nz.who]||'Блокируй отмеченное направление.';
     return {casino_cards:'Лови карты с указанной стороны. Маленькая карта предшествует старшей.',
       casino_roulette:'Рулетка показывает конечный сектор шарика. На зелёном 0 опусти щит; перед выплатой банка подними его заново.',
       casino_dice:'Грань кости задаёт число ударов. Чередуй две отмеченные стороны; последний удар каждой кости тяжёлый.',
@@ -157,7 +164,7 @@
     const damage=Math.min(s.hp,Math.max(0,Math.round(s.exactDamage)-s.damage));
     s.damage+=damage;s.hp-=damage;
     s.contacts.push({id:event.id,time:s.time,x:s.player.x,y:s.player.y,strike:event.strike,
-      tier:event.tier,kind:event.kind,angle:event.angle,raw,afterArmor,damage,outcome,reduction});
+      tier:event.tier,kind:event.kind,angle:event.angle,raw,afterArmor,damage,outcome,reduction,...(event.status&&reduction<1?{status:event.status}:{})});
   }
   function step(s,dt,input={}){
     if(s.ended)return;
@@ -165,8 +172,9 @@
     while(remaining>1e-8&&!s.ended){
       const tick=Math.min(remaining,1/120);remaining-=tick;s.time+=tick;
       if(s.time<=s.preparation+1e-8)continue;
-      if(Number.isFinite(input.angle))s.angle+=clamp(angleDiff(input.angle,s.angle),-s.params.rotation*tick,s.params.rotation*tick);
-      const requested=!!input.active,canRaise=requested&&s.time>=s.brokenUntil;
+      const frozen=(typeof module==='object'&&module.exports?require('../nazarick-qte.js'):globalThis.NazarickQTE)?.timeStopped(s);
+      if(Number.isFinite(input.angle)&&!frozen)s.angle+=clamp(angleDiff(input.angle,s.angle),-s.params.rotation*tick,s.params.rotation*tick);
+      const requested=!!input.active&&!frozen,canRaise=requested&&s.time>=s.brokenUntil;
       if(canRaise&&!s.active){
         s.raisedAt=s.time;
         if(!s.requested&&s.time-s.loweredAt>=.10-1e-8&&s.time-s.lastRaise>=.32-1e-8){

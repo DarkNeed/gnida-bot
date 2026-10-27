@@ -34,7 +34,7 @@
       if(B.casinoHint(s.p)){find('.qte-help-full').textContent=B.casinoHint(s.p);find('.qte-help-compact').textContent=B.casinoHint(s.p);}
       document.body.append(cover);
       const unlock=QTETouch.lockViewport(cover),abort=new AbortController(),on=(el,name,fn)=>el.addEventListener(name,fn,{signal:abort.signal});
-      const proof={ticks:1140,inputs:[]};let tick=0,accumulator=0,last=0,lastInput='',lastAngle=0,done=false,raf,watch,aim=null,canvasPointer=null;
+      const proof={ticks:Math.round(s.duration*120),inputs:[]};let tick=0,accumulator=0,last=0,lastInput='',lastAngle=0,done=false,raf,watch,aim=null,canvasPointer=null;
       const keys=new Set(),pointers=new Map();
       const touch=QTETouch.attach({canvas,stick:find('.qte-stick'),getPlayer:()=>s.player,isDefense:()=>true,width:720,height:400,onTouch:()=>cover.classList.add('qte-touch-mode')});
       const deadline=performance.now()+Math.max(0,(challenge.expires-(challenge.server_now||Date.now()/1000))*1000);
@@ -102,8 +102,8 @@
       find('h2').textContent=challenge.name;
       find('.qte-eyebrow').textContent=defense?'ЗАЩИТА · '+p.title:'ТВОЯ АТАКА · ПОЙМАЙ МОМЕНТ';
       const criticalHint=!defense&&E.attackFrame(sim).criticalWidth?' Розовая отметка внутри зоны — крит ×1,5.':'';
-      find('.qte-help-full').textContent=defense?p.hint+' Разные снаряды ранят независимо; золотые опаснее мелких.':p.attackHint+criticalHint;
-      find('.qte-help-compact').textContent=defense?'Уходи от угроз. Золотые сильнее мелких. Пропуск = все касания.':'Одно нажатие на удар. Промах без повтора.'+criticalHint;
+      find('.qte-help-full').textContent=defense?p.hint+' Разные снаряды ранят независимо; крупные светящиеся угрозы опаснее мелких.':p.attackHint+criticalHint;
+      find('.qte-help-compact').textContent=defense?'Уходи от угроз. Крупные снаряды опаснее мелких. Пропуск = все касания.':'Одно нажатие на удар. Промах без повтора.'+criticalHint;
       find('.qte-health-label').textContent=(defense?'Твои HP':'HP цели')+' · прогноз';
       if(!defense)find('.qte-info').textContent+=' Даже после успешной отметки бот или босс может уклониться по своей характеристике.';
       find('.qte-abort').title=defense?'Пропуск или истечение времени засчитывают все снаряды как попадания.':'Пропуск расходует действие и не даёт попаданий.';

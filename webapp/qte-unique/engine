@@ -1,5 +1,5 @@
 /* Shared pattern simulation. The server independently replays every input. */
-(function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.QTEUnique=api;})(globalThis,function(){
+(function(root,factory){const api=factory(typeof module==='object'&&module.exports?require('../nazarick-qte.js'):root.NazarickQTE);if(typeof module==='object'&&module.exports)module.exports=api;else root.QTEUnique=api;})(globalThis,function(NZ){
   'use strict';
   const W=720,H=320,TAU=Math.PI*2;
   const DAMAGE_TIERS={minor:{name:'Мелкий',weight:.1},normal:{name:'Обычный',weight:.3},heavy:{name:'Тяжёлый',weight:.6},critical:{name:'Финальный',weight:1}};
@@ -50,6 +50,8 @@
     tiger:['Поступь тигробоя','#e8b786','Шесть разрезов: горизонталь, вертикаль, диагонали и финальная пара.','arc'],
   };
   function family(skill){
+    if((skill.base_id||'').startsWith('nz_pyromancer_'))return 'fire';
+    const nz=NZ?.identity({skill});if(nz){const{who,phase,move}=nz;return ({shalltear:[['slash','death','edict'],['thrust','slash','beast']],demiurge:[['fire','edict','script'],['fire','script','death']],albedo:[['slash','impact','impact'],['impact','slash','impact']],pandora:[['lightning','void','death'],['thrust','mirror','charm']],ainz:[['mana','void','death'],['coins','eclipse','holy']]}[who]||[['thrust','thrust','thrust'],['thrust','thrust','thrust']])[phase-1][move];}
     if((skill.base_id||'').startsWith('casino_')||skill.class_id==='gambler')return skill.base_id==='mastery_gambler'?'casino_dice':skill.base_id==='casino_deposit'?((skill.name||'').startsWith('777')?'casino_jackpot':'casino_slots'):skill.base_id==='casino_all_in'?'casino_roulette':'casino_cards';
     if((skill.base_id||'').startsWith('chaplain_p'))return ['coins','script','holy'][Number(skill.base_id.split('_').at(-1))];
     if(skill.base_id==='chaplain_hand')return 'coins';
@@ -101,7 +103,8 @@
     const chaplain=(skill.base_id||'').startsWith('chaplain_p')?Number(skill.base_id[10]):0;
     const entry=chaplain?[skill.name,'#e3c68c',['Стрелки возвращаются; позднее снаряды замирают и продолжают полёт.','Следи за контурами системных окон и отметкой возврата позиции.','Свет бьёт по отмеченным областям; золотые вспышки опаснее мелких.'][Number(skill.base_id.split('_').at(-1))],FAMILIES[kind][3]]:clock?[...clock,FAMILIES[kind][3]]:FAMILIES[kind];
     const basic=skill.base_id==='bum_punch'&&skill.name==='Удар бомжа';
-    return {id,seed,kind,title:basic?'Простой удар':entry[0],color:entry[1],hint:basic?'Три коротких замаха без ударных волн. Выйди из небольшого отмеченного круга.':entry[2],style:entry[3],skill,basic,
+    const nazarick=NZ?.identity({skill});
+    return {id,seed,kind,title:nazarick?skill.name:basic?'Простой удар':entry[0],color:nazarick?NZ.colors[nazarick.who]:entry[1],hint:nazarick?(skill.description||'Следи за контурами предупреждений. Тяжёлые снаряды опаснее мелких.'):basic?'Три коротких замаха без ударных волн. Выйди из небольшого отмеченного круга.':entry[2],style:entry[3],skill,basic,
       strikes:clamp(skill.strikes||1,1,6),kit:(skill.base_id||'').startsWith('kit_'),
       moon:skill.base_id==='arch_hunter_moon',hunterShot:skill.base_id==='hunter_shot',casinoJackpot:(skill.name||'').startsWith('777'),chaplain,phase:r()*TAU,polarity:r()<.5?-1:1,
       speed:.94+r()*.18,spread:.78+r()*.34,interval:.8+r()*.4,drift:r()>.6,
@@ -167,22 +170,29 @@
     if(p.moon||p.hunterShot){d.speed*=1.12;d.warning=Math.max(.32,d.warning*.96);}
     if(p.chaplain>=2){d.speed*=1+.10*(p.chaplain-1);d.warning=Math.max(.28,d.warning*(1-.06*(p.chaplain-1)));}
     if(p.skill.base_id==='chaplain_p4_1')d.warning=Math.max(.65,d.warning+.22);
+    const nz=NZ?.identity(p);if(nz){d.warning=Math.max(nz.phase===1?.48:.42,d.warning);d.speed*=nz.phase===1?1:1.08;}
     if(p.basic){d.warning=Math.max(.66,d.warning);d.size=24+8*d.intensity;}
     d.warning+=stats.extraWarning||0;
     return d;
   }
   function defense(p,stats,seed=1,options={}){
     const d=defenseDifficulty(p,stats),r=rng(seed^p.seed);
-    const count=p.kind==='casino_jackpot'?6:p.kind==='casino_dice'?4:p.skill.base_id==='chaplain_p4_1'?4:p.basic?3:p.kind==='tiger'?12:p.kind==='train'?6:Math.max(p.strikes,4+(p.seed%3)+(d.intensity>.75?1:d.intensity<.25?-1:0)+(p.skill.class_id==='thumb'?1:0));
+    let count=p.kind==='casino_jackpot'?6:p.kind==='casino_dice'?4:p.skill.base_id==='chaplain_p4_1'?4:p.basic?3:p.kind==='tiger'?12:p.kind==='train'?6:Math.max(p.strikes,4+(p.seed%3)+(d.intensity>.75?1:d.intensity<.25?-1:0)+(p.skill.class_id==='thumb'?1:0));
     const staticOnly=p.skill.base_id!=='mother_joke'&&['slash','thrust','grapple','hack','script','edict','holy','lightning','portal','coins','tiger'].includes(p.kind);
-    const span=(p.basic?4.8:staticOnly?5.1:p.kind==='fire'?4.3:p.kind==='impact'?4:3.5)*(.94+(p.interval-.8)*.15)*(p.kit?.96:1)*(p.basic?1:1-.08*d.intensity);
+    let span=(p.basic?4.8:staticOnly?5.1:p.kind==='fire'?4.3:p.kind==='impact'?4:3.5)*(.94+(p.interval-.8)*.15)*(p.kit?.96:1)*(p.basic?1:1-.08*d.intensity);
+    if(NZ)[count,span]=NZ.schedule(p,count,span);
     const model=damageModel(options),preparation=clamp(options.preparation??1,0,3);
-    return {kind:'defense',p,d,...model,criticalBase:!!options.criticalBase,criticalStrikes:options.criticalStrikes||[],preparation,activeDuration:6.8,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:preparation+6.8,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
+    const activeDuration=NZ?.activeDuration(p)??6.8;
+    return {kind:'defense',p,d,...model,criticalBase:!!options.criticalBase,criticalStrikes:options.criticalStrikes||[],preparation,activeDuration,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:preparation+activeDuration,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
       events:Array.from({length:count},(_,i)=>({at:preparation+.18+i*(p.kind==='casino_jackpot'?4.1:span)/Math.max(1,count-1),strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/count)),index:i,
         jitter:r(),angle:r()*TAU,ready:false})),received:[]};
   }
   function line(ax,ay,bx,by,r,extra={}){return {type:'line',ax,ay,bx,by,r,...extra};}
   function prepare(s,e){
+    const copy=s.p.skill.copy_skill;
+    if(s.p.skill.base_id==='nz_pandora_p2_1'&&copy&&copy.base_id!=='mana_shot'&&!(copy.base_id||'').startsWith('nz_')){
+      const originalP=s.p,originalD=s.d;try{s.p=profile(copy);s.d={...originalD,speed:originalD.speed*.80,beamScale:originalD.beamScale*.85};prepare(s,e);}finally{s.p=originalP;s.d=originalD;}return;
+    }
     const {x,y}=s.player,p=s.p,d=s.d,i=e.index,odd=i%2,sign=odd?1:-1;
     const tx=clamp(x+(s.player.vx||0)*d.lead,12,W-12),ty=clamp(y+(s.player.vy||0)*d.lead,12,H-12);
     const angle=e.angle,warning=d.warning,shapes=[],start=e.at+warning,n=p.skill.name.toLowerCase(),id=p.skill.base_id;
@@ -207,7 +217,9 @@
       fan(bx,by,Math.atan2(ty-by,tx-bx),n,spread,delay,motif);};
     const cross=(radius=17,delay=0)=>{beam(x,0,x,H,radius,delay);beam(0,y,W,y,radius,delay+.12);};
     const diagonal=(theta,width=18,delay=0)=>{const dx=Math.cos(theta)*900,dy=Math.sin(theta)*900,cx=x+(tx-x)*.6,cy=y+(ty-y)*.6;beam(cx-dx,cy-dy,cx+dx,cy+dy,width,delay);};
-    if(p.kind==='casino_cards'){
+    if(NZ?.identity(p)){
+      for(const h of NZ.shapes(s,e)){const {delay,duration,...shape}=h;add(shape,delay,duration);}
+    }else if(p.kind==='casino_cards'){
       let bx=odd?35:685,by=40+e.jitter*240,theta=Math.atan2(y-by,x-bx);
       for(let j=-2;j<=2;j++){const a=theta+j*(.18-.04*d.intensity);bullet(bx,by,Math.cos(a)*d.speed*.92,Math.sin(a)*d.speed*.92,j===0?6:4,0,{motif:'casino_card',tier:j===0?'normal':'minor',weight:j===0?.30:.08});}
       if(odd){bx=720-bx;theta=Math.atan2(y-160,x-bx);bullet(bx,160,Math.cos(theta)*d.speed*.85,Math.sin(theta)*d.speed*.85,6,.24,{motif:'casino_card',weight:.30});}
@@ -330,7 +342,7 @@
     }
     for(let j=0;j<shapes.length;j++){
       const h=shapes[j];h.id='wave:'+i+':'+j;h.damageId=p.kind==='lightning'&&j<2?'wave:'+i+':bolt':h.id;
-      h.disabled=!!s.enabledStrikes&&!s.enabledStrikes[h.strike];
+      h.disabled=!!h.visualOnly||!!s.enabledStrikes&&!s.enabledStrikes[h.strike];
       h.tier=h.tier||(['line','circle','rect'].includes(h.type)?'heavy':h.type==='ring'||h.type==='well'?'normal':'minor');
       h.weight=h.weight??DAMAGE_TIERS[h.tier].weight;h.rawDamage=damageValue(s.damageBase,h.weight*(s.criticalStrikes[h.strike]&&!s.criticalBase?1.5:1));
       s.hazards.push(h);
@@ -343,6 +355,8 @@
     if(h.freezeFor&&age>h.freezeAt)age=h.freezeAt+Math.max(0,age-h.freezeAt-h.freezeFor);
     if(h.type==='line'&&h.clockTurn){const a=h.clockTurn*age,cs=Math.cos(a),sn=Math.sin(a),dx=h.bx-h.ax,dy=h.by-h.ay;return {...h,bx:h.ax+dx*cs-dy*sn,by:h.ay+dx*sn+dy*cs};}
     if(h.type==='bullet'){
+      if(h.orbit){const a=h.orbitAngle+h.orbitSpeed*age,r=h.orbitRadius+h.spiral*age;return{...h,x:h.cx+Math.cos(a)*r,y:h.cy+Math.sin(a)*r,vx:Math.cos(a)*h.spiral-Math.sin(a)*r*h.orbitSpeed,vy:Math.sin(a)*h.spiral+Math.cos(a)*r*h.orbitSpeed};}
+      if(h.px!==undefined)return {...h,x:h.px,y:h.py};
       if(h.turn){const a=h.turn*age,cs=Math.cos(a),sn=Math.sin(a);
         return {...h,x:h.x+(h.vx*sn+h.vy*(cs-1))/h.turn,y:h.y+(h.vx*(1-cs)+h.vy*sn)/h.turn};}
       return {...h,x:h.x+h.vx*age,y:h.y+h.vy*age};
@@ -357,9 +371,12 @@
     return Math.min(distance(ax,ay,cx,cy,dx,dy),distance(bx,by,cx,cy,dx,dy),distance(cx,cy,ax,ay,bx,by),distance(dx,dy,ax,ay,bx,by));
   }
   function touches(h,old,now,t,dt){
+    if(h.pendingLaunch&&t<h.start+(h.freezeFor||0))return false;
     const g=geometry(h,t),r=now.r;
-    if(h.type==='bullet'){const previous=geometry(h,Math.max(h.start,t-dt));return distance(0,0,previous.x-old.x,previous.y-old.y,g.x-now.x,g.y-now.y)<=g.r+r;}
+    if(h.type==='bullet'){const previous=h.lastX!==undefined?{x:h.lastX,y:h.lastY}:geometry(h,Math.max(h.start,t-dt));if(h.length){const len=Math.hypot(g.vx,g.vy)||1;if(segmentDistance(old.x,old.y,now.x,now.y,g.x-g.vx/len*h.length,g.y-g.vy/len*h.length,g.x,g.y)<=g.r+r)return true;}return distance(0,0,previous.x-old.x,previous.y-old.y,g.x-now.x,g.y-now.y)<=g.r+r;}
     if(h.type==='line')return segmentDistance(old.x,old.y,now.x,now.y,g.ax,g.ay,g.bx,g.by)<=g.r+r;
+    if(h.type==='polyline')return g.points.slice(1).some((q,i)=>segmentDistance(old.x,old.y,now.x,now.y,...g.points[i],...q)<=g.r+r);
+    if(h.type==='safe_zone')return Math.hypot(now.x-g.x,now.y-g.y)>g.r-r;
     if(h.type==='circle'||h.type==='well')return distance(g.x,g.y,old.x,old.y,now.x,now.y)<=g.r+r;
     if(h.type==='rect')return segmentDistance(old.x,old.y,now.x,now.y,g.x,g.y,g.x+g.w,g.y)<=r||segmentDistance(old.x,old.y,now.x,now.y,g.x,g.y+g.h,g.x+g.w,g.y+g.h)<=r||
       segmentDistance(old.x,old.y,now.x,now.y,g.x,g.y,g.x,g.y+g.h)<=r||segmentDistance(old.x,old.y,now.x,now.y,g.x+g.w,g.y,g.x+g.w,g.y+g.h)<=r||now.x>=g.x&&now.x<=g.x+g.w&&now.y>=g.y&&now.y<=g.y+g.h;
@@ -380,7 +397,7 @@
       for(const mark of s.relocations||[])if(!mark.done&&s.time>=mark.at){s.player.x=mark.x;s.player.y=mark.y;old={...s.player};mark.done=true;}
       let dx=input.x||0,dy=input.y||0;
       if(input.target){dx=input.target.x-old.x;dy=input.target.y-old.y;}
-      const length=Math.hypot(dx,dy),travel=input.target?Math.min(length,s.d.moveSpeed*step):s.d.moveSpeed*step*Math.min(1,length);
+      const speed=NZ?.timeStopped(s)?0:s.d.moveSpeed,length=Math.hypot(dx,dy),travel=input.target?Math.min(length,speed*step):speed*step*Math.min(1,length);
       if(length){s.player.x+=dx/length*travel;s.player.y+=dy/length*travel;}
       for(const h of s.hazards)if(h.type==='well'&&s.time>=h.start&&s.time<h.end){
         const len=Math.hypot(h.x-s.player.x,h.y-s.player.y);if(len>1&&len<170){s.player.x+=(h.x-s.player.x)/len*h.pull*step;s.player.y+=(h.y-s.player.y)/len*h.pull*step;}
@@ -388,11 +405,12 @@
       s.player.x=clamp(s.player.x,12,W-12);s.player.y=clamp(s.player.y,12,H-12);
       s.player.vx=(s.player.x-old.x)/step;s.player.vy=(s.player.y-old.y)/step;
       if(s.p.chaplain>=2){(s.history??=[]).push({t:s.time,x:s.player.x,y:s.player.y});if(s.history.length>720)s.history.shift();}
-      for(const h of s.hazards){if(h.disabled||h.end<previous||h.start>s.time||s.hitIds.includes(h.damageId))continue;
+      for(const h of s.hazards){if(h.homing)NZ?.advanceHoming(h,s.player,s.time,step);if(h.disabled||h.end<previous||h.start>s.time||s.hitIds.includes(h.damageId))continue;
+        if(h.moveOnly&&Math.hypot(s.player.x-old.x,s.player.y-old.y)<.001)continue;
         if(touches(h,old,s.player,s.time,step)){
           s.hitIds.push(h.damageId);if(!s.received.includes(h.strike))s.received.push(h.strike);
           const damage=Math.min(s.hp,h.rawDamage);s.hp-=damage;s.damage+=damage;
-          s.contacts.push({id:h.damageId,time:s.time,damage,raw:h.rawDamage,weight:h.weight,tier:h.tier,strike:h.strike,x:s.player.x,y:s.player.y});
+          s.contacts.push({id:h.damageId,time:s.time,damage,raw:h.rawDamage,weight:h.weight,tier:h.tier,strike:h.strike,x:s.player.x,y:s.player.y,...(h.status?{status:h.status}:{})});
           if(s.hp<=0&&s.endOnDeath){s.ended=true;remaining=0;break;}
         }}
       s.hazards=s.hazards.filter(h=>h.end>=s.time);

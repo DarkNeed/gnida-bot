@@ -176,6 +176,8 @@ def add_unique_qte_routes(app, root):
 
     async def page(request):
         version = hashlib.sha256(
+            (root / 'nazarick-qte.js').read_bytes() +
+            (root / 'qte-block-view').read_bytes() +
             (root / "qte-input").read_bytes()
             + (root / 'qte-casino-view').read_bytes() + (root / 'qte-view').read_bytes()
             + (root / "qte-input.css").read_bytes()
@@ -217,6 +219,8 @@ def add_block_qte_routes(app, root):
 
     async def page(request):
         version = hashlib.sha256(
+            (root / 'nazarick-qte.js').read_bytes() +
+            (root / 'qte-block-view').read_bytes() +
             (root / "qte-input").read_bytes()
             + (root / 'qte-casino-view').read_bytes()
             + (root / "qte-input.css").read_bytes()

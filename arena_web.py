@@ -743,6 +743,7 @@ def create_arena_app(
                 personal,
                 row["revision"] if action == "start" else None,
                 rp_template=body.get('rp_template'),
+                blessing_id=body.get('blessing_id'),
             )
         if raid_changed:
             await raid_changed(row["token"])
@@ -940,6 +941,7 @@ def create_arena_app(
                 confirm,
                 body.get("replace_skill"),
                 expected_slot=expected_slot,
+                new_class=body.get('new_class'),
             )
         elif action == "craft":
             raise ValueError("Крафт убран. Зелья и конфеты есть у торговца.")

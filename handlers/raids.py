@@ -17,7 +17,7 @@ from arena_raid_engine import BOSSES
 from handlers.routes import text_or_caption_regexp
 
 RAID_RE = re.compile(
-    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng|фуфелшмерц|фуфел|doofenshmirtz|doof|китобой|whaler|кит|kit|маэль|капеллан|каппеллан|chaplain))?\s*$",
+    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng|фуфелшмерц|фуфел|doofenshmirtz|doof|китобой|whaler|кит|kit|маэль|капеллан|каппеллан|chaplain|назарик|nazarick|аинз|айнз|ainz))?\s*$",
     re.I,
 )
 ENCOUNTER_RE = re.compile(r'^\s*/(?:встреча|encounter)(?:@\w+)?(?:\s+(?P<roster>[^\n]+))?\s*$', re.I)
@@ -25,6 +25,8 @@ ENCOUNTER_RE = re.compile(r'^\s*/(?:встреча|encounter)(?:@\w+)?(?:\s+(?P<
 
 def raid_boss_id(match):
     name = match.group("boss").casefold() if match and match.group("boss") else ""
+    if name in ('назарик','nazarick','аинз','айнз','ainz'):
+        return 'nazarick'
     if name in ('капеллан', 'каппеллан', 'chaplain'):
         return 'chaplain'
     if name in ('китобой','whaler'):

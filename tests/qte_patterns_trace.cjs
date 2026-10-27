@@ -1,10 +1,10 @@
 const E=require('../webapp/qte-unique/engine');
-const clone=s=>({...s,player:{...s.player},events:s.events.map(e=>({...e})),hazards:s.hazards.slice(),received:s.received.slice(),contacts:s.contacts.slice(),hitIds:s.hitIds.slice()});
+const clone=s=>({...s,player:{...s.player},events:s.events.map(e=>({...e})),hazards:s.hazards.map(h=>({...h})),received:s.received.slice(),contacts:s.contacts.slice(),hitIds:s.hitIds.slice()});
 function safeRoute(initial,limit=28){
   const moves=[{x:0,y:0},...Array.from({length:8},(_,i)=>({x:Math.cos(i*Math.PI/4),y:Math.sin(i*Math.PI/4)}))];
   const start=clone(initial);E.defenseStep(start,start.preparation||0);
   let frontier=[{s:start,route:[]}];
-  for(let step=0;step<68;step++){
+  for(let step=0;step<Math.ceil(initial.activeDuration*10);step++){
     const cells=new Map();
     for(const f of frontier)for(const move of moves){
       const s=clone(f.s);E.defenseStep(s,.1,move);if(s.contacts.length)continue;
@@ -38,11 +38,16 @@ function record(c){
   const proof={ticks:Math.round(s.duration*120),inputs:[]},readyTicks=Math.round(s.preparation*120);let last='';
   for(let tick=0;tick<proof.ticks;tick++){
     const active=tick-readyTicks,move=active<0?{x:0,y:0}:route?.[Math.min(route.length-1,Math.floor(active/12))];
-    const cmd=move||{x:active<240?-1:active<480?1:0,y:active<240?0:active<480?1:-1};
-    const value=JSON.stringify(cmd);if(value!==last){proof.inputs.push({t:tick,...cmd});last=value;}
+    let cmd=move||{x:active<240?-1:active<480?1:0,y:active<240?0:active<480?1:-1};
+    if(c.policy==='shelter'){
+      const h=s.hazards.filter(h=>h.type==='safe_zone'&&h.end>s.time&&s.time>h.at+.35).sort((a,b)=>a.start-b.start)[0];
+      cmd=h?{target:{x:h.x,y:h.y}}:{};
+    }
+    const encoded=cmd.target?{target:[cmd.target.x,cmd.target.y]}:cmd;
+    const value=JSON.stringify(encoded);if(value!==last){proof.inputs.push({t:tick,...encoded});last=value;}
     E.defenseStep(s,1/120,cmd);
   }
-  return {proof,result:{mask:Array.from({length:p.strikes},(_,i)=>!s.contacts.some(c=>c.strike===i)),contacts:s.contacts.map(c=>({id:c.id,strike:c.strike,weight:c.weight,tier:c.tier,tick:Math.round(c.time*120)}))}};
+  return {proof,result:{mask:Array.from({length:p.strikes},(_,i)=>!s.contacts.some(c=>c.strike===i)),contacts:s.contacts.map(c=>({id:c.id,strike:c.strike,weight:c.weight,tier:c.tier,tick:Math.round(c.time*120),...(c.status?{status:c.status}:{})}))}};
 }
 module.exports=record;
 if(require.main===module){

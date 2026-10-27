@@ -24,6 +24,7 @@ async def raid_view(db, row, actor):
         skills = rp_skills(skills)
     data = json.loads(row["data_json"]) if row["data_json"] else None
     boss_info = BOSSES.get(row.get("boss_id", "iron"), BOSSES["iron"])
+    nazarick = bool(data and row.get('boss_id') == 'nazarick')
 
     async def decorate(side, fighter, boss=False, character_slot=1, mob=False):
         mob_info = MOBS.get(side.get('mob_id')) if mob else None
@@ -62,6 +63,12 @@ async def raid_view(db, row, actor):
             side.update(await db.arena_character_sprite_info(fighter,character_slot))
         elif boss_info.get("sprite"):
             side["class_avatar_url"] = raid_boss_sprite(row.get('boss_id', 'iron'), data.get('phase', 1))
+        if nazarick and boss:
+            from arena_nazarick import sprite, identity
+            who, phase = identity(data)
+            side['name'] = side.get('name') if mob else data['boss']['name']
+            side['class_avatar_url'] = sprite(who, phase) if not side.get('nz_sprite') else sprite(side['nz_sprite'])
+            side['sprite_flip'] = False
         if mob_info:
             side['class_avatar_url'] = mob_info['sprite']
         if boss and boss_info.get("ally_sprite"):
@@ -148,6 +155,13 @@ async def raid_view(db, row, actor):
             for enemy in data['enemies'].values():
                 await decorate(enemy, 0, True, mob=True)
             data['boss'] = next(iter(data['enemies'].values()))
+        elif nazarick:
+            from arena_nazarick import presentation
+            for enemy in data['enemies'].values():
+                await decorate(enemy, 0, True, mob=enemy.get('nz_sprite') is not None)
+            data['boss'] = data['enemies']['boss']
+            data['nazarick_view'] = presentation(data)
+            data['nazarick'].pop('initial_players', None)
         else:
             await decorate(data['boss'], 0, True)
         for key, player in data["players"].items():
@@ -187,7 +201,7 @@ async def raid_view(db, row, actor):
         revision=row["revision"],
         deadline=row["deadline"],
         server_time=int(time.time()),
-        boss_name=boss_info["name"],
+        boss_name=data['boss']['name'] if nazarick else boss_info["name"],
         boss_id=row.get("boss_id", "iron"),
         silent=bool(row.get("silent", False)),
         recommended_level=boss_info.get("recommended_level", 1),

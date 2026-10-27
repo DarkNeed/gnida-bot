@@ -25,6 +25,7 @@
     for(const id of Object.keys(modes))$(id+'-value').textContent=$(id).value+(id==='accuracy'?'%':'');
     $('armor-info').textContent=p.armor+' · −'+Math.round((1-p.armorMultiplier)*100)+'% урона';
     $('arc-info').textContent=Math.round(p.arc*180/Math.PI)+'°';$('perfect-info').textContent=p.perfectWindow.toFixed(2)+' с';
+    $('defense-length').textContent='1 + '+((window.NazarickQTE?.blockDuration(selected)??9.5)-1).toFixed(1)+' с';
     if(!sim&&!record)hud(B.create(selected,stats(),seed(),options()));
   }
   function fillSkills(){
@@ -123,6 +124,7 @@
   }
   function draw(){
     const s=sim||B.create(selected,stats(),seed(),options()),cx=B.W/2,cy=B.H/2,t=s.time;
+    if(window.NazarickQTE?.identity(s.p)&&window.QTEBlockView){window.QTEBlockView.draw(ctx,canvas,s);return;}
     if(window.QTECasinoView?.drawBlock(ctx,canvas,s))return;
     ctx.clearRect(0,0,B.W,B.H);ctx.fillStyle='#09131f';ctx.fillRect(0,0,B.W,B.H);
     for(let x=0;x<=B.W;x+=40)line(x,0,x,B.H,'#162b3b');for(let y=0;y<=B.H;y+=40)line(0,y,B.W,y,'#162b3b');

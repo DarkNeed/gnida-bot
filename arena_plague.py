@@ -82,10 +82,11 @@ def begin_turn(side):
     if side.get("plague_tick_turn", -1) >= turn or side["hp"] <= 0:
         return 0
     side["plague_tick_turn"] = turn
+    from arena_relics import periodic_damage
     damage = min(
         side["hp"],
-        sum(max(0, int(e['value'])) * (int(e.get('damage_per_stack', 1)) if e['kind'] == 'plague_spores' else 1)
-            for e in side['effects'] if e['kind'] in KINDS),
+        periodic_damage(side,sum(max(0, int(e['value'])) * (int(e.get('damage_per_stack', 1)) if e['kind'] == 'plague_spores' else 1)
+            for e in side['effects'] if e['kind'] in KINDS)),
     )
     side["hp"] -= damage
     if side["hp"] <= 0:

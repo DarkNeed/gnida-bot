@@ -10,8 +10,8 @@ from aiohttp import web, WSMsgType
 MAX_ROOMS = 32
 MAX_CONNECTIONS = 128
 MAX_ROOM_CONNECTIONS = 24
-MAX_FRAME_BYTES = 128 * 1024
-MAX_INPUTS = 2000
+MAX_FRAME_BYTES = 256 * 1024
+MAX_INPUTS = 3600
 MAX_TICKS = 3600
 HUB_KEY = web.AppKey('qte_watch_hub', object)
 
@@ -58,7 +58,9 @@ class Stream:
         if any(type(x) is not bool for x in (reset, ended, aborted)):
             raise ValueError('Некорректный пакет трансляции.')
         if self.stage.get('version') == 3:
-            total = 1140
+            from arena_nazarick_patterns import block_duration
+            from arena_qte_patterns import profile
+            total = round(block_duration(profile(self.stage['profile']))*120) if self.stage.get('profile') else 1140
         else:
             from arena_qte_patterns import duration
             total = math.ceil(duration(self.stage) * 120 - 1e-7)

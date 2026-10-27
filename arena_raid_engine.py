@@ -23,12 +23,16 @@ from arena_kit import (KIT_LEVEL, KIT_STATS, KIT_SKILLS, set_kit_intent,
 from arena_whaler import WHALER_SKILLS, WHALER_LEVEL
 from arena_chaplain import CHAPLAIN_LEVEL, CHAPLAIN_SKILLS
 from arena_encounters import MOB_SKILLS
+from arena_nazarick import SKILLS as NAZARICK_SKILLS
 
 RAID_SIZE = 3
 RAID_ROUND_SECONDS = 120
 RAID_MAX_ROUNDS = 100
 BOSS_NAME = "Железный сборщик"
 BOSSES = {
+    'nazarick': dict(name='Назарик — Путь к королю-колдуну', sprite='/static/assets/nazarick/shalltear1.png',
+                     skills=tuple(NAZARICK_SKILLS), recommended_level=20, min_level=1,
+                     fixed_level=25, phase_count=2, difficulty='Пять боссов · десять фаз'),
     'encounter': dict(name='РП-встреча', skills=tuple(MOB_SKILLS), phase_count=1),
     'chaplain': dict(name='Капеллан — Хранитель последней редакции',
                       sprite='/static/assets/chaplain.png', skills=tuple(CHAPLAIN_SKILLS),
@@ -102,6 +106,7 @@ BOSS_SKILLS.update(KIT_SKILLS)
 BOSS_SKILLS.update(WHALER_SKILLS)
 BOSS_SKILLS.update(CHAPLAIN_SKILLS)
 BOSS_SKILLS.update(MOB_SKILLS)
+BOSS_SKILLS.update(NAZARICK_SKILLS)
 
 
 def raid_boss_sprite(boss_id, phase=1):
@@ -165,6 +170,9 @@ def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True
 
 
 def set_intent(data):
+    if data.get('boss_id') == 'nazarick':
+        from arena_nazarick import set_intent as nazarick_intent
+        return nazarick_intent(data)
     if data.get('kind') == 'encounter':
         from arena_encounters import set_intents
         return set_intents(data)
@@ -251,7 +259,7 @@ def set_intent(data):
     data["intent"] = intent
 
 
-AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz", "kit", "whaler", "chaplain")
+AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz", "kit", "whaler", "chaplain", "nazarick")
 
 
 def raid_boss_level(levels):
@@ -356,6 +364,9 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
     if boss_id == 'chaplain':
         from arena_chaplain import initialize
         initialize(data)
+    if boss_id == 'nazarick':
+        from arena_nazarick import initialize
+        initialize(data)
     set_intent(data)
     return data
 
@@ -378,6 +389,8 @@ def raid_snapshot(data):
 
 
 def log_event(data, actor, target, text, **extra):
+    if data.get('boss_id') == 'nazarick' and actor in data.get('enemies', {}):
+        extra.setdefault('actor_name', data['enemies'][actor]['name'])
     data["event_seq"] = data.get("event_seq", 0) + 1
     first = not data["log"] or data["log"][-1]["round"] != data["round"]
     data["log"].append(
@@ -417,6 +430,11 @@ def defend(fighter,opponent=None,raid_context=None):
 
 
 def finish_if_needed(data):
+    if data.get('boss_id') == 'nazarick':
+        if not alive_players(data):
+            from arena_nazarick import offer_blessing
+            return offer_blessing(data)
+        return data.get('finished', False)
     if data.get('kind') == 'encounter':
         from arena_encounters import finish
         return finish(data)
@@ -437,6 +455,9 @@ def finish_if_needed(data):
 
 
 def resolve_round(data, skills, rng=None):
+    if data.get('boss_id') == 'nazarick':
+        from arena_nazarick import resolve
+        return resolve(data, skills, rng)
     if data.get('kind') == 'encounter':
         from arena_encounters import resolve
         return resolve(data, skills, rng)

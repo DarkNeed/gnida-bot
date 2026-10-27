@@ -49,6 +49,7 @@
     statIds.forEach(id=>$(id+'-value').textContent=$(id).value+'%');
     document.querySelectorAll('[data-example]').forEach(b=>b.classList.toggle('active',b.dataset.example===selected.skill.base_id));
     $('strike-dots').hidden=mode==='defense';
+    $('defense-length').textContent=(window.NazarickQTE?.activeDuration(selected)??6.8).toFixed(1)+' + 1 с';
     $('damage-legend').textContent='При опоре '+model().damageBase+': '+Object.values(E.DAMAGE_TIERS).map(t=>t.name.toLowerCase()+' '+E.damageValue(model().damageBase,t.weight)).join(' · ')+'. У отдельных атак свои промежуточные значения. Общий урон серии может быть выше опоры.';
     dots();if(!sim)health();
   }
@@ -157,7 +158,7 @@
     ctx.restore();
   }
   function drawDefense(s){
-    if(s.p.kind.startsWith('casino_')&&window.QTEView){window.QTEView.draw(ctx,canvas,s);return;}
+    if(window.QTEView&&(s.p.kind.startsWith('casino_')||window.NazarickQTE?.identity(s.p))){window.QTEView.draw(ctx,canvas,s);return;}
     background();
     if(s.time<s.preparation){
       const p=s.player;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#92e2ce';ctx.fillRect(-5,-5,10,10);ctx.restore();
@@ -176,7 +177,7 @@
     }
     record=null;clearInput();paused=document.hidden;
     sim=mode==='defense'?E.defense(selected,stats(),seed(),model()):E.attack(selected,stats(),seed(),model());lastFrame=0;
-    labels();controls();health(sim);feedback(mode==='defense'?'Секунда подготовки, затем атака. Золотые угрозы сильнее мелких.':'Подготовься. На каждый удар — одно нажатие без повторной попытки.');
+    labels();controls();health(sim);feedback(mode==='defense'?'Секунда подготовки, затем атака. Крупные светящиеся угрозы сильнее мелких; цвет соответствует магии противника.':'Подготовься. На каждый удар — одно нажатие без повторной попытки.');
     $('trial').scrollIntoView({block:'start',behavior:'instant'});canvas.focus({preventScroll:true});
   }
   function log(text,detail){

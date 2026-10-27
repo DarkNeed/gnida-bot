@@ -45,6 +45,7 @@ from arena_finals import (context as final_context, modifiers as final_modifiers
 from arena_mastery import (build_skills as build_mastery_skills, skill_allowed as mastery_allowed,
     variant as mastery_variant, street_stats, context as mastery_context,
     modifiers as mastery_modifiers, after_action as mastery_after_action)
+from arena_relics import build_catalog as build_relic_catalog, modifiers as relic_modifiers, incoming as relic_incoming, after_action as relic_after_action, periodic_damage
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0.08
@@ -72,7 +73,7 @@ def passive_skill_limit(level: int) -> int:
 def bleeding_damage(side: dict) -> int:
     return min(
         side["hp"],
-        sum(max(0, int(e["value"])) for e in side["effects"] if e["kind"] == "bleed"),
+        periodic_damage(side,sum(max(0, int(e["value"])) for e in side["effects"] if e["kind"] == "bleed")),
     )
 
 
@@ -611,6 +612,7 @@ BUILTIN_PASSIVES = {
 _epic_skills, _epic_passives = build_epic_catalog(Skill, PassiveSkill, effect)
 BUILTIN_SKILLS.update(_epic_skills)
 BUILTIN_PASSIVES.update(_epic_passives)
+BUILTIN_PASSIVES.update(build_relic_catalog(PassiveSkill))
 _rpg_classes, _rpg_skills = build_rpg_catalog(FighterClass, Skill, effect)
 FIGHTER_CLASSES.update(_rpg_classes)
 BUILTIN_SKILLS.update(_rpg_skills)
@@ -1071,7 +1073,7 @@ def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
 
 def _tick(side: dict, *, tick_dot=True, preserve_rally=False) -> None:
     if tick_dot:
-        side['hp'] = max(0, side['hp'] - sum(max(0,int(e['value'])) for e in side['effects'] if e['kind']=='burn'))
+        side['hp'] = max(0, side['hp'] - periodic_damage(side,sum(max(0,int(e['value'])) for e in side['effects'] if e['kind']=='burn')))
         rpg_revive(side,rpg_branch(side))
     side["own_turns"] = side.get("own_turns", 0) + 1
     memory = side.get('rpg_state', {})
@@ -1278,7 +1280,7 @@ def resolve_skill(
     pending_bleed = (
         bleeding_damage(actor) if tick_actor_bleed and skill.damage_type else 0
     )
-    pending_burn = sum(max(0,int(e['value'])) for e in actor['effects'] if e['kind']=='burn') if tick_actor_bleed else 0
+    pending_burn = periodic_damage(actor,sum(max(0,int(e['value'])) for e in actor['effects'] if e['kind']=='burn')) if tick_actor_bleed else 0
     before = {
         k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
     }
@@ -1292,6 +1294,8 @@ def resolve_skill(
     class_boost += final_modifiers(actor,skill)
     epic_accuracy, epic_multiplier = epic_modifiers(actor, target, skill)
     class_accuracy += epic_accuracy
+    relic_accuracy,relic_multiplier=relic_modifiers(actor,target,skill)
+    class_accuracy+=relic_accuracy
     rpg_accuracy, rpg_multiplier = rpg_modifiers(actor,target,skill)
     class_accuracy += rpg_accuracy
     mastery_accuracy, mastery_multiplier = mastery_modifiers(actor,target,skill)
@@ -1437,12 +1441,14 @@ def resolve_skill(
                 * reduction
                 * mirror_multiplier
                 * epic_multiplier
+                * relic_multiplier
                 * rpg_multiplier
                 * mastery_multiplier
                 * parry_multiplier
                 * actor.get("raid_damage_multiplier", 1)
                 * target.get('chaplain_damage_taken', 1)
                 * rpg_incoming_multiplier(target,rpg_branch(target))
+                * relic_incoming(target)
                 * math.prod(max(.1, e.get("value", 1)) for e in target["effects"] if e.get("kind") == "incoming_damage_multiplier")
                 * math.prod(
                     max(0.1, e.get("value", 1))
@@ -1711,6 +1717,7 @@ def resolve_skill(
         if who['hp'] > old_hp and id(who) not in plague_healed_seen:
             heal_plague(who)
             plague_healed_seen.add(id(who))
+    pet_notes+=relic_after_action(actor,skill,min(before[other]['hp'],damage))
     text = f"{skill.name}: " + (
         f"−{damage} HP"
         if damage

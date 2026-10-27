@@ -109,6 +109,42 @@ dialog.effect-dialog:not([open]){display:none}dialog.effect-dialog::backdrop{bac
 .chaplain-cut .chaplain-inspect-slash{animation-duration:.45s}
 @keyframes chaplain-cut{0%{opacity:0;scale:.01 1}20%,55%{opacity:1;scale:1 1}100%{opacity:0;scale:1 1}}
 @media(prefers-reduced-motion:reduce){.chaplain-inspect-slash{animation:none;opacity:.8;box-shadow:none}.chaplain-background-clock{animation:none}}
+.encounter-field.nazarick-field{background-size:cover!important;background-position:center!important;height:660px;isolation:isolate}
+.nazarick-field:before{background:linear-gradient(transparent,#080c2040)!important;pointer-events:none}
+.encounter-field.nazarick-field .enemy-0{right:6%;top:1%;width:37%}
+.encounter-field.nazarick-field .enemy-0 .raid-art{height:180px}
+.encounter-field.nazarick-field[data-guardian="pandora"] .enemy-0 .raid-art{height:195px}
+.encounter-field.nazarick-field[data-guardian="ainz"] .enemy-0 .raid-art{height:225px}
+.encounter-field.nazarick-field .nz-small-summon .raid-art{height:150px}
+.encounter-field.nazarick-field .nz-large-summon .raid-art{height:180px}
+.nazarick-field .raid-enemy .raid-sprite{width:auto;max-width:100%;object-fit:contain}
+.encounter-field.nazarick-field .enemy-1{right:45%;top:13%;width:22%}
+.encounter-field.nazarick-field .enemy-2{right:1%;top:58%;width:22%}
+.nazarick-field .raid-enemy .raid-sprite{transform:none;animation:raid-idle 3s ease-in-out infinite}
+.nazarick-field .nz-floating-staff{position:absolute;left:-7%;bottom:8%;height:94%;width:auto;max-width:36%;object-fit:contain;z-index:3;pointer-events:none;filter:drop-shadow(0 0 7px #8a5ded55);animation:nz-staff-float 3.6s ease-in-out infinite}
+@keyframes nz-staff-float{0%,100%{transform:translateY(-3px) rotate(-7deg)}50%{transform:translateY(-14px) rotate(4deg)}}
+@media(prefers-reduced-motion:reduce){.nazarick-field .nz-floating-staff{animation:none}}
+.nazarick-field .raid-art .raid-strike-left{animation:enemyAttack .35s ease}.nazarick-field .raid-art .raid-cast{animation:raid-cast .35s ease}.nazarick-field .raid-art .raid-hit{animation:hurt .4s ease}
+.nazarick-field .raid-dialogue{left:3%;top:12%;width:47%;transform:none;background:#101526ed;border-color:#b69b61;grid-template-columns:34px 1fr}
+.nazarick-field .raid-dialogue-portrait{width:34px;background-size:contain;background-position:center;background-repeat:no-repeat}
+.nazarick-field .raid-dialogue small{display:none}
+.nazarick-field[data-guardian="pandora"][data-phase="2"] .enemy-0 .raid-sprite{animation:raid-idle 3s ease-in-out infinite}
+.nazarick-transition{position:absolute;inset:20% 4% auto;z-index:30;background:#080b18f2;border:1px solid #cbb17e;border-radius:12px;padding:22px;text-align:center;color:#e9d9b5;pointer-events:none}
+.nazarick-transition img{display:block;height:180px;width:auto;margin:auto}
+.nz-blessing-overlay{position:fixed;inset:0;z-index:900;display:grid;place-items:center;padding:calc(18px + var(--app-inset-top)) calc(16px + var(--app-inset-right)) calc(18px + var(--app-inset-bottom)) calc(16px + var(--app-inset-left));background:#040714df;backdrop-filter:blur(7px)}
+.nz-blessing-card{width:min(100%,580px);max-height:min(88dvh,calc(100dvh - 36px - var(--app-inset-top) - var(--app-inset-bottom)));display:flex;flex-direction:column;overflow:hidden;background:#141d31;border:1px solid #cfaf78;border-radius:18px;box-shadow:0 0 55px #b38ae527;padding:24px;color:#e8edf7}
+.nz-blessing-copy{min-height:0;overflow:auto;overscroll-behavior:contain;font-size:14px}.nz-blessing-card>h2,.nz-blessing-card>.stack,.nz-blessing-card>.turn-timer{flex-shrink:0}.nz-blessing-card>h2{font-size:23px;margin:12px 0}.nz-blessing-card>.stack{margin-top:6px}
+.nz-blessing-card .eyebrow{color:#deb980}.nz-blessing-card .stack{display:grid;gap:10px}.nz-blessing-card button{min-height:45px;white-space:normal}
+@keyframes nz-mask{0%,91%,100%{filter:none}92%{filter:hue-rotate(60deg);translate:3px}94%{filter:contrast(1.8);translate:-3px}}
+@media(max-width:550px){.encounter-field.nazarick-field{height:610px}.encounter-field.nazarick-field .enemy-0{width:42%;right:2%}.encounter-field.nazarick-field .enemy-0 .raid-art{height:190px}.nazarick-field .raid-dialogue{left:2%;top:4%;width:52%;padding:8px;grid-template-columns:1fr}.nazarick-field .raid-dialogue-portrait{display:none}.nazarick-field .raid-dialogue p{font-size:11px}.encounter-field.nazarick-field .enemy-1{right:45%;top:30%}.encounter-field.nazarick-field .enemy-2{top:58%}.nazarick-field .raid-ally.slot-0{bottom:12%}.nazarick-field .raid-ally.slot-1{bottom:7%}.nazarick-field .raid-ally.slot-2{bottom:2%}}
+@media(prefers-reduced-motion:reduce){.nazarick-field .raid-sprite{animation:none!important}}
+@media(max-width:550px){
+ .encounter-field.nazarick-field .enemy-0 .raid-art{height:112px}
+ .encounter-field.nazarick-field[data-guardian="pandora"] .enemy-0 .raid-art{height:109px}
+ .encounter-field.nazarick-field[data-guardian="ainz"] .enemy-0 .raid-art{height:126px}
+ .encounter-field.nazarick-field .nz-small-summon .raid-art{height:84px}
+ .encounter-field.nazarick-field .nz-large-summon .raid-art{height:140px}
+}
 .chaplain-field .raid-enemy{left:63%;width:36%}.chaplain-field .raid-enemy .raid-art{height:270px}
 .chaplain-field .raid-enemy .raid-sprite{transform:none;animation:raid-idle 4s ease-in-out infinite}
 .chaplain-field .raid-dialogue{left:28%;top:105px;width:36%;transform:none;grid-template-columns:28px 1fr;border-color:#a58b56;background:#171924ef}

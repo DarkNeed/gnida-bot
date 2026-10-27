@@ -19,6 +19,7 @@ from arena_raid_engine import (
     finish_if_needed,
 )
 from arena_archprogress import skill_branch
+from arena_relics import RELIC_IDS,TICKET_ID,TICKET_NAME
 
 RAID_LOBBY_SECONDS = 600
 RAID_REWARD_COOLDOWN = 3600
@@ -258,6 +259,7 @@ class RaidMixin:
             pool += [
                 ("passive", p.skill_id, p.rarity, p.name)
                 for p in BUILTIN_PASSIVES.values()
+                if p.skill_id not in RELIC_IDS
             ]
             for key, player in data["players"].items():
                 if (
@@ -297,8 +299,15 @@ class RaidMixin:
                 )
                 self._add_francs_locked(chat, player["actor_id"], francs)
                 loot = ""
+                class_ticket=False
                 loot_skill = BOSSES.get(boss_id, {}).get("loot_skill")
-                if full_reward and loot_skill:
+                if full_reward and boss_id=='nazarick':
+                    relic=BUILTIN_PASSIVES[rng.choice(RELIC_IDS)]
+                    loot=relic.name
+                    self._arena_add_item_locked(chat,player['actor_id'],'passive',relic.skill_id,relic.rarity)
+                    class_ticket=not data.get('nazarick',{}).get('ticket_forfeited',False) and rng.random()<.70
+                    if class_ticket:self._arena_add_item_locked(chat,player['actor_id'],'class_ticket',TICKET_ID,'legendary')
+                elif full_reward and loot_skill:
                     pity = self.connection.execute(
                         "SELECT misses FROM arena_raid_global_pity WHERE actor_id=? AND boss_id=?",
                         (player["actor_id"], boss_id),
@@ -338,7 +347,8 @@ class RaidMixin:
                         (player['actor_id'],boss_id,row['token']))
                     available_at=0
                 data["rewards"][key] = dict(xp=xp, francs=francs, loot=loot, pet_rewards=pet_rewards,
-                    full_reward=full_reward, reward_day=day, reward_available_at=available_at)
+                    full_reward=full_reward, reward_day=day, reward_available_at=available_at,
+                    class_ticket=class_ticket,class_ticket_name=TICKET_NAME if class_ticket else '')
         self._raid_save_locked(row, data, "finished")
 
     def _raid_player_valid_locked(self, row, player):
@@ -388,6 +398,16 @@ class RaidMixin:
         return row
 
     def _raid_resolve_locked(self, row, data):
+        offer=data.get('nazarick',{}).get('blessing_offer')
+        if offer:
+            from arena_nazarick import decline_blessing
+            if row['deadline']<=int(time.time()) or any(data['players'][k].get('withdrawn') for k in offer['eligible']):
+                decline_blessing(data,'Благословение не было принято всеми участниками вовремя.')
+                self._raid_finish_locked(row,data)
+            else:
+                self._raid_save_locked(row,data)
+                self.connection.execute('UPDATE arena_raids SET deadline=? WHERE token=?',(row['deadline'],row['token']))
+            return
         pending = data.get('whaler_reaction')
         if (pending and not pending.get('result') and pending['target'] in alive_players(data)
                 and self._qte_load_locked('raid', row['token'], int(pending['target']))):
@@ -400,6 +420,8 @@ class RaidMixin:
             from arena_rp import rp_skills
             skills = rp_skills(skills)
         resolve_round(data, skills)
+        if data.get('nazarick',{}).get('blessing_offer'):
+            self.connection.execute("DELETE FROM arena_qte_flows WHERE scope='raid' AND token=?",(row['token'],))
         if data["finished"]:
             self._raid_finish_locked(row, data)
         else:
@@ -529,7 +551,7 @@ class RaidMixin:
                 raise
 
     async def arena_raid_setup(
-        self, token, actor, action, fighter=0, personal=True, expected_revision=None, *, rp_template=None
+        self, token, actor, action, fighter=0, personal=True, expected_revision=None, *, rp_template=None, blessing_id=None
     ):
         async with self._lock:
             try:
@@ -537,6 +559,27 @@ class RaidMixin:
                 if rp_template is not None and row.get('boss_id') != 'encounter':
                     raise ValueError('RP-сборки доступны только во встречах без наград.')
                 self._require_feature_locked(row['chat_id'], 'arena')
+                if action in ('blessing_accept','blessing_decline'):
+                    if row.get('boss_id')!='nazarick' or row['status']!='active':raise ValueError('Благословение недоступно.')
+                    from arena_nazarick import vote_blessing,decline_blessing
+                    data=json.loads(row['data_json']);offer=data['nazarick'].get('blessing_offer')
+                    p=data['players'].get(str(actor))
+                    if not offer or not p or p.get('withdrawn') or str(actor) not in offer['eligible']:
+                        raise ValueError('Ты не участник голосования этого отряда.')
+                    self._character_require_locked(actor,p.get('character_slot',1))
+                    if row['deadline']<=int(time.time()):
+                        decline_blessing(data,'Время голосования истекло.')
+                        self._raid_finish_locked(row,data)
+                    else:
+                        result=vote_blessing(data,actor,action=='blessing_accept',blessing_id)
+                        if result in ('restarted','declined'):
+                            self.connection.execute("DELETE FROM arena_qte_flows WHERE scope='raid' AND token=?",(token,))
+                        if data['finished']:self._raid_finish_locked(row,data)
+                        elif result!='unchanged':
+                            self._raid_save_locked(row,data)
+                            if result=='waiting':self.connection.execute('UPDATE arena_raids SET deadline=? WHERE token=?',(row['deadline'],token))
+                    self.connection.commit()
+                    return self._raid_row_locked(token)
                 if action == 'finish' and row.get('boss_id') == 'encounter':
                     if actor != row['creator_id']:
                         raise ValueError('Завершить встречу может только мастер.')
@@ -682,6 +725,8 @@ class RaidMixin:
                     self.connection.commit()
                     raise ValueError("Время выбора истекло. Обновите рейд.")
                 data = json.loads(row["data_json"])
+                if data.get('nazarick',{}).get('blessing_offer'):
+                    raise ValueError('Бой приостановлен: отряд голосует за благословение.')
                 if type(round_number) is not int or round_number != data["round"]:
                     raise ValueError("Раунд уже изменился. Обновите рейд.")
                 player = alive_players(data).get(str(actor))
@@ -703,7 +748,7 @@ class RaidMixin:
                     if not isinstance(skill, str):
                         raise ValueError("Некорректный навык.")
                     opponent = data['boss']
-                    if data.get('kind') == 'encounter':
+                    if data.get('kind') == 'encounter' or data.get('boss_id') == 'nazarick':
                         from arena_encounters import target_enemy
                         target, opponent = target_enemy(data, target)
                     if skill.startswith('chaplain_anchor:'):
@@ -721,7 +766,7 @@ class RaidMixin:
                             skills,
                         )
                     player["selected"] = skill
-                    if data.get('kind') == 'encounter':
+                    if data.get('kind') == 'encounter' or data.get('boss_id') == 'nazarick':
                         player['selected_target'] = target
                     if _qte:
                         player['qte_result'] = _qte
