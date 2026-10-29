@@ -49,7 +49,9 @@
     dust:['Пыль и ослепление','#c7b69e','Два веера пыли сходятся в точке. Ищи зазор, не теряй свой маркер.','bar'],
     tiger:['Поступь тигробоя','#e8b786','Шесть разрезов: горизонталь, вертикаль, диагонали и финальная пара.','arc'],
   };
+  const GUILD_FAMILIES={guild_stab:'slash',guild_net:'paint',guild_fang:'beast',guild_hex:'mana',guild_smash:'impact',guild_bone:'death',guild_soul:'death',guild_claw:'beast',guild_fire:'fire',guild_ice:'ice',guild_lightning:'lightning'};
   function family(skill){
+    if(GUILD_FAMILIES[skill.base_id])return GUILD_FAMILIES[skill.base_id];
     if((skill.base_id||'').startsWith('nz_pyromancer_'))return 'fire';
     const nz=NZ?.identity({skill});if(nz){const{who,phase,move}=nz;return ({shalltear:[['slash','death','edict'],['thrust','slash','beast']],demiurge:[['fire','edict','script'],['fire','script','death']],albedo:[['slash','impact','impact'],['impact','slash','impact']],pandora:[['lightning','void','death'],['thrust','mirror','charm']],ainz:[['mana','void','death'],['coins','eclipse','holy']]}[who]||[['thrust','thrust','thrust'],['thrust','thrust','thrust']])[phase-1][move];}
     if((skill.base_id||'').startsWith('casino_')||skill.class_id==='gambler')return skill.base_id==='mastery_gambler'?'casino_dice':skill.base_id==='casino_deposit'?((skill.name||'').startsWith('777')?'casino_jackpot':'casino_slots'):skill.base_id==='casino_all_in'?'casino_roulette':'casino_cards';

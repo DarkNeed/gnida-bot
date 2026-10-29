@@ -158,7 +158,7 @@
     ctx.restore();
   }
   function drawDefense(s){
-    if(window.QTEView&&(s.p.kind.startsWith('casino_')||window.NazarickQTE?.identity(s.p))){window.QTEView.draw(ctx,canvas,s);return;}
+    if(window.QTEView){window.QTEView.draw(ctx,canvas,s);return;}
     background();
     if(s.time<s.preparation){
       const p=s.player;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#92e2ce';ctx.fillRect(-5,-5,10,10);ctx.restore();

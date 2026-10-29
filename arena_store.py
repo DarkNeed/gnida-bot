@@ -44,6 +44,7 @@ from arena_global import GlobalArenaMixin, RPG_SCOPE
 from arena_characters import CharacterMixin
 from arena_qte_live import ArenaQteMixin
 from arena_rp import RPMixin
+from arena_guild import GuildMixin
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -56,10 +57,11 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin, ArenaQteMixin, RPMixin):
+class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin, ArenaQteMixin, RPMixin, GuildMixin):
     def _connect_arena(self) -> None:
         self._connect_qte()
         self._connect_rp()
+        self._connect_guild()
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (
                 chat_id INTEGER NOT NULL,
@@ -725,7 +727,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
         )
 
     def _arena_busy_locked(
-        self, chat: int, user: int, exclude=0, raid_exclude=""
+        self, chat: int, user: int, exclude=0, raid_exclude="", guild_exclude=""
     ) -> bool:
         return bool(
             self.connection.execute(
@@ -734,6 +736,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 (exclude, user, user, user, user),
             ).fetchone()
             or self._raid_busy_locked(chat, user, raid_exclude)
+            or self._guild_busy_locked(user,guild_exclude)
             or self.connection.execute(
                 "SELECT 1 FROM arena_mirror_runs WHERE status='active' AND (actor_id=? OR fighter_id=?)",
                 (user, user),
@@ -747,6 +750,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 (user, user, user, user),
             ).fetchone()
             or self._raid_busy_locked(chat, user, active_only=True)
+            or self._guild_busy_locked(user,active_only=True)
             or self.connection.execute(
                 "SELECT 1 FROM arena_mirror_runs WHERE status='active' AND (actor_id=? OR fighter_id=?)",
                 (user, user),

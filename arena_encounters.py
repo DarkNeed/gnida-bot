@@ -158,12 +158,18 @@ def set_intents(data, skills=None):
     intents = {}
     for index, (key, fighter) in enumerate(alive_enemies(data).items()):
         mob = fighter['mob_id']
+        guild_mob=fighter.get('guild_monster')
+        if guild_mob=='shaman' and data['round']%3==0:
+            intents[key]=dict(kind='heal',skill=None,targets=[],text='Настой шамана: исцелит раненого союзника на 25% HP')
+            continue
         if mob == 'custom':
             from arena_engine import BUILTIN_SKILLS, validate_skill
             from arena_raid_engine import pair_state
             from arena_rp import rp_skills
             catalog = rp_skills(skills or BUILTIN_SKILLS)
             targets = players[(data['round'] + index - 1) % len(players):][:1] if players else []
+            if guild_mob=='wolf' and players:
+                targets=[min(players,key=lambda k:data['players'][k]['fighter']['hp']/data['players'][k]['fighter']['stats']['max_hp'])]
             opponent = data['players'][targets[0]]['fighter'] if targets else fighter
             ids = fighter['loadout']
             usable = []
@@ -181,6 +187,8 @@ def set_intents(data, skills=None):
             else:
                 selected = (random.SystemRandom().choice(usable) if fighter['rp_ai'] == 'random' else usable[0]) if usable else 'bum_punch'
             kind, text = 'attack', catalog[selected].name
+            if guild_mob in ('dragon','ancient','wyvern') and selected=='guild_fire':
+                targets=list(players);text+=' · дыхание по всему отряду'
             intents[key] = dict(kind=kind, skill=selected, targets=targets, text=text)
             continue
         if mob == 'shaman' and data['round'] % 3 == 0:
@@ -279,6 +287,9 @@ def resolve(data, skills, rng=None):
         if finish(data) or enemy['hp'] <= 0:
             continue
         intent = data['enemy_intents'][enemy_key]
+        if enemy.get('guild_monster')=='troll' and not any(e['kind']=='burn' for e in enemy['effects']):
+            amount=min(enemy['stats']['max_hp']-enemy['hp'],round(enemy['stats']['max_hp']*.04));enemy['hp']+=amount
+            if amount:log_event(data,enemy_key,enemy_key,f'Плоть болот: +{amount} HP. Огонь подавляет регенерацию.',healing=amount)
         if any(e['kind'] == 'stun' for e in enemy['effects']):
             _tick(enemy)
             log_event(data, enemy_key, enemy_key, 'Ошеломление: намерение сорвано.')

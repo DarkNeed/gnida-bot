@@ -83,6 +83,10 @@ async def raid_view(db, row, actor):
         if side.get('rp_sandbox'):
             from arena_rp import appearance
             side.update(appearance(side))
+        if side.get('guild_sprite'):
+            from arena_guild_rules import MONSTERS
+            side.update(class_avatar_url=side['guild_sprite'],sprite_url=side['guild_sprite'],pixel_art=False,
+                class_name=MONSTERS[side['guild_monster']]['role'])
         pair = pair_state(side, target)
         ids = list(side["loadout"])
         if (
@@ -184,6 +188,9 @@ async def raid_view(db, row, actor):
                                         name='🎭 ' + template['definition']['name'] + ' · Lv.' + str(template['definition']['level'])))
     config = json.loads(row['encounter_json']) if row.get('encounter_json') else None
     master = await db.get_user(row['chat_id'], row['creator_id']) if config else None
+    guild_biome=''
+    if data and data.get('guild_run_id'):
+        async with db._lock:guild_biome=db._guild_row_locked(data['guild_run_id'])['data']['contract']['biome']
     return dict(
         token=row["token"],
         chat_id=row["chat_id"],
@@ -191,7 +198,9 @@ async def raid_view(db, row, actor):
         kind='encounter' if config else 'raid',
         rp_menu=bool(config and config.get('rp')),
         master_name=master['display_name'] if master else str(row['creator_id']),
-        is_master=bool(config and actor == row['creator_id']),
+        is_master=bool(config and not config.get('guild') and actor == row['creator_id']),
+        guild_run_id=data.get('guild_run_id') if data else None,
+        guild_biome=guild_biome,
         encounter_roster=([dict(id=mob, name=MOBS[mob]['name']) if isinstance(mob, str) else dict(id=mob['id'], name=mob['name']) for mob in config['roster']] if config else []),
         rewards_enabled=not bool(config),
         actor_id=actor,

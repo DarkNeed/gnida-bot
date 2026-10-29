@@ -107,6 +107,8 @@ BOSS_SKILLS.update(WHALER_SKILLS)
 BOSS_SKILLS.update(CHAPLAIN_SKILLS)
 BOSS_SKILLS.update(MOB_SKILLS)
 BOSS_SKILLS.update(NAZARICK_SKILLS)
+from arena_guild_rules import SKILLS as GUILD_SKILLS
+BOSS_SKILLS.update(GUILD_SKILLS)
 
 
 def raid_boss_sprite(boss_id, phase=1):

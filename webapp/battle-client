@@ -104,6 +104,7 @@ const sprite=c=>{
   if(/^\/rp\/images\/[0-9a-f]{64}\.png$/.test(data.sprite_url||''))return data.sprite_url;
   if(/^\/rp\/images\/[0-9a-f]{64}\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(/^\/static\/assets\/nazarick\/[a-z0-9_]+\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
+  if(/^\/static\/assets\/guild\/[a-z]+-v1\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(/^\/static\/assets\/(?:(?:archclasses|rpg|casino)\/)?[a-z_]+\.png$/.test(data.class_avatar_url||""))return data.class_avatar_url;
   if(/^\/static\/assets\/encounters\/(?:goblin|brute|shaman)\.svg$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(["warrior","mage","priest","hunter"].includes(id))return "/static/assets/rpg/"+id+".png";
@@ -759,6 +760,13 @@ async function openRP(selectedChat=null){
     try{raidScreen(await api('/api/raid/'+id));}catch(error){toast(error.message);await openRP(selectedChat);}
   }});
 }
+async function openGuild(selectedChat=null,runId='',boardOnly=false){
+  window.ArenaQTEWatch?.close();closeEffect();closeStats();closeRaidDetails();
+  current=null;raidCurrent=null;mirrorRun=null;token='';page='guild';audio.scene('menu');
+  await window.GuildApp.open({app,chat:selectedChat,runId,boardOnly,toast,initData:tg?.initData||'',
+    onRaid:async id=>{try{raidScreen(await api('/api/raid/'+id));}catch(error){toast(error.message);await openGuild(selectedChat,runId);}},
+    onArena:async id=>{if(id){chat=id;page='personal';await openMenu();}}});
+}
 async function menuAction(action,extra={}){
   if(demo){toast('Демо: покупки и изменения не сохраняются.');menuScreen(menu);return;}
   if(busy)return;busy=true;
@@ -1007,6 +1015,8 @@ async function boot(){
   }
   const start=new URLSearchParams(location.search).get("tgWebAppStartParam")||tg?.initDataUnsafe?.start_param||"";
   try{
+    if(start==='guild'||/^guild_-?\d+$/.test(start)||start.startsWith('guildrun_')){await openGuild(/^guild_-?\d+$/.test(start)?Number(start.slice(6)):null,start.startsWith('guildrun_')?start.slice(9):'');return;}
+    if(start==='guildboard'||/^guildboard_-?\d+$/.test(start)){await openGuild(start==='guildboard'?null:Number(start.slice(11)),'',true);return;}
     if(start==='rp'||/^rp_-?\d+$/.test(start)||location.pathname==='/rp'){await openRP(/^rp_-?\d+$/.test(start)?Number(start.slice(3)):null);return;}
     if(start==='pets'||/^pets_-?\d+$/.test(start)){location.replace('/pets'+(start==='pets'?'':'?chat='+start.slice(5))+location.hash);return;}
     if(start==='holdings'||/^holdings_-?\d+$/.test(start)){await openHoldings(start==='holdings'?null:Number(start.slice(9)));}
@@ -1072,6 +1082,7 @@ function chaplainArt(f,key){
   return {...f,class_avatar_url:other.class_avatar_url,sprite_url:other.sprite_url,pixel_art:other.pixel_art};
 }
 function raidPhaseLabel(data){
+  if(data.guild_run_id)return 'ЗАКАЗ ГИЛЬДИИ · РАУНД '+data.data.round;
   const nz=data.data?.nazarick_view;if(nz)return 'НАЗАРИК · БОСС '+nz.stage+' / 5 · '+nz.phase_name+' · РАУНД '+nz.stage_round;
   if(data.kind==='encounter')return 'РП-ВСТРЕЧА · РАУНД '+data.data.round;
   const d=data.data;return (data.boss_id==='chaplain'&&d.phase<3?'РЕГЛАМЕНТ':('ФАЗА '+d.phase+' / '+(data.phase_count||d.phase_count||2)))+' · РАУНД '+d.round;
@@ -1160,7 +1171,7 @@ function raidScreen(data){
     body='<div class="raid-intent"><span class="eyebrow">'+raidPhaseLabel(data)+'</span><h3>'+esc(d.intent.text)+'</h3>'+(targets?'<p class="muted">Цель: '+targets+'</p>':'')+prediction+'</div><div class="raid-field'+(data.boss_id==='doofenshmirtz'?' doof-field':data.boss_id==='kit'?' kit-field':'')+'" data-boss="'+esc(data.boss_id)+'" data-phase="'+esc(d.phase)+'" aria-label="Поле боя: отряд слева внизу, босс справа вверху">'+raidPortrait(d.boss,'boss')+raidSupport(data)+raidDialogue(data)+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
     if(data.kind==='encounter'){
       const intents=raidPlaying?'<p>Разыгрывается раунд</p>':Object.entries(d.enemy_intents||{}).filter(([key])=>d.enemies[key].hp>0).map(([key,i])=>'<p><b>'+esc(d.enemies[key].name)+'</b>: '+esc(i.text)+(i.targets.length?' → '+i.targets.map(k=>esc(d.players[k]?.fighter.name)).join(', '):'')+'</p>').join('');
-      body='<div class="raid-intent"><span class="eyebrow">'+raidPhaseLabel(data)+'</span><h3>Намерения противников</h3>'+intents+'<small>Мастер: '+esc(data.master_name)+' · награды отключены</small></div><div class="raid-field encounter-field" aria-label="Отряд слева внизу, противники справа вверху">'+Object.entries(d.enemies).map(([key,f],i)=>encounterPortrait(f,key,i)).join('')+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
+      body='<div class="raid-intent"><span class="eyebrow">'+raidPhaseLabel(data)+'</span><h3>Намерения противников</h3>'+intents+'<small>'+(data.guild_run_id?'Гильдия охотников · награда после завершения заказа':'Мастер: '+esc(data.master_name)+' · награды отключены')+'</small></div><div class="raid-field encounter-field'+(data.guild_run_id?' guild-field':'')+'" data-biome="'+esc(data.guild_biome||'mines')+'" aria-label="Отряд слева внизу, противники справа вверху">'+Object.entries(d.enemies).map(([key,f],i)=>encounterPortrait(f,key,i)).join('')+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
     }
     body+=chaplainPanel(data,own);
     if(d.nazarick_view){
@@ -1190,7 +1201,7 @@ function raidScreen(data){
     if(demo&&data.boss_id==='kit')body+='<div class="row">'+[1,2,3].map(n=>raidButton('Фаза '+n+' · демо','kitphase:'+n,'small')).join('')+'</div>';
   }else body='<div class="card"><h2>Сбор рейда закрыт</h2><p>Новый отряд можно собрать командой /рейд в чате.</p></div>';
   if(data.status==='finished')body+=petRewards(data.data?.rewards?.[String(data.actor_id)]?.pet_rewards);
-  app.innerHTML='<section class="menu raid-screen">'+top(data.kind==='encounter'?'РП-встреча':data.silent?'Тихий рейд':'Командный рейд','ГНИДА · ЧАТ '+chat,raidButton('Обновить','refresh','small'))+'<div class="content">'+body+'<div class="row">'+raidButton(data.kind==='encounter'?'В RP-меню':'В меню арены',data.kind==='encounter'?'rp':'menu','small')+'</div></div></section>';
+  app.innerHTML='<section class="menu raid-screen">'+top(data.guild_run_id?'Гильдия · заказ':data.kind==='encounter'?'РП-встреча':data.silent?'Тихий рейд':'Командный рейд','ГНИДА · ЧАТ '+chat,raidButton('Обновить','refresh','small'))+'<div class="content">'+body+'<div class="row">'+raidButton(data.guild_run_id?'К карте похода':data.kind==='encounter'?'В RP-меню':'В меню арены',data.guild_run_id?'guild':data.kind==='encounter'?'rp':'menu','small')+'</div></div></section>';
   if(data.boss_id==='whaler'){
     document.querySelector('.raid-field')?.classList.add('whaler-field');
     const intent=document.querySelector('.raid-intent');
@@ -1371,6 +1382,7 @@ app.addEventListener('click',async event=>{
   if(cmd==='join'){await raidAction('join',{personal:parts[0]==='p',fighter:Number(parts[1])});return;}
   if(cmd==='joinrp'){await raidAction('join',{personal:true,fighter:raidCurrent.actor_id,rp_template:arg});return;}
   if(cmd==='rp'){await openRP(raidCurrent.chat_id);return;}
+  if(cmd==='guild'){await openGuild(raidCurrent.chat_id,raidCurrent.guild_run_id);return;}
   if(cmd==='target'){selectEncounterTarget(arg);return;}
   if(cmd==='finish'){if(confirm('Завершить РП-встречу для всего отряда?'))await raidAction('finish');return;}
   if(cmd==='skill'){await raidAction('skill',{round:raidCurrent.data.round,skill:arg,...(raidCurrent.kind==='encounter'||raidCurrent.data?.multi_enemy?{target:encounterTarget}:{})});return;}

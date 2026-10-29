@@ -226,12 +226,17 @@ dialog.audio-dialog,dialog.stats-dialog,dialog.holdings-dialog{
 .encounter-field button.encounter-target:hover:not(:disabled) .raid-ground{border-color:#f0c574}
 .encounter-field .encounter-selected .raid-ground{border-color:#f0c574;background:#f0c57426;box-shadow:0 0 16px #f0c57455}
 .encounter-field{height:620px;background:radial-gradient(ellipse at 30% 95%,#496453,transparent 70%),linear-gradient(#172b30,#2e4249 60%,#364943)}
-/* Match the allies' diagonal step, shifted to the opposing upper-right side. */
-.encounter-field .encounter-enemy{width:23%;left:auto}
-.encounter-field .enemy-0{right:50%;top:2%}
-.encounter-field .enemy-1{right:25%;top:7%}
+/* Start at the middle of the field, then step diagonally right. A lone
+   enemy uses the same central anchor; Nazarick keeps its bespoke layout. */
+.encounter-field .encounter-enemy{width:20%;left:auto}
+.encounter-field .enemy-0{right:40%;top:2%}
+.encounter-field .enemy-1{right:20%;top:7%}
 .encounter-field .enemy-2{right:0;top:12%}
 .encounter-field .encounter-enemy .raid-art{height:140px}
+.guild-field .raid-enemy .raid-sprite{transform:none}
+.guild-field .raid-enemy .raid-sprite:not(.raid-strike-left):not(.raid-cast):not(.raid-hit){animation:raid-idle 3s ease-in-out infinite}
+.guild-field .raid-art .raid-strike-left{animation:guild-enemy-attack .35s ease}
+@keyframes guild-enemy-attack{50%{transform:translateX(-25px) rotate(-5deg)}}
 .encounter-field .encounter-enemy .raid-hud{position:static;width:auto;max-width:100%;padding:5px;background:#101d2ac9;border-radius:8px;text-align:center}
 .encounter-field .encounter-selected .raid-hud{outline:2px solid #f0c574}
 .encounter-field .encounter-enemy .raid-effects{min-height:18px}
@@ -242,7 +247,7 @@ dialog.audio-dialog,dialog.stats-dialog,dialog.holdings-dialog{
 .encounter-field .raid-enemy .raid-hud .row{justify-content:center}
 @media(max-width:550px){
   .encounter-field{height:560px}
-  .encounter-field .encounter-enemy{width:25%}
+  .encounter-field .encounter-enemy{width:22%}
   .encounter-field .encounter-enemy .raid-art{height:112px}
   .encounter-field .encounter-enemy .raid-hud{max-width:100%;width:auto}
   .encounter-field .raid-hud strong{font-size:10px}

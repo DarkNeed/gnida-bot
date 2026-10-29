@@ -12,6 +12,7 @@
     ctx.clearRect(0,0,720,400);ctx.fillStyle='#09131f';ctx.fillRect(0,0,720,400);
     for(let x=0;x<=720;x+=40)line(x,0,x,400,'#162b3b');for(let y=0;y<=400;y+=40)line(0,y,720,y,'#162b3b');
     arc(145,0,Math.PI*2,'#263c4b');arc(92,0,Math.PI*2,'#213945');
+    window.QTEArt?.field(ctx,s,400);
     const nz=window.NazarickQTE?.identity(s.p);
     if(nz){text(s.p.skill.name+' · ФАЗА '+nz.phase,cx,25,window.NazarickQTE.colors[nz.who],15);}
     if(nz?.who==='ainz'&&nz.phase===2&&staffArt?.complete&&staffArt.naturalWidth){ctx.save();ctx.shadowColor='#b090f4';ctx.shadowBlur=12;ctx.drawImage(staffArt,626,66+Math.sin(t*2)*6,78,116);ctx.restore();text('ПАРЯЩИЙ ПОСОХ',640,204,'#ba9ae9',10);}
@@ -96,6 +97,7 @@
           ctx.restore();
         }
       }else if(C)chaplainThreat(e,v,c);
+      else if(window.QTEArt?.block(ctx,s,e,v)){/* Native class projectile, same timing/direction. */}
       else if(e.kind==='wave'){arc(155-v*107,0,Math.PI*2,c,4);text('ВОЛНА · ПОДНИМИ БЛОК',cx,309,'#f0cd92',13);}
       else{
         const r=162-v*113,x=cx+Math.cos(e.angle)*r,y=cy+Math.sin(e.angle)*r;

@@ -52,6 +52,8 @@ def random_values(seed):
 
 def family(s):
     ident, n = s.get("base_id", ""), s.get("name", "").lower()
+    guild={'guild_stab':'slash','guild_net':'paint','guild_fang':'beast','guild_hex':'mana','guild_smash':'impact','guild_bone':'death','guild_soul':'death','guild_claw':'beast','guild_fire':'fire','guild_ice':'ice','guild_lightning':'lightning'}
+    if ident in guild:return guild[ident]
     branch, cls = s.get("branch", ""), s.get("class_id")
     if ident.startswith('nz_'):
         from arena_nazarick_patterns import identity

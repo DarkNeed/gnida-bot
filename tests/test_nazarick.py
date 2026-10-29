@@ -220,7 +220,7 @@ class RevisedMechanicsTests(unittest.TestCase):
         result=json.loads(subprocess.check_output(['node','tests/nazarick_render.cjs'],input=json.dumps(fixtures).encode(),cwd=Path(__file__).resolve().parents[1]))
         self.assertGreater(result['draws'],3000)
         client=(Path(__file__).resolve().parents[1]/'webapp/qte-unique/client').read_text(encoding='utf8')
-        self.assertIn('window.NazarickQTE?.identity(s.p)',client)
+        self.assertIn('if(window.QTEView){window.QTEView.draw(ctx,canvas,s);return;}',client)
 
     def state(self,sid):
         from arena_qte_patterns import defense

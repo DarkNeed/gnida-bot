@@ -176,7 +176,7 @@ def add_unique_qte_routes(app, root):
 
     async def page(request):
         version = hashlib.sha256(
-            (root / 'nazarick-qte.js').read_bytes() +
+            (root / 'nazarick-qte.js').read_bytes() + (root / 'qte-art.js').read_bytes() +
             (root / 'qte-block-view').read_bytes() +
             (root / "qte-input").read_bytes()
             + (root / 'qte-casino-view').read_bytes() + (root / 'qte-view').read_bytes()
@@ -210,6 +210,23 @@ def add_unique_qte_routes(app, root):
     app.router.add_get("/qte-lab/unique", page)
     app.router.add_get("/qte-lab/unique/", page)
     app.router.add_get("/qte-lab/unique/{name:engine|client}.js", script)
+
+    async def art_review(request):
+        catalog = json.dumps(review_catalog(), ensure_ascii=False).replace("<", "\\u003c")
+        version = hashlib.sha256(b"".join(
+            (root / name).read_bytes() for name in (
+                'qte-art.js', 'qte-art-review.html', 'qte-art-review.js',
+                'qte-view', 'qte-block-view', 'qte-unique/engine',
+                'qte-block/engine', 'qte-casino-view', 'nazarick-qte.js',
+            )
+        )).hexdigest()[:16]
+        return web.Response(
+            text=(root / 'qte-art-review.html').read_text(encoding='utf-8')
+            .replace('__CATALOG__', catalog).replace('__REV__', version),
+            content_type='text/html', headers={'Cache-Control': 'no-store'},
+        )
+
+    app.router.add_get('/qte-lab/art/', art_review)
     add_block_qte_routes(app, root)
 
 
@@ -219,7 +236,7 @@ def add_block_qte_routes(app, root):
 
     async def page(request):
         version = hashlib.sha256(
-            (root / 'nazarick-qte.js').read_bytes() +
+            (root / 'nazarick-qte.js').read_bytes() + (root / 'qte-art.js').read_bytes() +
             (root / 'qte-block-view').read_bytes() +
             (root / "qte-input").read_bytes()
             + (root / 'qte-casino-view').read_bytes()

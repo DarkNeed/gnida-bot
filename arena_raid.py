@@ -245,6 +245,8 @@ class RaidMixin:
             or self._raid_row_locked(row["token"])["status"] != "active"
         ):
             raise ValueError("Рейд уже закрыт.")
+        if data.get('guild_run_id'):
+            self._guild_battle_finished_locked(row,data)
         if data["won"] and row.get('boss_id') != 'encounter' and data.get('kind') != 'encounter':
             rng = random.SystemRandom()
             now = raid_reward_now()
@@ -556,6 +558,8 @@ class RaidMixin:
         async with self._lock:
             try:
                 row = self._raid_row_locked(token)
+                if row.get('encounter_json') and json.loads(row['encounter_json']).get('guild'):
+                    raise ValueError('Составом и завершением этого похода управляют через гильдию.')
                 if rp_template is not None and row.get('boss_id') != 'encounter':
                     raise ValueError('RP-сборки доступны только во встречах без наград.')
                 self._require_feature_locked(row['chat_id'], 'arena')

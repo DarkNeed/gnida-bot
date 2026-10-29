@@ -6,7 +6,7 @@
   if(staffArt)staffArt.src='/static/assets/nazarick/staff_floating.png';
   function draw(ctx,canvas,s){
     if(s.kind==='attack'&&window.QTECasinoView?.drawAttack(ctx,canvas,s))return;
-    const E=window.QTEUnique,p=s.p,color=p.color,t=s.time;
+    const E=window.QTEUnique,p=s.p,art=window.QTEArt?.appearance(p),color=art?.color||p.color,t=s.time;
     function text(value,x,y,c='#b9cddd',size=13,align='left'){
       ctx.font=`500 ${Math.max(size,Math.min(22,7200/Math.max(1,canvas.clientWidth)))}px Segoe UI,sans-serif`;
       ctx.fillStyle=c;ctx.textAlign=align;ctx.fillText(value,x,y);
@@ -16,6 +16,7 @@
     function heart(x,y,size,c){ctx.save();ctx.translate(x,y);ctx.scale(size/12,size/12);ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(0,5);ctx.bezierCurveTo(-16,-3,-6,-15,0,-6);ctx.bezierCurveTo(6,-15,16,-3,0,5);ctx.fill();ctx.restore();}
     ctx.clearRect(0,0,720,320);ctx.fillStyle='#09111d';ctx.fillRect(0,0,720,320);
     ctx.strokeStyle='#1b3040';ctx.lineWidth=1;for(let x=20;x<720;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,320);ctx.stroke();}for(let y=20;y<320;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(720,y);ctx.stroke();}
+    window.QTEArt?.field(ctx,s);
     const nz=window.NazarickQTE?.identity(p);
     if(nz){
       ctx.save();ctx.globalAlpha=.7;text('НАЗАРИК · '+p.skill.name,18,23,color,12);
@@ -71,11 +72,13 @@
         arc(cx,cy,r,start,start+end,'#2b4358',10);arc(cx,cy,r,start+(f.center-f.width/2)*end,start+(f.center+f.width/2)*end,gold,16);
         if(f.criticalWidth)arc(cx,cy,r,start+(f.center-f.criticalWidth/2)*end,start+(f.center+f.criticalWidth/2)*end,crit,20);
         const a=start+f.cursor*end;ctx.strokeStyle=white;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*55,cy+Math.sin(a)*55);ctx.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r);ctx.stroke();dot(cx+Math.cos(a)*r,cy+Math.sin(a)*r,6,white);
-        if(full)text('✧',cx,cy+7,color,28,'center');else arc(cx,cy,64,Math.PI,Math.PI*2,color,2);
+        if(art)window.QTEArt.glyph(ctx,art.motif,cx,full?cy:cy-20,22,-Math.PI/2,color,t);
+        else if(full)text('✧',cx,cy+7,color,28,'center');else arc(cx,cy,64,Math.PI,Math.PI*2,color,2);
       }else if(style==='pulse'||style==='heart'){
         arc(360,166,30+f.center*104,0,Math.PI*2,gold,Math.max(8,f.width*104));arc(360,166,30+f.cursor*104,0,Math.PI*2,white,3);
         if(f.criticalWidth){arc(360,166,30+f.center*104,0,Math.PI*2,crit,f.criticalWidth*104);arc(360,166,30+f.cursor*104,0,Math.PI*2,white,2);}
-        if(style==='heart')heart(360,171,36,color);else dot(360,166,11,color);
+        if(art)window.QTEArt.glyph(ctx,art.motif,360,166,24,-Math.PI/2,color,t);
+        else if(style==='heart')heart(360,171,36,color);else dot(360,166,11,color);
       }else{
         const left=55,w=610,y=160,cx=left+f.center*w,x=left+f.cursor*w;
         ctx.fillStyle='#172c3e';ctx.fillRect(left,y-20,w,40);ctx.fillStyle='#e4bd7340';ctx.fillRect(cx-f.width*w/2,y-25,f.width*w,50);ctx.strokeStyle=gold;ctx.lineWidth=2;ctx.strokeRect(cx-f.width*w/2,y-25,f.width*w,50);
@@ -86,16 +89,22 @@
         }else if(style==='gates'){ctx.fillStyle=white;ctx.fillRect(x-3,y-50,6,100);ctx.fillStyle=color;ctx.fillRect(left+w*(1-f.cursor)-2,y-38,4,76);}
         else{
           ctx.fillStyle=white;ctx.fillRect(x-3,y-36,6,72);
-          if(style==='scan'){text('0101   EXEC   1100',360,100,color,18,'center');text('COMPILE → COMMIT',360,232,'#7e9eac',12,'center');}
+          if(style==='scan'){
+            const decree=art?.cls==='index',code=art?.cls==='nerd';
+            text(decree?'ПРЕДПИСАНИЕ · ИСПОЛНИТЬ':code?'0101   EXEC   1100':'ПРИЦЕЛ · ЗАФИКСИРОВАН',360,100,color,18,'center');
+            text(decree?'ПЕЧАТЬ → ПРИГОВОР':code?'COMPILE → COMMIT':'ДОЖДИСЬ ЗОЛОТОЙ ОТМЕТКИ',360,232,'#7e9eac',12,'center');
+          }
           if(style==='cross'){ctx.strokeStyle=color;ctx.beginPath();ctx.moveTo(x-20,y);ctx.lineTo(x+20,y);ctx.stroke();}
         }
       }
+      window.QTEArt?.attack(ctx,s,f);
       const r=s.results[f.index],critical=s.criticals?.[f.index];text(f.phase==='cue'?'СИГНАЛ · СЕЙЧАС НАЧНЁТСЯ':r===null?'ПОПЫТОК: '+f.attemptsLeft+' / 1':r?(critical?'КРИТИЧЕСКИЙ УДАР ×1,5':'ПОПАДАНИЕ'):'ПРОМАХ',360,292,r===null?'#b9cddd':critical?crit:r?'#8ed5b5':'#ecaaa5',12,'center');
     }else{
       function hazard(h){
         const warning=t<h.start,g=E.geometry(h,t),spent=!h.visualOnly&&(h.disabled||s.hitIds.includes(h.damageId)),major=h.tier==='heavy'||h.tier==='critical',c=h.color||(major?(h.tier==='critical'?'#fff0b7':'#e8bd7c'):color);
         ctx.save();ctx.strokeStyle=c;ctx.fillStyle=c;ctx.globalAlpha=spent?.1:warning?.55:h.tier==='minor'?.65:.95;ctx.setLineDash(warning?[7,6]:[]);
         if(!warning&&major&&!spent){ctx.shadowColor=c;ctx.shadowBlur=h.tier==='critical'?14:6;}
+        if(window.QTEArt?.hazard(ctx,s,h,g,{warning,spent})){ctx.restore();return;}
         if(h.uniform){
           // Trap and shelter share ALL visual properties; only the inscription differs.
           ctx.shadowBlur=0;ctx.globalAlpha=warning?.65:.95;ctx.setLineDash(warning?[6,5]:[]);

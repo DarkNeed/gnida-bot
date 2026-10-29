@@ -24,6 +24,7 @@ from handlers.character_grants import create_character_grant_router
 from handlers.pet_grants import create_pet_grant_router
 from handlers.enterprises import create_enterprise_router, sweep_recovery_events
 from handlers.rp import create_rp_router
+from handlers.guild import create_guild_router,GuildPublisher
 from handlers.slave_finance import sweep_finance, create_finance_router
 
 
@@ -69,6 +70,7 @@ async def main() -> None:
         await bot.session.close()
         raise
     publisher = ArenaPublisher(database, bot, username)
+    guild_publisher=GuildPublisher(database,bot,username)
     dispatcher = Dispatcher()
     dispatcher.include_router(create_admin_menu_router(database))
     dispatcher.include_router(create_character_grant_router(database, username))
@@ -83,6 +85,7 @@ async def main() -> None:
     dispatcher.include_router(create_finance_router(database))
     dispatcher.include_router(create_enterprise_router(database))
     dispatcher.include_router(create_rp_router(database, bot, username, bool(webapp_url)))
+    dispatcher.include_router(create_guild_router(database, bot, username, bool(webapp_url),guild_publisher))
     dispatcher.include_router(
         create_arena_router(database, bot, username, bool(webapp_url), publisher)
     )
@@ -133,6 +136,7 @@ async def main() -> None:
                 for raid in await database.arena_raid_expire():
                     await publisher.raid_changed(raid["token"])
                 await publisher.raids.retry_pending()
+                await guild_publisher.sweep()
                 sweep_time = asyncio.get_running_loop().time()
                 if webapp_url and sweep_time - last_merchant_sweep >= 30:
                     last_merchant_sweep = sweep_time
@@ -175,7 +179,7 @@ async def main() -> None:
                 raise RuntimeError("PORT must be between 1 and 65535")
             runner = web.AppRunner(
                 create_arena_app(database, bot, token, publisher.changed, publisher.raid_changed,
-                                 pets_payments_enabled=pets_payments_enabled, rp_publisher=publisher.raids)
+                                 pets_payments_enabled=pets_payments_enabled, rp_publisher=publisher.raids,guild_publisher=guild_publisher)
             )
             await runner.setup()
             await web.TCPSite(runner, "0.0.0.0", port).start()

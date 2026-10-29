@@ -470,7 +470,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
 
 
 def create_arena_app(
-    db, bot, token: str, changed=None, raid_changed=None, *, pets_payments_enabled=False, rp_publisher=None
+    db, bot, token: str, changed=None, raid_changed=None, *, pets_payments_enabled=False, rp_publisher=None, guild_publisher=None
 ) -> web.Application:
     member_cache: dict[tuple[int, int], float] = {}
 
@@ -1019,4 +1019,6 @@ def create_arena_app(
     register_holdings(app,db,bot,ACTOR,require_member,int_field)
     from arena_rp_web import register_rp
     register_rp(app, db, bot, ACTOR, require_member, read_member, raid_changed, rp_publisher)
+    from arena_guild_web import register_guild
+    register_guild(app,db,bot,ACTOR,require_member,read_member,guild_publisher)
     return app
