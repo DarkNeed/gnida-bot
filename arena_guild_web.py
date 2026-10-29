@@ -2,9 +2,11 @@
 import asyncio
 from aiohttp import web
 from aiogram.exceptions import TelegramAPIError
+from arena_guild_avatars import GuildAvatarCache
 
 
 def register_guild(app,db,bot,actor_key,require_member,read_member,publisher=None):
+    avatars=GuildAvatarCache(bot)
     async def authorize(chat,actor,fresh=False):
         if type(chat) is not int or not await db.user_knows_chat(actor,chat):raise ValueError('Этот чат недоступен.')
         await db.arena_require_enabled(chat)
@@ -59,6 +61,18 @@ def register_guild(app,db,bot,actor_key,require_member,read_member,publisher=Non
         if not publisher:raise ValueError('Отправка приглашений в этом режиме недоступна.')
         return web.json_response(await publisher.invite(ident,actor))
 
+    async def avatar(request):
+        actor=request[actor_key];ident=request.match_info['id'];user=int(request.match_info['user'])
+        async with db._lock:
+            row=db._guild_row_locked(ident);chat=row['chat_id'];members=row['members']
+        await authorize(chat,actor)
+        if user not in members:raise ValueError('Участник не относится к этому отряду.')
+        value=await avatars.get(user)
+        if not value:return web.Response(status=204,headers={'Cache-Control':'no-store','Vary':'X-Telegram-Init-Data'})
+        data,mime=value
+        return web.Response(body=data,content_type=mime,headers={
+            'Cache-Control':'no-store','Vary':'X-Telegram-Init-Data','X-Content-Type-Options':'nosniff'})
+
     async def buy(request):
         body=await request.json();actor=request[actor_key]
         if not isinstance(body,dict):raise ValueError('Некорректный запрос.')
@@ -72,4 +86,5 @@ def register_guild(app,db,bot,actor_key,require_member,read_member,publisher=Non
     app.router.add_get('/api/guild/runs/{id}',run)
     app.router.add_post('/api/guild/runs/{id}',run)
     app.router.add_post('/api/guild/runs/{id}/invite',invite)
+    app.router.add_get('/api/guild/runs/{id}/avatars/{user:\\d+}',avatar)
     app.router.add_post('/api/guild/buy',buy)

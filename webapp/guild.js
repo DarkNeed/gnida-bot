@@ -26,6 +26,7 @@
     previous?.abort();const abort=new AbortController();previous=abort;
     const app=context.app,init=context.initData??window.Telegram?.WebApp?.initData??'';
     let chat=context.chat??null,view,run=null,chats=[],tab='board',filter='all',rankFilter='recommended',busy=false,runId=context.runId||'',timer;
+    const avatarCache=new Map();
     const toast=m=>context.toast?.(m);
     async function api(path,body){
       const res=await fetch(path,{method:body?'POST':'GET',signal:abort.signal,headers:{'X-Telegram-Init-Data':init,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
@@ -62,7 +63,34 @@
     function bestiary(){shell(navigation()+'<div class="guild-section-title"><div><p class="guild-kicker">ПОЛЕВОЙ СПРАВОЧНИК</p><h2>Знай свою добычу.</h2></div><small>'+view.monsters.length+' видов</small></div><div class="guild-bestiary">'+view.monsters.map(m=>'<article class="guild-panel">'+badge(m.rank,true)+'<img src="'+monsterArt(m)+'" alt="'+esc(m.name)+'" loading="lazy" decoding="async"><h3>'+esc(m.name)+'</h3><p>'+esc(m.role)+'</p><small>Основа: '+m.hp+' HP · атака '+m.attack+' · защита '+m.armor+' · уклонение '+m.evasion+'%</small></article>').join('')+'</div><p class="guild-hint">В особых заказах цель усилена: HP ×1,45. На двух/трёх охотников HP ×1,6/×2,2. Уровень и атака не зависят от уровня отряда. Шаман лечит союзников; стая выбирает раненых; огонь подавляет восстановление тролля.</p>');}
     function leaderboard(){shell(navigation()+'<div class="guild-section-title"><div><p class="guild-kicker">ЗАЛ СЛАВЫ · ОБЩИЙ ДЛЯ ВСЕХ ЧАТОВ</p><h2>Они возвращались.</h2></div></div><div class="guild-ranking">'+view.leaderboard.map((h,i)=>'<article><b class="guild-place">'+String(i+1).padStart(2,'0')+'</b>'+badge(h.rank_name,true)+'<div><strong>'+esc(h.name||h.actor_id)+'</strong><small>'+h.reputation+' репутации · '+h.wins+' заказов · '+h.dungeons+' подземелий</small></div><span>'+((h.wins+h.losses)?Math.round(h.wins/(h.wins+h.losses)*100)+'%':'—')+'<small>успех</small></span></article>').join('')+'</div><p class="guild-hint">Сортировка: текущий ранг → репутация → выполненные заказы. Лёгкие заказы не заменяют высокие ранги. SS, SSS и легендарные лицензии пока не введены.</p>');}
     function render(){if(run){renderRun();return;}if(tab==='hunter')hunter();else if(tab==='shop')shop();else if(tab==='bestiary')bestiary();else if(tab==='top')leaderboard();else board();}
-    function party(r){return '<div class="guild-party">'+r.members.map(p=>'<article>'+badge(p.rank,true)+'<div><b>'+esc(p.name)+(p.actor_id===r.leader?' <small>Лидер</small>':'')+'</b>'+(p.hp!==null?'<div class="guild-mini-hp"><i style="width:'+100*p.hp/p.max_hp+'%"></i></div><small>'+p.hp+'/'+p.max_hp+' HP · '+p.resource+'/'+p.resource_max+' энергии'+(p.withdrawn?' · покинул отряд':'')+'</small>':'<small>Обычный персонаж · снимок при старте</small>')+'</div></article>').join('')+'</div>';}
+    function party(r){return '<div class="guild-party">'+r.members.map(p=>{
+      const initials=(p.name.match(/[\p{L}\p{N}]+/gu)||[]).slice(0,2).map(w=>Array.from(w)[0]).join('').toUpperCase()||'?';
+      return '<article><span class="guild-member-avatar" data-avatar-user="'+p.actor_id+'" role="img" aria-label="Аватар: '+esc(p.name)+'"><span class="guild-avatar-fallback" aria-hidden="true">'+esc(initials)+'</span></span><div class="guild-member-info"><div class="guild-member-heading"><b>'+esc(p.name)+'</b><span class="guild-member-rank" title="Ранг охотника: '+esc(p.rank)+'" aria-label="Ранг охотника '+esc(p.rank)+'">'+esc(p.rank)+'</span>'+(p.actor_id===r.leader?'<small class="guild-member-leader">Лидер</small>':'')+'</div>'+(p.hp!==null?'<div class="guild-mini-hp"><i style="width:'+100*p.hp/p.max_hp+'%"></i></div><small>'+p.hp+'/'+p.max_hp+' HP · '+p.resource+'/'+p.resource_max+' энергии'+(p.withdrawn?' · покинул отряд':'')+'</small>':'<small>Обычный персонаж · снимок при старте</small>')+'</div></article>';
+    }).join('')+'</div>';}
+    async function avatarUrl(user,ident){
+      if(!avatarCache.has(user)){
+        const entry={url:null,promise:null};avatarCache.set(user,entry);
+        entry.promise=(async()=>{
+          try{
+            const res=await fetch('/api/guild/runs/'+encodeURIComponent(ident)+'/avatars/'+user,{signal:abort.signal,headers:{'X-Telegram-Init-Data':init}});
+            if(!res.ok)return null;
+            const blob=await res.blob();if(abort.signal.aborted||!['image/jpeg','image/png','image/webp'].includes(blob.type))return null;
+            entry.url=URL.createObjectURL(blob);return entry.url;
+          }catch{return null;}
+        })();
+      }
+      return avatarCache.get(user).promise;
+    }
+    function hydrateAvatars(){
+      const ident=run?.id;if(!ident)return;
+      for(const node of app.querySelectorAll('.guild-member-avatar')){
+        avatarUrl(Number(node.dataset.avatarUser),ident).then(url=>{
+          if(!url||abort.signal.aborted||!node.isConnected)return;
+          const image=document.createElement('img');image.alt='';image.setAttribute('aria-hidden','true');
+          image.onload=()=>node.classList.add('has-photo');image.onerror=()=>image.remove();image.src=url;node.append(image);
+        });
+      }
+    }
     function map(r){
       const coord=n=>({x:72+n.layer*145,y:68+n.lane*88});
       let paths='';for(const n of r.nodes)for(const id of n.links){const next=r.nodes.find(v=>v.id===id),a=coord(n),b=coord(next);paths+='<path d="M'+a.x+' '+a.y+'C'+(a.x+70)+' '+a.y+' '+(b.x-70)+' '+b.y+' '+b.x+' '+b.y+'" class="'+(n.cleared?'passed':'')+'"/>';}
@@ -85,7 +113,7 @@
         if(Object.keys(r.votes).length)body+='<p class="guild-votes">Голоса: '+Object.keys(r.votes).length+' · осталось '+Math.max(0,r.vote_deadline-r.server_time)+' с</p>';
         body+='</section><section class="guild-panel"><p class="guild-kicker">ПОХОДНЫЙ РЮКЗАК</p><h3>Не забывай дышать.</h3><p>Один припас на участника между комнатами. Припасы покупаются в лавке и сохраняются после похода.</p><label>Помочь <select id="guild-target" aria-label="Цель припаса">'+r.members.map(p=>'<option value="'+p.actor_id+'"'+(p.actor_id===view.actor_id?' selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select></label><div class="guild-bag">'+view.shop.filter(s=>r.bag[s.id]>0).map(s=>button(esc(s.name)+' ×'+r.bag[s.id],'supply:'+s.id,'guild-quiet',!member||busy||!!r.battle||!!r.supplies_used[view.actor_id+':'+r.position])).join('')+(Object.values(r.bag).some(q=>q>0)?'':'<p>Рюкзак пуст. В следующий поход возьми припасы.</p>')+'</div>'+(leader?button('Отступить · сохранить 50% находок','retreat','guild-danger',!!r.battle||busy):'')+'<p class="guild-hint">Отступление не даёт основную награду и считается неудачным заказом. Обычный инвентарь не теряется.</p></section></div>';
       }else body+='<section class="guild-result"><div class="guild-result-seal">'+sigil+'</div><p class="guild-kicker">'+esc(states[r.status])+'</p><h2>'+esc(r.reason||'Сбор отряда завершён.')+'</h2>'+Object.entries(r.results).map(([key,result])=>'<article><b>'+esc(r.members.find(p=>String(p.actor_id)===key)?.name||key)+'</b><strong>+'+result.francs+' ₣</strong><span>'+esc(result.loot||'Без предметов')+'</span><small>Ранг '+result.rank+' · '+(result.reputation>0?'+':'')+result.reputation+' репутации'+(result.rank!==result.rank_before?' · раньше '+result.rank_before:'')+'</small></article>').join('')+button('Новый заказ','back','primary')+'</section>';
-      body+='<section class="guild-section"><h3>Дневник похода</h3><ol class="guild-journal">'+r.history.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ol></section>';shell(body);
+      body+='<section class="guild-section"><h3>Дневник похода</h3><ol class="guild-journal">'+r.history.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ol></section>';shell(body);hydrateAvatars();
     }
     async function loadBoard(){view=await api('/api/guild/board?chat='+chat);if(abort.signal.aborted)return;render();}
     async function loadRun(id){run=await api('/api/guild/runs/'+encodeURIComponent(id));chat=run.chat_id;if(!view||view.chat_id!==chat)view=await api('/api/guild/board?chat='+chat);renderRun();}
@@ -115,7 +143,7 @@
       finally{busy=false;if(!abort.signal.aborted&&view)render();}
     },{signal:abort.signal});
     app.addEventListener('change',async e=>{if(e.target.id==='guild-rank'&&!busy){rankFilter=e.target.value;render();}else if(e.target.id==='guild-chat'&&!busy){chat=Number(e.target.value);run=null;try{await loadBoard();}catch(error){toast(error.message);}}},{signal:abort.signal});
-    abort.signal.addEventListener('abort',()=>clearInterval(timer));
+    abort.signal.addEventListener('abort',()=>{clearInterval(timer);for(const entry of avatarCache.values())if(entry.url)URL.revokeObjectURL(entry.url);avatarCache.clear();});
     try{
       chats=(await api('/api/guild/chats')).chats;
       if(runId){await loadRun(runId);}

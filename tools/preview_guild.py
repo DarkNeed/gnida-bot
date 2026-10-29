@@ -49,6 +49,7 @@ async def application():
         return SimpleNamespace(message_id=ident)
     async def edit(text,**kwargs):messages[kwargs['message_id']]=dict(text=text,keyboard=kwargs.get('reply_markup'))
     bot=SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status='member',user=SimpleNamespace(is_bot=False))),
+        get_user_profile_photos=AsyncMock(return_value=SimpleNamespace(photos=[])),
         send_message=AsyncMock(side_effect=send),edit_message_text=AsyncMock(side_effect=edit))
     publisher=GuildPublisher(db,bot,'GnidoBot')
     app=create_arena_app(db,bot,TOKEN,guild_publisher=publisher)
