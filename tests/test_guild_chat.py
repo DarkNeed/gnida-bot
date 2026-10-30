@@ -124,7 +124,7 @@ class GuildChatTests(unittest.IsolatedAsyncioTestCase):
         await self.click(run,'start')
         await self.click(run,'start')
         run=await self.db.guild_get(run['id'],10)
-        self.assertEqual(run['status'],'active');self.assertEqual(self.db._guild_used_locked(10),1);self.assertEqual(self.db._guild_used_locked(20),1)
+        self.assertEqual(run['status'],'active');self.assertEqual(self.db._guild_used_locked(10),0);self.assertEqual(self.db._guild_used_locked(20),0)
         text,keyboard=self.pub.card(run)
         self.assertIn('Поход начался',text)
         self.assertIn('startapp=guildrun_',keyboard.inline_keyboard[0][0].url)
@@ -141,7 +141,7 @@ class GuildChatTests(unittest.IsolatedAsyncioTestCase):
         await guild_chat_action(self.db,run['id'],run['members'][1]['actor_id'],'join')
         self.assertEqual(self.db._guild_used_locked(10),0)
 
-    async def test_rank_daily_choice_and_cross_chat_are_enforced(self):
+    async def test_rank_choice_and_chat_enforced_but_daily_wins_allow_join(self):
         run=await self.publish()
         forwarded=await self.click(run,'join',20,chat=-200)
         self.assertTrue(forwarded.answer.call_args.kwargs['show_alert'])
@@ -149,9 +149,9 @@ class GuildChatTests(unittest.IsolatedAsyncioTestCase):
         denied=await self.click(run,'join',20);self.assertTrue(denied.answer.call_args.kwargs['show_alert'])
         self.db.connection.execute('UPDATE guild_hunters SET rank=3 WHERE actor_id=20')
         from arena_raid import raid_day
-        self.db.connection.execute('INSERT INTO guild_daily VALUES(?,?,3)',(20,raid_day()));self.db.connection.commit()
-        denied=await self.click(run,'join',20);self.assertTrue(denied.answer.call_args.kwargs['show_alert'])
-        self.db.connection.execute('DELETE FROM guild_daily WHERE actor_id=20')
+        self.db.connection.execute('INSERT INTO guild_reward_days VALUES(?,?,3)',(20,raid_day()));self.db.connection.commit()
+        joined=await self.click(run,'join',20);self.assertFalse(joined.answer.call_args.kwargs.get('show_alert',False))
+        await self.click(run,'leave',20)
         self.db.connection.execute("UPDATE personal_profiles SET level=10,progression_level=5,progression_pending_level=10 WHERE chat_id=0 AND user_id=20");self.db.connection.commit()
         denied=await self.click(run,'join',20);self.assertTrue(denied.answer.call_args.kwargs['show_alert'])
         self.assertEqual(len((await self.db.guild_get(run['id'],10))['members']),1)

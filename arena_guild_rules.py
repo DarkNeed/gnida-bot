@@ -6,7 +6,7 @@ from arena_engine import Skill
 
 RANKS = ('F', 'E', 'D', 'C', 'B', 'A', 'S')
 LEVELS = (2, 5, 8, 12, 16, 19, 20)
-DAILY_LIMIT = 3
+DAILY_FULL_REWARDS = 3
 RUN_SECONDS = 48 * 3600
 LOBBY_SECONDS = 1800
 INVITE_COOLDOWN = 300

@@ -9,7 +9,7 @@ import json
 import random
 import secrets
 import time
-from arena_guild_rules import (RANKS, DAILY_LIMIT, RUN_SECONDS, LOBBY_SECONDS,
+from arena_guild_rules import (RANKS, DAILY_FULL_REWARDS, RUN_SECONDS, LOBBY_SECONDS,
     CONTRACTS, MONSTERS, BIOMES, SUPPLIES, EVENTS, make_map, mob_templates,
     calibration_rank, fingerprint, art, INVITE_COOLDOWN)
 from arena_raid import raid_day, RAID_ROUND_SECONDS
@@ -27,6 +27,10 @@ class GuildMixin:
                 calibrated INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS guild_daily(
                 actor_id INTEGER NOT NULL, day TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0 CHECK(used BETWEEN 0 AND 3),
+                PRIMARY KEY(actor_id,day));
+            CREATE TABLE IF NOT EXISTS guild_reward_days(
+                actor_id INTEGER NOT NULL, day TEXT NOT NULL,
+                full_wins INTEGER NOT NULL DEFAULT 0 CHECK(full_wins BETWEEN 0 AND 3),
                 PRIMARY KEY(actor_id,day));
             CREATE TABLE IF NOT EXISTS guild_runs(
                 id TEXT PRIMARY KEY, chat_id INTEGER NOT NULL, leader INTEGER NOT NULL,
@@ -61,8 +65,24 @@ class GuildMixin:
         return dict(self.connection.execute('SELECT * FROM guild_hunters WHERE actor_id=?', (actor,)).fetchone())
 
     def _guild_used_locked(self, actor):
-        row=self.connection.execute('SELECT used FROM guild_daily WHERE actor_id=? AND day=?', (actor,raid_day())).fetchone()
-        return row['used'] if row else 0
+        # Old guild_daily counts starts (including defeats), not reward wins.
+        # Retain it as history; never convert lost attempts into spent bonuses.
+        row=self.connection.execute('SELECT full_wins FROM guild_reward_days WHERE actor_id=? AND day=?', (actor,raid_day())).fetchone()
+        return row['full_wins'] if row else 0
+
+    def _guild_reward_preview_locked(self,actor,contract=None):
+        used=self._guild_used_locked(actor);full=used<DAILY_FULL_REWARDS
+        result=dict(full=full,used=used,limit=DAILY_FULL_REWARDS,remaining=max(0,DAILY_FULL_REWARDS-used),
+            day=raid_day(),timezone='Europe/Moscow',unlimited=True,
+            francs_pct=100 if full else 25,reputation_pct=100 if full else 30,
+            materials_pct=100 if full else 50,equipment_pct=100,tractate=full,supply=full)
+        if contract:
+            h=self._guild_hunter_locked(actor);difficulty=RANKS.index(contract['rank'])
+            reputation=0 if contract.get('calibration') else 40 if difficulty>h['rank'] else 28 if difficulty==h['rank'] else 0
+            result.update(francs_base=contract['reward'] if full else contract['reward']//4,
+                reputation=reputation if full else (reputation*30+50)//100,
+                guaranteed_equipment=contract['kind']=='dungeon')
+        return result
 
     def _guild_busy_locked(self, actor, exclude='', active_only=False):
         return bool(self.connection.execute('''SELECT 1 FROM guild_members m JOIN guild_runs r ON r.id=m.run_id
@@ -103,7 +123,6 @@ class GuildMixin:
         hunter=self._guild_hunter_locked(actor)
         if RANKS.index(contract['rank'])>hunter['rank']+1:
             raise ValueError('Можно брать заказ не выше своего ранга +1.')
-        if self._guild_used_locked(actor)>=DAILY_LIMIT:raise ValueError('Три допуска на сегодня уже использованы. Сброс — в 00:00 МСК.')
 
     def _guild_contract_locked(self, actor, chat, key):
         if not isinstance(key,str):raise ValueError('Некорректный код заказа.')
@@ -130,7 +149,6 @@ class GuildMixin:
                     return self._guild_public_locked(self._guild_row_locked(old['run_id']),actor)
                 contract=self._guild_contract_locked(actor,chat,contract_id)
                 if not contract.get('calibration'):self._guild_require_rank_locked(actor,contract)
-                elif self._guild_used_locked(actor)>=DAILY_LIMIT:raise ValueError('Нет допусков на сегодня.')
                 if self._arena_busy_locked(chat,actor):raise ValueError('Сначала заверши текущий бой или поход.')
                 self._arena_require_choice_locked(chat,actor,True)
                 now=int(time.time());ident=secrets.token_urlsafe(12)
@@ -152,7 +170,6 @@ class GuildMixin:
             if c.get('calibration'):
                 if len(row['members'])!=1:raise ValueError('Вступительное испытание проходят в одиночку.')
                 self._guild_contract_locked(user,row['chat_id'],'calibration')
-                if self._guild_used_locked(user)>=DAILY_LIMIT:raise ValueError('Нет допусков на сегодня.')
             else:self._guild_require_rank_locked(user,c)
             if self._arena_busy_locked(row['chat_id'],user,guild_exclude=row['id']):raise ValueError('Участник уже занят другим боем.')
             self._arena_require_choice_locked(row['chat_id'],user,True)
@@ -165,13 +182,11 @@ class GuildMixin:
         for key,p in fighters.items():
             p['character_slot']=self._character_active_locked(p['actor_id'])
             p['fighter']['name']=self.connection.execute('SELECT display_name FROM users WHERE chat_id=? AND user_id=?',(row['chat_id'],int(key))).fetchone()['display_name']
-            self.connection.execute('''INSERT INTO guild_daily VALUES(?,?,1) ON CONFLICT(actor_id,day)
-                DO UPDATE SET used=used+1''',(int(key),raid_day()))
             if c.get('calibration'):self.connection.execute('UPDATE guild_hunters SET calibrated=1 WHERE actor_id=?',(int(key),))
         d['players']=fighters;d['sources']=sources;d['nodes']=make_map(c,secrets.randbits(64))
         d['position']='start' if c['kind']=='dungeon' else None
         row['status']='active';row['expires']=int(time.time())+RUN_SECONDS
-        d['history'].append('Допуски списаны. Снимки персонажей сохранены; здоровье между комнатами не восстанавливается автоматически.')
+        d['history'].append('Поход начат без ограничения попыток. Полная награда засчитывается только при победе. Снимки персонажей сохранены; здоровье между комнатами не восстанавливается автоматически.')
         if c['kind']!='dungeon':self._guild_enter_locked(row,'boss')
 
     def _guild_battle_locked(self,row,node):
@@ -310,11 +325,15 @@ class GuildMixin:
             h=self._guild_hunter_locked(actor);p=d['players'].get(str(actor),{})
             eligible=not p.get('withdrawn') and not p.get('reward_blocked') and p.get('missed',0)<3
             success=won and eligible
+            reward_mode=self._guild_reward_preview_locked(actor,c)
+            full=reward_mode['full']
             francs=(c['reward']+d['finds']) if success else d['finds']//2 if retreat and eligible else 0
+            if not full:francs//=4
             reputation=0;rank_before=h['rank'];loot='';equipment_loot=[]
             if success:
                 difficulty=RANKS.index(c['rank'])
                 reputation=40 if difficulty>h['rank'] else 28 if difficulty==h['rank'] else 0
+                if not full:reputation=(reputation*30+50)//100
                 if c.get('calibration'):
                     h.update(rank=difficulty,reputation=0,rank_wins=0,clearance=0)
                     reputation=0
@@ -324,25 +343,32 @@ class GuildMixin:
                     if h['reputation']>=100 and h['rank_wins']>=3 and h['clearance'] and h['rank']<6:
                         h.update(rank=h['rank']+1,reputation=0,rank_wins=0,clearance=0)
                 h['wins']+=1;h['streak']=0;h['dungeons']+=int(c['kind']=='dungeon')
-                # A guaranteed useful guild item; elite/dungeon also drop a real
-                # non-boss tractate. No raid cooldowns, pet grants or PvP rating.
+                # Equipment chances/rarity never depend on the daily bonus.
                 supply='bandage' if difficulty<2 else 'ration' if difficulty<4 else 'antidote'
-                self.connection.execute('INSERT INTO guild_bag VALUES(?,?,1) ON CONFLICT(actor_id,item) DO UPDATE SET quantity=quantity+1',(actor,supply))
-                loot=SUPPLIES[supply]['name']
+                if full:
+                    self.connection.execute('INSERT INTO guild_bag VALUES(?,?,1) ON CONFLICT(actor_id,item) DO UPDATE SET quantity=quantity+1',(actor,supply))
+                    loot=SUPPLIES[supply]['name']
+                bonus_nodes=[n for n in d['nodes'] if n.get('cleared') and n['kind'] in ('treasure','elite')] if c['kind']=='dungeon' else []
+                boss_materials=3 if c['kind']=='dungeon' else 1
+                normal_materials=boss_materials+len(bonus_nodes)
+                material_budget=normal_materials if full else max(1,normal_materials//2)
+                grant=min(boss_materials,material_budget);material_budget-=grant
                 equipment_loot.append(self._gear_loot_locked('guild:'+row['id']+':boss',actor,c,
                     guaranteed=c['kind']=='dungeon',chance=.45 if c['kind']=='elite' else .15,
-                    materials=3 if c['kind']=='dungeon' else 1))
-                if c['kind']=='dungeon':
-                    for node in d['nodes']:
-                        if node.get('cleared') and node['kind'] in ('treasure','elite'):
-                            equipment_loot.append(self._gear_loot_locked('guild:'+row['id']+':'+node['id'],actor,c,chance=.25,materials=1))
-                if c['kind']!='hunt':
+                    materials=grant))
+                for node in bonus_nodes:
+                    grant=min(1,material_budget);material_budget-=grant
+                    equipment_loot.append(self._gear_loot_locked('guild:'+row['id']+':'+node['id'],actor,c,chance=.25,materials=grant))
+                if full and c['kind']!='hunt':
                     from arena_engine import BUILTIN_SKILLS
                     from arena_archprogress import skill_branch
                     rarity='common' if difficulty<2 else 'uncommon' if difficulty<4 else 'rare' if difficulty<6 else 'epic'
                     pool=[s for s in BUILTIN_SKILLS.values() if s.rarity==rarity and s.class_id!='ragamuffin' and 'raid_loot' not in s.tags and not skill_branch(s) and not any(t.startswith('archclass:') for t in s.tags)]
                     if pool:
                         s=random.SystemRandom().choice(pool);self._arena_add_item_locked(row['chat_id'],actor,'skill',s.skill_id,s.rarity);loot+=' · трактат «'+s.name+'»'
+                if full:
+                    self.connection.execute('''INSERT INTO guild_reward_days VALUES(?,?,1)
+                        ON CONFLICT(actor_id,day) DO UPDATE SET full_wins=MIN(3,full_wins+1)''',(actor,reward_mode['day']))
             else:
                 reputation=-12;h['reputation']=max(0,h['reputation']-12);h['losses']+=1;h['streak']+=1
                 if h['reputation']==0 and h['streak']>=3 and h['rank']>0:
@@ -351,7 +377,8 @@ class GuildMixin:
             self.connection.execute('''UPDATE guild_hunters SET rank=?,reputation=?,peak_rank=?,wins=?,losses=?,dungeons=?,streak=?,rank_wins=?,clearance=? WHERE actor_id=?''',
                 tuple(h[k] for k in ('rank','reputation','peak_rank','wins','losses','dungeons','streak','rank_wins','clearance'))+(actor,))
             if francs:self._add_francs_locked(row['chat_id'],actor,francs)
-            result=dict(won=success,francs=francs,loot=loot,equipment_loot=equipment_loot,reputation=reputation,rank=RANKS[h['rank']],rank_before=RANKS[rank_before])
+            result=dict(won=success,francs=francs,loot=loot,equipment_loot=equipment_loot,reward_mode=reward_mode,
+                full_reward=bool(success and full),reward_day=reward_mode['day'],reputation=reputation,rank=RANKS[h['rank']],rank_before=RANKS[rank_before])
             self.connection.execute('INSERT INTO guild_settlements VALUES(?,?,?)',(row['id'],actor,json.dumps(result,ensure_ascii=False)));results[str(actor)]=result
         row['status']='completed' if won else 'retreated' if retreat else 'failed'
         d.update(results=results,reason=reason,battle=None,pending=None,votes={},vote_deadline=0)
@@ -425,7 +452,8 @@ class GuildMixin:
                 class_name=classes[cid].name,level=f['level'] if f else character['level'],
                 hp=f['hp'] if f else None,max_hp=f['stats']['max_hp'] if f else None,
                 resource=f['resource'] if f else None,resource_max=f['stats']['resource_max'] if f else None,
-                withdrawn=bool(p and p.get('withdrawn')),character_slot=p.get('character_slot') if p else None))
+                withdrawn=bool(p and p.get('withdrawn')),character_slot=p.get('character_slot') if p else None,
+                reward_preview=self._guild_reward_preview_locked(user,d['contract'])))
         pending=deepcopy(d['pending'])
         if pending and pending['kind']=='event':pending.update(EVENTS[pending['event']])
         elif pending:pending.update(name='Тихий привал',text='Каждому нужен отдых. Выберите, что важнее сейчас.',choices=[
@@ -519,9 +547,9 @@ class GuildMixin:
                     WHERE m.actor_id=? AND r.status NOT IN ('lobby','active') ORDER BY r.created DESC LIMIT 10''',(actor,)).fetchall()
                 return dict(actor_id=actor,chat_id=chat,hunter=dict(h,rank_name=RANKS[h['rank']],peak_rank_name=RANKS[h['peak_rank']],
                     calibration_rank=calibration_rank(profile['level']) if not(h['calibrated'] or h['wins'] or h['losses']) else None),
-                    daily=dict(used=self._guild_used_locked(actor),limit=DAILY_LIMIT,day=raid_day(),timezone='Europe/Moscow'),
+                    daily=self._guild_reward_preview_locked(actor),
                     francs=money['balance'] if money else 0,ranks=RANKS,biomes=BIOMES,
-                    contracts=[dict(c,locked=RANKS.index(c['rank'])>h['rank']+1) for c in CONTRACTS.values()],
+                    contracts=[dict(c,locked=RANKS.index(c['rank'])>h['rank']+1,reward_preview=self._guild_reward_preview_locked(actor,c)) for c in CONTRACTS.values()],
                     monsters=[dict(id=k,sprite=art(k),**m) for k,m in MONSTERS.items()],shop=[dict(id=k,**s,locked=RANKS.index(s['rank'])>h['rank']) for k,s in SUPPLIES.items()],
                     bag={r['item']:r['quantity'] for r in self.connection.execute('SELECT * FROM guild_bag WHERE actor_id=?',(actor,))},
                     active=self._guild_public_locked(self._guild_row_locked(current['id']),actor) if current else None,

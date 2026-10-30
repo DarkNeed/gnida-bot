@@ -97,7 +97,7 @@ async def application():
             with db.connection:
                 db.connection.execute("UPDATE guild_runs SET status='cancelled' WHERE status IN ('lobby','active')")
                 db.connection.execute("UPDATE arena_raids SET status='cancelled' WHERE status IN ('lobby','active')")
-                db.connection.execute('DELETE FROM arena_qte_flows');db.connection.execute('DELETE FROM guild_daily')
+                db.connection.execute('DELETE FROM arena_qte_flows');db.connection.execute('DELETE FROM guild_daily');db.connection.execute('DELETE FROM guild_reward_days')
         run=await db.guild_create(CHAT,10,'c_dungeon','demo-'+secrets.token_hex(8))
         run=await db.guild_action(run['id'],20,'join',run['revision'])
         run=await db.guild_action(run['id'],10,'start',run['revision'])

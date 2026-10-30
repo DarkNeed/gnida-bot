@@ -55,10 +55,10 @@ class GuildTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_snapshot_quota_and_replay(self):
         run=await self.start(party=True)
         self.assertEqual(run['status'],'active')
-        self.assertEqual(self.db._guild_used_locked(10),1)
-        self.assertEqual(self.db._guild_used_locked(20),1)
+        self.assertEqual(self.db._guild_used_locked(10),0)
+        self.assertEqual(self.db._guild_used_locked(20),0)
         again=await self.db.guild_action(run['id'],10,'start',0)
-        self.assertEqual(again['id'],run['id']);self.assertEqual(self.db._guild_used_locked(10),1)
+        self.assertEqual(again['id'],run['id']);self.assertEqual(self.db._guild_used_locked(10),0)
         created=await self.db.guild_create(-100,10,'c_dungeon','nonce-10-c_dungeon')
         self.assertEqual(created['id'],run['id'])
         self.db.connection.execute("UPDATE personal_profiles SET level=1,class_id='ragamuffin' WHERE chat_id=0 AND user_id=10");self.db.connection.commit()
@@ -141,13 +141,15 @@ class GuildTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run['bag']['bandage'],0)
         with self.assertRaises(ValueError):await self.db.guild_action(run['id'],10,'supply',run['revision'],item='bandage')
 
-    async def test_daily_account_limit_reset_and_safe_retreat(self):
+    async def test_unlimited_attempts_and_safe_retreat_do_not_spend_rewards(self):
         for i in range(3):
             run=await self.db.guild_create(-100,10,'c_dungeon','daily-nonce-'+str(i))
             run=await self.db.guild_action(run['id'],10,'start',run['revision'])
             run=await self.db.guild_action(run['id'],10,'retreat',run['revision'])
-        self.assertEqual(self.db._guild_used_locked(10),3)
-        with self.assertRaises(ValueError):await self.db.guild_create(-200,10,'c_hunt','fourth-one')
+        self.assertEqual(self.db._guild_used_locked(10),0)
+        fourth=await self.db.guild_create(-200,10,'c_hunt','fourth-one')
+        fourth=await self.db.guild_action(fourth['id'],10,'start',fourth['revision'])
+        self.assertEqual(fourth['status'],'active')
         with patch('arena_guild.raid_day',return_value='2099-01-01'):
             self.assertEqual(self.db._guild_used_locked(10),0)
         profile=self.db._guild_hunter_locked(10)
@@ -214,13 +216,14 @@ class GuildTests(unittest.IsolatedAsyncioTestCase):
         run=await self.db.guild_action(run['id'],10,'start',run['revision']);await self.win_room(run)
         self.assertEqual(self.db._guild_hunter_locked(10)['reputation'],0)
 
-    async def test_calibration_is_solo_once_uses_daily_ticket(self):
+    async def test_calibration_is_solo_once_spends_reward_only_on_win(self):
         self.db.connection.execute('UPDATE guild_hunters SET rank=0,peak_rank=0 WHERE actor_id=10');self.db.connection.commit()
         run=await self.db.guild_create(-100,10,'calibration','calibrate-me')
         with self.assertRaises(ValueError):await self.db.guild_action(run['id'],20,'join',run['revision'])
         run=await self.db.guild_action(run['id'],10,'start',run['revision'])
-        self.assertEqual(self.db._guild_used_locked(10),1)
+        self.assertEqual(self.db._guild_used_locked(10),0)
         finished=await self.win_room(run)
+        self.assertEqual(self.db._guild_used_locked(10),1)
         self.assertEqual(finished['results']['10']['rank'],'C')
         self.assertEqual(finished['results']['10']['reputation'],0)
         with self.assertRaises(ValueError):await self.db.guild_create(-100,10,'calibration','calibrate-again')

@@ -28,14 +28,18 @@ class GuildPublisher:
         code=c.get('code',CONTRACTS.get(c['id'],{}).get('code',''))
         text='🏹 <b>Заказ '+esc(code)+' — '+esc(c['name'])+'</b>\n\n'+esc(c['description'])
         text+='\n\nРекомендуется: '+('1–3' if c['recommended_party']==1 else str(c['recommended_party'])+'–3')+' охотника'
-        text+='\nНаграда каждому: '+str(c['reward'])+' ₣ и припас'+(' + трактат' if c['kind']!='hunt' else '')
+        text+='\nПолная награда: '+str(c['reward'])+' ₣ и припас'+(' + трактат' if c['kind']!='hunt' else '')
+        text+='\nПосле 3 побед: 25% франков, 30% репутации, половина материалов; без припаса и трактата. Дроп экипировки прежний.'
         text+='\nДопуск: ранг '+RANKS[max(0,RANKS.index(c['rank'])-1)]+' и выше'
         text+='\n\n<b>Отряд: '+str(len(run['members']))+'/3</b>\n'
-        text+='\n'.join(('👑 ' if p['actor_id']==run['leader'] else '⚔️ ')+esc(p['name'])+' · '+esc(p['class_name'])+', ур. '+str(p['level']) for p in run['members'])
+        for p in run['members']:
+            reward=p.get('reward_preview',{})
+            mode='полная награда, ещё '+str(reward.get('remaining',3)) if reward.get('full',True) else 'повторная награда: 25% ₣ / 30% реп.'
+            text+=('👑 ' if p['actor_id']==run['leader'] else '⚔️ ')+esc(p['name'])+' · '+esc(p['class_name'])+', ур. '+str(p['level'])+' — '+mode+'\n'
         link=arena_link(self.username,'guildrun_'+run['id'])
         button=lambda text,action:InlineKeyboardButton(text=text,callback_data='gg:'+action+':'+run['id'])
         if run['status']=='lobby':
-            text+='\n\nСбор открыт. До старта можно выйти бесплатно. Допуск спишется только при запуске. Сбор закрывается через 30 минут после создания.'
+            text+='\nПоходы без лимита. Полная награда расходуется только при победе, по дню её завершения. Сброс в 00:00 МСК.\n\nСбор открыт. До старта можно выйти бесплатно. Сбор закрывается через 30 минут после создания.'
             buttons=[[button('➕ Вступить','join'),InlineKeyboardButton(text='Подробнее',url=link)],
                      [button('⚔️ Начать поход','start'),button('🚪 Выйти','leave')],
                      [button('Отменить сбор · лидер','cancel')]]
@@ -138,7 +142,7 @@ def create_guild_router(db,bot,username,enabled,publisher=None):
             parameter+='_'+str(message.chat.id)
         await message.answer('🏹 Гильдия охотников: заказы F–S и подземелья. '
             'Выбери заказ в меню или создай сбор командой /охота F1. '
-            'Позвать друзей в свой сбор: /позвать. Допуски списываются только при старте.'+
+            'Позвать друзей в свой сбор: /позвать. Походы без лимита; первые 3 победы в день с полной наградой, затем сниженные награды без урезания дропа экипировки.'+
             (' Сначала выбери чат.' if message.chat.type=='private' else ''),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='📋 Доска заказов' if board else '🏹 Открыть гильдию',url=arena_link(username,parameter))]]))
 
