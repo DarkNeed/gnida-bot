@@ -24,6 +24,8 @@ def render_arena_index(root: Path) -> str:
         "qte-art.js",
         "guild.js",
         "guild.css",
+        "equipment.js",
+        "equipment.css",
         "qte-casino-view",
         "qte-casino-chance",
         "qte-casino-chance.css",
@@ -57,6 +59,8 @@ def render_arena_index(root: Path) -> str:
         .replace('src="/static/qte-art.js"', f'src="/static/qte-art.js?v={version}"')
         .replace('src="/static/guild.js"', f'src="/static/guild.js?v={version}"')
         .replace('href="/static/guild.css"', f'href="/static/guild.css?v={version}"')
+        .replace('src="/static/equipment.js"', f'src="/static/equipment.js?v={version}"')
+        .replace('href="/static/equipment.css"', f'href="/static/equipment.css?v={version}"')
         .replace('src="/static/qte-casino-view.js"', f'src="/static/qte-casino-view.js?v={version}"')
         .replace('src="/static/qte-casino-chance.js"', f'src="/static/qte-casino-chance.js?v={version}"')
         .replace('href="/static/qte-casino-chance.css"', f'href="/static/qte-casino-chance.css?v={version}"')

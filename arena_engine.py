@@ -46,6 +46,7 @@ from arena_mastery import (build_skills as build_mastery_skills, skill_allowed a
     variant as mastery_variant, street_stats, context as mastery_context,
     modifiers as mastery_modifiers, after_action as mastery_after_action)
 from arena_relics import build_catalog as build_relic_catalog, modifiers as relic_modifiers, incoming as relic_incoming, after_action as relic_after_action, periodic_damage
+import arena_equipment as gear
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0.08
@@ -879,6 +880,8 @@ def create_battle_state(
         class_id = str(source["class_id"])
         stats = stats_for(class_id, int(source["level"]), controlled, class_catalog)
         stats = street_stats(source, stats)
+        equipment=deepcopy(source.get('equipment',[]))
+        stats=gear.apply_stats(stats,equipment)
         fighter_class = class_catalog.get(class_id, FIGHTER_CLASSES["ragamuffin"])
         passive_limit = passive_skill_limit(int(source["level"]))
         passive_details = source.get("passive_details")
@@ -927,6 +930,7 @@ def create_battle_state(
             "level": min(MAX_FIGHTER_LEVEL, int(source["level"])),
             "defense_mode": source.get("defense_mode", "dodge"),
             "stats": stats,
+            "equipment": equipment,
             "hp": stats["max_hp"],
             "resource": stats["resource_max"],
             "loadout": normalize_loadout(
@@ -1275,6 +1279,9 @@ def resolve_skill(
     mastery_allies = [dict(hp=p['hp']) for p in (allies or [])]
     rpg_context = rpg_action_context(actor,target)
     rpg_context['action_id']=[actor.get('controller_id'),actor.get('own_turns',0)]
+    gear_action_id=[actor.get('controller_id'),actor.get('slave_id'),actor.get('own_turns',0),state.get('turn',1)]
+    gear_multiplier=gear.modifiers(actor,target,skill)
+    gear_summon_before=actor.get('rpg_state',{}).get('summon',0)
     # Capture before _tick expires the last turn; utilities and misses without an
     # attacking skill never trigger it. A missed attack still is an attack.
     pending_bleed = (
@@ -1442,6 +1449,7 @@ def resolve_skill(
                 * mirror_multiplier
                 * epic_multiplier
                 * relic_multiplier
+                * gear_multiplier
                 * rpg_multiplier
                 * mastery_multiplier
                 * parry_multiplier
@@ -1487,7 +1495,7 @@ def resolve_skill(
                 else:
                     c['potential']=max(1,math.floor(reference_damage*c['weight']*multiplier+.5))
             potential=sum(c['potential'] for c in pattern_contacts)
-            remaining=final_incoming(target,rpg_incoming(target,potential,rpg_branch(target)),actor,raid_context) if potential else 0
+            remaining=gear.incoming(target,final_incoming(target,rpg_incoming(target,potential,rpg_branch(target)),actor,raid_context),gear_action_id) if potential else 0
             redirected=potential-remaining
             for c in pattern_contacts:
                 held=min(redirected,c['potential']);redirected-=held
@@ -1512,7 +1520,7 @@ def resolve_skill(
                 budget = [round(value * (1.5 if i < len(timing_criticals)
                           and timing_criticals[i] is True else 1)) for i, value in enumerate(budget)]
             potential=sum(budget[i] for i,p in enumerate(strike_results) if p['hit'])
-            redirected=potential-final_incoming(target,potential,actor,raid_context)
+            redirected=potential-gear.incoming(target,final_incoming(target,potential,actor,raid_context),gear_action_id)
             for i, part in enumerate(strike_results):
                 if part["hit"]:
                     held=min(redirected,budget[i]);redirected-=held
@@ -1524,6 +1532,7 @@ def resolve_skill(
         else:
             damage = rpg_incoming(target,damage,rpg_branch(target))
             damage=final_incoming(target,damage,actor,raid_context)
+            damage=gear.incoming(target,damage,gear_action_id)
             target["hp"] = max(0, target["hp"] - damage)
     if timing_criticals:
         critical = critical or any(part['hit'] and part.get('critical') for part in strike_results or [])
@@ -1590,7 +1599,7 @@ def resolve_skill(
                 if recipient is actor and effect['value'] > 0:
                     restored += max(0, actor['resource'] - resource_before_effect)
             elif effect["kind"] == "heal_pct":
-                recipient["hp"] = min(recipient["stats"]["max_hp"], recipient["hp"] + round(recipient["stats"]["max_hp"] * effect["value"]))
+                recipient["hp"] = min(recipient["stats"]["max_hp"], recipient["hp"] + gear.heal_amount(actor,recipient,round(recipient["stats"]["max_hp"] * effect["value"])))
                 if effect['value'] > 0:
                     from arena_plague import actively_healed
                     actively_healed(recipient)
@@ -1607,6 +1616,8 @@ def resolve_skill(
             else:
                 new = dict(effect)
                 new.setdefault("duration", max(1, new.get("turns", 1)))
+                previous_dot=next((e for e in recipient['effects'] if (e.get('id'),e['kind'])==(new.get('id'),new['kind'])),None)
+                gear.enhance_dot(actor,new,previous_dot)
                 if new['kind']=='bleed':
                     previous=next((e for e in recipient['effects']
                         if (e.get('id'),e['kind'])==(new.get('id'),new['kind'])),None)
@@ -1718,6 +1729,7 @@ def resolve_skill(
             heal_plague(who)
             plague_healed_seen.add(id(who))
     pet_notes+=relic_after_action(actor,skill,min(before[other]['hp'],damage))
+    pet_notes+=gear.after_action(actor,target,skill,min(before[other]['hp'],damage),before[other]['hp'],gear_summon_before,gear_action_id)
     text = f"{skill.name}: " + (
         f"−{damage} HP"
         if damage

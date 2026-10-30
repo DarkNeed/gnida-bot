@@ -209,7 +209,8 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
         candidates=[s for s in (allies or [actor]) if s['hp']>0]
         recipient=min(candidates,key=lambda s:s['hp']/s['stats']['max_hp']) if candidates else actor
         bonus=1.25 if has_trait(actor,'rpg_merciful') and recipient['hp']<=recipient['stats']['max_hp']*.40 else 1
-        healed=min(recipient['stats']['max_hp']-recipient['hp'],round(recipient['stats']['max_hp']*item['value']*bonus))
+        from arena_equipment import heal_amount
+        healed=min(recipient['stats']['max_hp']-recipient['hp'],heal_amount(actor,recipient,round(recipient['stats']['max_hp']*item['value']*bonus)))
         recipient['hp']+=healed
         if item['value'] > 0:
             from arena_plague import actively_healed
@@ -249,7 +250,8 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
             total=0
             for restored in candidates:
                 if restored['hp']<=0: continue
-                amount=min(restored['stats']['max_hp']-restored['hp'],round(restored['stats']['max_hp']*(.25 if allies else .50)))
+                from arena_equipment import heal_amount
+                amount=min(restored['stats']['max_hp']-restored['hp'],heal_amount(actor,restored,round(restored['stats']['max_hp']*(.25 if allies else .50))))
                 restored['hp']+=amount;total+=amount
                 from arena_plague import actively_healed
                 actively_healed(restored)

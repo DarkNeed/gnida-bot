@@ -311,7 +311,7 @@ class GuildMixin:
             eligible=not p.get('withdrawn') and not p.get('reward_blocked') and p.get('missed',0)<3
             success=won and eligible
             francs=(c['reward']+d['finds']) if success else d['finds']//2 if retreat and eligible else 0
-            reputation=0;rank_before=h['rank'];loot=''
+            reputation=0;rank_before=h['rank'];loot='';equipment_loot=[]
             if success:
                 difficulty=RANKS.index(c['rank'])
                 reputation=40 if difficulty>h['rank'] else 28 if difficulty==h['rank'] else 0
@@ -329,6 +329,13 @@ class GuildMixin:
                 supply='bandage' if difficulty<2 else 'ration' if difficulty<4 else 'antidote'
                 self.connection.execute('INSERT INTO guild_bag VALUES(?,?,1) ON CONFLICT(actor_id,item) DO UPDATE SET quantity=quantity+1',(actor,supply))
                 loot=SUPPLIES[supply]['name']
+                equipment_loot.append(self._gear_loot_locked('guild:'+row['id']+':boss',actor,c,
+                    guaranteed=c['kind']=='dungeon',chance=.45 if c['kind']=='elite' else .15,
+                    materials=3 if c['kind']=='dungeon' else 1))
+                if c['kind']=='dungeon':
+                    for node in d['nodes']:
+                        if node.get('cleared') and node['kind'] in ('treasure','elite'):
+                            equipment_loot.append(self._gear_loot_locked('guild:'+row['id']+':'+node['id'],actor,c,chance=.25,materials=1))
                 if c['kind']!='hunt':
                     from arena_engine import BUILTIN_SKILLS
                     from arena_archprogress import skill_branch
@@ -344,7 +351,7 @@ class GuildMixin:
             self.connection.execute('''UPDATE guild_hunters SET rank=?,reputation=?,peak_rank=?,wins=?,losses=?,dungeons=?,streak=?,rank_wins=?,clearance=? WHERE actor_id=?''',
                 tuple(h[k] for k in ('rank','reputation','peak_rank','wins','losses','dungeons','streak','rank_wins','clearance'))+(actor,))
             if francs:self._add_francs_locked(row['chat_id'],actor,francs)
-            result=dict(won=success,francs=francs,loot=loot,reputation=reputation,rank=RANKS[h['rank']],rank_before=RANKS[rank_before])
+            result=dict(won=success,francs=francs,loot=loot,equipment_loot=equipment_loot,reputation=reputation,rank=RANKS[h['rank']],rank_before=RANKS[rank_before])
             self.connection.execute('INSERT INTO guild_settlements VALUES(?,?,?)',(row['id'],actor,json.dumps(result,ensure_ascii=False)));results[str(actor)]=result
         row['status']='completed' if won else 'retreated' if retreat else 'failed'
         d.update(results=results,reason=reason,battle=None,pending=None,votes={},vote_deadline=0)

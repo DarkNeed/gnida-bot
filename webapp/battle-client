@@ -550,7 +550,7 @@ function profileCard(p,title,owned=false){
   const maxed=p.level>=20;
   const catchup=p.catchup_level?'<p class="muted">Боевой опыт ×2 до '+esc(p.catchup_level)+' уровня. Конфеты без множителя.</p>':'';
   const status='';
-  const equipment='';
+  const equipment=p.personal?button('Снаряжение','equipment'):'';
   return '<div class="card"><div class="profile">'+fighterImage(p)+'<div><div class="eyebrow">'+title+'</div><h2>'+esc(p.name||p.class_name)+'</h2><div class="muted">'+esc(p.class_name)+' · уровень '+p.level+'</div><div class="xp"><div class="barline"><span>ОПЫТ</span><span>'+(maxed?'МАКСИМУМ · 20':progress[1]+' / '+progress[2]+' XP')+'</span></div><div class="bar"><i style="width:'+(maxed?100:100*progress[1]/progress[2])+'%"></i></div></div></div></div>'+catchup+status+'<div class="stack">'+button("В Пустошь", "waste:"+p.user_id,"primary",!p.personal&&!p.combat_slot)+button('Зеркальная Пустошь','mirrorstart:'+(p.personal?'p:':'s:')+p.user_id,'',(!p.personal&&!p.combat_slot)||(menu?.mirror_runs||[]).some(r=>r.status==='active'))+button("Класс и навыки","profile:"+p.user_id)+equipment+(p.can_edit_sprite?button("Свой спрайт","appearance"):"")+'</div></div>';
 }
 function activeProfile(){return [menu?.personal].filter(Boolean).find(p=>p.user_id===profileId&&p.personal===(page==="personalProfile"));}
@@ -764,8 +764,14 @@ async function openGuild(selectedChat=null,runId='',boardOnly=false){
   window.ArenaQTEWatch?.close();closeEffect();closeStats();closeRaidDetails();
   current=null;raidCurrent=null;mirrorRun=null;token='';page='guild';audio.scene('menu');
   await window.GuildApp.open({app,chat:selectedChat,runId,boardOnly,toast,initData:tg?.initData||'',
+    onEquipment:async (id,runId)=>openEquipment(id,()=>openGuild(id,runId||'')),
     onRaid:async id=>{try{raidScreen(await api('/api/raid/'+id));}catch(error){toast(error.message);await openGuild(selectedChat,runId);}},
     onArena:async id=>{if(id){chat=id;page='personal';await openMenu();}}});
+}
+async function openEquipment(selectedChat=chat,onBack=null){
+  window.ArenaQTEWatch?.close();closeEffect();closeStats();closeRaidDetails();
+  current=null;raidCurrent=null;mirrorRun=null;token='';page='equipment';audio.scene('menu');
+  await window.GearApp.open({app,chat:selectedChat,initData:tg?.initData||'',onBack:onBack||(()=>{chat=selectedChat;page='personal';return openMenu();})});
 }
 async function menuAction(action,extra={}){
   if(demo){toast('Демо: покупки и изменения не сохраняются.');menuScreen(menu);return;}
@@ -823,6 +829,7 @@ app.addEventListener("click",async event=>{
   if(cmd==="select"||cmd==="selected"){await action("select",{fighter:Number(arg),controlled:document.getElementById("control").checked});return;}
   if(cmd==="potion"||cmd==="surrender"){await action("skill",{skill:cmd});return;}
   if(cmd==='holdings'){await openHoldings();return;}
+  if(cmd==='equipment'){await openEquipment();return;}
   if(cmd==="menu"||cmd==="refresh"){closeEffect();statusViews=null;closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
   if(cmd==='charactersbuy'){page='charactersPurchase';menuScreen(menu);return;}
   if(cmd==='characterinvoice'){await buyCharacters();return;}
@@ -1015,6 +1022,7 @@ async function boot(){
   }
   const start=new URLSearchParams(location.search).get("tgWebAppStartParam")||tg?.initDataUnsafe?.start_param||"";
   try{
+    if(/^equipment_-?\d+$/.test(start)){await openEquipment(Number(start.slice(10)));return;}
     if(start==='guild'||/^guild_-?\d+$/.test(start)||start.startsWith('guildrun_')){await openGuild(/^guild_-?\d+$/.test(start)?Number(start.slice(6)):null,start.startsWith('guildrun_')?start.slice(9):'');return;}
     if(start==='guildboard'||/^guildboard_-?\d+$/.test(start)){await openGuild(start==='guildboard'?null:Number(start.slice(11)),'',true);return;}
     if(start==='rp'||/^rp_-?\d+$/.test(start)||location.pathname==='/rp'){await openRP(/^rp_-?\d+$/.test(start)?Number(start.slice(3)):null);return;}

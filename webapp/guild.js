@@ -35,6 +35,7 @@
     function header(){return '<header class="guild-header"><div class="guild-brand">'+sigil+'<div><small>ГНИДА · НОВАЯ ИСТОРИЯ</small><h1>Гильдия охотников</h1></div></div><div class="guild-header-right">'+(view?'<span class="guild-money">'+view.francs+' <small>₣</small></span>':'')+button('Арена','arena','guild-quiet')+'</div></header>';}
     function shell(body){
       if(abort.signal.aborted)return;
+      body='<div style="display:flex;justify-content:flex-end;margin:12px 0">'+button('◇ Снаряжение · общий инвентарь','equipment','guild-quiet')+'</div>'+body;
       app.innerHTML='<section class="guild">'+header()+'<div class="guild-chatline"><label>Отделение <select id="guild-chat" aria-label="Чат гильдии">'+chats.map(c=>'<option value="'+c.chat_id+'"'+(c.chat_id===chat?' selected':'')+'>'+esc(c.title||c.chat_id)+'</option>').join('')+'</select></label><span>Ранг и допуски общие · кошелёк выбранного чата</span></div>'+body+'<footer class="guild-footer">ГИЛЬДИЯ / F — S <span>Сброс допусков в 00:00 МСК · закрытие приложения не прерывает поход</span></footer></section>';
     }
     function navigation(){return '<nav class="guild-nav" aria-label="Разделы гильдии">'+[['board','Заказы'],['dungeons','Подземелья'],['hunter','Удостоверение'],['shop','Лавка'],['bestiary','Бестиарий'],['top','Зал славы']].map(([id,n])=>button(n,'tab:'+id,tab===id?'active':'')).join('')+'</nav>';}
@@ -113,6 +114,8 @@
         if(Object.keys(r.votes).length)body+='<p class="guild-votes">Голоса: '+Object.keys(r.votes).length+' · осталось '+Math.max(0,r.vote_deadline-r.server_time)+' с</p>';
         body+='</section><section class="guild-panel"><p class="guild-kicker">ПОХОДНЫЙ РЮКЗАК</p><h3>Не забывай дышать.</h3><p>Один припас на участника между комнатами. Припасы покупаются в лавке и сохраняются после похода.</p><label>Помочь <select id="guild-target" aria-label="Цель припаса">'+r.members.map(p=>'<option value="'+p.actor_id+'"'+(p.actor_id===view.actor_id?' selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select></label><div class="guild-bag">'+view.shop.filter(s=>r.bag[s.id]>0).map(s=>button(esc(s.name)+' ×'+r.bag[s.id],'supply:'+s.id,'guild-quiet',!member||busy||!!r.battle||!!r.supplies_used[view.actor_id+':'+r.position])).join('')+(Object.values(r.bag).some(q=>q>0)?'':'<p>Рюкзак пуст. В следующий поход возьми припасы.</p>')+'</div>'+(leader?button('Отступить · сохранить 50% находок','retreat','guild-danger',!!r.battle||busy):'')+'<p class="guild-hint">Отступление не даёт основную награду и считается неудачным заказом. Обычный инвентарь не теряется.</p></section></div>';
       }else body+='<section class="guild-result"><div class="guild-result-seal">'+sigil+'</div><p class="guild-kicker">'+esc(states[r.status])+'</p><h2>'+esc(r.reason||'Сбор отряда завершён.')+'</h2>'+Object.entries(r.results).map(([key,result])=>'<article><b>'+esc(r.members.find(p=>String(p.actor_id)===key)?.name||key)+'</b><strong>+'+result.francs+' ₣</strong><span>'+esc(result.loot||'Без предметов')+'</span><small>Ранг '+result.rank+' · '+(result.reputation>0?'+':'')+result.reputation+' репутации'+(result.rank!==result.rank_before?' · раньше '+result.rank_before:'')+'</small></article>').join('')+button('Новый заказ','back','primary')+'</section>';
+      const drops=r.results?.[view.actor_id]?.equipment_loot||[];
+      if(drops.length)body+='<section class="guild-section"><p class="guild-kicker">ТВОЯ ЛИЧНАЯ ДОБЫЧА</p><h2>Вернулся не с пустыми руками.</h2><div class="guild-shop-grid">'+drops.flatMap(d=>d.items).map(i=>'<article class="guild-panel"><small>'+esc(i.rarity_name)+' · ранг '+i.rank+' · Lv. '+i.min_level+'+</small><h3>'+esc(i.name)+'</h3><p>'+esc(i.effect_text||'Характеристики и дополнительные свойства')+'</p></article>').join('')+'</div><p>Материалы: '+drops.map(d=>d.materials+' оск. '+d.rank).join(' + ')+'. Добыча уже сохранена в общем инвентаре.</p>'+button('Осмотреть и сравнить','equipment','primary')+'</section>';
       body+='<section class="guild-section"><h3>Дневник похода</h3><ol class="guild-journal">'+r.history.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ol></section>';shell(body);hydrateAvatars();
     }
     async function loadBoard(){view=await api('/api/guild/board?chat='+chat);if(abort.signal.aborted)return;render();}
@@ -128,6 +131,7 @@
       busy=true;el.disabled=true;
       try{
         if(cmd==='back'){run=null;await loadBoard();}
+        else if(cmd==='equipment'){abort.abort();await context.onEquipment?.(chat,run?.id);return;}
         else if(cmd==='reload')await loadBoard();
         else if(cmd==='accept'){run=await api('/api/guild/runs',{chat,contract:arg,nonce:crypto.randomUUID()});renderRun();}
         else if(cmd==='run')await loadRun(arg);

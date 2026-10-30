@@ -88,3 +88,16 @@ def register_guild(app,db,bot,actor_key,require_member,read_member,publisher=Non
     app.router.add_post('/api/guild/runs/{id}/invite',invite)
     app.router.add_get('/api/guild/runs/{id}/avatars/{user:\\d+}',avatar)
     app.router.add_post('/api/guild/buy',buy)
+
+    async def equipment(request):
+        actor=request[actor_key]
+        if request.method=='GET':
+            chat=int(request.query.get('chat','0'));await authorize(chat,actor)
+            return web.json_response(await db.gear_view(chat,actor))
+        body=await request.json()
+        if not isinstance(body,dict):raise ValueError('Некорректный запрос.')
+        chat=body.get('chat');await authorize(chat,actor,True)
+        return web.json_response(await db.gear_action(chat,actor,body))
+
+    app.router.add_get('/api/equipment',equipment)
+    app.router.add_post('/api/equipment',equipment)

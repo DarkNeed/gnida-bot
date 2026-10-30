@@ -45,6 +45,7 @@ from arena_characters import CharacterMixin
 from arena_qte_live import ArenaQteMixin
 from arena_rp import RPMixin
 from arena_guild import GuildMixin
+from arena_equipment_store import EquipmentMixin
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -57,11 +58,12 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin, ArenaQteMixin, RPMixin, GuildMixin):
+class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin, ArenaQteMixin, RPMixin, GuildMixin, EquipmentMixin):
     def _connect_arena(self) -> None:
         self._connect_qte()
         self._connect_rp()
         self._connect_guild()
+        self._connect_equipment()
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (
                 chat_id INTEGER NOT NULL,
@@ -821,6 +823,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             archclass_stage=profile["archclass_stage"],
             progression_level=profile["progression_level"],
             defense_mode=self._defense_mode_locked(user),
+            equipment=self._gear_snapshot_locked(user,profile['level']) if personal and not controlled else [],
             level=profile["level"],
             loadout=[k for k in json.loads(profile["loadout"]) if self._arena_content_enabled_locked(chat,'skill',k)],
             granted_skills=[k for k in self._arena_grants_locked(chat, user, personal) if self._arena_content_enabled_locked(chat,'skill',k)],

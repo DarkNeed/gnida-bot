@@ -306,6 +306,10 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
             profile["class_id"], profile["level"], False, classes
         )
         profile['stats'] = street_stats(profile, profile['stats'])
+        from arena_equipment import apply_stats
+        async with db._lock:
+            equipment=db._gear_snapshot_locked(profile['user_id'],profile['level'])
+        profile['stats']=apply_stats(profile['stats'],equipment)
         profile['mastery'] = mastery_view(profile)
         profile["class_name"] = classes.get(
             profile["class_id"], classes["ragamuffin"]
