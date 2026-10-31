@@ -52,7 +52,7 @@ class ArenaAssetHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("?v=", path)
                 asset = await client.get(path)
                 self.assertEqual(asset.status, 200)
-                self.assertEqual(asset.headers["Cache-Control"], "no-cache")
+                self.assertEqual(asset.headers.get("Cache-Control"), "no-cache", path)
             css = await client.get("/static/style.css")
             self.assertEqual(css.headers["Cache-Control"], "no-cache")
             audio = await client.get("/static/audio.js")

@@ -25,6 +25,7 @@ from handlers.pet_grants import create_pet_grant_router
 from handlers.enterprises import create_enterprise_router, sweep_recovery_events
 from handlers.rp import create_rp_router
 from handlers.guild import create_guild_router,GuildPublisher
+from handlers.kingdom import create_kingdom_router
 from handlers.slave_finance import sweep_finance, create_finance_router
 
 
@@ -86,6 +87,7 @@ async def main() -> None:
     dispatcher.include_router(create_enterprise_router(database))
     dispatcher.include_router(create_rp_router(database, bot, username, bool(webapp_url)))
     dispatcher.include_router(create_guild_router(database, bot, username, bool(webapp_url),guild_publisher))
+    dispatcher.include_router(create_kingdom_router(database, bot, username, bool(webapp_url)))
     dispatcher.include_router(
         create_arena_router(database, bot, username, bool(webapp_url), publisher)
     )
@@ -137,6 +139,9 @@ async def main() -> None:
                     await publisher.raid_changed(raid["token"])
                 await publisher.raids.retry_pending()
                 await guild_publisher.sweep()
+                if webapp_url:
+                    from arena_kingdom_notices import publish_kingdom_notices
+                    await publish_kingdom_notices(database,bot)
                 sweep_time = asyncio.get_running_loop().time()
                 if webapp_url and sweep_time - last_merchant_sweep >= 30:
                     last_merchant_sweep = sweep_time

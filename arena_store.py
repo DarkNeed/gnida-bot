@@ -46,6 +46,7 @@ from arena_qte_live import ArenaQteMixin
 from arena_rp import RPMixin
 from arena_guild import GuildMixin
 from arena_equipment_store import EquipmentMixin
+from arena_kingdom import KingdomMixin
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -58,11 +59,12 @@ def utc_timestamp() -> int:
     return int(time.time())
 
 
-class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin, ArenaQteMixin, RPMixin, GuildMixin, EquipmentMixin):
+class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArenaMixin, CharacterMixin, ArenaQteMixin, RPMixin, GuildMixin, EquipmentMixin, KingdomMixin):
     def _connect_arena(self) -> None:
         self._connect_qte()
         self._connect_rp()
         self._connect_guild()
+        self._connect_kingdom()
         self._connect_equipment()
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS slave_profiles (

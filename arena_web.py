@@ -528,6 +528,10 @@ def create_arena_app(
             )
         if request.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
+        elif request.path.startswith("/static/") and request.path.endswith((".js", ".css")):
+            # Revalidate versioned code too: a Mini App must not mix old clients
+            # with a freshly deployed server. Keep image/audio caching unchanged.
+            response.headers["Cache-Control"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
@@ -1007,6 +1011,12 @@ def create_arena_app(
         return web.FileResponse(ROOT/'holdings.css',headers={'Cache-Control':'no-cache'})
     app.router.add_get('/static/holdings.js',holdings_client)
     app.router.add_get('/static/holdings.css',holdings_style)
+    async def kingdom_client(request):
+        return web.FileResponse(ROOT/'kingdom.js',headers={'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-cache'})
+    async def kingdom_style(request):
+        return web.FileResponse(ROOT/'kingdom.css',headers={'Cache-Control':'no-cache'})
+    app.router.add_get('/static/kingdom.js',kingdom_client)
+    app.router.add_get('/static/kingdom.css',kingdom_style)
     app.router.add_static("/static/", ROOT, show_index=False)
     app.router.add_get("/api/battle/{token}", get_battle)
     app.router.add_post('/api/qte-casino/{scope:battle|raid}/{token}', casino_roll)
@@ -1027,4 +1037,6 @@ def create_arena_app(
     register_rp(app, db, bot, ACTOR, require_member, read_member, raid_changed, rp_publisher)
     from arena_guild_web import register_guild
     register_guild(app,db,bot,ACTOR,require_member,read_member,guild_publisher)
+    from arena_kingdom_web import register_kingdom
+    register_kingdom(app,db,bot,ACTOR,require_member,read_member)
     return app

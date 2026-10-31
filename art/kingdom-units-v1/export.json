@@ -1,0 +1,56 @@
+[
+  {
+    "id": "militia",
+    "source_sha256": "fcecf2417327854852a855ab71fa7af46c8aa91ba1452ef11014b25ea86e4302",
+    "output": "webapp\\assets\\kingdom\\units\\militia.webp",
+    "bytes": 45624
+  },
+  {
+    "id": "vagrants",
+    "source_sha256": "70a92b295ac94b4c7c914197fd289ea61c64409aad5063bd1dbb9c1802e1a848",
+    "output": "webapp\\assets\\kingdom\\units\\vagrants.webp",
+    "bytes": 58416
+  },
+  {
+    "id": "shields",
+    "source_sha256": "d1b0bb4f1ed15ac0f50b333eacf2da7c7a46c6d4f9b4c82b4472cc165d91367e",
+    "output": "webapp\\assets\\kingdom\\units\\shields.webp",
+    "bytes": 70258
+  },
+  {
+    "id": "archers",
+    "source_sha256": "a16819735c0a5d1569867a7be146f0b1d3f14310ba614bfd2b9c32ed55e80667",
+    "output": "webapp\\assets\\kingdom\\units\\archers.webp",
+    "bytes": 54920
+  },
+  {
+    "id": "agents",
+    "source_sha256": "c9dd564a2bc2b4d1ab8c70833821d30ba0ba20a40fbe91d11ac38fbe1a04c2c7",
+    "output": "webapp\\assets\\kingdom\\units\\agents.webp",
+    "bytes": 41750
+  },
+  {
+    "id": "paladins",
+    "source_sha256": "23a2caa6461fb549b59008112eedd97560c086b8d95236bf7ceb6f8caabfb2a9",
+    "output": "webapp\\assets\\kingdom\\units\\paladins.webp",
+    "bytes": 55992
+  },
+  {
+    "id": "priests",
+    "source_sha256": "6f33b7380c18af64399d546a9e876f0d456858c11f261f9d0aa240422f14e65c",
+    "output": "webapp\\assets\\kingdom\\units\\priests.webp",
+    "bytes": 61336
+  },
+  {
+    "id": "skeletons",
+    "source_sha256": "81c39b4abbca6f045d99a376f6a967a2762381e7c9bf4fb7c12eb10e1188da7f",
+    "output": "webapp\\assets\\kingdom\\units\\skeletons.webp",
+    "bytes": 61394
+  },
+  {
+    "id": "necromancers",
+    "source_sha256": "268cf05739ab48f7df8b6818aa78c1c40812e5834944b1bb49709819ebe06d17",
+    "output": "webapp\\assets\\kingdom\\units\\necromancers.webp",
+    "bytes": 59694
+  }
+]

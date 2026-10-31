@@ -24,6 +24,12 @@ def render_arena_index(root: Path) -> str:
         "qte-art.js",
         "guild.js",
         "guild.css",
+        "kingdom.js",
+        "kingdom-map.js",
+        "kingdom-army.js",
+        "kingdom-diplomacy.js",
+        "kingdom-diplomacy.css",
+        "kingdom.css",
         "equipment.js",
         "equipment.css",
         "qte-casino-view",
@@ -59,6 +65,12 @@ def render_arena_index(root: Path) -> str:
         .replace('src="/static/qte-art.js"', f'src="/static/qte-art.js?v={version}"')
         .replace('src="/static/guild.js"', f'src="/static/guild.js?v={version}"')
         .replace('href="/static/guild.css"', f'href="/static/guild.css?v={version}"')
+        .replace('src="/static/kingdom.js"', f'src="/static/kingdom.js?v={version}"')
+        .replace('src="/static/kingdom-map.js"', f'src="/static/kingdom-map.js?v={version}"')
+        .replace('src="/static/kingdom-army.js"', f'src="/static/kingdom-army.js?v={version}"')
+        .replace('src="/static/kingdom-diplomacy.js"', f'src="/static/kingdom-diplomacy.js?v={version}"')
+        .replace('href="/static/kingdom-diplomacy.css"', f'href="/static/kingdom-diplomacy.css?v={version}"')
+        .replace('href="/static/kingdom.css"', f'href="/static/kingdom.css?v={version}"')
         .replace('src="/static/equipment.js"', f'src="/static/equipment.js?v={version}"')
         .replace('href="/static/equipment.css"', f'href="/static/equipment.css?v={version}"')
         .replace('src="/static/qte-casino-view.js"', f'src="/static/qte-casino-view.js?v={version}"')

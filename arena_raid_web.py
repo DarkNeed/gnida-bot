@@ -71,6 +71,8 @@ async def raid_view(db, row, actor):
             side['sprite_flip'] = False
         if mob_info:
             side['class_avatar_url'] = mob_info['sprite']
+        if data.get('kingdom_id') and side.get('kingdom_npc'):
+            side.update(class_avatar_url=choice_avatar('ragamuffin'),class_name=side['kingdom_npc'])
         if boss and boss_info.get("ally_sprite"):
             side["resource_name"] = "Заряд инатора"
         side["skill_details"] = []
@@ -198,7 +200,8 @@ async def raid_view(db, row, actor):
         kind='encounter' if config else 'raid',
         rp_menu=bool(config and config.get('rp')),
         master_name=master['display_name'] if master else str(row['creator_id']),
-        is_master=bool(config and not config.get('guild') and actor == row['creator_id']),
+        is_master=bool(config and not config.get('guild') and not config.get('kingdom') and actor == row['creator_id']),
+        kingdom_id=data.get('kingdom_id') if data else None,
         guild_run_id=data.get('guild_run_id') if data else None,
         guild_biome=guild_biome,
         encounter_roster=([dict(id=mob, name=MOBS[mob]['name']) if isinstance(mob, str) else dict(id=mob['id'], name=mob['name']) for mob in config['roster']] if config else []),
