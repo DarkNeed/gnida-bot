@@ -20,7 +20,7 @@ def review_catalog():
 
     result = {}
 
-    def add(skill, origin="Базовый навык", branch=""):
+    def add(skill, origin="Базовый навык", branch="", npc_tier=0):
         if not skill.hostile:
             return
         strikes = (
@@ -33,6 +33,7 @@ def review_catalog():
             )
         )
         key = f"{skill.skill_id}:{skill.name}:{strikes}:{skill.damage_type}"
+        if npc_tier:key += ':npc'+str(npc_tier)
         if key in result:
             return
         result[key] = dict(
@@ -53,12 +54,20 @@ def review_catalog():
             accuracy=skill.accuracy,
             strikes=strikes,
             description=skill.description,
+            npc_tier=npc_tier,
+            monster_pattern=2 if skill.skill_id.startswith('guild_') else 0,
         )
 
     for skill in (BUILTIN_SKILLS | BOSS_SKILLS).values():
         add(skill, "Босс" if skill.skill_id in BOSS_SKILLS else "Базовый навык")
         if skill.skill_id in EVOLUTIONS:
             add(apply_rule(skill, EVOLUTIONS[skill.skill_id]), "Условное усиление")
+
+    from arena_guild_rules import MONSTERS, SKILLS as GUILD_SKILLS, RANKS
+    for monster in MONSTERS.values():
+        tier=max(0,min(4,RANKS.index(monster['rank'])-2))
+        for sid in monster['skills']:
+            add(GUILD_SKILLS[sid], 'Гильдия · '+monster['rank']+' · '+monster['name'], npc_tier=tier)
 
     # Ask the actual pure variant functions for names/tags, including locked
     # finishers. Readiness is irrelevant in a laboratory, not bypassed in-game.

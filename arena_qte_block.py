@@ -38,6 +38,9 @@ def parameters(p, stats):
 
 
 def threats(p, seed, params):
+    from arena_guild_patterns import block_threats as guild_threats
+    guild=guild_threats(p,seed,params)
+    if guild is not None:return guild
     copy=p['skill'].get('copy_skill')
     if p['skill'].get('base_id')=='nz_pandora_p2_1' and copy and copy.get('base_id')!='mana_shot' and not copy.get('base_id','').startswith('nz_'):
         return threats(profile(copy),seed,dict(params,warning=params['warning']+.20))

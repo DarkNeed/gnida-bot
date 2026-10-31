@@ -39,17 +39,28 @@ def enemy_source(level: int, previous_class: str | None = None, rng=None, *, ena
         and s.unlock_level <= level
         and branch_skill_allowed(s, archclass_id, level)
         and mastery_allowed(s,dict(class_id=class_id,level=level,archclass_id=archclass_id))
+        and 'raid_loot' not in s.tags
     ]
     # At least one attack, then varied native skills rather than always the
-    # first four low-level skills. Fill remaining slots with inherited skills.
+    # first four low-level skills. Foreign-class filler is never added.
     attacks = [key for key in native if BUILTIN_SKILLS[key].damage_type]
-    loadout = [rng.choice(attacks)]
+    signature = ['arch_'+archclass_id] if 'arch_'+archclass_id in attacks else []
+    loadout = signature or [rng.choice(attacks)]
+    # Finishers need their native setup. Never generate an unusable moon hunter
+    # or a necromancer without the summon that produces Souls.
+    setups = {'hunter':['hunter_shot','hunter_cut'], 'mage':['mana_focus','mana_shot'],
+              'warrior':['armor_split'], 'priest':['light_word']}
+    if level >= 15:
+        loadout += [sid for sid in setups.get(class_id, []) if sid in native and sid not in loadout]
+    cheap = [sid for sid in attacks if BUILTIN_SKILLS[sid].cost <= 15 and sid not in loadout]
+    if cheap and len(loadout) < MAX_ACTIVE_SKILLS and not any(BUILTIN_SKILLS[sid].damage_type and BUILTIN_SKILLS[sid].cost <= 15 for sid in loadout):
+        loadout.append(rng.choice(cheap))
     remaining = [key for key in native if key not in loadout]
-    loadout += rng.sample(remaining, min(len(remaining), MAX_ACTIVE_SKILLS - 1))
+    loadout += rng.sample(remaining, min(len(remaining), MAX_ACTIVE_SKILLS - len(loadout)))
     inherited = [
         s.skill_id
         for s in BUILTIN_SKILLS.values()
-        if s.class_id == "ragamuffin"
+        if class_id == 'ragamuffin' and s.class_id == "ragamuffin"
         and s.unlock_level <= level
         and s.skill_id not in loadout
         and not any(t.startswith('mastery:') for t in s.tags)
@@ -59,8 +70,12 @@ def enemy_source(level: int, previous_class: str | None = None, rng=None, *, ena
         slave_id=0,
         owner_id=0,
         controlled=False,
+        native_enemy=True,
         class_id=class_id,
         archclass_id=archclass_id,
+        archclass_stage=20 if level >= 20 else 10,
+        progression_level=20 if level >= 20 else 10 if level >= 10 else 5,
         level=level,
+        npc_tier=2 if level >= 18 else 1 if level >= 12 else 0,
         loadout=loadout,
     )

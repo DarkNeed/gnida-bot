@@ -211,10 +211,20 @@ class GuildTests(unittest.IsolatedAsyncioTestCase):
         self.db.connection.execute('UPDATE guild_hunters SET reputation=84,rank_wins=3,clearance=0 WHERE actor_id=10');self.db.connection.commit()
         run=await self.start('c_elite');await self.win_room(run)
         hunter=self.db._guild_hunter_locked(10)
-        self.assertEqual(hunter['rank'],4);self.assertEqual(hunter['reputation'],0)
+        self.assertEqual(hunter['rank'],4);self.assertEqual(hunter['reputation'],12)
         run=await self.db.guild_create(-100,10,'f_hunt','easy-no-rank')
         run=await self.db.guild_action(run['id'],10,'start',run['revision']);await self.win_room(run)
-        self.assertEqual(self.db._guild_hunter_locked(10)['reputation'],0)
+        self.assertEqual(self.db._guild_hunter_locked(10)['reputation'],12)
+
+    async def test_reputation_can_wait_above_threshold_and_survives_promotion(self):
+        self.db.connection.execute('UPDATE guild_hunters SET reputation=95,rank_wins=3,clearance=0 WHERE actor_id=10');self.db.connection.commit()
+        run=await self.start('c_hunt');await self.win_room(run)
+        self.assertEqual(self.db._guild_hunter_locked(10)['reputation'],123)
+        run=await self.start('c_elite');await self.win_room(run)
+        hunter=self.db._guild_hunter_locked(10)
+        self.assertEqual((hunter['rank'],hunter['reputation']),(4,51))
+        await self.db.guild_get(run['id'],10)
+        self.assertEqual(self.db._guild_hunter_locked(10)['reputation'],51)
 
     async def test_calibration_is_solo_once_spends_reward_only_on_win(self):
         self.db.connection.execute('UPDATE guild_hunters SET rank=0,peak_rank=0 WHERE actor_id=10');self.db.connection.commit()

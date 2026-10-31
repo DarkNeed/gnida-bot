@@ -60,6 +60,7 @@
       pressure:clamp((enemyAttack+20)/(armor+30),.65,1.5),blockReduction:.75};
   }
   function threats(p,seed,params,preparation,activeDuration){
+    const guild=E.guildBlockThreats(p,seed,params);if(guild)return guild;
     const copy=p.skill.copy_skill;
     if(p.skill.base_id==='nz_pandora_p2_1'&&copy&&copy.base_id!=='mana_shot'&&!(copy.base_id||'').startsWith('nz_'))return threats(E.profile(copy),seed,{...params,warning:params.warning+.20},preparation,activeDuration);
     const nz=(typeof module==='object'&&module.exports?require('../nazarick-qte.js'):globalThis.NazarickQTE)?.blockThreats(p,seed,params,E.rng);if(nz)return nz;

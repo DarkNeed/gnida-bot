@@ -338,10 +338,10 @@ class GuildMixin:
                     h.update(rank=difficulty,reputation=0,rank_wins=0,clearance=0)
                     reputation=0
                 else:
-                    h['reputation']=min(100,h['reputation']+reputation)
+                    h['reputation']+=reputation
                     if difficulty>=h['rank']:h['rank_wins']+=1;h['clearance']=max(h['clearance'],int(c['kind']!='hunt'))
                     if h['reputation']>=100 and h['rank_wins']>=3 and h['clearance'] and h['rank']<6:
-                        h.update(rank=h['rank']+1,reputation=0,rank_wins=0,clearance=0)
+                        h.update(rank=h['rank']+1,reputation=h['reputation']-100,rank_wins=0,clearance=0)
                 h['wins']+=1;h['streak']=0;h['dungeons']+=int(c['kind']=='dungeon')
                 # Equipment chances/rarity never depend on the daily bonus.
                 supply='bandage' if difficulty<2 else 'ration' if difficulty<4 else 'antidote'
@@ -363,7 +363,7 @@ class GuildMixin:
                     from arena_engine import BUILTIN_SKILLS
                     from arena_archprogress import skill_branch
                     rarity='common' if difficulty<2 else 'uncommon' if difficulty<4 else 'rare' if difficulty<6 else 'epic'
-                    pool=[s for s in BUILTIN_SKILLS.values() if s.rarity==rarity and s.class_id!='ragamuffin' and 'raid_loot' not in s.tags and not skill_branch(s) and not any(t.startswith('archclass:') for t in s.tags)]
+                    pool=[s for s in BUILTIN_SKILLS.values() if s.rarity==rarity and s.class_id=='universal' and 'raid_loot' not in s.tags and not skill_branch(s) and not any(t.startswith('archclass:') for t in s.tags)]
                     if pool:
                         s=random.SystemRandom().choice(pool);self._arena_add_item_locked(row['chat_id'],actor,'skill',s.skill_id,s.rarity);loot+=' · трактат «'+s.name+'»'
                 if full:

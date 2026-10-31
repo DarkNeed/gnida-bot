@@ -9,15 +9,16 @@ import time
 from arena_engine import RARITY_LABELS
 from arena_modules import ClassModulesMixin
 from arena_global import RPG_SCOPE
+from arena_public_scrolls import NATIVE_RESOURCE_SCROLLS
 
 FORGE_RULES = {
     r: dict(salvage_pages=2, craft_pages=6, craft_price=p, rewrite_price=p // 2)
-    for r, p in (("common", 40), ("uncommon", 70), ("rare", 130), ("epic", 250))
+    for r, p in (("common", 40), ("uncommon", 70), ("rare", 130), ("epic", 250), ("legendary", 600))
 }
 FORGE_FUSION_ODDS = {r: dict(zip(FORGE_RULES, row)) for r, row in zip(FORGE_RULES,
-    ((85, 14, 1, 0), (15, 70, 14, 1), (3, 17, 75, 5), (2, 8, 20, 70)))}
+    ((85, 14, 1, 0, 0), (15, 70, 14, 1, 0), (3, 17, 75, 5, 0), (2, 8, 20, 69, 1), (0, 0, 5, 20, 75)))}
 FORGE_PAGE_ODDS = {r: dict(zip(FORGE_RULES, row)) for r, row in zip(FORGE_RULES,
-    ((85, 14, 1, 0), (25, 60, 14, 1), (5, 25, 65, 5), (5, 15, 40, 40)))}
+    ((85, 14, 1, 0, 0), (25, 60, 14, 1, 0), (5, 25, 65, 5, 0), (5, 15, 40, 39, 1), (0, 0, 15, 40, 45)))}
 
 
 def forge_distribution(catalog, kind, ingredients, *, pages=False):
@@ -58,17 +59,21 @@ class ForgeMixin(ClassModulesMixin):
         self.connection.execute("UPDATE arena_forge_wallets SET revision=revision+1,pages_json=?,seals_json=? WHERE chat_id=? AND owner_id=?",
             (json.dumps(wallet["pages"]), json.dumps(wallet["seals"]), chat, actor))
 
-    def _forge_catalog_locked(self, chat=None):
-        # Merchant catalog excludes boss, branch, free and hidden skills.
+    def _forge_catalog_locked(self, chat=None, actor=None):
+        # Keep working cross-class skills, but never roll the actor's free skills
+        # or advertise a foreign inherent mechanic. Old copies remain ingredients.
+        native = self._arena_profile_locked(chat, actor, True)['class_id'] if actor is not None else None
         return {k: dict(v) for k, v in self._arena_shop_catalog_locked().items()
                 if k[0] in {"skill", "passive"} and v["rarity"] in FORGE_RULES
+                and (k[0] != 'skill' or (v['details'].get('class_id') not in {'ragamuffin', native} and k[1] not in NATIVE_RESOURCE_SCROLLS))
                 and (chat is None or self._arena_content_enabled_locked(chat, k[0], k[1]))}
 
     def _forge_view_locked(self, chat, actor):
-        wallet, catalog = self._forge_wallet_locked(chat, actor), self._forge_catalog_locked(chat)
+        wallet, catalog = self._forge_wallet_locked(chat, actor), self._forge_catalog_locked(chat, actor)
+        ingredients = self._arena_shop_catalog_locked()
         inventory = [dict(i, salvage_pages=FORGE_RULES[i["rarity"]]["salvage_pages"],
-                          can_rewrite=(i["kind"], i["content_id"]) in catalog
-                          and catalog[(i["kind"], i["content_id"])]["rarity"] == i["rarity"])
+                          can_rewrite=(i["kind"], i["content_id"]) in ingredients
+                          and ingredients[(i["kind"], i["content_id"])]["rarity"] == i["rarity"])
                      for i in self._arena_inventory_locked(chat, actor)
                      if i["kind"] in {"skill", "passive"} and i["rarity"] in FORGE_RULES]
         pools, crafts, fusion = [], [], {}
@@ -146,7 +151,7 @@ class ForgeMixin(ClassModulesMixin):
         if not isinstance(data, dict) or data.get("confirm") is not True:
             raise ValueError("Подтверди операцию кузницы.")
         action, nonce, revision = data.get("operation"), data.get("nonce"), data.get("revision")
-        if not isinstance(action, str) or action not in {"dismantle", "craft", "rewrite"} or not isinstance(nonce, str) or not re.fullmatch(r"[0-9a-f]{32}", nonce):
+        if not isinstance(action, str) or action not in {"dismantle", "craft", "rewrite", "exchange"} or not isinstance(nonce, str) or not re.fullmatch(r"[0-9a-f]{32}", nonce):
             raise ValueError("Некорректная операция кузницы.")
         if type(revision) is not int or revision < 0:
             raise ValueError("Обнови кузницу перед операцией.")
@@ -154,7 +159,18 @@ class ForgeMixin(ClassModulesMixin):
         if not isinstance(quote, str) or not re.fullmatch(r"[0-9a-f]{16}", quote):
             raise ValueError("Обнови шансы и стоимость.")
         request = dict(operation=action, revision=revision, catalog_revision=quote, payment_chat=chat)
-        if action == "craft":
+        if action == 'exchange':
+            rarity, direction, quantity = data.get('rarity'), data.get('direction'), data.get('quantity')
+            if not isinstance(rarity, str) or rarity not in FORGE_RULES or not isinstance(direction, str) or direction not in ('up', 'down') or type(quantity) is not int or not 1 <= quantity <= 9999:
+                raise ValueError('Выбери редкость, направление и число обменов от 1 до 9999.')
+            tiers = list(FORGE_RULES)
+            index = tiers.index(rarity) + (1 if direction == 'up' else -1)
+            if not 0 <= index < len(tiers):
+                raise ValueError('За пределами этой редкости страниц нет.')
+            target = tiers[index]
+            spent, gained = (5 * quantity, quantity) if direction == 'up' else (quantity, 2 * quantity)
+            request.update(rarity=rarity, direction=direction, quantity=quantity)
+        elif action == "craft":
             kind, rarity = data.get("kind"), data.get("rarity")
             if not isinstance(kind, str) or kind not in {"skill", "passive"} or not isinstance(rarity, str) or rarity not in FORGE_RULES or "content" in data:
                 raise ValueError("Выбери тип трактата и редкость страниц. Рецептов больше нет.")
@@ -166,6 +182,7 @@ class ForgeMixin(ClassModulesMixin):
             request["items"] = inputs
         serialized = json.dumps(request, sort_keys=True)
         async with self._lock:
+            self._require_feature_locked(chat, 'arena')
             with self.connection:
                 previous = self.connection.execute("SELECT * FROM arena_forge_actions WHERE chat_id=? AND owner_id=? AND nonce=?", (RPG_SCOPE, actor, nonce)).fetchone()
                 if previous:
@@ -175,10 +192,16 @@ class ForgeMixin(ClassModulesMixin):
                 wallet = self._forge_wallet_locked(chat, actor)
                 if wallet["revision"] != revision:
                     raise ValueError("Кузница изменилась. Обнови меню и проверь стоимость заново.")
-                catalog = self._forge_catalog_locked(chat)
+                catalog = self._forge_catalog_locked(chat, actor)
                 if quote != self._forge_catalog_revision(catalog):
                     raise ValueError("Шансы, трактаты или стоимость изменились. Обнови кузницу.")
-                if action == "craft":
+                if action == 'exchange':
+                    if wallet['pages'].get(rarity, 0) < spent:
+                        raise ValueError('Не хватает страниц для обмена.')
+                    wallet['pages'][rarity] -= spent
+                    wallet['pages'][target] = wallet['pages'].get(target, 0) + gained
+                    notice = f'Обмен страниц: {RARITY_LABELS[rarity]} −{spent}; {RARITY_LABELS[target]} +{gained}.'
+                elif action == "craft":
                     rule = FORGE_RULES[rarity]
                     if wallet["pages"].get(rarity, 0) < rule["craft_pages"]:
                         raise ValueError("Не хватает страниц нужной редкости.")
@@ -207,7 +230,7 @@ class ForgeMixin(ClassModulesMixin):
                     else:
                         kind = rows[0][0]["kind"]
                         for row, _ in rows:
-                            item = catalog.get((row["kind"], row["content_id"]))
+                            item = self._arena_shop_catalog_locked().get((row["kind"], row["content_id"]))
                             if row["kind"] != kind or not item or item["rarity"] != row["rarity"]:
                                 raise ValueError("Нужны три общедоступных трактата одного типа. Редкости можно смешивать; боссовые, веточные и эксклюзивные не подходят.")
                         ingredients = [(r["rarity"], q) for r, q in rows]

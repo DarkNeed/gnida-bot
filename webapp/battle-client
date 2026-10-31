@@ -93,6 +93,7 @@ async function runPendingMiniGames(){
   }finally{qtePlaying=false;busy=false;window.ArenaQTEWatch?.resume();if(!raid)renderActions();}
 }
 let forgeMode='dismantle',forgePool='',forgePending=null;
+let sellPending=null;
 const rarityNames={common:"Обычный",uncommon:"Необычный",rare:"Редкий",epic:"Эпический",legendary:"Легендарный"};
 const statNames={max_hp:"Макс. HP",resource_max:"Макс. энергия",physical_attack:"Физ. атака",magic_attack:"Маг. атака",physical_defense:"Физ. защита",magic_defense:"Маг. защита",speed:"Скорость",evasion:"Уклонение"};
 const effectNames={accuracy_flat:"Точность",damage_pct:"Урон",speed_pct:"Скорость",physical_defense_pct:"Физ. защита",magic_defense_pct:"Маг. защита",physical_attack_pct:"Физ. атака",magic_attack_pct:"Маг. атака",evasion_flat:"Уклонение",resource:"Энергия",resource_leech:"Похищение энергии (возврат половины)",next_magic_damage:"Следующая магическая атака",next_physical_damage:"Следующая физическая атака",prepared_attack:"Подготовленная атака",stun:"Ошеломление",bleed:"Кровотечение"};
@@ -168,13 +169,33 @@ function describeEffect(e){
   return esc(effectNames[kind]||kind)+': '+(e.value>0?'+':'')+esc(value)+(e.target==='enemy'?' противнику':'')+(e.turns?' · '+e.turns+' х.':'')+(e.chance<1?' · шанс '+Math.round(e.chance*100)+'%':'');
 }
 const statusIcons={bleed:1,stun:2,accuracy_flat:3,damage_pct:4,physical_attack_pct:4,magic_attack_pct:5,physical_defense_pct:6,magic_defense_pct:6,evasion_flat:7,speed_pct:8,resource:9,resource_leech:9,prepared_attack:10,next_physical_damage:10,next_magic_damage:5};
-Object.assign(statusIcons,{plague_fever:1,plague_spores:12});
+Object.assign(statusIcons,{burn:'burn',plague_fever:'fever',plague_spores:'spores',rpg_counter:'counter',rpg_parry:'parry',family_cover:'family_cover',skill_cost_flat:'skill_cost'});
+// Named artwork is a strict allowlist: neither effect IDs nor API strings become URLs.
+const statusArtNames=['burn','frost','fever','spores','vulnerability','counter','parry','family_cover','souls','skeleton','death_servants','blood_rally','weapon_open','moon_mark','visceral','beast','mana_echo','faith','retribution','casino_misfortune','casino_chips','casino_jackpot','casino_debt','casino_table','casino_ace','casino_dice','revision','plot_armor','skill_cost','pet_ready','grip','compilation','poison','curse','shock','prey'];
+const statusArtIds={
+  'effect:nz_contact_venom:burn':'poison','effect:nz_contact_curse:damage_pct':'curse','effect:nz_contact_shock:accuracy_flat':'shock','effect:lei_prey:raid_prey':'prey','effect:lei_overheat:damage_taken_pct':'vulnerability',
+  'mechanic:chaplain_revision':'revision',
+  'casino:misfortune':'casino_misfortune','casino:chips':'casino_chips','casino:sevens':'casino_jackpot','casino:debt':'casino_debt','casino:table':'casino_table','casino:ace':'casino_ace','casino:stored':'casino_dice',
+  'rpg:souls':'souls','rpg:skeleton':'skeleton','rpg:rally':'blood_rally','rpg:weapon':'weapon_open','rpg:moon':'moon_mark','rpg:visceral':'visceral','rpg:beast':'beast','rpg:beast_fury':'beast','rpg:echo':'mana_echo','rpg:faith':'faith','rpg:retribution':'retribution','rpg:heat':'burn',
+  'mastery:flow':'mana_echo','mastery:prayers':'faith','mastery:mercy_ready':'faith','mastery:healing_ready':'faith',
+  'final:grip':'grip','final:beast':'beast','final:counter':'counter','final:compile':'compilation','final:program':'compilation',
+};
+function illustratedStatus(item,side){
+  const id=item.id;
+  const named=id.startsWith('pet:')?'pet_ready':
+    id.startsWith('effect:nz_plot_armor:')?'plot_armor':
+    id.startsWith('effect:rpg_frost:')?'frost':
+    id==='rpg:skeleton'&&side.rpg_state?.death_servants?'death_servants':statusArtIds[id];
+  return named?{...item,icon:named}:item;
+}
 const statusStatNames={accuracy_flat:'точности',damage_pct:'урона',damage_taken_pct:'входящего урона',physical_attack_pct:'физ. атаки',magic_attack_pct:'маг. атаки',physical_defense_pct:'физ. защиты',magic_defense_pct:'маг. защиты',evasion_flat:'уклонения',speed_pct:'скорости',next_physical_damage:'следующей физ. атаки',next_magic_damage:'следующей маг. атаки'};
 const statusColors=['#ef5366','#ef5366','#f4cb75','#93d9ef','#93d9ef','#c59bf1','#93d9ef','#93d9ef','#93d9ef','#c59bf1','#f4cb75','#f4cb75','#ef5366','#c59bf1','#f4cb75','#93d9ef'];
 function statusIcon(index,direction=''){
+  const illustrated=typeof index==='string'&&statusArtNames.includes(index);
   const glyph=Number.isInteger(index)&&index>=0&&index<statusColors.length?index:15;
+  const path=illustrated?'/static/assets/status-effects-v4/'+index+'.png':'/static/assets/status-effects-v3/'+glyph+'.png';
   const marked=direction==='down'||direction==='up',arrow=direction==='down'?'M26 20v8m-3-3 3 3 3-3':'M26 28v-8m-3 3 3-3 3 3';
-  return '<svg class="status-icon'+(marked?' status-'+direction:'')+'" aria-hidden="true" focusable="false" viewBox="0 0 32 32" style="color:'+(direction==='down'?'#ef5366':statusColors[glyph])+'"><image class="status-drawing" href="/static/assets/status-effects-v3/'+glyph+'.png" width="32" height="32"/>'+(marked?'<g fill="none" stroke-linecap="square" stroke-linejoin="miter"><path d="'+arrow+'" stroke="#101b2b" stroke-width="5"/><path d="'+arrow+'" stroke="currentColor" stroke-width="2.5"/></g>':'')+'</svg>';
+  return '<svg class="status-icon'+(illustrated?' status-illustrated':'')+(marked?' status-'+direction:'')+'" aria-hidden="true" focusable="false" viewBox="0 0 32 32" style="color:'+(direction==='down'?'#ef5366':statusColors[glyph])+'"><image class="status-drawing" href="'+path+'" width="32" height="32"/>'+(marked?'<g fill="none" stroke-linecap="square" stroke-linejoin="miter"><path d="'+arrow+'" stroke="#101b2b" stroke-width="5"/><path d="'+arrow+'" stroke="currentColor" stroke-width="2.5"/></g>':'')+'</svg>';
 }
 function fighterStatuses(side){
   const items=[];
@@ -186,7 +207,7 @@ function fighterStatuses(side){
     const name=specialNames[e.id]|| (e.id==='nz_plot_armor'?'Сюжетная броня':e.id==='adoration'?'Умиление':e.name||(kind==='incoming_damage_multiplier'?'Защита от урона':direction?(direction==='down'?'Понижение ':'Повышение ')+statusStatNames[kind]:effectNames[kind]||'Особый эффект'));
     let detail=e.description?esc(e.description):kind==='stun'?'Пропускает ход из-за ошеломления.':kind==='bleed'?'Кровотечение: '+esc(e.value)+' урона при атаке этого бойца.':kind==='prepared_attack'?'Усилена следующая подходящая атака; подготовка расходуется по условиям навыка.':describeEffect({...e,target:'self',turns:0,chance:1});
     detail+=e.id==='nz_plot_armor'?'<br>До конца этого похода.':kind==='plague_spores'?'<br>Стаков: '+esc(e.value)+' / 3. Урон спор: '+esc(Number(e.value)*Number(e.damage_per_stack||1))+' HP за ход. Действует до снятия.':'<br>Осталось ходов этого бойца: '+esc(duration)+'.';
-    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:kind==='incoming_damage_multiplier'?6:e.id==='pet_guard'?6:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:e.id==='nz_plot_armor'?'∞':String(kind==='plague_spores'?e.value:duration),detail});
+    items.push({id:'effect:'+String(e.id||kind)+':'+kind,name,icon:kind==='damage_taken_pct'?(Number(e.value)>0?'vulnerability':6):kind==='incoming_damage_multiplier'?6:e.id==='pet_guard'?6:e.id==='lei_prey'?14:e.id==='lei_overheat'?12:e.id==='adoration'?0:(statusIcons[kind]??15),direction:e.id==='adoration'?'':direction,count:e.id==='nz_plot_armor'?'∞':String(kind==='plague_spores'?e.value:duration),detail});
   }
   const m=side.mechanics||{};
   if(m.chaplain_incoming)items.push({id:'mechanic:chaplain_revision',name:'Сопротивление редакции',icon:6,count:'×'+m.chaplain_incoming,detail:'Множитель получаемого прямого урона. Это свойство текущей редакции, а не снимаемый эффект.'});
@@ -265,7 +286,7 @@ function fighterStatuses(side){
   if(m.enemy_prescript?.skill_id)items.push({id:'mechanic:enemy_prescript',name:'Предписание противника',icon:14,count:'1',detail:'Используй '+(m.enemy_prescript.allowed||[m.enemy_prescript.skill_id]).map(id=>'«'+esc(skillName(id))+'»').join(' или ')+'. Другое действие или пропуск: до '+esc(m.enemy_prescript.penalty)+' энергии штрафа. Зелье не расходует предписание.'});
   const pet=side.pet,p=side.pet_state||{};
   if(pet&&(p.ready||p.charge||p.incoming||p.used||p.task))items.push({id:'pet:'+pet.id,name:pet.name+(p.ready?' · бонус готов':''),icon:15,count:String(p.ready||p.used?1:p.charge||p.incoming||1),detail:esc(pet.description)+'<br>'+(p.used?'Уже использован в этом бою.':p.ready?'Бонус подготовлен к следующему подходящему навыку.':'Накопление: '+esc(p.charge||p.incoming||0)+'. Это не длительность.')+(p.task?'<br>Поручение: '+esc(({attack:'атаковать',restore:'восстановить энергию',support:'применить поддержку'})[p.task]||p.task):'')});
-  return items;
+  return items.map(item=>illustratedStatus(item,side));
 }
 function statusSide(key){return statusViews?.[key]||current?.state?.sides?.[key];}
 function statusButtons(side,key){return fighterStatuses(side).map(e=>'<button class="status-token" data-status-side="'+key+'" data-status-id="'+esc(e.id)+'" aria-label="'+esc(e.name)+' · '+esc(e.count)+'" title="'+esc(e.name)+'">'+statusIcon(e.icon,e.direction)+'<span class="status-count">'+esc(e.count)+'</span></button>').join('');}
@@ -562,6 +583,10 @@ function forgeChoices(f,kind,odds){return '<details><summary>Все возмож
 function forgeFusion(f,rows,items){const count=items.reduce((n,i)=>n+i.quantity,0),odds=Object.fromEntries(f.rarities.map(r=>[r.id,0]));let cost=0;for(const i of items){const row=rows.find(r=>r.id===i.id),rule=f.rarities.find(r=>r.id===row.rarity);cost+=rule.rewrite_price*i.quantity;for(const r of f.rarities)odds[r.id]+=(f.fusion_odds[row.kind][row.rarity][r.id]||0)*i.quantity/(count||1);}return {odds,price:Math.ceil(cost/(count||1)),count};}
 function forgeSelection(f){const rows=f.inventory.filter(i=>i.can_rewrite&&i.kind===forgePool),items=[];let bad=false;for(const row of rows){const count=Number(document.getElementById('forge-rewrite-'+row.id)?.value);if(!Number.isInteger(count)||count<0||count>Math.min(3,row.quantity))bad=true;if(count>0)items.push({id:row.id,quantity:count});}return {rows,items,bad,...forgeFusion(f,rows,items)};}
 function forgeUpdateSelection(){const f=menu?.forge,el=document.getElementById('forge-selection');if(!f||!el)return;const s=forgeSelection(f);el.innerHTML=s.bad?'<p>Проверь количество трактатов.</p>':'<p>Выбрано '+s.count+' / 3 · стоимость '+s.price+' ₣</p>'+(s.count?forgeOdds(s.odds):'');}
+function sellControls(item){
+  if(!item.sell_price)return '';
+  return '<div class="note"><label>Количество для продажи<input id="sell-quantity-'+item.id+'" type="number" min="1" max="'+Math.min(9999,item.quantity)+'" step="1" value="1"></label><p>Скупка: '+item.sell_price+' ₣ за штуку · 50% базовой цены.</p>'+button('Продать торговцу','sellitem:'+item.id)+'</div>';
+}
 function forgeBody(data){
   const f=data.forge;if(!f)return '<div class="note">Обнови меню для загрузки кузницы.</div>';
   if(page==='forgeConfirm'){
@@ -570,7 +595,7 @@ function forgeBody(data){
   }
   let body='<div class="card"><h2>Кузница трактатов</h2><p>Баланс: '+(data.balance||0)+' ₣</p><div class="forge-wallet">'+f.rarities.map(r=>'<span>'+rarityBadge(r.id)+' '+(f.pages[r.id]||0)+' стр.</span>').join('')+'</div>';
   body+='<p class="muted">Страницы и трактаты общие для аккаунта; оплата франками выбранного чата. Один трактат даёт 2 страницы своей редкости. Для случайной ковки нужны 6 страниц одной редкости и франки. Рецептов нет; боссовые навыки остаются наградой рейдов.</p></div>';
-  body+='<div class="tabs">'+button('Разобрать','forgemode:dismantle',forgeMode==='dismantle'?'selected':'')+button('Ковать','forgemode:craft',forgeMode==='craft'?'selected':'')+button('Слияние','forgemode:rewrite',forgeMode==='rewrite'?'selected':'')+'</div>';
+  body+='<div class="tabs">'+button('Разобрать','forgemode:dismantle',forgeMode==='dismantle'?'selected':'')+button('Ковать','forgemode:craft',forgeMode==='craft'?'selected':'')+button('Слияние','forgemode:rewrite',forgeMode==='rewrite'?'selected':'')+button('Страницы','forgemode:exchange',forgeMode==='exchange'?'selected':'')+'</div>';
   if(forgeMode==='dismantle'){
     body+='<div class="note">Разбираются только предметы-трактаты, а не изученные навыки. За каждый — 2 страницы его редкости.</div>';
     body+=f.inventory.map(i=>'<div class="card"><h2>№'+i.id+' · '+esc(i.name)+' × '+i.quantity+'</h2>'+rarityBadge(i.rarity)+forgeInfo(i)+'<label>Количество для разбора<input id="forge-dismantle-'+i.id+'" type="number" min="1" max="'+Math.min(99,i.quantity)+'" step="1" value="1"></label><p class="muted">За каждый: '+i.salvage_pages+' страницы той же редкости. Франки не нужны.</p>'+button('Разобрать','forgedismantle:'+i.id)+'</div>').join('');
@@ -578,6 +603,13 @@ function forgeBody(data){
   }else if(forgeMode==='craft'){
     body+='<div class="note">Выбери качество страниц и активный или пассивный трактат. Пустого результата нет, но редкость результата может отличаться. Требования изучения и лимиты навыков сохраняются.</div>';
     body+=f.crafts.map(c=>'<div class="card"><h2>'+(c.kind==='skill'?'Активный':'Пассивный')+' трактат</h2><p>Из страниц: '+rarityBadge(c.rarity)+'</p><p>'+forgeCost(c)+'</p>'+forgeOdds(c.odds)+forgeChoices(f,c.kind,c.odds)+button('Ковать','forgecraft:'+c.kind+':'+c.rarity,'primary',(f.pages[c.rarity]||0)<c.pages||(data.balance||0)<c.price)+'</div>').join('');
+  }else if(forgeMode==='exchange'){
+    body+='<div class="note">Обмен между соседними редкостями: одна страница → две рангом ниже; пять страниц → одна рангом выше. Без франков и случайности.</div>';
+    for(let index=0;index<f.rarities.length;index++)for(const direction of ['down','up']){
+      const source=f.rarities[index],target=f.rarities[index+(direction==='up'?1:-1)];if(!target)continue;
+      const spent=direction==='up'?5:1,gained=direction==='up'?1:2,key=source.id+'-'+direction,available=Math.floor((f.pages[source.id]||0)/spent);
+      body+='<div class="card"><h2>'+spent+' × '+esc(source.name)+' → '+gained+' × '+esc(target.name)+'</h2><label>Число обменов<input id="forge-exchange-'+key+'" type="number" min="1" max="'+Math.max(1,Math.min(9999,available))+'" step="1" value="1"></label>'+button('Обменять','forgeexchange:'+source.id+':'+direction,'primary',!available)+'</div>';
+    }
   }else{
     if(!['skill','passive'].includes(forgePool))forgePool='skill';
     const ingredients=f.inventory.filter(i=>i.can_rewrite&&i.kind===forgePool);
@@ -665,6 +697,10 @@ function menuScreen(data){
     body+='<div class="note">Выбери босса и создай тихий рейд — сообщение в группу не отправляется. В рейд отправляется твой общий персонаж. Можно сразу начать соло. На сбор — 10 минут.</div>';
     body+='<div class="note">Лей Хенг и Фуфелшмерц подстраиваются под отряд: уровень равен большему из среднего уровня (вверх) +2 и уровня самого сильного бойца +1. У Кита фиксированный 25 уровень, без подстройки. Шанс трактата — 70%; после четырёх неудачных подходящих побед пятая гарантирована. Часовой кулдаун наград запускается только при выпадении трактата. Не выпал — следующая победа снова даёт полную награду и попытку дропа. Во время кулдауна: 20% франков и XP, без трактатов и ресурсов питомцев. Таймер отдельный для каждого босса, общий для всех чатов и бойцов; повторы его не продлевают.</div>';
     body+=(data.raid_bosses||[]).map(b=>'<div class="card"><div class="profile">'+(b.sprite?'<img class="portrait" src="'+esc(b.sprite)+'" alt="">':'')+'<div><h2>'+esc(b.name)+'</h2>'+(b.id==='whaler'?'<p class="muted">С 20 уровня · 600 / 900 / 1200 HP на 1 / 2 / 3 бойцов. Без брони. Восстановление энергии может вызвать Кару.</p>':b.fixed_level?'<p class="muted">'+esc(b.difficulty)+' · фиксированный Lv.'+esc(b.fixed_level)+' · без подстройки. Рекомендуется тройка подготовленных бойцов 20 уровня.</p>':'')+'<p class="muted">'+esc(raidRewardStatus(b))+'</p></div></div>'+button((data.personal?.level||0)<(b.min_level||1)?'Нужен '+b.min_level+' уровень':'Создать тихий рейд','raidcreate:'+b.id,'primary',(data.personal?.level||0)<(b.min_level||1))+'</div>').join('');
+  }else if(page==='sellConfirm'){
+    const pending=sellPending,item=(data.inventory||[]).find(i=>i.id===pending?.item);
+    if(!item){sellPending=null;page='inventory';menuScreen(data);return;}
+    body+='<div class="card"><h2>Продать торговцу?</h2><p>Отдать: <b>'+esc(item.name)+' × '+pending.quantity+'</b>.</p><p>Получить: <b>'+item.sell_price*pending.quantity+' ₣</b> · 50% базовой цены.</p><p class="muted">Проданные предметы исчезнут из инвентаря. Покупка обратно не гарантируется. При действующем долговом взыскании доход погашает долг по обычным правилам.</p><div class="row">'+button('Подтвердить продажу','sellconfirm','primary')+button('Отмена','sellcancel')+'</div></div>';
   }else if(page==="merchant"){
     const m=data.merchant||{offers:[]};
     const casino=data.casino;
@@ -677,13 +713,14 @@ function menuScreen(data){
       body+='</div>';
     }
     body+='<div class="card"><h2>Странствующий торговец</h2><p>Баланс: '+(data.balance||0)+' ₣</p><p class="muted">'+(m.visit_id?'Уходит: '+esc(new Date(m.ends*1000).toLocaleString('ru-RU')):'Сейчас торговца нет. Следующее появление: '+esc(m.next_starts?new Date(m.next_starts*1000).toLocaleString('ru-RU'):'скоро'))+'</p>'+button('Обновить товары','refresh','small')+'</div>';
-    body+=(m.offers||[]).map(item=>'<div class="card"><h2>'+esc(item.name)+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+'<p class="muted">Можно купить ещё '+item.remaining+' за этот визит.</p>'+button('Купить — '+item.price+' ₣','buy:'+item.id,'primary',!item.remaining||(data.balance||0)<item.price)+'</div>').join('');
+    body+=(m.offers||[]).map(item=>'<div class="card"><h2>'+esc(item.name)+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+'<p class="muted">'+esc(item.purchase_warning||('Можно купить ещё '+item.remaining+' за этот визит.'))+'</p>'+button('Купить — '+item.price+' ₣','buy:'+item.id,'primary',!!item.purchase_warning||!item.remaining||(data.balance||0)<item.price)+'</div>').join('');
+    body+='<div class="card"><h2>Скупка лишнего</h2><p>Торговец покупает неиспользованные трактаты, свитки классов, зелья и конфеты за 50% базовой цены. Скупка доступна постоянно в инвентаре. Билеты и платные услуги не продаются.</p>'+button('Продать из инвентаря','tab:inventory')+'</div>';
     body+='<div class="note">Два визита в день по два часа, с 10:00 до 22:00 МСК. Время прихода и ассортимент едины для всех чатов. Лимиты покупок общие для аккаунта и всех его персонажей. Оплата франками выбранного чата; покупки попадают в общий инвентарь.</div>';
   }else if(page==="inventory"){
     const targets=[data.personal].filter(Boolean);
     body+='<div class="note">Групповая передача: <code>/передать предмет 42x3, 57 @участник</code> — три экземпляра №42 и один №57. Или ответом получателю без тега. Можно написать несколько команд отдельными строками; при ошибке весь пакет отменяется.</div>';
     body+='<div class="card"><h2>Инвентарь</h2><p class="muted">Предметы общие для аккаунта. Трактат расходуется при изучении, смена класса требует подтверждения. Передавать можно по номеру предмета.</p>'+button('К торговцу','tab:merchant')+'</div>';
-    body+=(data.inventory||[]).map(item=>'<div class="card"><h2>№'+item.id+' · '+esc(item.name)+' × '+item.quantity+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+(item.kind==='potion'?'<p class="muted">Используется кнопкой «Зелье» в свой ход.</p>':'<select id="item-target-'+item.id+'">'+targets.map(p=>'<option value="'+(p.personal?'p':'s')+':'+p.user_id+'">'+esc(p.personal?'Мой личный персонаж':p.name||'Мой персонаж-раб')+' · Lv.'+p.level+'</option>').join('')+'</select>'+button('Использовать','useitem:'+item.id,'primary'))+'<p class="muted">Передать в чате: <code>/передать предмет '+item.id+' @участник</code><br>Или ответом: <code>/передать предмет '+item.id+'</code></p></div>').join('')||'<div class="note">Пока пусто.</div>';
+    body+=(data.inventory||[]).map(item=>'<div class="card"><h2>№'+item.id+' · '+esc(item.name)+' × '+item.quantity+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+(item.kind==='potion'?'<p class="muted">Используется кнопкой «Зелье» в свой ход.</p>':'<select id="item-target-'+item.id+'">'+targets.map(p=>'<option value="'+(p.personal?'p':'s')+':'+p.user_id+'">'+esc(p.personal?'Мой личный персонаж':p.name||'Мой персонаж-раб')+' · Lv.'+p.level+'</option>').join('')+'</select>'+button('Использовать','useitem:'+item.id,'primary'))+sellControls(item)+'<p class="muted">Передать в чате: <code>/передать предмет '+item.id+' @участник</code><br>Или ответом: <code>/передать предмет '+item.id+'</code></p></div>').join('')||'<div class="note">Пока пусто.</div>';
   }else if(page==="skillReplace"){
     const pending=skillUsePending;
     const row=(data.inventory||[]).find(i=>i.id===pending?.item);
@@ -841,6 +878,19 @@ app.addEventListener("click",async event=>{
   if(cmd==='pets'){location.assign('/pets?chat='+chat+location.hash);return;}
   if(cmd==='raidcreate'){await menuAction('raid_create',{boss:arg});return;}
   if(cmd==='forgemode'){forgeMode=arg;page='forge';menuScreen(menu);return;}
+  if(cmd==='sellitem'){
+    const item=menu?.inventory?.find(i=>i.id===Number(arg)),quantity=Number(document.getElementById('sell-quantity-'+arg)?.value);
+    if(!item||!item.sell_price||!Number.isInteger(quantity)||quantity<1||quantity>Math.min(9999,item.quantity)){toast('Выбери имеющееся количество предметов.');return;}
+    sellPending={item:item.id,quantity,nonce:forgeNonce(),confirm:true};page='sellConfirm';menuScreen(menu);return;
+  }
+  if(cmd==='sellcancel'){sellPending=null;page='inventory';menuScreen(menu);return;}
+  if(cmd==='sellconfirm'){if(sellPending&&await menuAction('sell_item',sellPending)){sellPending=null;page='inventory';menuScreen(menu);}return;}
+  if(cmd==='forgeexchange'){
+    const [rarity,direction]=arg.split(':'),f=menu?.forge,quantity=Number(document.getElementById('forge-exchange-'+rarity+'-'+direction)?.value),index=f?.rarities.findIndex(r=>r.id===rarity),target=f?.rarities[index+(direction==='up'?1:-1)];
+    const spent=direction==='up'?5:1,gained=direction==='up'?1:2;
+    if(!target||!Number.isInteger(quantity)||quantity<1||quantity>9999||quantity*spent>(f.pages[rarity]||0)){toast('Не хватает страниц или неверное количество.');return;}
+    forgePreview('exchange',{rarity,direction,quantity},'<p>Отдать '+quantity*spent+' стр. '+rarityBadge(rarity)+'. Получить '+quantity*gained+' стр. '+rarityBadge(target.id)+'. Без франков и случайности.</p>');return;
+  }
   if(cmd==='forgecancel'){forgePending=null;page='forge';menuScreen(menu);return;}
   if(cmd==='forgeconfirm'){if(forgePending&&await menuAction('forge',forgePending.payload)){forgePending=null;page='forge';menuScreen(menu);}return;}
   if(cmd==='forgedismantle'){

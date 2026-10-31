@@ -8,3 +8,4 @@
 @media(max-width:650px){.guild-member-avatar{width:42px;height:42px;flex-basis:42px}.guild-member-heading{gap:5px}}
 .guild-rank-filter{font-size:10px;color:var(--g-muted)}.guild-rank-filter select{display:block;padding:7px 10px;margin-top:4px;font-size:11px}
 @media(prefers-reduced-motion:reduce){.guild *{transition:none!important}}
+.guild .guild-meter > i { max-width: 100%; }

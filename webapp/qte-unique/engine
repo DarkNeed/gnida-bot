@@ -50,7 +50,51 @@
     tiger:['Поступь тигробоя','#e8b786','Шесть разрезов: горизонталь, вертикаль, диагонали и финальная пара.','arc'],
   };
   const GUILD_FAMILIES={guild_stab:'slash',guild_net:'paint',guild_fang:'beast',guild_hex:'mana',guild_smash:'impact',guild_bone:'death',guild_soul:'death',guild_claw:'beast',guild_fire:'fire',guild_ice:'ice',guild_lightning:'lightning'};
+  const GUILD_MOVES={stab:'slash',net:'paint',fang:'beast',hex:'mana',smash:'impact',bone:'death',soul:'death',claw:'beast',fire:'fire',ice:'ice',lightning:'lightning',acid:'paint',sticky:'paint',poison_bite:'beast',pounce:'beast',cleaver:'slash',troll_quake:'impact',spectral_blade:'slash',rune_cross:'lightning',stone_rain:'impact',venom_rain:'paint',dragon_dive:'beast',tail:'slash',wings:'fire',ice_tomb:'ice',soul_prison:'death',grave_crown:'death',crypt_blades:'slash',ancient_sun:'fire',ash_orbit:'fire'};
+  function guildPrepare(s,e,add){
+    const key=(s.p.skill.base_id||'').slice(6);if(!GUILD_MOVES[key]||s.p.skill.monster_pattern!==2)return false;
+    const d=s.d,p=s.p,i=e.index,{x,y}=s.player,tx=clamp(x+(s.player.vx||0)*d.lead,20,700),ty=clamp(y+(s.player.vy||0)*d.lead,20,300),angle=e.angle;
+    const color=['soul','bone','soul_prison','grave_crown'].includes(key)?'#83c6ae':['ice','ice_tomb'].includes(key)?'#b6ddfa':['fire','wings','ancient_sun','ash_orbit'].includes(key)?'#e78654':['hex','lightning','rune_cross','spectral_blade','crypt_blades'].includes(key)?'#ba9ddf':['acid','sticky','venom_rain','net','poison_bite'].includes(key)?'#a9bc75':'#d3b69c';
+    const beam=(ax,ay,bx,by,r=12,delay=0,motif='blade')=>add({type:'line',ax,ay,bx,by,r:r*d.beamScale,color,motif,tier:'heavy'},delay,.22);
+    const slash=(a,delay=0)=>{const dx=Math.cos(a)*900,dy=Math.sin(a)*900;beam(tx-dx,ty-dy,tx+dx,ty+dy,12,delay);};
+    const circle=(cx,cy,r=35,delay=0)=>add({type:'circle',x:cx,y:cy,r,color,tier:'heavy'},delay,.28);
+    const fan=(bx,by,a,n=5,spread=.18,delay=0,motif='soul')=>{for(let j=0;j<n;j++){const theta=a+(j-(n-1)/2)*spread;add({type:'bullet',x:bx,y:by,vx:Math.cos(theta)*d.speed*.80,vy:Math.sin(theta)*d.speed*.80,r:j===Math.floor(n/2)?7:5,color,motif,tier:j===Math.floor(n/2)?'normal':'minor'},delay,2.2);}};
+    const aimed=(n=5,delay=0,motif='soul',top=false)=>{const bx=top?40+e.jitter*640:i%2?-18:738,by=top?(i%2?-18:338):40+e.jitter*240;fan(bx,by,Math.atan2(ty-by,tx-bx),n,.15,delay,motif);};
+    const ring=()=>add({type:'ring',x:tx,y:ty,r:20,speed:200,gap:angle,gapWidth:1.65,thickness:9,color,tier:'normal'},.30,1.3);
+    if(['stab','cleaver','spectral_blade','crypt_blades','tail'].includes(key)){
+      slash(angle);if(key!=='stab')slash(angle+(['tail','crypt_blades'].includes(key)?Math.PI/2:.7),.30);if(key==='crypt_blades')aimed(5,.5,'bone',true);
+    }else if(['fang','claw','poison_bite','pounce','dragon_dive'].includes(key)){
+      circle(tx,ty,key==='dragon_dive'?42:32);slash(angle,.24);if(['claw','dragon_dive'].includes(key))slash(angle+1.1,.48);if(key==='poison_bite')aimed(3,.45,'web');
+    }else if(['smash','troll_quake','stone_rain'].includes(key)){
+      if(key==='stone_rain'){for(let j=0;j<3;j++)circle(clamp(tx+(j-1)*75,25,695),clamp(ty+(j-1)*40,25,295),25,j*.16);}else{circle(tx,ty,38);ring();}if(key==='troll_quake')beam(0,ty,720,ty,10,.45);
+    }else if(['net','sticky'].includes(key)){
+      beam(tx,0,tx,320,10,0,'web');beam(0,ty,720,ty,10,.26,'web');if(key==='net')aimed(3,.5,'web');
+    }else if(['acid','venom_rain'].includes(key)){
+      aimed(key==='acid'?5:7,0,'paint',key==='venom_rain');circle(tx,ty,24,.35);if(key==='venom_rain')aimed(5,.38,'paint');
+    }else if(['bone','soul','hex','soul_prison','grave_crown'].includes(key)){
+      aimed(['bone','grave_crown'].includes(key)?7:5,0,key==='bone'?'bone':'soul');
+      if(['soul_prison','grave_crown'].includes(key)){add({type:'well',x:360+Math.cos(angle)*170,y:160+Math.sin(angle)*70,r:25,pull:70,color,tier:'normal'},.15,.9);aimed(5,.38,'soul',true);}else if(key==='hex')beam(0,ty,720,ty,9,.30);else if(key==='soul')aimed(3,.32,'soul',true);
+    }else if(['fire','wings','ancient_sun','ash_orbit'].includes(key)){
+      aimed(7,0,'flame',key==='wings');if(key==='fire')circle(tx,ty,30,.36);else if(key==='wings')aimed(5,.34,'flame');else if(key==='ancient_sun'){circle(tx,ty,42,.12);for(let j=0;j<6;j++)fan(360,160,angle+j*TAU/6,1,0,.45,'flame');}else for(let j=0;j<8;j++){const a=angle+j*TAU/8;add({type:'bullet',x:360+Math.cos(a)*130,y:160+Math.sin(a)*130,vx:Math.cos(a+.8)*280,vy:Math.sin(a+.8)*280,r:6,turn:.65,color,motif:'flame',tier:'minor'},.20,1.7);}
+    }else if(['ice','ice_tomb'].includes(key)){
+      const gap=70+e.jitter*580;for(let j=0;j<13;j++){const bx=30+j*55;if(Math.abs(bx-gap)>48)fan(bx,i%2?-15:335,i%2?Math.PI/2:-Math.PI/2,1,0,0,'crystal');}if(key==='ice_tomb')beam(0,ty,720,ty,10,.4,'crystal');
+    }else if(['lightning','rune_cross'].includes(key)){
+      beam(tx,0,tx,320,12,0,'spark');for(const j of [-1,1])beam(clamp(tx+j*100,10,710),0,clamp(tx-j*65,10,710),320,9,.23,'spark');if(key==='rune_cross')beam(0,ty,720,ty,10,.5,'spark');
+    }
+    return true;
+  }
+  function guildBlockThreats(p,seed,params){
+    const key=(p.skill.base_id||'').slice(6);if(!(p.skill.base_id||'').startsWith('guild_')||!GUILD_MOVES[key]||p.skill.monster_pattern!==2)return null;
+    const random=rng(seed^p.seed),offset=Math.floor(random()*8)*Math.PI/4,tier=clamp(p.skill.npc_tier||0,0,4),cycles=4+Math.floor(tier/2),result=[],mode=[...key].reduce((v,c)=>v+c.charCodeAt(0),0)%3;
+    for(let i=0;i<cycles;i++){
+      const a=offset+p.polarity*i*(mode===0?Math.PI/2:Math.PI/4),at=2+i*6.1/Math.max(1,cycles-1),specs=[[at,a,'bolt',.3],[at+.35,a+(mode!==1?Math.PI/2:0),'slash',.3]];
+      if(i%2)specs.push([at+.74,a,mode===2?'wave':'bolt',mode===2?.6:.1]);
+      for(const [t,angle,kind,weight] of specs)result.push({id:'block:'+result.length,at:t,warning:Math.max(.5,params.warning)+(kind==='wave'?.16:0),angle:Math.atan2(Math.sin(angle),Math.cos(angle)),kind,motif:GUILD_MOVES[key]==='death'?'bone':GUILD_MOVES[key]==='fire'?'flame':GUILD_MOVES[key]==='ice'?'crystal':'blade',tier:weight===.6?'heavy':weight===.3?'normal':'minor',weight,strike:0,resolved:false});
+    }
+    result.forEach((e,i)=>e.strike=Math.min(p.strikes-1,Math.floor(i*p.strikes/result.length)));return result;
+  }
   function family(skill){
+    const guild=GUILD_MOVES[(skill.base_id||'').slice(6)];if((skill.base_id||'').startsWith('guild_')&&guild)return guild;
     if(GUILD_FAMILIES[skill.base_id])return GUILD_FAMILIES[skill.base_id];
     if((skill.base_id||'').startsWith('nz_pyromancer_'))return 'fire';
     const nz=NZ?.identity({skill});if(nz){const{who,phase,move}=nz;return ({shalltear:[['slash','death','edict'],['thrust','slash','beast']],demiurge:[['fire','edict','script'],['fire','script','death']],albedo:[['slash','impact','impact'],['impact','slash','impact']],pandora:[['lightning','void','death'],['thrust','mirror','charm']],ainz:[['mana','void','death'],['coins','eclipse','holy']]}[who]||[['thrust','thrust','thrust'],['thrust','thrust','thrust']])[phase-1][move];}
@@ -166,6 +210,7 @@
   function attackResult(s){return {hits:s.results.filter(Boolean).length,total:s.results.length,mask:s.results.map(Boolean),criticals:s.criticals.slice(),damage:s.damage,hp:s.hp};}
   function defenseDifficulty(p,stats){
     const d=difficulty(stats);
+    const npc=clamp(p.skill.npc_tier||0,0,4);if(npc&&!p.basic){d.speed*=1+.06*npc;d.warning=Math.max(.40,d.warning*(1-.04*npc));d.gap*=1-.035*npc;d.lead+=.035*npc;}
     if(p.casinoJackpot){d.speed*=1.10;d.warning=Math.max(.30,d.warning*.94);}
     if(p.kit){d.warning*=.92;d.speed*=1.08;}
     if(p.skill.class_id==='thumb'){d.speed*=1.16;d.warning=Math.max(.30,d.warning*.94);d.beamScale*=1.12;}
@@ -183,6 +228,7 @@
     const staticOnly=p.skill.base_id!=='mother_joke'&&['slash','thrust','grapple','hack','script','edict','holy','lightning','portal','coins','tiger'].includes(p.kind);
     let span=(p.basic?4.8:staticOnly?5.1:p.kind==='fire'?4.3:p.kind==='impact'?4:3.5)*(.94+(p.interval-.8)*.15)*(p.kit?.96:1)*(p.basic?1:1-.08*d.intensity);
     if(NZ)[count,span]=NZ.schedule(p,count,span);
+    if(p.skill.npc_tier&&!p.basic)count+=clamp(p.skill.npc_tier,0,4);
     const model=damageModel(options),preparation=clamp(options.preparation??1,0,3);
     const activeDuration=NZ?.activeDuration(p)??6.8;
     return {kind:'defense',p,d,...model,criticalBase:!!options.criticalBase,criticalStrikes:options.criticalStrikes||[],preparation,activeDuration,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:preparation+activeDuration,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
@@ -219,7 +265,8 @@
       fan(bx,by,Math.atan2(ty-by,tx-bx),n,spread,delay,motif);};
     const cross=(radius=17,delay=0)=>{beam(x,0,x,H,radius,delay);beam(0,y,W,y,radius,delay+.12);};
     const diagonal=(theta,width=18,delay=0)=>{const dx=Math.cos(theta)*900,dy=Math.sin(theta)*900,cx=x+(tx-x)*.6,cy=y+(ty-y)*.6;beam(cx-dx,cy-dy,cx+dx,cy+dy,width,delay);};
-    if(NZ?.identity(p)){
+    if((id||'').startsWith('guild_')&&guildPrepare(s,e,add)){
+    }else if(NZ?.identity(p)){
       for(const h of NZ.shapes(s,e)){const {delay,duration,...shape}=h;add(shape,delay,duration);}
     }else if(p.kind==='casino_cards'){
       let bx=odd?35:685,by=40+e.jitter*240,theta=Math.atan2(y-by,x-bx);
@@ -331,7 +378,7 @@
       case 'portal':corridor(!!odd);diagonal(odd?.55:-.55,10,.4);break;
       case 'mirror':aimed(odd,.08,3);aimed(!odd,.08,3,.32);break;
       case 'coins':{
-        const cx=clamp(x+sign*55,80,W-80);beam(cx,0,cx,H,25);circle(x,y,36,.32,.2);break;}
+        const margin=id==='chaplain_hand'?0:80,cx=clamp(x+sign*55,margin,W-margin);beam(cx,0,cx,H,25);circle(x,y,36,.32,.2);break;}
       case 'eclipse':{
         const bx=odd?W-25:25,by=30+(i%3)*130;beam(bx,by,x+(x-bx)*4,y+(y-by)*4,10+d.pressure*3);
         if(i>1)circle(x,y,32,.3,.28);break;}
@@ -420,5 +467,5 @@
     if(s.time>=s.duration-1e-7){s.time=s.duration;s.ended=true;}
   }
   function defenseResult(s){return {hits:s.contacts.length,total:s.projectileCount,dodged:s.projectileCount-s.contacts.length,damage:s.damage,hp:s.hp,mask:Array.from({length:s.p.strikes},(_,i)=>!s.received.includes(i))};}
-  return {W,H,FAMILIES,DAMAGE_TIERS,impact,attackWeights,damageValue,hash,rng,clamp,family,profile,difficulty,defenseDifficulty,attack,attackStep,attackFrame,attackResult,hit,defense,defenseStep,defenseResult,geometry,distance,segmentDistance,touches};
+  return {W,H,FAMILIES,DAMAGE_TIERS,impact,attackWeights,damageValue,hash,rng,clamp,family,profile,difficulty,defenseDifficulty,guildBlockThreats,attack,attackStep,attackFrame,attackResult,hit,defense,defenseStep,defenseResult,geometry,distance,segmentDistance,touches};
 });

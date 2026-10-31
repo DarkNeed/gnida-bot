@@ -1,0 +1,224 @@
+{
+  "mode": "built-in image_gen",
+  "transparent_background": true,
+  "base_prompt": "Use case: stylized-concept. Asset type: a SINGLE raster status-effect icon for a dark fantasy RPG HUD, designed to read clearly at only 32 pixels. One centered compact symbol filling about 80% of a square canvas, angular hand-inked heraldic graphic, sharp tapering silhouette, bold near-black outlines, flat limited-color fills with one restrained highlight, matching an existing set of crimson bleeding claws, icy-blue shields, violet mana flames and pale-gold scrolls. Genuine transparent background, clean alpha, no background color, no tile, no badge frame, no letters, no numbers, no words, no watermark, no soft smoky halo, no photorealism, no decorative particles. Subject: ",
+  "packaging": "Exact alpha-bounds crop, Lanczos downscale to fit 128x128, centered on transparent 144x144 canvas. No halo removal or alpha thresholding.",
+  "assets": [
+    {
+      "key": "burn",
+      "label": "Горение",
+      "source": "exec-80d881f8-120d-42d1-b63c-fd5b7995b310.png",
+      "subject": "BURNING. A fierce compact red-orange flame with three angular tongues and a bright amber inner flame. Unmistakable fire, NOT a sword or claw."
+    },
+    {
+      "key": "frost",
+      "label": "Обморожение",
+      "source": "exec-52dd7f4e-0069-4e10-a516-efd7f4f52ccd.png",
+      "subject": "FROSTBITE. A single broad icy cyan snowflake made from six jagged ice crystals, pale blue and near-white centers, icy-blue dark outline, compact unmistakable cold symbol."
+    },
+    {
+      "key": "fever",
+      "label": "Лихорадка",
+      "source": "exec-7536df53-871d-4e14-8d21-919416c9e1dd.png",
+      "subject": "PLAGUE FEVER. A crimson anatomical-looking heart silhouette pierced by a small sickly yellow-green fever zigzag, a few angular cracks, NOT a bleeding wound, no letters."
+    },
+    {
+      "key": "spores",
+      "label": "Споры",
+      "source": "exec-fc1d57e3-ac0a-4d8a-b8d8-c2fc2b7e263c.png",
+      "subject": "PLAGUE SPORES. One large toxic yellow-green spore orb with five short pointed fungal protrusions, two smaller surrounding spores, dark olive outlines, flat chartreuse highlights."
+    },
+    {
+      "key": "vulnerability",
+      "label": "Уязвимость",
+      "source": "exec-815b3f20-65d1-488e-8695-f1828a9e0313.png",
+      "subject": "VULNERABILITY. A split broken icy-blue breastplate with a wide crimson jagged crack down its center, the two halves visibly separated, compact readable silhouette, no arrows."
+    },
+    {
+      "key": "counter",
+      "label": "Контрудар",
+      "source": "exec-b223037b-3a96-4c32-9ef3-77032ede0ffc.png",
+      "subject": "COUNTERATTACK. Two short pale-gold blades crossed with a single curling crimson return arrow around them, bold simple silhouette."
+    },
+    {
+      "key": "parry",
+      "label": "Парирование",
+      "source": "exec-94bd1d91-0687-409f-80bd-d46c9b5d0958.png",
+      "subject": "PARRY. A silvery dagger deflecting a crimson blade, with a sharp icy-white impact spark at the crossing, two bold silhouettes."
+    },
+    {
+      "key": "family_cover",
+      "label": "За спиной семьи",
+      "source": "exec-956fe2d1-87d8-4ffa-9edb-57fb077686d8.png",
+      "subject": "FAMILY PROTECTION. A large blue shield sheltering two small pale-blue human silhouettes behind its rim, a crimson family ribbon across the bottom."
+    },
+    {
+      "key": "souls",
+      "label": "Души",
+      "source": "exec-26db5bef-dbfb-4e33-8756-8172efdce0e1.png",
+      "subject": "SOUL CHARGES. Three pale emerald ghost flames with tiny dark eye slits, sweeping upward together, compact silhouette."
+    },
+    {
+      "key": "skeleton",
+      "label": "Скелет",
+      "source": "exec-fe78e3a2-8077-40fe-8f5b-d18a7503aee6.png",
+      "subject": "SUMMONED SKELETON. A single ivory skull above two crossed bony forearms, restrained dark green inner light, bold readable silhouette."
+    },
+    {
+      "key": "death_servants",
+      "label": "Страж и Палач",
+      "source": "exec-1012622c-654d-4671-a28e-2779f338365a.png",
+      "subject": "DEATH SERVANTS. Two ivory skulls side by side beneath one angular black and dark emerald crown, unmistakable pair of undead guardians."
+    },
+    {
+      "key": "blood_rally",
+      "label": "Кровавый ответ",
+      "source": "exec-e981a0f9-abae-46fe-882a-2f1bce427dbf.png",
+      "subject": "BLOOD RALLY. A crimson blood drop clasped by a pale ivory clawed hand, compact blood recovery symbol."
+    },
+    {
+      "key": "weapon_open",
+      "label": "Оружие раскрыто",
+      "source": "exec-8468e331-ad95-4840-821c-ecc91184263e.png",
+      "subject": "OPEN TRICK WEAPON. A silver serrated hunter cleaver unfolding at its hinge into two distinct segments, muted red leather grip, one bold angular weapon silhouette."
+    },
+    {
+      "key": "moon_mark",
+      "label": "Лунная метка",
+      "source": "exec-9d60452c-ff91-43d7-8f27-48985ed5bc16.png",
+      "subject": "MOON MARK. A large silver crescent moon enclosing a dark violet staring eye, eerie pale lavender highlights, simple compact mark."
+    },
+    {
+      "key": "visceral",
+      "label": "Висцеральная",
+      "source": "exec-f5e593a0-87bc-4892-a25f-2ad2734b6792.png",
+      "subject": "VISCERAL OPENING. A crimson anatomical heart centered inside four icy silver inward-pointing dagger tips, sharp simple silhouette, vulnerability opportunity."
+    },
+    {
+      "key": "beast",
+      "label": "Зверство",
+      "source": "exec-4ce79852-07bf-425b-9a39-1b9665fd13ec.png",
+      "subject": "BEAST FURY. A snarling wolf skull with two long ivory fangs and a crimson claw slash crossing its cheek, compact dark red and ivory emblem."
+    },
+    {
+      "key": "mana_echo",
+      "label": "Мановое эхо",
+      "source": "exec-aba7b049-d7da-455c-9b1f-224dfed23b52.png",
+      "subject": "MANA ECHO. Two offset violet flame silhouettes mirroring each other around one bright icy-blue arcane orb, echo repetition clearly visible, compact."
+    },
+    {
+      "key": "faith",
+      "label": "Вера",
+      "source": "exec-756e20c9-534f-4e67-a155-381b218c3cd4.png",
+      "subject": "FAITH. Two pale ivory praying hands holding a small golden four-pointed holy star, compact heraldic silhouette, muted warm gold."
+    },
+    {
+      "key": "retribution",
+      "label": "Воздаяние",
+      "source": "exec-d4a916a8-73ed-4e9f-8d48-289e44054d4f.png",
+      "subject": "RETRIBUTION. An upright silvery war hammer over a small pale-gold radiant sun, an electric blue crack in the hammer head, compact unmistakable paladin emblem."
+    },
+    {
+      "key": "casino_misfortune",
+      "label": "Невезение",
+      "source": "exec-4b9a4180-fb12-4a29-ad8c-2ceacfac9da7.png",
+      "subject": "BAD LUCK. A cracked violet horseshoe turned upside down, one broken gold nail and a small crimson fracture, bold readable silhouette."
+    },
+    {
+      "key": "casino_chips",
+      "label": "Фишки",
+      "source": "exec-a2bb2d01-9666-4333-beeb-94cfd14c2a04.png",
+      "subject": "CASINO CHIPS. Three overlapping black and pale gold poker chips, one red rim and one violet rim, thick simple edge markings, absolutely no letters or numbers."
+    },
+    {
+      "key": "casino_jackpot",
+      "label": "Джекпот",
+      "source": "exec-d87ecba5-db20-44c9-b2a9-be1c58d39940.png",
+      "subject": "JACKPOT. Three matching gold starburst slot reels lined up side by side inside a compact red and gold silhouette, no numbers, no text."
+    },
+    {
+      "key": "casino_debt",
+      "label": "Долг энергии",
+      "source": "exec-4d9c68da-b6bd-494a-996d-53396ee123c4.png",
+      "subject": "ENERGY DEBT. A violet lightning bolt bound in dark iron chains, one pale gold coin hanging below it, compact readable shape."
+    },
+    {
+      "key": "casino_table",
+      "label": "Игровой стол",
+      "source": "exec-95cc97c9-99d0-4663-9641-4e4da6fe9dcc.png",
+      "subject": "GAMING TABLE. A small diamond-shaped dark emerald casino table viewed from above, pale gold rim, three red card silhouettes on the felt, simple flat emblem."
+    },
+    {
+      "key": "casino_ace",
+      "label": "Туз в рукаве",
+      "source": "exec-3d23df3e-47ef-44fe-935d-1273f2e47246.png",
+      "subject": "ACE UP SLEEVE. One ivory playing card bearing only a large crimson spade symbol emerging from a black sleeve, pale gold trim, no letters or numbers."
+    },
+    {
+      "key": "casino_dice",
+      "label": "Запасной бросок",
+      "source": "exec-71da301c-458c-4ec1-88b6-9da29b69bf03.png",
+      "subject": "STORED DICE ROLL. A single ivory six-sided die with black circular pips, a small violet arc curved around one corner, bold compact perspective silhouette."
+    },
+    {
+      "key": "revision",
+      "label": "Редакция",
+      "source": "exec-406ffbcd-7f58-4738-a145-4db1649a501b.png",
+      "subject": "CHAPLAIN REVISION RESISTANCE. An ivory clock face protected by a dark angular shield, a single gold clock hand over the shield, cracked time motif, no numerals."
+    },
+    {
+      "key": "plot_armor",
+      "label": "Сюжетная броня",
+      "source": "exec-138982d0-43ea-4b5e-9d00-62d1018cbdb7.png",
+      "subject": "PLOT ARMOR. A pale-gold open storybook wrapping around a silvery breastplate like protective wings, one bright gold four-pointed star at its center, compact."
+    },
+    {
+      "key": "skill_cost",
+      "label": "Удорожание",
+      "source": "exec-3a56695b-2999-49cf-b18b-08876ec694fa.png",
+      "subject": "INCREASED ENERGY COST. One bright violet lightning bolt carrying a heavy black iron padlock with a crimson keyhole, compact bold resource penalty symbol."
+    },
+    {
+      "key": "pet_ready",
+      "label": "Бонус питомца",
+      "source": "exec-2f32ea06-1d9e-4cd7-8a6a-a55dabb97594.png",
+      "subject": "PET BONUS READY. A single large pale-gold animal paw print with a small four-pointed cyan sparkle, simple bold silhouette, no animal portrait."
+    },
+    {
+      "key": "grip",
+      "label": "Захват",
+      "source": "exec-b0ce6261-dff2-40fa-bcdc-8bf9ff6b7b5d.png",
+      "subject": "GRAPPLE CHARGES. Two muscular ivory hands gripping each other's wrists in a locked hold, crimson wrist bands, compact heraldic shape."
+    },
+    {
+      "key": "compilation",
+      "label": "Компиляция",
+      "source": "exec-f677f7a4-ab75-49ce-9f1c-c5000b9e59ec.png",
+      "subject": "COMPILED PROGRAM. A violet angular microchip with a bright cyan branching circuit pattern in its center and one pale-gold checkmark, bold simple readable icon, no words or letters."
+    },
+    {
+      "key": "poison",
+      "label": "Яд",
+      "source": "exec-230a68ed-729f-467b-9832-94d4a9679245.png",
+      "subject": "POISON. A single dark emerald venom droplet dripping from two ivory fangs, sickly yellow-green inner highlight, simple unmistakable poison symbol."
+    },
+    {
+      "key": "curse",
+      "label": "Проклятие",
+      "source": "exec-636906f0-8bd3-42b1-8c80-72c4108d94c4.png",
+      "subject": "CURSE. A dark violet hooked demonic sigil with a small crimson closed eye at its center, jagged shadow branches, no letters or pseudo-text, compact readable silhouette."
+    },
+    {
+      "key": "shock",
+      "label": "Шок",
+      "source": "exec-5dda8dc7-e5c1-4f8c-a41e-94ff0ca7c8ef.png",
+      "subject": "SHOCK. Two bright icy-blue lightning forks surrounding a small silver shattered star, electric cyan inner highlights, angular crisp silhouette, no background."
+    },
+    {
+      "key": "prey",
+      "label": "Добыча",
+      "source": "exec-1b40f42e-2833-44eb-a2e8-63663b9d436e.png",
+      "subject": "MARKED PREY. A crimson tiger eye with a pale-gold vertical slit centered within four short inward golden claw tips, compact fierce target mark."
+    }
+  ]
+}

@@ -55,6 +55,11 @@
       else if(cls==='priest')motif=kind==='thrust'?'glaive':kind==='impact'?'hammer':'holy';
     }
     if(sk.base_id==='guild_net'){motif='web';color='#d5cddb';}
+    if((sk.base_id||'').startsWith('guild_')){
+      motif=({death:'soul',fire:'flame',ice:'crystal',lightning:'spark',beast:'claw',slash:'blade',impact:'shield',paint:'paint',mana:'mana'})[kind]||motif;
+      if(sk.base_id==='guild_net')motif='web';
+      color=kind==='paint'?'#a9bc75':color;
+    }
     return {cls,motif,color,label};
   }
   function stroke(c,points,color,width=1,close=false,fill=false){
@@ -227,6 +232,7 @@
   }
   function hazard(c,s,h,g,flags){
     const a=appearance(s.p);if(!a||h.uniform||h.visualOnly)return false;
+    if((s.p.skill.base_id||'').startsWith('guild_')&&h.color)a.color=h.color;
     const {warning}=flags,t=s.time;c.save();c.strokeStyle=a.color;c.fillStyle=a.color;c.shadowBlur=0;
     if(h.type==='bullet'){
       if(warning){

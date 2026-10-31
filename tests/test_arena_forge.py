@@ -77,7 +77,7 @@ class ForgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view['pages'], {'common': 6})
         self.fixed(.01)
         await self.perform('craft', kind='skill', rarity='common')
-        self.assertEqual(self.qty(), 1)
+        self.assertEqual(self.qty('sweeping_kick') + self.qty('catch_breath'), 1)
         self.assertEqual(await self.db.franc_balance(1, 10), 9960)
         self.assertEqual((await self.db.arena_forge_view(1, 10))['pages']['common'], 0)
 
@@ -214,7 +214,7 @@ class ForgeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pages_epic_can_roll_epic_without_recipe_or_seals(self):
         self.resources(pages={'epic': 6})
-        self.fixed(.99)
+        self.fixed(.98)
         await self.perform('craft', kind='passive', rarity='epic')
         self.assertEqual(await self.db.franc_balance(1, 10), 9750)
         row = self.db.connection.execute('SELECT * FROM arena_inventory').fetchone()
@@ -224,7 +224,7 @@ class ForgeTests(unittest.IsolatedAsyncioTestCase):
     async def test_old_recipe_request_and_class_rejected(self):
         self.resources(pages={r: 100 for r in FORGE_RULES})
         for fields in (dict(kind='skill', content='dust_in_eyes'), dict(kind='class', rarity='rare'),
-                       dict(kind='skill', rarity='epic', content='tigerslayer_flurry'), dict(kind='skill', rarity='legendary')):
+                       dict(kind='skill', rarity='epic', content='tigerslayer_flurry'), dict(kind='skill', rarity='mythic')):
             with self.assertRaises(ValueError):
                 await self.perform('craft', **fields)
         self.assertEqual(await self.db.franc_balance(1, 10), 10000)
@@ -367,6 +367,17 @@ class ForgeClientTests(unittest.TestCase):
         self.assertEqual(result['price'], 55)
         for r in FORGE_RULES:
             self.assertAlmostEqual(result['odds'][r], (FORGE_FUSION_ODDS['common'][r]*2+FORGE_FUSION_ODDS['epic'][r])/3)
+
+    def test_exchange_and_sale_confirmation_render_safe_controls(self):
+        body=self.render("page='forge';forgeMode='exchange';menuScreen(input);")
+        self.assertIn('forge-exchange-epic-up',body)
+        self.assertIn('forgeexchange:legendary:down',body)
+        self.assertNotIn('forgeexchange:common:down',body)
+        body=self.render("input.inventory=[{id:3,name:'<Трактат>',kind:'skill',rarity:'common',quantity:2,sell_price:40,details:{}}];page='sellConfirm';sellPending={item:3,quantity:2};menuScreen(input);")
+        self.assertIn('&lt;Трактат&gt;',body)
+        self.assertIn('80 ₣',body)
+        self.assertIn('data-do="sellconfirm"',body)
+        self.assertIn('data-do="sellcancel"',body)
         detail = self.render("out=forgeInfo({kind:'skill',details:{unlock_level:10,cost:15,accuracy:95,power:32,cooldown:4,effects:[{kind:'resource_leech',value:15,target:'enemy'}]}});")
         self.assertIn('нужен уровень 10', detail)
         self.assertIn('-15 противнику', detail)

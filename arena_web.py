@@ -929,6 +929,8 @@ def create_arena_app(
             )
         elif action == "buy_item":
             notice = await db.arena_buy_item(chat, actor, int_field(body, "offer"))
+        elif action == 'sell_item':
+            notice = await db.arena_sell_item(chat, actor, int_field(body, 'item'), int_field(body, 'quantity'), body.get('nonce'), body.get('confirm'))
         elif action == "use_item":
             personal = body.get("personal", True)
             confirm = body.get("confirm", False)

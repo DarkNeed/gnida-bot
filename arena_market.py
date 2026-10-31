@@ -3,6 +3,7 @@
 from __future__ import annotations
 import json
 import random
+import re
 import sqlite3
 import time
 import uuid
@@ -29,6 +30,7 @@ from arena_forge import ForgeMixin
 from arena_global import RPG_SCOPE
 from arena_casino_unlock import CasinoUnlockMixin
 from arena_relics import RELIC_IDS,TICKET_ID,TICKET_NAME,TICKET_DESCRIPTION
+from arena_public_scrolls import NATIVE_RESOURCE_SCROLLS
 
 MSK = timezone(timedelta(hours=3))
 MERCHANT_DURATION = 2 * 3600
@@ -36,9 +38,9 @@ MERCHANT_OPEN_HOUR = 10
 MERCHANT_CLOSE_HOUR = 22
 MERCHANT_WINDOWS = ((1, MERCHANT_OPEN_HOUR, 13), (2, 15, 20))
 CLASS_SCROLL_CHANCE = 0.03
-PRICES = {"common": 80, "uncommon": 140, "rare": 260, "epic": 500}
-CLASS_PRICES = {"common": 500, "uncommon": 750, "rare": 1200, "epic": 2000}
-WEIGHTS = {"common": 6, "uncommon": 3, "rare": 1, "epic": 0.2}
+PRICES = {"common": 80, "uncommon": 140, "rare": 260, "epic": 500, "legendary": 1000}
+CLASS_PRICES = {"common": 500, "uncommon": 750, "rare": 1200, "epic": 2000, "legendary": 4000}
+WEIGHTS = {"common": 6, "uncommon": 3, "rare": 1, "epic": 0.2, "legendary": .02}
 
 
 def market_now() -> int:
@@ -92,6 +94,11 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
                 quantity INTEGER NOT NULL, PRIMARY KEY(offer_id,user_id)
             );
             CREATE TABLE IF NOT EXISTS arena_market_migrations(name TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS arena_merchant_sales(
+                owner_id INTEGER NOT NULL, nonce TEXT NOT NULL, request_json TEXT NOT NULL,
+                notice TEXT NOT NULL, created_at INTEGER NOT NULL,
+                PRIMARY KEY(owner_id,nonce)
+            );
             CREATE TABLE IF NOT EXISTS arena_merchant_notifications(
                 day TEXT NOT NULL, visit INTEGER NOT NULL, chat_id INTEGER NOT NULL,
                 PRIMARY KEY(day,visit,chat_id)
@@ -522,7 +529,7 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
     def _arena_describe_item_locked(self, row, catalog=None):
         catalog = catalog or self._arena_shop_catalog_locked()
         if row['kind']=='class_ticket' and row['content_id']==TICKET_ID:
-            return dict(row,name=TICKET_NAME,rarity_name=RARITY_LABELS[row['rarity']],details=dict(description=TICKET_DESCRIPTION))
+            return dict(row,name=TICKET_NAME,rarity_name=RARITY_LABELS[row['rarity']],details=dict(description=TICKET_DESCRIPTION),sell_price=0)
         if (row["kind"], row["content_id"]) not in catalog and row["kind"] in {
             "skill",
             "class",
@@ -549,7 +556,65 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
         )
         data.update(dict(row))
         data["rarity_name"] = RARITY_LABELS.get(data["rarity"], data["rarity"])
+        data['sell_price'] = self._arena_sell_price(data)
         return data
+
+    @staticmethod
+    def _arena_sell_price(item):
+        # Paid services, tickets and unknown content are never converted into francs.
+        if item.get('name') in (None, 'Недоступный предмет'):
+            return 0
+        kind, rarity = item['kind'], item['rarity']
+        price = (25 if kind == 'potion' and item['content_id'] == 'healing' else
+                 50 if kind == 'candy' and item['content_id'] == 'experience' else
+                 CLASS_PRICES.get(rarity, 0) if kind == 'class' else
+                 PRICES.get(rarity, 0) if kind in ('skill', 'passive') else 0)
+        return price // 2
+
+    def _arena_purchase_warning_locked(self, chat, actor, item):
+        if item['kind'] not in ('class', 'skill', 'passive'):
+            return ''
+        profile = self._arena_profile_locked(chat, actor, True)
+        if item['kind'] == 'class':
+            return 'Текущий персонаж уже принадлежит этому классу.' if item['content_id'] == profile['class_id'] else ''
+        if item['kind'] == 'passive':
+            return 'Эта пассивка уже изучена текущим персонажем.' if item['content_id'] in self._arena_learned_locked(chat, actor, True, 'passive') else ''
+        _, skills = self._fighter_catalog_locked()
+        skill = skills.get(item['content_id'])
+        if not skill:
+            return ''
+        if skill.class_id in ('ragamuffin', profile['class_id']):
+            return 'Навык своего класса открывается бесплатно при достижении нужного уровня. Покупка не нужна.'
+        if skill.skill_id in NATIVE_RESOURCE_SCROLLS:
+            return 'Классовый трактат снят с продажи: он не выдаёт механику чужого класса. Старые экземпляры можно использовать, передать, разобрать или продать.'
+        if skill.skill_id in self._arena_known_skills_locked(chat, actor, True, profile):
+            return 'Этот навык уже изучен текущим персонажем. Для другого персонажа используй другой слот.'
+        return ''
+
+    async def arena_sell_item(self, chat, actor, item, quantity, nonce, confirm=False):
+        if confirm is not True or type(item) is not int or item <= 0 or type(quantity) is not int or not 1 <= quantity <= 9999:
+            raise ValueError('Подтверди предмет и количество от 1 до 9999.')
+        if not isinstance(nonce, str) or not re.fullmatch(r'[0-9a-f]{32}', nonce):
+            raise ValueError('Обнови предложение продажи.')
+        request = json.dumps(dict(chat=chat, item=item, quantity=quantity), sort_keys=True)
+        async with self._lock:
+            self._require_feature_locked(chat, 'arena')
+            with self.connection:
+                previous = self.connection.execute('SELECT * FROM arena_merchant_sales WHERE owner_id=? AND nonce=?', (actor, nonce)).fetchone()
+                if previous:
+                    if previous['request_json'] != request:
+                        raise ValueError('Этот запрос уже использован для другой продажи.')
+                    return previous['notice']
+                row = self._arena_item_locked(chat, actor, item)
+                description = self._arena_describe_item_locked(row)
+                price = description['sell_price']
+                if not price:
+                    raise ValueError('Торговец не покупает этот предмет.')
+                self._forge_consume_locked(row, quantity)
+                self._add_francs_locked(chat, actor, price * quantity)
+                notice = f"Продано: «{description['name']}» × {quantity} за {price * quantity} ₣. Скупка — 50% базовой цены; действующие правила погашения долга сохраняются."
+                self.connection.execute('INSERT INTO arena_merchant_sales VALUES(?,?,?,?,?)', (actor, nonce, request, notice, market_now()))
+                return notice
 
     def _arena_inventory_locked(self, chat, actor):
         chat = RPG_SCOPE
@@ -568,7 +633,8 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
         midnight = int(
             datetime.combine(day, datetime.min.time(), tzinfo=MSK).timestamp()
         )
-        catalog = {k:v for k,v in self._arena_shop_catalog_locked().items() if self._arena_content_enabled_locked(chat,*k)}
+        catalog = {k:v for k,v in self._arena_shop_catalog_locked().items() if self._arena_content_enabled_locked(chat,*k)
+                   and (k[0] != 'skill' or (v['details'].get('class_id') != 'ragamuffin' and k[1] not in NATIVE_RESOURCE_SCROLLS))}
         for visit, lo, hi in MERCHANT_WINDOWS:
             if self.connection.execute(
                 "SELECT 1 FROM arena_merchant_visits WHERE chat_id=? AND day=? AND visit=?",
@@ -656,6 +722,7 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
                     continue
                 item['bought'] = self._arena_merchant_bought_locked(visit, actor, row['kind'], row['content_id'])
                 item["remaining"] = max(0, row["per_user"] - item['bought'])
+                item['purchase_warning'] = self._arena_purchase_warning_locked(chat, actor, item)
                 offers.append(item)
         return dict(
             visit_id=visit["id"] if visit else None,
@@ -750,6 +817,9 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
                 ) not in self._arena_shop_catalog_locked():
                     raise ValueError("Предмет больше недоступен.")
                 bought = self._arena_merchant_bought_locked(row, actor, row['kind'], row['content_id'])
+                warning = self._arena_purchase_warning_locked(chat, actor, row)
+                if warning:
+                    raise ValueError(warning)
                 if bought >= row["per_user"]:
                     raise ValueError("Лимит покупки этого товара исчерпан.")
                 if not self.connection.execute(

@@ -82,15 +82,21 @@ process.stdin.on('end',()=>{
   const moves=[{x:0,y:0},...Array.from({length:8},(_,i)=>({x:Math.cos(i*Math.PI/4),y:Math.sin(i*Math.PI/4)}))];
   function danger(s){
     let risk=0;
-    for(const h of s.hazards)if(h.start>s.time&&h.start<s.time+.5){
-      if(E.touches(h,s.player,s.player,h.start,0))risk+=1;
+    for(const h of s.hazards)if(h.start>s.time){
+      // Route patterns require reaching a future safe circle, not just dodging
+      // imminent lines. A centre-biased search otherwise prunes those paths.
+      if(h.type==='safe_zone'&&h.start<s.time+1.5)risk+=Math.max(0,Math.hypot(s.player.x-h.x,s.player.y-h.y)-h.r+s.player.r)/Math.max(.1,h.start-s.time)/120;
+      if(h.start<s.time+.5&&E.touches(h,s.player,s.player,h.start,0))risk+=1;
     }
     return risk+Math.hypot(s.player.x-360,s.player.y-160)/3000;
   }
   function possible(p,stats,seed,limit=22){
     const initial=E.defense(p,stats,seed);E.defenseStep(initial,initial.preparation);
     let frontier=[initial];
-    for(let step=0;step<68;step++){
+    // Boss patterns may last longer than the original 6.8-second laboratory.
+    // Include an extra tick for floating-point boundaries at exactly duration.
+    const steps=Math.ceil((initial.duration-initial.time)/.1)+2;
+    for(let step=0;step<steps;step++){
       const cells=new Map();
       for(const s of frontier)for(const move of moves){
         const t=copyDefense(s);E.defenseStep(t,.1,move);if(t.received.length)continue;

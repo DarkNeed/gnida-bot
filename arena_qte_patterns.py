@@ -52,6 +52,8 @@ def random_values(seed):
 
 def family(s):
     ident, n = s.get("base_id", ""), s.get("name", "").lower()
+    from arena_guild_patterns import FAMILIES as guild_families
+    if ident.startswith('guild_') and ident[6:] in guild_families:return guild_families[ident[6:]]
     guild={'guild_stab':'slash','guild_net':'paint','guild_fang':'beast','guild_hex':'mana','guild_smash':'impact','guild_bone':'death','guild_soul':'death','guild_claw':'beast','guild_fire':'fire','guild_ice':'ice','guild_lightning':'lightning'}
     if ident in guild:return guild[ident]
     branch, cls = s.get("branch", ""), s.get("class_id")
@@ -351,6 +353,12 @@ def duration(challenge):
 
 def defense(p, stats, seed, enabled=None, preparation=1):
     d, r = difficulty(stats), random_values(seed ^ p["seed"])
+    npc=max(0,min(4,p['skill'].get('npc_tier',0)))
+    if npc and not p['basic']:
+        d['speed']*=1+.06*npc
+        d['warning']=max(.40,d['warning']*(1-.04*npc))
+        d['gap']*=1-.035*npc
+        d['lead']+=.035*npc
     if p.get('casinoJackpot'):
         d['speed']*=1.10
         d['warning']=max(.30,d['warning']*.94)
@@ -435,6 +443,7 @@ def defense(p, stats, seed, enabled=None, preparation=1):
         * (1 if p["basic"] else 1 - 0.08 * d["intensity"])
     )
     count,span=schedule(p,count,span)
+    if npc and not p['basic']:count+=npc
     events = [
         dict(
             at=preparation + 0.18 + i * span / max(1, count - 1),
@@ -559,7 +568,10 @@ def prepare(s, e):
         beam(cx - dx, cy - dy, cx + dx, cy + dy, width, delay)
 
     k = p["kind"]
-    if ident and ident.startswith('nz_'):
+    from arena_guild_patterns import prepare as guild_prepare
+    if ident and ident.startswith('guild_') and guild_prepare(s,e,add):
+        pass
+    elif ident and ident.startswith('nz_'):
         from arena_nazarick_patterns import prepare as nazarick_prepare
         nazarick_prepare(s, e, add)
     elif k.startswith('casino_'):
@@ -769,7 +781,8 @@ def prepare(s, e):
         aimed(odd, 0.08, 3)
         aimed(not odd, 0.08, 3, 0.32)
     elif k == "coins":
-        cx = clamp(x + sign * 55, 80, W - 80)
+        margin = 0 if ident == 'chaplain_hand' else 80
+        cx = clamp(x + sign * 55, margin, W - margin)
         beam(cx, 0, cx, H, 25)
         circle(x, y, 36, 0.32, 0.2)
     elif k == "eclipse":

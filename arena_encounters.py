@@ -127,7 +127,8 @@ def create_encounter(participants, sources, classes, skills, roster, master_id):
     for index, mob in enumerate(roster, 1):
         if isinstance(mob, dict):
             fighter = template_fighter(mob, -index, classes, skills)
-            fighter.update(mob_id='custom', enemy_id=f'e{index}', controller_id=0, is_boss=False)
+            fighter.update(mob_id='custom', enemy_id=f'e{index}', controller_id=0, is_boss=False,
+                           npc_tier=min(4,mob.get('npc_tier',0)))
             enemies[f'e{index}'] = fighter
             continue
         if mob not in MOBS:
@@ -183,13 +184,15 @@ def set_intents(data, skills=None):
                 start = fighter.get('rp_ai_index', 0) % len(ids)
                 position = next((start + j) % len(ids) for j in range(len(ids)) if ids[(start + j) % len(ids)] in usable)
                 selected = ids[position]
-                fighter['rp_ai_index'] = position + 1
             else:
                 selected = (random.SystemRandom().choice(usable) if fighter['rp_ai'] == 'random' else usable[0]) if usable else 'bum_punch'
-            kind, text = 'attack', catalog[selected].name
+            from arena_engine import effective_skill
+            kind, text = 'attack', effective_skill(pair_state(fighter,opponent),'a',selected,catalog).name
             if guild_mob in ('dragon','ancient','wyvern') and selected=='guild_fire':
                 targets=list(players);text+=' · дыхание по всему отряду'
             intents[key] = dict(kind=kind, skill=selected, targets=targets, text=text)
+            if fighter['rp_ai'] == 'sequence' and usable:
+                intents[key]['next_ai_index'] = position + 1
             continue
         if mob == 'shaman' and data['round'] % 3 == 0:
             kind, targets, text = 'heal', [], 'Лечебный настой: восстановит 25% HP раненому союзнику'
@@ -337,6 +340,8 @@ def resolve(data, skills, rng=None):
                 log_event(data, enemy_key, enemy_key, 'Намерение стало недоступно: защита вместо атаки.')
                 break
             fighter.pop('_qte_guard', None)
+            if 'next_ai_index' in intent:
+                enemy['rp_ai_index'] = intent['next_ai_index']
             log_event(data, enemy_key, key, event['text'], skill=intent['skill'],
                       **{field: event[field] for field in ('damage', 'self_damage', 'bleed_damage', 'damage_type', 'hit', 'critical', 'hits', 'hit_results') if field in event})
     data.pop('_qte_boss_phase', None)

@@ -29,7 +29,40 @@ SKILLS = {s.skill_id: s for s in (
     attack('fire', 'Драконье пламя', 'mage', 22, 95, ({'target':'enemy','kind':'burn','value':3,'duration':2},)),
     attack('ice', 'Ледяное копьё', 'mage', 18, 95),
     attack('lightning', 'Грозовая молния', 'mage', 20, 95),
+    attack('acid', 'Кислотный плевок', 'mage', 9, 90),
+    attack('sticky', 'Липкий выброс', 'mage', 7, 90, ({'id':'guild_sticky','target':'enemy','kind':'speed_pct','value':-.15,'turns':2},)),
+    attack('pounce', 'Бросок хищника', 'hunter', 15, 94),
+    attack('poison_bite', 'Ядовитые жвала', 'hunter', 12, 93, ({'id':'guild_venom','target':'enemy','kind':'burn','value':2,'turns':2},)),
+    attack('cleaver', 'Секира разорителя', 'warrior', 18, 93),
+    attack('troll_quake', 'Разлом трясины', 'warrior', 23, 94),
+    attack('spectral_blade', 'Клинок забытого рыцаря', 'warrior', 21, 95),
+    attack('rune_cross', 'Перекрёсток рун', 'mage', 24, 96),
+    attack('stone_rain', 'Обвал каменных шипов', 'warrior', 23, 96),
+    attack('venom_rain', 'Чумной ливень', 'mage', 24, 96, ({'id':'guild_venom','target':'enemy','kind':'burn','value':3,'turns':2},)),
+    attack('dragon_dive', 'Пикирование хищника', 'hunter', 27, 97),
+    attack('tail', 'Разящий хвост', 'warrior', 26, 97),
+    attack('wings', 'Пепельный шквал', 'mage', 27, 97),
+    attack('ice_tomb', 'Ледяной саркофаг', 'mage', 29, 97),
+    attack('soul_prison', 'Темница душ', 'mage', 30, 98),
+    attack('grave_crown', 'Корона безымянных', 'mage', 34, 99),
+    attack('crypt_blades', 'Клинки погребённого войска', 'warrior', 32, 98),
+    attack('ancient_sun', 'Падение последнего солнца', 'mage', 35, 99),
+    attack('ash_orbit', 'Хоровод пепельных звёзд', 'mage', 33, 98),
 )}
+
+# Each creature has a coherent kit; no knives for spiders, curses for slimes or
+# borrowed dragon breath for undead. Legacy IDs remain resolvable in saved runs.
+MONSTER_KITS = {
+    'goblin':['stab','net'], 'slime':['acid','sticky'], 'shaman':['hex','bone','soul'],
+    'spider':['net','poison_bite','venom_rain'], 'wolf':['fang','claw','pounce'],
+    'orc':['cleaver','smash','claw'], 'troll':['smash','troll_quake','stone_rain'],
+    'wraith':['spectral_blade','bone','soul'], 'golem':['smash','rune_cross','stone_rain','lightning'],
+    'wyvern':['claw','venom_rain','dragon_dive','tail'],
+    'lich':['bone','soul_prison','ice_tomb','soul'],
+    'dragon':['fire','tail','wings','dragon_dive'],
+    'ancient':['fire','ancient_sun','ash_orbit','lightning'],
+    'deathlord':['bone','grave_crown','crypt_blades','soul_prison'],
+}
 
 # HP/attack/armor below are rank content, not functions of the player's level.
 MONSTERS = {
@@ -48,6 +81,9 @@ MONSTERS = {
     'ancient': dict(name='Дракон последнего рассвета', rank='S', role='Древняя катастрофа', art='dragon', hp=730, attack=40, armor=28, evasion=14, skills=['guild_fire','guild_ice','guild_lightning']),
     'deathlord': dict(name='Король безымянных могил', rank='S', role='Владыка нежити', art='skeleton', hp=660, attack=42, armor=26, evasion=12, skills=['guild_soul','guild_bone','guild_claw']),
 }
+
+for _mid, _kit in MONSTER_KITS.items():
+    MONSTERS[_mid]['skills'] = ['guild_'+sid for sid in _kit]
 
 BIOMES = {
     'mines': dict(name='Гоблинские копи', subtitle='Ржавые рельсы. Чужие шаги. Слишком много глаз.', color='#cdb17b'),
@@ -170,7 +206,8 @@ def mob_templates(contract, node, party_size):
             defense_mode='dodge', skills=list(m['skills']), passives=[], stats=stats,
             ai='sequence', avatar_key='', sprite_key='', flip=False, scale=1.15 if elite else .9,
             preset_id='')
-        result.append(dict(id='guild:'+mid, revision=1, kind='mob', definition=v, guild_monster=mid))
+        result.append(dict(id='guild:'+mid, revision=2, kind='mob', definition=v, guild_monster=mid,
+                           npc_tier=max(0,RANKS.index(m['rank'])-2)+(1 if elite and m['rank'] in ('B','A','S') else 0)))
     return result
 
 

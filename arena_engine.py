@@ -612,6 +612,10 @@ BUILTIN_PASSIVES = {
 
 _epic_skills, _epic_passives = build_epic_catalog(Skill, PassiveSkill, effect)
 BUILTIN_SKILLS.update(_epic_skills)
+from arena_public_scrolls import build_public_scrolls
+_public_skills, _public_passives = build_public_scrolls(Skill, PassiveSkill, effect)
+BUILTIN_SKILLS.update(_public_skills)
+BUILTIN_PASSIVES.update(_public_passives)
 BUILTIN_PASSIVES.update(_epic_passives)
 BUILTIN_PASSIVES.update(build_relic_catalog(PassiveSkill))
 _rpg_classes, _rpg_skills = build_rpg_catalog(FighterClass, Skill, effect)
@@ -928,6 +932,7 @@ def create_battle_state(
             "archclass_stage": source.get("archclass_stage", 20),
             "progression_level": source.get("progression_level", 0),
             "level": min(MAX_FIGHTER_LEVEL, int(source["level"])),
+            "npc_tier": max(0,min(4,int(source.get('npc_tier',0)))) if int(source['slave_id']) == 0 and int(source['owner_id']) == 0 else 0,
             "defense_mode": source.get("defense_mode", "dodge"),
             "stats": stats,
             "equipment": equipment,
@@ -949,6 +954,9 @@ def create_battle_state(
             "potion_used": False,
             "own_turns": 0,
         }
+        if source.get('native_enemy') and sides[side]['controller_id'] == 0:
+            sides[side]['loadout'] = [sid for sid in sides[side]['loadout']
+                if skill_catalog[sid].class_id == class_id and 'raid_loot' not in skill_catalog[sid].tags]
         if pet_snapshot(source.get("pet")):
             sides[side]["pet"] = pet_snapshot(source["pet"])
             sides[side]["pet_state"] = {}
@@ -1001,6 +1009,8 @@ def effective_skill(state: dict, side_key: str, skill_id: str, skills=None) -> S
     skill = (skills or BUILTIN_SKILLS)[skill_id]
     actor = state['sides'][side_key]
     target = state['sides']['b' if side_key == 'a' else 'a']
+    from arena_npc_ai import basic_skill
+    skill = basic_skill(skill, actor)
     skill = skill_variant(skill, actor, target, completed_turns(state, side_key))
     skill = rpg_variant(skill, actor, target)
     skill = mastery_variant(skill, actor, target)
@@ -1671,6 +1681,8 @@ def resolve_skill(
         ]
     if skill.cooldown and skill_id != 'last_amendment':
         actor["cooldowns"][skill_id] = skill.cooldown
+    if actor.get('controller_id') == 0:
+        actor['npc_skill_history'] = (actor.get('npc_skill_history', []) + [skill_id])[-4:]
     class_after_action(actor, target, skill, hit, dodged, adored, charmed)
     gift_after_action(actor, target, skill, hit, damage, actual_cost, bleeding, charmed)
     evolution_after_action(actor, target, skill, hit, evolved)

@@ -60,10 +60,13 @@ def challenge(kind, attacker, target, skill, actor):
         strikes=n,
         tags=list(skill.tags),
         description=skill.description,
+        npc_tier=(max(0,min(4,int(attacker.get('npc_tier', 0)))) if attacker.get('controller_id') == 0 else 0),
     )
     if skill.skill_id=='nz_pandora_p2_1' and attacker.get('nz_copy'):
         descriptor['copy_skill']=deepcopy(attacker['nz_copy'])
         descriptor['name']+=' — '+attacker['nz_copy']['name']
+    if skill.skill_id.startswith('guild_'):
+        descriptor['monster_pattern']=2
     # Kit's announced reflection/coins consist of two different native actions.
     # One pattern, two groups: do not apply the same collisions to both actions.
     subskills = {
@@ -380,14 +383,8 @@ class ArenaQteMixin:
             if row["mode"] != "wasteland" or state["active_side"] != "b":
                 return row
             _, skills = self._fighter_catalog_locked()
-            choices = []
-            for sid in state["sides"]["b"]["loadout"]:
-                try:
-                    validate_skill(state, "b", sid, skills)
-                    choices.append(sid)
-                except ValueError:
-                    pass
-            sid = random.choice(choices or ["bum_punch"])
+            from arena_npc_ai import choose_skill
+            sid = choose_skill(state, 'b', skills)
             if self._qte_battle_begin_locked(row, sid):
                 return self._arena_row_locked(token)
             self._arena_action_locked(token, 0, row["revision"], sid, _interactive=True)

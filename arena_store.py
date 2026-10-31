@@ -1255,16 +1255,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     and not state["finished"]
                     and state["active_side"] == "b"
                 ):
-                    ai = state["sides"]["b"]
-                    choices = []
-                    for candidate in ai["loadout"]:
-                        try:
-                            validate_skill(state, "b", candidate, skills)
-                        except ValueError:
-                            continue
-                        choices.append(candidate)
+                    from arena_npc_ai import choose_skill
                     resolve_skill(
-                        state, "b", random.choice(choices or ["bum_punch"]), skills
+                        state, "b", choose_skill(state, 'b', skills), skills
                     )
                 if state["finished"]:
                     self._arena_finish_locked(row, state)
