@@ -258,7 +258,8 @@ def action(db, row, command, payload, now):
         definition=council.recruit_terms(d,UNITS[kind])
         for key in ('food','wood'):
             if d['resources'][key]<definition[key]:raise ValueError('Не хватает припасов для найма.')
-        db._forge_spend_francs_locked(row['chat'],row['owner'],definition['price'])
+        from arena_kingdom_finance import spend
+        spend(db,row,definition['price'])
         for key in ('food','wood'):d['resources'][key]-=definition[key]
         units.append(new_unit(kind,now))
         return 'Начат найм: '+definition['name']+'.'

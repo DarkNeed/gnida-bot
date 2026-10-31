@@ -29,6 +29,8 @@ def render_arena_index(root: Path) -> str:
         "kingdom-army.js",
         "kingdom-diplomacy.js",
         "kingdom-diplomacy.css",
+        "kingdom-budget.js",
+        "kingdom-budget.css",
         "kingdom.css",
         "equipment.js",
         "equipment.css",
@@ -70,6 +72,8 @@ def render_arena_index(root: Path) -> str:
         .replace('src="/static/kingdom-army.js"', f'src="/static/kingdom-army.js?v={version}"')
         .replace('src="/static/kingdom-diplomacy.js"', f'src="/static/kingdom-diplomacy.js?v={version}"')
         .replace('href="/static/kingdom-diplomacy.css"', f'href="/static/kingdom-diplomacy.css?v={version}"')
+        .replace('src="/static/kingdom-budget.js"', f'src="/static/kingdom-budget.js?v={version}"')
+        .replace('href="/static/kingdom-budget.css"', f'href="/static/kingdom-budget.css?v={version}"')
         .replace('href="/static/kingdom.css"', f'href="/static/kingdom.css?v={version}"')
         .replace('src="/static/equipment.js"', f'src="/static/equipment.js?v={version}"')
         .replace('href="/static/equipment.css"', f'href="/static/equipment.css?v={version}"')

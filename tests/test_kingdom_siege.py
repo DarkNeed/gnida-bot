@@ -20,6 +20,7 @@ class SiegeTests(unittest.IsolatedAsyncioTestCase):
     action=towns.KingdomTests.action
     found=towns.KingdomTests.found
     town=towns.KingdomTests.town
+    budget=towns.KingdomTests.budget
 
     async def prepare(self):
         for actor,q in ((10,6),(20,11)):
@@ -45,10 +46,10 @@ class SiegeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reform_price_nonce_delay_cooldown_and_no_arena_power(self):
         await self.found();row=self.town();profile=dict(self.db._arena_profile_locked(-100,10,True))
-        before=await self.db.franc_balance(-100,10)
+        before=self.budget()
         body=dict(action='reform',field='policy',choice='trade',town=row['id'],revision=row['revision'],confirm=True,nonce=uuid4().hex)
         await self.db.kingdom_action(-100,10,body);await self.db.kingdom_action(-100,10,body)
-        self.assertEqual(await self.db.franc_balance(-100,10),before-25000)
+        self.assertEqual(self.budget(),before-25000)
         self.assertEqual(self.town()['data']['government']['policy'],'balanced')
         with self.assertRaises(ValueError):await self.action('reform',field='religion',choice='light')
         self.now+=24*HOUR;v=await self.view();g=next(t for t in v['towns'] if t['own'])['government']
@@ -76,32 +77,32 @@ class SiegeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(council.recruit_terms(d,army.UNITS['skeletons'])['price'],round(army.UNITS['skeletons']['price']*.9*1.3))
 
     async def test_declaration_spends_once_hides_snapshot_and_locks_armies(self):
-        await self.prepare();row=self.town(20);money=await self.db.franc_balance(-100,20)
+        await self.prepare();row=self.town(20);money=self.budget(20)
         body=dict(action='siege',town=row['id'],revision=row['revision'],confirm=True,nonce=uuid4().hex,defender=self.town()['id'],q=8,r=4,tactic='guard')
         a=await self.db.kingdom_action(-100,20,body);b=await self.db.kingdom_action(-100,20,body)
-        self.assertEqual(a['siege'],b['siege']);self.assertEqual(await self.db.franc_balance(-100,20),money-15000)
+        self.assertEqual(a['siege'],b['siege']);self.assertEqual(self.budget(20),money-15000)
         self.assertEqual(len(a['view']['diplomacy']['wars']),1)
         self.assertNotIn('seed',str(a['view']['diplomacy']));self.assertNotIn('fighters',str(a['view']['diplomacy']))
         for command,extra in [('formation',dict(formation=[None]*5)),('march',dict(target='road_camp',tactic='guard')),('reform',dict(field='policy',choice='trade')),('annex',dict(q=12,r=5))]:
             with self.assertRaises(ValueError):await self.action(command,actor=20,**extra)
 
     async def test_undelivered_notice_expires_refunds_and_releases_both(self):
-        await self.prepare();money=await self.db.franc_balance(-100,20);result=await self.declare()
+        await self.prepare();money=self.budget(20);result=await self.declare()
         self.now+=HOUR;await self.view()
         self.assertEqual(self.db._siege_row(result['siege'])['status'],'cancelled')
-        self.assertEqual(await self.db.franc_balance(-100,20),money)
+        self.assertEqual(self.budget(20),money)
         for actor in (10,20):self.assertIsNone(self.town(actor)['data']['military']['siege_lock'])
         self.assertEqual(self.db._siege_land(self.town()),{(6,5),(7,4),(8,4)})
 
     async def test_cancel_before_and_after_delivery_and_owner_check(self):
-        await self.prepare();money=await self.db.franc_balance(-100,20);s=(await self.declare())['siege']
+        await self.prepare();money=self.budget(20);s=(await self.declare())['siege']
         with self.assertRaises(ValueError):await self.action('cancel_siege',siege=s)
         await self.action('cancel_siege',actor=20,siege=s)
-        self.assertEqual(await self.db.franc_balance(-100,20),money)
+        self.assertEqual(self.budget(20),money)
         self.assertIsNone(self.town(20)['data']['military']['siege_lock'])
         self.now+=HOUR;s=(await self.declare())['siege'];await self.db.kingdom_siege_announced(s)
         await self.action('cancel_siege',actor=20,siege=s)
-        self.assertEqual(await self.db.franc_balance(-100,20),money-15000)
+        self.assertEqual(self.budget(20),money-15000)
         self.now+=HOUR
         with self.assertRaisesRegex(ValueError,'неделю'):await self.declare()
         # Bounded public history must not erase the pair's weekly restriction.
@@ -126,11 +127,11 @@ class SiegeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError,'реформ'):await self.declare()
         row=self.town();row['data']['government']['pending']=None;row['data']['pvp']['shield_until']=self.now+DAY;self.save(row)
         with self.assertRaisesRegex(ValueError,'защита'):await self.declare()
-        row=self.town();money=await self.db.franc_balance(-100,10)
+        row=self.town();money=self.budget()
         for command,fields in [('reform',dict(field='religion',choice='light')),('defense',dict(tactic='flank'))]:
             body=dict(action=command,confirm=True,nonce=uuid4().hex,town=row['id'],revision=row['revision'],**fields)
             with self.assertRaisesRegex(ValueError,'не твоё'):await self.db.kingdom_action(-100,20,body)
-        self.assertEqual(await self.db.franc_balance(-100,10),money)
+        self.assertEqual(self.budget(),money)
 
     async def test_warn_prepare_freeze_then_capture_exactly_once(self):
         await self.prepare();s=(await self.declare())['siege'];await self.db.kingdom_siege_announced(s)
@@ -173,15 +174,15 @@ class SiegeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):await self.action('siege',actor=20,chat=-200,defender=b['id'],q=8,r=4,tactic='guard')
 
     async def test_refund_on_changed_territory_and_failed_transaction(self):
-        await self.prepare();money=await self.db.franc_balance(-100,20)
+        await self.prepare();money=self.budget(20)
         with patch.object(self.db,'_kingdom_save_locked',side_effect=RuntimeError('injected')):
             with self.assertRaises(RuntimeError):await self.declare()
-        self.assertEqual(await self.db.franc_balance(-100,20),money)
+        self.assertEqual(self.budget(20),money)
         self.assertEqual(self.db.connection.execute('SELECT COUNT(*) FROM kingdom_sieges').fetchone()[0],0)
         s=(await self.declare())['siege'];await self.db.kingdom_siege_announced(s)
         self.db.connection.execute('DELETE FROM kingdom_tiles WHERE chat=-100 AND q=8 AND r=4');self.db.connection.commit()
         self.now+=25*HOUR;await self.view();self.assertEqual(self.db._siege_row(s)['status'],'cancelled')
-        self.assertEqual(await self.db.franc_balance(-100,20),money)
+        self.assertEqual(self.budget(20),money)
 
     async def test_warning_delivery_retry_escaping_and_success(self):
         await self.prepare();row=self.town(20);row['name']='<fake>';self.save(row);s=(await self.declare())['siege']

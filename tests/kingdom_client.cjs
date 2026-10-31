@@ -6,7 +6,7 @@ let input='';process.stdin.on('data',data=>input+=data);process.stdin.on('end',a
   const app={innerHTML:'',events:{},addEventListener(type,fn){this.events[type]=fn;},querySelector(){return null;}};
   const sandbox={window:{},console,AbortController,crypto:require('node:crypto').webcrypto,setInterval:()=>1,clearInterval(){},document:{hidden:false},
    fetch:async path=>({ok:!error,json:async()=>error?{error:'API <сломалось>'}:path==='/api/kingdom/chats'?{chats:[{chat_id:-100,title:'Наш чат'}]}:structuredClone(value)})};
-  vm.createContext(sandbox);for(const file of ['kingdom-map','kingdom-army','kingdom-diplomacy'])vm.runInContext(fs.readFileSync('webapp/'+file+'.js','utf8'),sandbox);vm.runInContext(source,sandbox);await sandbox.window.KingdomApp.open({app,chat,initData:'test'});
+  vm.createContext(sandbox);for(const file of ['kingdom-map','kingdom-army','kingdom-diplomacy','kingdom-budget'])vm.runInContext(fs.readFileSync('webapp/'+file+'.js','utf8'),sandbox);vm.runInContext(source,sandbox);await sandbox.window.KingdomApp.open({app,chat,initData:'test'});
   return {app,click:action=>app.events.click({target:{closest:selector=>selector==='[data-k]'?{dataset:{k:action},disabled:false}:null}})};
  }
  try{
@@ -18,6 +18,9 @@ let input='';process.stdin.on('data',data=>input+=data);process.stdin.on('end',a
   await owner.click('explore:'+timed.id);assert(owner.app.innerHTML.includes('role="dialog"'));assert(owner.app.innerHTML.includes('никаких франков'));
   await owner.click('cancel');
   await owner.click('tab:buildings');assert(owner.app.innerHTML.includes('data-k="build:barracks"'));
+  await owner.click('tab:budget');assert(owner.app.innerHTML.includes('ДВЕ РАЗНЫЕ КАССЫ'));assert(owner.app.innerHTML.includes('Кошелёк → бюджет'));assert(!owner.app.innerHTML.includes('NaN'));
+  assert(owner.app.innerHTML.includes('Запас на сутки'));assert(!owner.app.innerHTML.includes('budget_withdraw'));assert(!owner.app.innerHTML.includes('Бюджет → кошелёк'));assert(!owner.app.innerHTML.includes('одно поселение Telegram-аккаунта'));
+  await owner.click('tab:buildings');
   await owner.click('build:barracks');assert(owner.app.innerHTML.includes('role="dialog"'));assert(owner.app.innerHTML.includes('9 000 ₣'));
   await owner.click('cancel');assert(!owner.app.innerHTML.includes('role="dialog"'));
   await owner.click('tab:events');assert(owner.app.innerHTML.includes('Союз свободных теплотрасс'));assert(owner.app.innerHTML.includes('event:bounty'));

@@ -7,6 +7,7 @@ import secrets
 from arena_kingdom_rules import HOUR,DAY,SITES,NEUTRAL_LANDS,coordinates,neighbours,land_cap
 import arena_kingdom_council as council
 import arena_kingdom_war as army
+import arena_kingdom_finance as finance
 
 ACTIVE=('notice','warning','battle')
 SIEGE_FEE=15000
@@ -107,7 +108,8 @@ class KingdomSiegeMixin:
     def _siege_cancel(self,s,reason,*,refund=False):
         a=self._kingdom_row_locked(s['attacker']);b=self._kingdom_row_locked(s['defender'])
         if refund:
-            self._add_francs_locked(s['chat'],a['owner'],s['data']['fee'])
+            if s['data'].get('fee_source')=='budget':finance.credit(self,a,s['data']['fee'])
+            else:self._add_francs_locked(s['chat'],a['owner'],s['data']['fee'])
             a['data']['resources']['food']=min(600+a['data']['buildings']['warehouse']*500,
                                                a['data']['resources']['food']+s['data']['food'])
         for town in (a,b):
@@ -128,9 +130,9 @@ class KingdomSiegeMixin:
         if not isinstance(tactic,str) or tactic not in army.TACTICS:raise ValueError('Выбери тактику армии.')
         selected=army.formation_units(a['data'],now,ready=True);food=council.supplies(a['data'],len(selected))
         if a['data']['resources']['food']<food:raise ValueError('Не хватает походного снабжения.')
-        self._forge_spend_francs_locked(a['chat'],a['owner'],SIEGE_FEE);a['data']['resources']['food']-=food
+        finance.spend(self,a,SIEGE_FEE);a['data']['resources']['food']-=food
         ident=secrets.token_hex(12);unit_ids=[u['id'] for u in selected]
-        data=dict(fee=SIEGE_FEE,food=food,seed=secrets.token_hex(16),tactic=tactic,
+        data=dict(fee=SIEGE_FEE,fee_source='budget',food=food,seed=secrets.token_hex(16),tactic=tactic,
                   attacker_units=deepcopy(selected),attacker_fighters=council.buff(a['data'],army._fighters(selected,'p:')))
         self.connection.execute('INSERT INTO kingdom_sieges(id,chat,attacker,defender,q,r,status,created,data) VALUES(?,?,?,?,?,?,\'notice\',?,?)',
             (ident,a['chat'],a['id'],b['id'],*point,now,json.dumps(data,ensure_ascii=False)))
@@ -143,7 +145,7 @@ class KingdomSiegeMixin:
 
     def _siege_start_battle(self,s,now):
         a=self._kingdom_row_locked(s['attacker']);b=self._kingdom_row_locked(s['defender'])
-        for town in (a,b):self._kingdom_advance_locked(town,self._kingdom_world_locked(town['chat']))
+        for town in (a,b):self._kingdom_advance_locked(town,self._kingdom_world_locked(town['chat']),until=s['battle_at'])
         target=(s['q'],s['r']);bt=self._siege_land(b);at=self._siege_land(a)
         if target not in bt or target==(b['q'],b['r']) or len(at)>=land_cap(a['data']) or not connected((b['q'],b['r']),bt-{target}) or not connected((a['q'],a['r']),at|{target}):
             self._siege_cancel(s,'Осада отменена: условия владения землёй изменились.',refund=True);return
@@ -165,6 +167,7 @@ class KingdomSiegeMixin:
 
     def _siege_finish(self,s,now):
         a=self._kingdom_row_locked(s['attacker']);b=self._kingdom_row_locked(s['defender'])
+        for town in (a,b):self._kingdom_advance_locked(town,self._kingdom_world_locked(town['chat']),until=s['finish'])
         target=(s['q'],s['r']);at=self._siege_land(a);bt=self._siege_land(b)
         if target not in bt or target==(b['q'],b['r']) or len(at)>=land_cap(a['data']) or not connected((b['q'],b['r']),bt-{target}) or not connected((a['q'],a['r']),at|{target}):
             self._siege_cancel(s,'Осада отменена: безопасная передача земли больше невозможна.',refund=True);return

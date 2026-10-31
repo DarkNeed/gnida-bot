@@ -27,7 +27,8 @@ def create_kingdom_router(db,bot,username,enabled):
             except ValueError as error:await message.answer(str(error));return
             parameter+='_'+str(message.chat.id)
         await message.answer('🗺️ Королевства · общая карта чата\n\nОсновывай поселение, развивай хозяйство и защищай жителей. '
-            'Основание: 20 000 ₣, 15 уровень и ранг охотника C. Чужие поселения можно смотреть, а за помощь — получать награду из кошелька заказчика. '
+            'Основание: 20 000 ₣, 15 уровень и ранг охотника C. Чужие поселения можно смотреть, а за помощь — получать личную награду из бюджета поселения заказчика. '
+            'Бюджет поселения отделён от кошелька: пополняй его вручную и включай налоги во вкладке «Бюджет». '
             'В ЛС сначала выбери чат.',reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text='🗺️ Открыть карту мира',url=arena_link(username,parameter))]]))
     return router

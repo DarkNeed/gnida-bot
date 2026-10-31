@@ -41,7 +41,17 @@ class KingdomTests(unittest.IsolatedAsyncioTestCase):
         body=dict(action=action,confirm=True,nonce=uuid4().hex,**({} if town is None else dict(town=town['id'],revision=town['revision'])),**fields)
         return await self.db.kingdom_action(chat,actor,body)
 
-    async def found(self,actor=10,chat=-100,q=7,r=5):return await self.action('found',actor,chat,q=q,r=r,name='Рассвет')
+    async def found(self,actor=10,chat=-100,q=7,r=5):
+        result=await self.action('found',actor,chat,q=q,r=r,name='Рассвет')
+        # Pre-existing development tests use a funded municipal budget. This
+        # fixture grant is not a production founding bonus or a wallet debit.
+        from arena_kingdom_finance import credit
+        row=self.town(actor,chat);credit(self.db,row,3000000);self.db._kingdom_save_locked(row);self.db.connection.commit()
+        result['view']=await self.view(actor,chat);return result
+
+    def budget(self,actor=10,chat=-100):
+        from arena_kingdom_finance import balance
+        return balance(self.db,self.town(actor,chat))
 
     def town(self,actor=10,chat=-100):
         row=self.db.connection.execute('SELECT id FROM kingdom_towns WHERE chat=? AND owner=?',(chat,actor)).fetchone()
@@ -104,7 +114,8 @@ class KingdomTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):await self.db.kingdom_action(chat,actor,body)
         await self.db.kingdom_action(-100,10,body)
         with self.assertRaises(ValueError):await self.db.kingdom_action(-100,10,dict(body,nonce=uuid4().hex))
-        self.assertEqual(await self.db.franc_balance(-100,10),971000)
+        self.assertEqual(await self.db.franc_balance(-100,10),980000)
+        self.assertEqual(self.budget(),3000000-9000)
 
     async def test_build_clock_queue_caps_and_consumption(self):
         await self.found();await self.action('build',building='sawmill')
@@ -168,7 +179,8 @@ class KingdomTests(unittest.IsolatedAsyncioTestCase):
         before=await self.db.franc_balance(-100,10);result=await self.action('promote',price=1)
         capital=next(t for t in result['view']['towns'] if t['own'])
         self.assertEqual(capital['stage'],3);self.assertEqual(capital['territory_cap'],7)
-        self.assertIsNone(capital['promotion']);self.assertEqual(result['view']['balance'],before-1500000)
+        self.assertIsNone(capital['promotion']);self.assertEqual(result['view']['balance'],before)
+        self.assertEqual(self.budget(),3000000-1500000)
         hall=next(b for b in capital['building_options'] if b['id']=='hall')
         self.assertEqual(hall['quote']['finish']-hall['quote']['started'],7*DAY)
         with self.assertRaises(ValueError):await self.action('promote')
@@ -211,7 +223,8 @@ class KingdomTests(unittest.IsolatedAsyncioTestCase):
         self.db._kingdom_save_locked(row);self.db.connection.commit()
         before=await self.db.franc_balance(-100,10)
         await self.action('promote',price=0)
-        self.assertEqual(self.town()['data']['stage'],2);self.assertEqual(await self.db.franc_balance(-100,10),before-250000)
+        self.assertEqual(self.town()['data']['stage'],2);self.assertEqual(await self.db.franc_balance(-100,10),before)
+        self.assertEqual(self.budget(),3000000-250000)
         with self.assertRaises(ValueError):await self.action('promote')
 
     async def test_disaster_options_and_automatic_expiry_do_not_destroy_houses(self):
@@ -226,7 +239,8 @@ class KingdomTests(unittest.IsolatedAsyncioTestCase):
     async def test_bounty_escrow_paid_once_through_real_reward_free_combat(self):
         await self.found();self.incident()
         before=await self.db.franc_balance(-100,10);helper_before=await self.db.franc_balance(-100,20)
-        await self.action('event',choice='bounty');self.assertEqual(await self.db.franc_balance(-100,10),before-5000)
+        await self.action('event',choice='bounty');self.assertEqual(await self.db.franc_balance(-100,10),before)
+        self.assertEqual(self.budget(),3000000-5000)
         town=self.town();profile=dict(self.db._arena_profile_locked(-100,20,True))
         result=await self.action('help',actor=20,town=town['id'],revision=town['revision'])
         raid=await self.db.arena_raid_get(result['battle']);battle=json.loads(raid['data_json'])

@@ -19,6 +19,7 @@ class MilitaryTests(unittest.IsolatedAsyncioTestCase):
     action=towns.KingdomTests.action
     found=towns.KingdomTests.found
     town=towns.KingdomTests.town
+    budget=towns.KingdomTests.budget
 
     async def prepare(self,kinds=('shields','militia','archers','priests'),actor=10):
         await self.found(actor=actor,q=7 if actor==10 else 12)
@@ -35,10 +36,10 @@ class MilitaryTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):await self.action('recruit',unit='militia')
         row=self.town();row['data']['buildings']['barracks']=1;self.db._kingdom_save_locked(row);self.db.connection.commit()
         row=self.town();body=dict(action='recruit',unit='militia',town=row['id'],revision=row['revision'],nonce=uuid4().hex,confirm=True,price=0,ready_at=0)
-        before=await self.db.franc_balance(-100,10)
+        before=self.budget()
         await self.db.kingdom_action(-100,10,body);await self.db.kingdom_action(-100,10,body)
         m=self.town()['data']['military'];self.assertEqual(len(m['units']),1)
-        self.assertEqual(await self.db.franc_balance(-100,10),before-12000)
+        self.assertEqual(self.budget(),before-12000)
         self.assertEqual(m['units'][0]['ready_at'],self.now+6*HOUR)
         with self.assertRaises(ValueError):await self.action('recruit',unit='archers')
         self.now+=6*HOUR
@@ -48,10 +49,10 @@ class MilitaryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_save_rolls_back_recruitment_payment_and_food(self):
         await self.prepare(kinds=('militia',));row=self.town()
-        before=await self.db.franc_balance(-100,10);resources=deepcopy(row['data']['resources'])
+        before=self.budget();resources=deepcopy(row['data']['resources'])
         with patch.object(self.db,'_kingdom_save_locked',side_effect=RuntimeError('injected')):
             with self.assertRaises(RuntimeError):await self.action('recruit',unit='militia')
-        self.assertEqual(await self.db.franc_balance(-100,10),before)
+        self.assertEqual(self.budget(),before)
         self.assertEqual(self.town()['data']['resources'],resources)
         self.assertEqual(len(self.town()['data']['military']['units']),1)
 
@@ -75,7 +76,7 @@ class MilitaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.town()['data']['military']['campaign'])
 
     async def test_campaign_snapshot_hidden_and_locked_then_resolves_once_without_arena_grants(self):
-        row=await self.prepare();before_money=await self.db.franc_balance(-100,10)
+        row=await self.prepare();before_money=self.budget()
         before_profile=dict(self.db._arena_profile_locked(-100,10,True))
         result=await self.action('march',target='road_camp',tactic='guard',won=True,seed='cheat')
         public=next(t for t in result['view']['towns'] if t['own'])['military']['campaign']
@@ -95,7 +96,7 @@ class MilitaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(m['glory'],1);self.assertTrue(report['won'])
         resources=deepcopy(d['resources']);await self.view();self.assertEqual(self.town()['data']['resources'],resources)
         self.assertEqual(len(self.town()['data']['military']['reports']),1)
-        self.assertEqual(await self.db.franc_balance(-100,10),before_money)
+        self.assertEqual(self.budget(),before_money)
         self.assertEqual(dict(self.db._arena_profile_locked(-100,10,True)),before_profile)
         self.assertEqual(self.db.connection.execute('SELECT COUNT(*) FROM arena_inventory').fetchone()[0],0)
         with self.assertRaises(ValueError):await self.action('march',target='road_camp',tactic='guard')
@@ -111,12 +112,12 @@ class MilitaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_recovery_cost_queue_and_dismissal_no_refund(self):
         row=await self.prepare(kinds=('militia',));unit=row['data']['military']['units'][0];unit['condition']=40
         self.db._kingdom_save_locked(row);self.db.connection.commit()
-        food=row['data']['resources']['food'];money=await self.db.franc_balance(-100,10)
+        food=row['data']['resources']['food'];money=self.budget()
         await self.action('recover',unit=unit['id'])
         d=self.town()['data'];self.assertEqual(d['resources']['food'],food-60)
         self.assertEqual(d['military']['units'][0]['ready_at'],self.now+3*HOUR)
         with self.assertRaises(ValueError):await self.action('march',target='road_camp',tactic='guard')
-        await self.action('dismiss',unit=unit['id']);self.assertEqual(await self.db.franc_balance(-100,10),money)
+        await self.action('dismiss',unit=unit['id']);self.assertEqual(self.budget(),money)
         self.assertFalse(self.town()['data']['military']['units'])
 
     async def test_restart_preserves_pending_order_and_reports_are_bounded(self):

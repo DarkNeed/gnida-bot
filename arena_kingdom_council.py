@@ -96,6 +96,7 @@ def reform(db,row,payload,now):
     if g['pending'] or g['next_change_at']>now:raise ValueError('Реформа уже идёт или ещё действует недельное ограничение.')
     if d.get('military',{}).get('siege_lock'):raise ValueError('Реформы во время осады запрещены.')
     price=25000 if field=='policy' else 40000
-    db._forge_spend_francs_locked(row['chat'],row['owner'],price)
+    from arena_kingdom_finance import spend
+    spend(db,row,price)
     g['pending']=dict(field=field,choice=choice,started=now,finish=now+24*HOUR)
     return 'Начата реформа: '+catalog[choice]['name']+'. До завершения действуют прежние правила.'
