@@ -34,8 +34,9 @@
     }
     function header(){return '<header class="guild-header"><div class="guild-brand">'+sigil+'<div><small>ГНИДА · НОВАЯ ИСТОРИЯ</small><h1>Гильдия охотников</h1></div></div><div class="guild-header-right">'+(view?'<span class="guild-money">'+view.francs+' <small>₣</small></span>':'')+button('Арена','arena','guild-quiet')+'</div></header>';}
     function shell(body){
-      if(tab==='hunter'||(view.hunter.reputation>=100&&view.hunter.rank<6))body+='<p class="guild-hint">Избыток репутации сохраняется и переносится в следующий ранг. Для повышения также нужны три зачётные победы и особый заказ или подземелье.</p>';
       if(abort.signal.aborted)return;
+      const hunter=view?.hunter;
+      if(hunter&&(tab==='hunter'||(hunter.reputation>=100&&hunter.rank<6)))body+='<p class="guild-hint">Избыток репутации сохраняется и переносится в следующий ранг. Для повышения также нужны три зачётные победы и особый заказ или подземелье.</p>';
       body='<div style="display:flex;justify-content:flex-end;margin:12px 0">'+button('◇ Снаряжение · общий инвентарь','equipment','guild-quiet')+'</div>'+body;
       app.innerHTML='<section class="guild">'+header()+'<div class="guild-chatline"><label>Отделение <select id="guild-chat" aria-label="Чат гильдии">'+chats.map(c=>'<option value="'+c.chat_id+'"'+(c.chat_id===chat?' selected':'')+'>'+esc(c.title||c.chat_id)+'</option>').join('')+'</select></label><span>Ранг и полные награды общие · кошелёк выбранного чата</span></div>'+body+'<footer class="guild-footer">ГИЛЬДИЯ / F — S <span>Походы без лимита · полные награды обновляются в 00:00 МСК</span></footer></section>';
     }
