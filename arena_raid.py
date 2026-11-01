@@ -773,6 +773,9 @@ class RaidMixin:
                             skill,
                             skills,
                         )
+                    if skill=='casino_all_in' and not player['fighter'].get('rp_sandbox'):
+                        from arena_casino_chance import native_roulette
+                        native_roulette(self,'raid',token,actor,_qte)
                     player["selected"] = skill
                     if data.get('kind') == 'encounter' or data.get('boss_id') == 'nazarick':
                         player['selected_target'] = target

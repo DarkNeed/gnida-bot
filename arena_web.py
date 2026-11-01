@@ -141,10 +141,13 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 await db.arena_character_sprite_info(row[key + "_fighter"] or 0,row.get(key+'_character_slot',1))
             )
             side["skill_details"] = []
-            for s in side["loadout"]:
+            from arena_rpg import prayer_actions
+            for s in side["loadout"] + prayer_actions(side):
                 if s not in skills:
                     continue
                 variant = effective_skill(state, key, s, skills)
+                from arena_casino_chance import roulette_reason
+                roulette_block=roulette_reason(db,'battle',row['token'],side['controller_id']) if s=='casino_all_in' and not side.get('rp_sandbox') else ''
                 info = evolution_info(
                     skills[s],
                     side["class_id"],
@@ -167,7 +170,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                         description=rpg_skill_description(variant,side),
                         cost=pet_cost(side, variant, gift_cost(side, variant)),
                         evolution=info,
-                        unavailable_reason=skill_restriction(
+                        unavailable_reason=roulette_block or skill_restriction(
                             side, variant, completed_turns(state, key)
                         ),
                     )

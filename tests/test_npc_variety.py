@@ -21,7 +21,7 @@ STATS=dict(accuracy=95,enemyEvasion=10,enemyAccuracy=98,evasion=10)
 def descriptor(skill, tier=0):
     return dict(id=skill.skill_id+':review',base_id=skill.skill_id,name=skill.name,
                 class_id=skill.class_id,damage_type=skill.damage_type,tags=list(skill.tags),
-                strikes=3 if 'three_strike' in skill.tags else 1,npc_tier=tier,monster_pattern=2)
+                strikes=3 if 'three_strike' in skill.tags else 1,npc_tier=tier,monster_pattern=3)
 
 
 class EnemyVarietyTests(unittest.TestCase):
@@ -109,9 +109,11 @@ class EnemyVarietyTests(unittest.TestCase):
         state=self.state();a,b=state['sides'].values()
         npc=challenge('defense',a,b,BUILTIN_SKILLS['mana_shot'],10)
         self.assertGreater(npc['profile']['npc_tier'],0)
+        self.assertEqual(npc['profile']['npc_pattern'],2)
         a['controller_id']=10
         human=challenge('defense',a,b,BUILTIN_SKILLS['mana_shot'],10)
         self.assertEqual(human['profile']['npc_tier'],0)
+        self.assertNotIn('npc_pattern',human['profile'])
         hard=defense(profile(npc['profile']),STATS,17)
         normal=defense(profile(human['profile']),STATS,17)
         self.assertGreater(len(hard['events']),len(normal['events']))

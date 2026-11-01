@@ -55,7 +55,7 @@ def review_catalog():
             strikes=strikes,
             description=skill.description,
             npc_tier=npc_tier,
-            monster_pattern=2 if skill.skill_id.startswith('guild_') else 0,
+            monster_pattern=3 if skill.skill_id.startswith('guild_') else 0,
         )
 
     for skill in (BUILTIN_SKILLS | BOSS_SKILLS).values():

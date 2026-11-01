@@ -96,7 +96,7 @@ class ChanceHttpTests(unittest.IsolatedAsyncioTestCase):
                 response=await client.get('/qte-lab/casino/',params=dict(skill=skill))
                 self.assertEqual(response.status,200)
                 source=await response.text();self.assertNotIn('_casino_chance_seed',source)
-                stage=json.loads(source.split('const stage=')[1].split(';')[0])
+                stage=json.JSONDecoder().raw_decode(source.split('const stage=')[1])[0]
                 choice='green' if stage['casino_mode']=='roulette' else 'launch'
                 body=dict(id=stage['id'],choice=choice)
                 first=await (await client.post('/qte-lab/casino/roll',json=body)).json()

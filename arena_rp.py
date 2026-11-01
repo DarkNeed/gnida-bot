@@ -277,7 +277,7 @@ class RPMixin:
                                       branches=[dict(id=b, **info, avatar=choice_avatar(k,b,10), final_avatar=choice_avatar(k,b,20)) for b, info in ARCHCLASSES.items() if info['class_id'] == k])
                                  for k, c in classes.items()],
                         skills=[dict(asdict(s), warnings=warnings(s), scripted=s.skill_id in SCRIPTED)
-                                for s in catalog.values()],
+                                for s in catalog.values() if not any(t.startswith('derived:') for t in s.tags)],
                         passives=list(rp_passives(classes).values()),
                         mobs=presets)
 

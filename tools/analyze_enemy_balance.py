@@ -16,7 +16,7 @@ def main():
         for sid in m['skills']:
             skill=SKILLS[sid]
             cases.append(dict(monster=mid,rank=m['rank'],skill=dict(id=sid+':probe',base_id=sid,name=skill.name,class_id=skill.class_id,damage_type=skill.damage_type,
-                tags=list(skill.tags),strikes=3 if 'three_strike' in skill.tags else 1,npc_tier=tier,monster_pattern=2)))
+                tags=list(skill.tags),strikes=3 if 'three_strike' in skill.tags else 1,npc_tier=tier,monster_pattern=3)))
     script="""
 const E=require('./webapp/qte-unique/engine');let input='';process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{
 const results=JSON.parse(input).map(c=>{const probes={};for(const policy of ['idle','edge','circle','zigzag']){let clean=0,hits=0;for(const seed of [17,89,323]){

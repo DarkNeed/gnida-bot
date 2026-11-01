@@ -15,6 +15,10 @@ let raidCurrent=null,raidInspect=null,raidPlaying=false;
 let encounterTarget='';
 let qtePlaying=false;
 let combatPreferences=null,combatSettingsRequest=0,combatSettingsSaving=false;
+function rouletteAvailabilityKey(view){
+  const fighters=[...Object.values(view?.state?.sides||{}),...Object.values(view?.data?.players||{}).map(p=>p.fighter)];
+  return fighters.filter(f=>f?.skill_details?.some(s=>s.skill_id==='casino_all_in')).map(f=>String(f.controller_id)+':'+Number(f.skill_details.some(s=>s.skill_id==='casino_all_in'&&s.unavailable_reason?.startsWith('Новый стол')))).sort().join('|');
+}
 function combatSettingsBody(enabled){
   return '<h2>Боевые мини-игры</h2><div class="minigames-toggle"><b>'+(enabled?'Включены':'Выключены · обычные броски')+'</b><button data-combat-enabled="'+!enabled+'" class="'+(enabled?'enabled':'primary')+'">'+(enabled?'Выключить':'Включить')+'</button></div><p class="muted">Настройка общая для всех твоих персонажей и чатов. По умолчанию включена. Изменение действует со следующего боя.</p><p>Включены: попадание через QTE, защита — выбранное для персонажа блокирование или уклонение. Характеристики меняют сложность. Успешная защита соперника имеет приоритет над успешным попаданием.</p><p>Выключены: выбираешь навык, а попадание и уклонение рассчитываются обычными бросками. В PvP соперник сохраняет свой режим; при выключенных мини-играх твоё уклонение остаётся случайным.</p><p class="muted">Лечение, поддержка и зелья — без QTE. Кровотечение, горение и ответные реакции не отменяются прохождением отдельной атаки. Закрытие или сворачивание мини-игры засчитывает неуспех; бой не ждёт бесконечно.</p>';
 }
@@ -214,9 +218,9 @@ function fighterStatuses(side){
   const rpg=side.rpg_state||{};
   const casino=side.casino_state||{};
   for(const [id,name,max,detail] of [
-    ['misfortune','Невезение',3,'На трёх следующий родной атакующий бросок гарантированно равен 6. Туз не расходует подготовку.'],
-    ['chips','Фишки',7,'Только этот бой. Семь фишек и три джекпота открывают 777 Счастливчика.'],
-    ['sevens','Джекпоты',3,'Три джекпота и семь фишек готовят Последний депозит 777.'],
+    ['misfortune','Невезение',3,'Три заряда гарантируют 6 обычному атакующему кубику. Не меняют рулетку, автомат 777 и Проверку вероятности. Туз не расходует подготовку.'],
+    ['chips','Фишки',7,'Только этот бой. Три фишки усиливают Ва-банк на 20%. Семь фишек и три джекпота готовят 777 только Счастливчика / Избранника Фортуны с 15 уровня.'],
+    ['sevens','Джекпоты',3,'777 доступен только Счастливчику / Избраннику Фортуны с 15 уровня: нужны три джекпота и семь фишек. Для базового Лудомана и Шулера накопления не открывают этот навык.'],
     ['debt','Долг',30,'Будущий пассивный реген сперва гасит этот долг. Не влияет на франки.'],
     ['table','Игровой стол',3,'Оставшиеся усиленные родные атаки.']])if(casino[id])items.push({id:'casino:'+id,name,icon:14,count:String(casino[id])+'/'+max,detail});
   if(casino.ace)items.push({id:'casino:ace',name:'Туз в рукаве',icon:14,count:'2',detail:'Следующая родная атака выбирает лучший из двух кубиков.'});
@@ -260,7 +264,7 @@ function fighterStatuses(side){
   if(f.blood_debt>0)items.push({id:'final:blood',name:'Кровный долг',icon:1,count:String(f.blood_debt),detail:'Реально полученный прямой урон. От 25% max HP усиливает «За всю семью». Самоурон не учитывается; максимум — собственный max HP.'});
   if(f.beast>0)items.push({id:'final:beast',name:'Чучело хищника',icon:12,count:String(f.beast),detail:'Осталось действий жизни слуги. Родная атака вызывает один укус, поддержка готовит защиту. Пассивки и питомец повторно не запускаются.'});
   if(f.counter_until>(side.own_turns||0))items.push({id:'final:counter',name:'Контрстойка',icon:10,count:String(f.counter_until-(side.own_turns||0)),detail:'«Лунная дуга» превращена в «Луна уже за твоей спиной». Расход только при попадании; число — оставшиеся собственные действия.'});
-  for(const [id,name,icon,detail] of [['mana','Перенасыщение',5,'Перегрузка: +35% урона за заряд.'],['faith','Вера',11,'Кара: +20% урона за заряд; Страшный суд: +40%.'],['souls','Души',12,'Жатва душ: +30% урона за душу.'],['beast','Зверство',4,'+10% своего и входящего урона за заряд.'],['retribution','Воздаяние',6,'Кара Паладина: +15% урона за заряд.']]){
+  for(const [id,name,icon,detail] of [['mana','Перенасыщение',5,'Перегрузка: +35% урона за заряд. При трёх зарядах весь урон дополнительно ×1,5, вместе с Эхом и Потоком.'],['faith','Вера',11,'Кара: +20% урона за заряд; Страшный суд: +40%.'],['souls','Души',12,'Жатва душ: +30% урона за душу.'],['beast','Зверство',4,'+10% своего и входящего урона за заряд.'],['retribution','Воздаяние',6,'Кара Паладина: +15% урона за заряд.']]){
     if(rpg[id]>0)items.push({id:'rpg:'+id,name,icon,count:rpg[id]+'/3',detail:detail+' Это заряды, не длительность.'});
   }
   if(rpg.weapon_open)items.push({id:'rpg:weapon',name:'Оружие раскрыто',icon:10,count:'1',detail:'Тяжёлый разрез сильнее, дороже и пробивает защиту. Возврат крови слабее, чем в сложенной форме.'});
@@ -690,6 +694,7 @@ function menuScreen(data){
   let body='<div class="tabs">'+button("Персонаж","tab:personal",page==="personal"?"selected":"")+'</div><div class="tabs">'+button("Инвентарь","tab:inventory",page==="inventory"?"selected":"")+button("Торговец","tab:merchant",page==="merchant"?"selected":"")+button("Рейды","tab:raids",page==="raids"?"selected":"")+'</div>';
   body+=button('⚒️ Кузница трактатов','tab:forge',page==='forge'||page==='forgeConfirm'?'primary':'');
   body+=button('🏆 Топ арены','tab:rankings',page==='rankings'?'primary':'');
+  body+='<div class="tabs arena-world-links">'+button('🗺️ Карта','kingdom')+button('🏹 Гильдия','guild')+'</div>';
   if(page==='forge'||page==='forgeConfirm')body+=forgeBody(data);
   else if(page==='rankings')body+=arenaLeaderboardBody(data.leaderboard);
   else if(page==="personal")body+=charactersBody(data)+profileCard(data.personal,"ЛИЧНЫЙ ПЕРСОНАЖ")+'<div class="note">Вызови любого: <b>/бой @участник</b> или ответом <b>/бой</b>. Персонаж и инвентарь общие для всех чатов. Можно добавить ставку: <b>/бой @участник 50</b>. Бои здесь не передают рабов.</div>';
@@ -875,6 +880,8 @@ app.addEventListener("click",async event=>{
   if(cmd==="potion"||cmd==="surrender"){await action("skill",{skill:cmd});return;}
   if(cmd==='holdings'){await openHoldings();return;}
   if(cmd==='equipment'){await openEquipment();return;}
+  if(cmd==='kingdom'){await openKingdom(chat);return;}
+  if(cmd==='guild'){await openGuild(chat);return;}
   if(cmd==="menu"||cmd==="refresh"){closeEffect();statusViews=null;closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
   if(cmd==='charactersbuy'){page='charactersPurchase';menuScreen(menu);return;}
   if(cmd==='characterinvoice'){await buyCharacters();return;}
@@ -997,7 +1004,7 @@ async function poll(){
   polling=true;
   try{
     const data=await api("/api/battle/"+token);
-    if(!busy&&token===data.token&&(!current||data.revision>current.revision)){busy=true;try{await applyBattle(data);}finally{busy=false;}}
+    if(!busy&&token===data.token&&(!current||data.revision>current.revision||rouletteAvailabilityKey(data)!==rouletteAvailabilityKey(current))){busy=true;try{await applyBattle(data);}finally{busy=false;}}
   }catch(error){toast(error.message);}finally{polling=false;}
 }
 function startDemo(){
@@ -1433,7 +1440,7 @@ async function raidAction(action,extra={}){
 async function pollRaid(){
   if(polling||busy||raidPlaying||demo||document.hidden||!raidCurrent||!['lobby','active'].includes(raidCurrent.status))return;
   const captured=raidCurrent.token;polling=true;
-  try{const data=await api('/api/raid/'+captured);if(!busy&&!raidPlaying&&raidCurrent?.token===captured&&data.revision>raidCurrent.revision)await receiveRaid(data);}
+  try{const data=await api('/api/raid/'+captured);if(!busy&&!raidPlaying&&raidCurrent?.token===captured&&(data.revision>raidCurrent.revision||rouletteAvailabilityKey(data)!==rouletteAvailabilityKey(raidCurrent)))await receiveRaid(data);}
   catch(error){toast(error.message);}finally{polling=false;}
 }
 app.addEventListener('click',async event=>{

@@ -27,7 +27,7 @@ def build_rpg_catalog(FighterClass, Skill, effect):
          (('rpg_weapon_master','Мастер оружия','Удары по расколотой броне получают +10 точности.'),
           ('rpg_executioner','Довести до конца','Против цели с HP ≤30% физические атаки получают +20% урона.'))),
         ('mage','Маг','Мана',(41,4,16,6,12,9,5),(4,.3,1.8,.6,1.0,.7,.2),
-         (('rpg_mana','Перенасыщение','Попавшие родные магические атаки дают заряд маны, до 3. Перегрузка расходует их ради +35% урона за заряд.'),
+         (('rpg_mana','Перенасыщение','Попавшие родные магические атаки дают заряд маны, до 3. Перегрузка: +35% урона за заряд; при трёх зарядах весь её урон дополнительно ×1,5.'),
           ('rpg_barrier_charge','Упругая мана','Попавшая атака врага при действующем Мановом барьере или активном призыве Некроманта даёт один заряд Перенасыщения, до 3. Не больше одного заряда за вражеское действие.'))),
         ('priest','Жрец','Мана',(48,8,13,9,12,7,5),(4.5,1.0,1.4,.9,1.0,.5,.2),
          (('rpg_faith','Вера','Успешные родные атаки и полезная поддержка дают Веру, до 3. Кара расходует её: +20% урона за заряд. Лечение полного HP не даёт Веру.'),
@@ -51,9 +51,12 @@ def build_rpg_catalog(FighterClass, Skill, effect):
         s('mage','mana_blob','Сгусток маны',5,'magic',16,25,1,description='Усиленная магическая атака. При попадании с пассивкой Перенасыщение даёт заряд маны.'),
         s('mage','mana_barrier','Мановый барьер',6,None,0,25,3,(effect('mana_barrier','incoming_damage_multiplier',.70,2,target='self'),),description='Прямой урон −30% на два собственных действия; попадания врага подготавливают Перенасыщение.'),
         s('mage','mana_focus','Сосредоточиться',5,None,0,0,0,(effect('mana_focus','resource',35,target='self'),),description='Возвращает 35 маны, расходуя действие.'),
-        s('mage','mana_overload','Перегрузка',8,'magic',18,40,3,tags=('rpg_mana_spend',),description='Расходует до 3 зарядов Перенасыщения: +35% урона за заряд. При промахе заряды сохраняются.'),
+        s('mage','mana_overload','Перегрузка',8,'magic',18,40,3,tags=('rpg_mana_spend',),description='Расходует до 3 зарядов Перенасыщения: +35% урона за заряд. При полном заряде (3) весь урон дополнительно ×1,5; складывается с Эхом и Потоком. При промахе заряды сохраняются.'),
         s('priest','light_word','Слово света',5,'magic',10,10),
         s('priest','priest_heal','Исцеление',5,None,0,25,3,(effect('priest_heal','rpg_heal',.25,target='self'),),description='Лечит 25% максимального HP. В рейде автоматически выбирает живого союзника с наименьшим процентом HP.'),
+        s('priest','priest_heal_regular','Высшая молитва · сохранить Веру',20,None,0,25,3,
+          (effect('priest_heal','rpg_heal',.25,target='self'),),tags=('archclass:priest_bishop','derived:priest_heal'),
+          description='Обычная молитва вместо финала: сохраняет три Веры и разовое применение «Пока горит свет». Лечит 30% HP, подготовленная — 40%; Милосердие действует. Общая перезарядка с финальной молитвой. Не занимает отдельный слот.'),
         s('priest','priest_ward','Оберег',6,None,0,20,3,(effect('priest_ward','incoming_damage_multiplier',.75,1,target='self'),),description='Прямой урон −25% до следующего собственного действия.'),
         s('priest','priest_cleanse','Очищение',6,None,0,15,2,(effect('priest_cleanse','cleanse_one',1,target='self'),)),
         s('priest','holy_judgment','Кара',8,'magic',18,40,3,tags=('rpg_faith_spend',),description='Расходует Веру ради +20% урона за заряд. Паладин наносит физический урон и использует Воздаяние.'),
@@ -84,6 +87,7 @@ def branch(side):
 
 def rpg_variant(skill, actor, target):
     sid, key, memory = skill.skill_id, branch(actor), actor.get('rpg_state',{})
+    if sid=='priest_heal_regular':sid='priest_heal'
     changes = {}
     if sid=='steel_charge' and any(e.get('id')=='armor_split' for e in target['effects']):
         changes.update(name='Стальной прорыв',power=22,tags=skill.tags+('two_strike',))
@@ -111,7 +115,7 @@ def rpg_variant(skill, actor, target):
             if sid=='mana_overload':
                 changes.update(name='Цепная молния',power=24 if any(e.get('id')=='rpg_frost' for e in target['effects']) else 18)
         elif key=='priest_bishop' and sid=='priest_heal':
-            changes.update(name='Высшая молитва',effects=tuple(dict(e,value=.30 if actor['level']>=12 else .28) for e in skill.effects))
+            changes.update(name='Высшая молитва · сохранить Веру' if skill.skill_id=='priest_heal_regular' else 'Высшая молитва',effects=tuple(dict(e,value=.30 if actor['level']>=12 else .28) for e in skill.effects))
         elif key=='priest_paladin':
             if sid=='holy_judgment': changes.update(name='Карающий удар',damage_type='physical',power=22)
             if sid=='priest_ward': changes.update(name='Святой заслон',effects=tuple(dict(e,value=.55) for e in skill.effects))
@@ -125,11 +129,22 @@ def rpg_variant(skill, actor, target):
 
 def rpg_restriction(actor, skill):
     m = actor.get('rpg_state',{})
+    if skill.skill_id=='priest_heal_regular' and skill.skill_id not in prayer_actions(actor):
+        return 'Обычный вариант доступен вместе с готовой финальной молитвой при трёх Веры.'
     if 'rpg_visceral' in skill.tags and (not m.get('visceral_ready') or actor.get('own_turns',0)>=m.get('visceral_until',0)):
         return 'Сначала успешно прерви атаку противника выстрелом.'
     if skill.skill_id=='blood_bullets' and actor['hp']<=max(1,round(actor['stats']['max_hp']*.10)):
         return 'Недостаточно HP для Кровавых пуль; навык не может убить.'
     return ''
+
+
+def prayer_actions(actor):
+    """An alternate cast, not another learned/equipped skill or a free cooldown."""
+    m=actor.get('rpg_state',{})
+    return ['priest_heal_regular'] if (branch(actor)=='priest_bishop'
+        and actor.get('level',0)>=20 and actor.get('archclass_stage',20)>=20
+        and 'priest_heal' in actor.get('loadout',[]) and m.get('faith',0)>=3
+        and not m.get('dawn_used')) else []
 
 
 def rpg_modifiers(actor,target,skill):
@@ -142,6 +157,7 @@ def rpg_modifiers(actor,target,skill):
         if 'rpg_mana_spend' in skill.tags:
             flow=.25*actor.get('mastery_state',{}).get('flow',0) if 'mastery_flow' in skill.tags else 0
             multiplier*=1+.35*m.get('mana',0)+flow
+            if m.get('mana',0)>=3:multiplier*=1.5
         if 'rpg_faith_spend' in skill.tags: multiplier*=1+(.40 if skill.skill_id=='arch_priest_bishop' else .20)*m.get('faith',0)
         if 'rpg_soul_spend' in skill.tags: multiplier*=1+.30*m.get('souls',0)
         if 'rpg_beast_spend' in skill.tags: multiplier*=1+.25*m.get('beast',0)
@@ -236,7 +252,7 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
         return 'Страж и Палач призваны на три действия'
     if kind=='rpg_dawn':
         m=actor.setdefault('rpg_state',{})
-        candidates=allies or [actor]
+        candidates=[s for s in (allies or [actor]) if not s.get('withdrawn')]
         dead=[s for s in candidates if s['hp']<=0]
         if raid_context is not None and dead and not raid_context.get('rpg_revive_used'):
             restored=dead[0]
@@ -251,7 +267,8 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
             for restored in candidates:
                 if restored['hp']<=0: continue
                 from arena_equipment import heal_amount
-                amount=min(restored['stats']['max_hp']-restored['hp'],heal_amount(actor,restored,round(restored['stats']['max_hp']*(.25 if allies else .50))))
+                bonus=1.25 if has_trait(actor,'rpg_merciful') and restored['hp']<=restored['stats']['max_hp']*.40 else 1
+                amount=min(restored['stats']['max_hp']-restored['hp'],heal_amount(actor,restored,round(restored['stats']['max_hp']*(.50 if len(candidates)==1 else .25)*bonus)))
                 restored['hp']+=amount;total+=amount
                 from arena_plague import actively_healed
                 actively_healed(restored)

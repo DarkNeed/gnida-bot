@@ -354,11 +354,12 @@ def duration(challenge):
 def defense(p, stats, seed, enabled=None, preparation=1):
     d, r = difficulty(stats), random_values(seed ^ p["seed"])
     npc=max(0,min(4,p['skill'].get('npc_tier',0)))
+    fair_npc=p['skill'].get('npc_pattern') == 2
     if npc and not p['basic']:
-        d['speed']*=1+.06*npc
-        d['warning']=max(.40,d['warning']*(1-.04*npc))
-        d['gap']*=1-.035*npc
-        d['lead']+=.035*npc
+        d['speed']*=1+(.025 if fair_npc else .06)*npc
+        d['warning']=max(.50 if fair_npc else .40,d['warning']*(1-(.015 if fair_npc else .04)*npc))
+        d['gap']*=1-(.015 if fair_npc else .035)*npc
+        d['lead']=min(.14,d['lead']+.01*npc) if fair_npc else d['lead']+.035*npc
     if p.get('casinoJackpot'):
         d['speed']*=1.10
         d['warning']=max(.30,d['warning']*.94)
@@ -383,6 +384,16 @@ def defense(p, stats, seed, enabled=None, preparation=1):
         _, phase, _ = identity(p)
         d['warning'] = max(.48 if phase==1 else .42, d['warning'])
         d['speed'] *= 1 if phase==1 else 1.08
+    from arena_guild_patterns import FAMILIES as guild_families
+    guild = (p['skill'].get('monster_pattern') == 3
+             and p['skill'].get('base_id', '')[6:] in guild_families)
+    if guild:
+        # Must match the browser: bounded rank pressure and a human-sized tell.
+        d['speed'] = (310 + 230 * d['intensity'] ** 1.25) * (1 + .025 * npc)
+        d['warning'] = .80 - .20 * d['intensity'] - .012 * npc
+        d['lead'] = .04 * d['intensity'] + .005 * npc
+        d['beamScale'] = 1 + .12 * d['intensity']
+        d['gap'] = 150 - 30 * d['intensity'] - 2 * npc
     count = (
         3
         if p["basic"]
@@ -414,6 +425,7 @@ def defense(p, stats, seed, enabled=None, preparation=1):
     if p["basic"]:
         d["warning"] = max(0.66, d["warning"])
         d["size"] = 24 + 8 * d["intensity"]
+    if npc and fair_npc:d['warning']=max(.50,d['warning'])
     d['warning'] += stats.get('extraWarning', 0)
     static = p["skill"].get("base_id") != "mother_joke" and p["kind"] in (
         "slash",
@@ -443,7 +455,13 @@ def defense(p, stats, seed, enabled=None, preparation=1):
         * (1 if p["basic"] else 1 - 0.08 * d["intensity"])
     )
     count,span=schedule(p,count,span)
-    if npc and not p['basic']:count+=npc
+    if npc and not p['basic']:
+        if fair_npc:
+            count=min(7,count+math.ceil(npc/2));span=max(span,(count-1)*.72)
+        else:count+=npc
+    if guild:
+        count = 4 + (1 if npc >= 3 else 0)
+        span = (count - 1) * (1.12 - .16 * d['intensity'])
     events = [
         dict(
             at=preparation + 0.18 + i * span / max(1, count - 1),

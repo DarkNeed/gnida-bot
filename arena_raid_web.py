@@ -90,7 +90,8 @@ async def raid_view(db, row, actor):
             side.update(class_avatar_url=side['guild_sprite'],sprite_url=side['guild_sprite'],pixel_art=False,
                 class_name=MONSTERS[side['guild_monster']]['role'])
         pair = pair_state(side, target)
-        ids = list(side["loadout"])
+        from arena_rpg import prayer_actions
+        ids = list(dict.fromkeys(list(side["loadout"]) + prayer_actions(side)))
         if (
             not boss
             and "bum_punch" not in ids
@@ -108,6 +109,8 @@ async def raid_view(db, row, actor):
             if sid not in catalog:
                 continue
             variant = effective_skill(pair, "a", sid, catalog)
+            from arena_casino_chance import roulette_reason
+            roulette_block=roulette_reason(db,'raid',row['token'],side.get('controller_id')) if sid=='casino_all_in' and not side.get('rp_sandbox') else ''
             info = evolution_info(
                 catalog[sid], side["class_id"], side, target, side.get("own_turns", 0)
             )
@@ -123,7 +126,7 @@ async def raid_view(db, row, actor):
                     description=rpg_skill_description(variant,side),
                     cost=pet_cost(side, variant, gift_cost(side, variant)),
                     evolution=info,
-                    unavailable_reason=skill_restriction(side, variant),
+                    unavailable_reason=roulette_block or skill_restriction(side, variant),
                 )
             )
 

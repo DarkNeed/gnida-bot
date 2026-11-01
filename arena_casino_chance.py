@@ -6,6 +6,43 @@ import time
 
 RED = frozenset((1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36))
 DICE_FACTORS = (.25, .5, .75, 1, 1.5, 2.5)
+ROULETTE_NEW_BATTLE_SECONDS = 180
+
+
+def roulette_reason(db, scope, token, actor, now=None):
+    """Account-wide new-table lock; turns at the same table remain unrestricted."""
+    now=time.time() if now is None else now
+    row=db.connection.execute('SELECT context,until_at FROM arena_roulette_windows WHERE actor_id=?',(actor,)).fetchone()
+    if row and row['context']!=scope+':'+token and row['until_at']>now:
+        opens=time.strftime('%H:%M:%S',time.gmtime(row['until_at']+3*3600))
+        return f'Новый стол рулетки с {opens} МСК. Другие навыки доступны; смена чата или персонажа таймер не сбрасывает.'
+    return ''
+
+
+def commit_account(db, scope, token, actor, stage, choice, now=None):
+    """Called inside the flow transaction, before revealing any new result."""
+    now=time.time() if now is None else now
+    protected=stage.get('casino_mode')=='roulette' and not stage.get('casino_retry_exempt')
+    fresh=not stage.get('casino_result')
+    if fresh and protected:
+        reason=roulette_reason(db,scope,token,actor,now)
+        if reason:raise ValueError(reason)
+    outcome=commit(stage,choice,now)
+    if fresh and protected:
+        db.connection.execute('''INSERT INTO arena_roulette_windows(actor_id,context,until_at) VALUES(?,?,?)
+            ON CONFLICT(actor_id) DO UPDATE SET context=excluded.context,until_at=excluded.until_at''',
+            (actor,scope+':'+token,now+ROULETTE_NEW_BATTLE_SECONDS))
+    return outcome
+
+
+def native_roulette(db, scope, token, actor, proof=None):
+    """The no-minigames entry points obey the same account-wide table window."""
+    reason=roulette_reason(db,scope,token,actor)
+    if reason:raise ValueError(reason)
+    if not (proof or {}).get('pattern_attack',{}).get('casino'):
+        db.connection.execute('''INSERT INTO arena_roulette_windows(actor_id,context,until_at) VALUES(?,?,?)
+            ON CONFLICT(actor_id) DO UPDATE SET context=excluded.context,until_at=excluded.until_at''',
+            (actor,scope+':'+token,time.time()+ROULETTE_NEW_BATTLE_SECONDS))
 
 
 def mode(profile):

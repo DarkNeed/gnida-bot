@@ -268,7 +268,7 @@ def resolve(data, skills, rng=None):
                 actor['_qte_' + field] = proof[field]
         try:
             event = native_attack(actor, enemy, selected, skills, rng,
-                                  allies=[p['fighter'] for p in alive_players(data).values()], raid_context=data)
+                                  allies=[p['fighter'] for p in data['players'].values() if not p.get('withdrawn') and not p.get('reward_blocked')], raid_context=data)
         except ValueError:
             defend(actor, enemy, data)
             log_event(data, key, key, 'Навык стал недоступен: защита без расхода энергии.')

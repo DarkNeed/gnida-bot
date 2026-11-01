@@ -58,7 +58,7 @@ def variant(skill, actor, target, key):
             change.update(name='Точка небытия', power=48, cost=70, pierce=.60,
                           tags=skill.tags + ('rpg_void',))
     elif key == 'priest_bishop':
-        if sid == 'priest_heal' and level >= 18 and m.get('prayer_ready'):
+        if sid in ('priest_heal','priest_heal_regular') and level >= 18 and m.get('prayer_ready'):
             change['effects'] = tuple(dict(e, value=.40) if e['kind'] == 'rpg_heal' else e for e in skill.effects)
         if final and sid == 'priest_heal' and m.get('faith', 0) >= 3 and not m.get('dawn_used'):
             change.update(name='Пока горит свет', cost=60, cooldown=4,
@@ -228,7 +228,7 @@ def post_action(actor, target, skill, hit, damage, key, before, allies=None):
             buff(target, 'event_horizon', 'magic_defense_pct', -.25, 2)
             target['effects'][-1]['source_controller']=actor.get('controller_id')
     if key == 'priest_bishop' and actor['level'] >= 18 and hit:
-        if skill.skill_id == 'priest_heal':
+        if skill.skill_id in ('priest_heal','priest_heal_regular'):
             m['prayer_ready'] = False
         elif m.get('support_useful'):
             m['prayer_ready'] = True

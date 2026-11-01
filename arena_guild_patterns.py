@@ -6,9 +6,10 @@ FAMILIES = dict(stab='slash',net='paint',fang='beast',hex='mana',smash='impact',
 
 def prepare(s, e, add):
     key = s['p']['skill'].get('base_id', '')[6:]
-    if key not in FAMILIES or s['p']['skill'].get('monster_pattern') != 2:
+    if key not in FAMILIES or s['p']['skill'].get('monster_pattern') not in (2,3):
         return False
     d, p, i = s['d'], s['p'], e['index']
+    fair = p['skill'].get('monster_pattern') == 3
     x, y = s['player']['x'], s['player']['y']
     tx = max(20, min(700, x+s['player'].get('vx',0)*d['lead']))
     ty = max(20, min(300, y+s['player'].get('vy',0)*d['lead']))
@@ -36,7 +37,9 @@ def prepare(s, e, add):
         fan(bx,by,math.atan2(ty-by,tx-bx),n,.15,delay,motif)
 
     def ring():
-        add(dict(type='ring',x=tx,y=ty,r=20,speed=200,gap=angle,gapWidth=1.65,thickness=9,color=color,tier='normal'),.30,1.3)
+        # At a wall the opening must point into playable space, not off-field.
+        gap=math.atan2(160-ty,360-tx) if fair and (tx<100 or tx>620 or ty<75 or ty>245) else angle
+        add(dict(type='ring',x=tx,y=ty,r=20,speed=175 if fair else 200,gap=gap,gapWidth=1.85 if fair else 1.65,thickness=9,color=color,tier='normal'),.30,1.5 if fair else 1.3)
 
     if key in ('stab','cleaver','spectral_blade','crypt_blades','tail'):
         slash(angle)
@@ -78,10 +81,11 @@ def prepare(s, e, add):
                 a=angle+j*math.tau/8
                 add(dict(type='bullet',x=360+math.cos(a)*130,y=160+math.sin(a)*130,vx=math.cos(a+.8)*280,vy=math.sin(a+.8)*280,r=6,turn=.65,color=color,motif='flame',tier='minor'),.20,1.7)
     elif key in ('ice','ice_tomb'):
-        gap=70+e['jitter']*580
-        for j in range(13):
-            bx=30+j*55
-            if abs(bx-gap)>48:fan(bx,-15 if i%2 else 335,math.pi/2 if i%2 else -math.pi/2,1,0,0,'crystal')
+        # Telegraph a reachable opening instead of rolling one across 580px.
+        gap=max(70,min(650,tx+(-1 if e['jitter']<.5 else 1)*(64+28*e['jitter']))) if fair else 70+e['jitter']*580
+        for j in range(14 if fair else 13):
+            bx=9+j*54 if fair else 30+j*55
+            if abs(bx-gap)>(52 if fair else 48):fan(bx,-15 if i%2 else 335,math.pi/2 if i%2 else -math.pi/2,1,0,0,'crystal')
         if key=='ice_tomb':beam(0,ty,720,ty,10,.4,'crystal')
     elif key in ('lightning','rune_cross'):
         beam(tx,0,tx,320,12,0,'spark')
@@ -92,7 +96,7 @@ def prepare(s, e, add):
 
 def block_threats(p, seed, params):
     key=p['skill'].get('base_id','')[6:]
-    if key not in FAMILIES or p['skill'].get('monster_pattern') != 2:return None
+    if key not in FAMILIES or p['skill'].get('monster_pattern') not in (2,3):return None
     from arena_qte_patterns import random_values
     random=random_values(seed ^ p['seed']); offset=math.floor(next(random)*8)*math.pi/4
     tier=max(0,min(4,p['skill'].get('npc_tier',0)))

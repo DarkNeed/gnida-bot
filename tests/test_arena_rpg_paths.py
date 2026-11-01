@@ -167,7 +167,7 @@ class RPGPathTests(unittest.TestCase):
         actor['hp']=100;actor['rpg_state']={'faith':3}
         event=self.use(state,'priest_heal')
         self.assertEqual(event['skill_name'],'Пока горит свет')
-        self.assertEqual(actor['hp'],600)
+        self.assertEqual(actor['hp'],725) # 50% solo healing, including Mercy at low HP.
         self.assertEqual(actor['resource'],40)
         actor['rpg_state']['faith']=3
         self.assertNotEqual(effective_skill(state,'a','priest_heal').name,'Пока горит свет')

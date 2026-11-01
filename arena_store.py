@@ -1248,6 +1248,9 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                     self._arena_consume_item_locked(item)
                     use_healing_potion(state, key)
                 else:
+                    if skill_id=='casino_all_in' and not state['sides'][key].get('rp_sandbox'):
+                        from arena_casino_chance import native_roulette
+                        native_roulette(self,'battle',token,actor,_qte)
                     resolve_skill(state, key, skill_id, skills,qte=_qte)
                     if row.get("ranked"):
                         state.setdefault("ranked_actions", {"a": 0, "b": 0})[key] += 1

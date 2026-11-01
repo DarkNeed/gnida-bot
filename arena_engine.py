@@ -839,6 +839,7 @@ def unlocked_skill_ids(
             or skill.skill_id in granted
         )
         and skill.unlock_level <= level
+        and not any(t.startswith('derived:') for t in skill.tags)
         and branch_skill_allowed(skill, archclass_id, level)
         and mastery_allowed(skill, dict(class_id=class_id, level=level,
             archclass_id=archclass_id, progression_level=progression_level))
@@ -1029,8 +1030,9 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
     if state["finished"] or state["active_side"] != side_key:
         raise ValueError("Сейчас не ваш ход.")
     side = state["sides"][side_key]
+    from arena_rpg import prayer_actions
     if (
-        skill_id not in side["loadout"] and skill_id != "bum_punch"
+        skill_id not in side["loadout"] and skill_id != "bum_punch" and skill_id not in prayer_actions(side)
     ) or skill_id not in catalog:
         raise ValueError("Навык недоступен.")
     if not side.get('rp_sandbox') and (not branch_skill_allowed(
@@ -1681,6 +1683,8 @@ def resolve_skill(
         ]
     if skill.cooldown and skill_id != 'last_amendment':
         actor["cooldowns"][skill_id] = skill.cooldown
+        if skill_id in ('priest_heal','priest_heal_regular') and actor.get('archclass_id')=='priest_bishop':
+            actor['cooldowns'].update(priest_heal=skill.cooldown,priest_heal_regular=skill.cooldown)
     if actor.get('controller_id') == 0:
         actor['npc_skill_history'] = (actor.get('npc_skill_history', []) + [skill_id])[-4:]
     class_after_action(actor, target, skill, hit, dodged, adored, charmed)

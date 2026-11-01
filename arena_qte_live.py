@@ -66,7 +66,9 @@ def challenge(kind, attacker, target, skill, actor):
         descriptor['copy_skill']=deepcopy(attacker['nz_copy'])
         descriptor['name']+=' — '+attacker['nz_copy']['name']
     if skill.skill_id.startswith('guild_'):
-        descriptor['monster_pattern']=2
+        descriptor['monster_pattern']=3
+    elif descriptor['npc_tier']:
+        descriptor['npc_pattern']=2
     # Kit's announced reflection/coins consist of two different native actions.
     # One pattern, two groups: do not apply the same collisions to both actions.
     subskills = {
@@ -129,6 +131,7 @@ def challenge(kind, attacker, target, skill, actor):
         casino_mode = mode(descriptor)
         if casino_mode:
             result.update(casino_mode=casino_mode, _casino_chance_seed=secrets.token_hex(32))
+            if attacker.get('rp_sandbox'):result['casino_retry_exempt']=True
     return result
 
 
@@ -186,6 +189,8 @@ class ArenaQteMixin:
             CREATE TABLE IF NOT EXISTS arena_character_defense (
                 actor_id INTEGER NOT NULL, slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 5),
                 mode TEXT NOT NULL CHECK(mode IN ('dodge','block')), PRIMARY KEY(actor_id,slot));
+            CREATE TABLE IF NOT EXISTS arena_roulette_windows (
+                actor_id INTEGER PRIMARY KEY, context TEXT NOT NULL, until_at REAL NOT NULL);
         """)
 
     def _qte_enabled_locked(self, actor):
@@ -345,6 +350,10 @@ class ArenaQteMixin:
         a, b = state["sides"][key], state["sides"][other]
         _, skills = self._fighter_catalog_locked()
         skill = validate_skill(state, key, skill_id, skills)
+        if skill_id=='casino_all_in' and not a.get('rp_sandbox'):
+            from arena_casino_chance import roulette_reason
+            reason=roulette_reason(self,'battle',row['token'],a['controller_id'])
+            if reason:raise ValueError(reason)
         stages = []
         modes = state["qte_modes"]
         if skill.hostile:
@@ -533,7 +542,7 @@ class ArenaQteMixin:
             return casino_public(deepcopy(stage))
 
     async def arena_qte_casino_roll(self, scope, token, actor, ident, choice):
-        from arena_casino_chance import commit
+        from arena_casino_chance import commit_account
         if scope not in ('battle', 'raid'): raise ValueError('Неизвестный бой.')
         async with self._lock:
             with self.connection:
@@ -543,7 +552,7 @@ class ArenaQteMixin:
                 stage = flow['stages'][0]
                 if stage['actor'] != actor or stage['id'] != ident or not stage.get('casino_mode'):
                     raise ValueError('Это не твой текущий бросок.')
-                outcome = commit(stage, choice)
+                outcome = commit_account(self,scope,token,actor,stage,choice)
                 self._qte_save_locked(flow)
                 return outcome
 
@@ -635,6 +644,10 @@ class ArenaQteMixin:
                     self._qte_snapshot_locked("raid", row, data)
                     stages = []
                     fighter = player["fighter"]
+                    if skill=='casino_all_in' and not fighter.get('rp_sandbox'):
+                        from arena_casino_chance import roulette_reason
+                        reason=roulette_reason(self,'raid',token,actor)
+                        if reason:raise ValueError(reason)
                     boss = data["boss"]
                     if data.get('kind') == 'encounter' or data.get('boss_id') == 'nazarick':
                         from arena_encounters import target_enemy

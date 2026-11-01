@@ -116,6 +116,23 @@ process.stdout.write(c.out||app.innerHTML);
         self.assertIn('data-do="useitem:42"', body)
         self.assertEqual(body.count("<select "), body.count("</select>"))
 
+    def test_map_and_guild_links_are_visible_in_main_arena_menu(self):
+        body=self.render('personal')
+        self.assertIn('data-do="kingdom"',body)
+        self.assertIn('data-do="guild"',body)
+        self.assertIn('🗺️ Карта',body);self.assertIn('🏹 Гильдия',body)
+        source=(Path(__file__).resolve().parents[1]/'webapp/battle-client').read_text(encoding='utf-8')
+        self.assertIn("if(cmd==='kingdom'){await openKingdom(chat);return;}",source)
+        self.assertIn("if(cmd==='guild'){await openGuild(chat);return;}",source)
+
+    def test_roulette_availability_updates_only_when_the_lock_changes(self):
+        output=self.run_client("""
+const snapshot=reason=>({data:{players:{'10':{fighter:{controller_id:10,skill_details:[{skill_id:'casino_all_in',unavailable_reason:reason}]}}}}});
+out=JSON.stringify([rouletteAvailabilityKey(snapshot('Новый стол через 180 с.'))===rouletteAvailabilityKey(snapshot('Новый стол через 179 с.')),
+rouletteAvailabilityKey(snapshot('Новый стол через 1 с.'))!==rouletteAvailabilityKey(snapshot(''))]);
+""",{})
+        self.assertEqual(json.loads(output),[True,True])
+
     def test_global_activity_cards_use_correct_open_and_exit_actions(self):
         data=self.menu_data()
         data['active']=[dict(token='battle-key',mode='personal',status='pending')]
