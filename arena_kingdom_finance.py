@@ -59,6 +59,8 @@ def upkeep(d):
     from arena_kingdom_war import UNITS,initialize as army_initialize
     people=d['population']*2
     buildings=10*sum(level*level for level in d['buildings'].values())
+    from arena_kingdom_estate import upkeep as special_upkeep
+    buildings+=special_upkeep(d)
     administration={1:60,2:180,3:360}[d['stage']]
     army=sum(UNITS[u['kind']]['price']//100 for u in army_initialize(d)['units'])
     return dict(people=people,buildings=buildings,administration=administration,army=army,

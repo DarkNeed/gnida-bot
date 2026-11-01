@@ -21,6 +21,12 @@ class KingdomTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.folder=tempfile.TemporaryDirectory();self.db=Database(Path(self.folder.name)/'world.sqlite3');await self.db.connect()
         self.now=1800000000;self.clock=patch('arena_kingdom.kingdom_now',side_effect=lambda:self.now);self.clock.start();self.addCleanup(self.clock.stop)
+        # Legacy construction/fiscal/siege arithmetic is isolated from randomly
+        # placed NPC raids. LivingWorldTests opts into the real shared system
+        # and exercises its production, taxes and casualty ordering explicitly.
+        if not getattr(self,'live_world',False):
+            world_clock=patch('arena_kingdom_camps.advance',return_value=None)
+            world_clock.start();self.addCleanup(world_clock.stop)
         for chat in (-100,-200):
             await self.db.upsert_chat(chat,'Тестовый мир')
             for actor in (10,20,30):

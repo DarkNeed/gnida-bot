@@ -24,6 +24,7 @@ import arena_kingdom_finance as finance
 
 async def application():
     app=await guild_application();db=app['guild_review_db'];clock=[int(time.time())]
+    app['kingdom_review_clock']=clock
     mock=patch('arena_kingdom.kingdom_now',side_effect=lambda:clock[0]);mock.start()
     async def stop(_):mock.stop()
     app.on_cleanup.append(stop)

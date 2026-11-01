@@ -13,6 +13,8 @@ import arena_kingdom_war as kingdom_war
 import arena_kingdom_council as council
 import arena_kingdom_time as world_time
 import arena_kingdom_finance as finance
+import arena_kingdom_estate as estate
+import arena_kingdom_camps as camps
 from arena_kingdom_siege import KingdomSiegeMixin,initialize as initialize_pvp
 
 
@@ -34,6 +36,7 @@ class KingdomMixin(KingdomSiegeMixin):
         ''')
         self._connect_kingdom_sieges()
         finance.connect(self)
+        camps.connect(self)
 
     def _kingdom_world_locked(self, chat):
         self.connection.execute('INSERT OR IGNORE INTO kingdom_worlds VALUES(?,?,?)',(chat,secrets.token_hex(8),kingdom_now()))
@@ -90,6 +93,7 @@ class KingdomMixin(KingdomSiegeMixin):
         kingdom_war.initialize(d)
         council.initialize(d)
         initialize_pvp(d)
+        estate.initialize(d)
         fiscal=finance.initialize(d,now);taxes=finance.active(self,row)
         fiscal_stop=min(now,finance.deadline(self,row)) if taxes else now
         job=d['construction']
@@ -125,16 +129,20 @@ class KingdomMixin(KingdomSiegeMixin):
                     d['population']=min(population_cap(d),d['population']+growth)
             d['last_tick']+=hours*HOUR
         milestones=[]
+        special_job=d['estate']['job']
+        if special_job and special_job['finish']<=now:milestones.append((special_job['finish'],'special'))
         if job and job['finish']<=now:milestones.append((job['finish'],'building'))
         reform=d['government']['pending']
         if reform and reform['finish']<=now:milestones.append((reform['finish'],'reform'))
         campaign=d['military']['campaign']
-        if campaign and campaign['finish']<=now:milestones.append((campaign['finish'],'army'))
+        if campaign and campaign.get('kind')!='living_camp' and campaign['finish']<=now:milestones.append((campaign['finish'],'army'))
         for finish,kind in sorted(milestones):
             produce(finish)
             if kind=='building':
                 d['buildings'][job['building']]=job['level'];d['construction']=None
                 self._kingdom_log(row,BUILDINGS[job['building']]['name']+f": завершён {job['level']} уровень.",finish)
+            elif kind=='special':
+                self._kingdom_log(row,estate.advance(row,finish),finish)
             elif kind=='reform':
                 name=council.advance(d,finish);self._kingdom_log(row,'Завершена реформа: '+name+'.',finish)
             else:
@@ -174,6 +182,7 @@ class KingdomMixin(KingdomSiegeMixin):
             defense=defense(d),tiles=tiles,event=event,stage_name=STAGES[d['stage']]['name'])
         user=self.connection.execute('SELECT display_name FROM users WHERE chat_id=? AND user_id=?',(row['chat'],row['owner'])).fetchone()
         result['owner_name']=user['display_name'] if user else str(row['owner'])
+        result['estate']=estate.public(d,{f'{t["q"]}:{t["r"]}' for t in tiles},own)
         if own:
             result.update(resources=d['resources'],buildings=d['buildings'],construction=d['construction'],history=d['history'],
                           rates=rates(d,tiles),capacity=capacity(d),population_cap=population_cap(d),next_event=d['next_event'])
@@ -194,7 +203,7 @@ class KingdomMixin(KingdomSiegeMixin):
 
     def _kingdom_view_locked(self, chat, actor):
         self._kingdom_siege_advance_locked(chat)
-        world=self._kingdom_world_locked(chat);rows=[]
+        world=self._kingdom_world_locked(chat);camps.advance(self,world,kingdom_now());rows=[]
         for raw in self.connection.execute('SELECT id FROM kingdom_towns WHERE chat=? ORDER BY id',(chat,)).fetchall():
             row=self._kingdom_row_locked(raw['id']);self._kingdom_advance_locked(row,world)
             if row['owner']==actor:finance.touch(self,row,kingdom_now())
@@ -203,10 +212,12 @@ class KingdomMixin(KingdomSiegeMixin):
         tiles=[dict(q=q,r=r,terrain=terrain(world['seed'],q,r),town=claims.get((q,r)),site=SITES.get((q,r))) for r in range(HEIGHT) for q in range(WIDTH)]
         own=next((row for row in rows if row['owner']==actor),None)
         owned={point for point,ident in claims.items() if own and ident==own['id']}
+        living=camps.public(self,chat,own,kingdom_now());blocked_camps={(c['q'],c['r']) for c in living if c['status']=='active'}
         for tile in tiles:
             point=(tile['q'],tile['r']);reason=''
             if tile['town']:reason='Эта земля уже принадлежит поселению.'
             elif tile['site']:reason='Место приключения нельзя застроить.'
+            elif point in blocked_camps:reason='Сначала уничтожьте лагерь на этой земле.'
             elif point in NEUTRAL_LANDS:reason='Общий участок тракта: остаётся нейтральным для всех.'
             elif not TERRAINS[tile['terrain']]['buildable']:reason='На реке пока нельзя строить.'
             elif own:
@@ -217,9 +228,11 @@ class KingdomMixin(KingdomSiegeMixin):
         profile=self._arena_profile_locked(chat,actor,True);hunter=self._guild_hunter_locked(actor)
         balance=self.connection.execute('SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?',(chat,actor)).fetchone()
         timed=world_time.encounters(world['seed'],kingdom_now(),tiles)
+        timed=[e for e in timed if (e['q'],e['r']) not in {(c['q'],c['r']) for c in living}]
         for event in timed:event['claimed']=bool(own and event['id'] in own['data'].get('timed_visits',{}))
         return dict(chat=chat,actor=actor,now=kingdom_now(),width=WIDTH,height=HEIGHT,tiles=tiles,terrains=TERRAINS,
             environment=world_time.environment(kingdom_now()),map_events=timed,
+            camps=living,
             towns=[self._kingdom_public_locked(row,world,actor) for row in rows],balance=balance['balance'] if balance else 0,
             eligibility=dict(level=profile['level'],rank=hunter['rank'],allowed=profile['level']>=15 and hunter['rank']>=3,price=FOUND_PRICE),
             factions=FACTIONS,neutral_lands=[dict(q=q,r=r) for q,r in sorted(NEUTRAL_LANDS)],
@@ -283,7 +296,9 @@ class KingdomMixin(KingdomSiegeMixin):
                     supplies=(),promote=(),event=('choice',),help=(),recruit=('unit',),formation=('formation',),
                     recover=('unit',),dismiss=('unit',),march=('target','tactic'),reform=('field','choice'),
                     siege=('defender','q','r','tactic'),cancel_siege=('siege',),defense=('tactic',),explore=('event',),
-                    budget_deposit=('amount',),tax_activate=(),tax_rate=('rate',))
+                    budget_deposit=('amount',),tax_activate=(),tax_rate=('rate',),
+                    camp_march=('camp','camp_revision','tactic'),land_style=('style','color','emblem'),
+                    land_decor=('q','r','name','description','decoration'),special_build=('special',),special_remove=('special',))
         if action not in fields:raise ValueError('Неизвестное действие поселения.')
         relevant=('action','town','revision','confirm')+fields[action]
         request=json.dumps(dict(chat=chat,data={key:data[key] for key in relevant if key in data}),sort_keys=True,ensure_ascii=False)
@@ -296,11 +311,13 @@ class KingdomMixin(KingdomSiegeMixin):
                     if prior['request']!=request:raise ValueError('Этот запрос уже использован для другого действия.')
                     return dict(**json.loads(prior['result']),view=self._kingdom_view_locked(chat,actor))
                 world=self._kingdom_world_locked(chat);now=kingdom_now();result=dict(notice='Изменения сохранены.')
+                camps.advance(self,world,now)
                 if action=='found':
                     if self.connection.execute('SELECT 1 FROM kingdom_towns WHERE chat=? AND owner=?',(chat,actor)).fetchone():raise ValueError('У тебя уже есть поселение в этом чате.')
                     profile=self._arena_profile_locked(chat,actor,True)
                     if profile['level']<15 or self._guild_hunter_locked(actor)['rank']<3:raise ValueError('Нужны 15 уровень и ранг охотника C.')
                     q,r=coordinates(data.get('q'),data.get('r'))
+                    if camps.occupied(self,chat,q,r):raise ValueError('Сначала уничтожьте лагерь на этой земле.')
                     if not TERRAINS[terrain(world['seed'],q,r)]['buildable'] or (q,r) in SITES or (q,r) in NEUTRAL_LANDS:raise ValueError('Здесь нельзя основать поселение.')
                     if self.connection.execute('SELECT 1 FROM kingdom_tiles WHERE chat=? AND q=? AND r=?',(chat,q,r)).fetchone():raise ValueError('Эта земля уже занята.')
                     for other in self.connection.execute('SELECT q,r FROM kingdom_towns WHERE chat=?',(chat,)):
@@ -322,10 +339,14 @@ class KingdomMixin(KingdomSiegeMixin):
                     if type(data.get('revision')) is not int or data['revision']!=row['revision']:raise ValueError('Поселение изменилось. Обнови карту и подтверди действие заново.')
                     if action!='help' and row['owner']!=actor:raise ValueError('Это не твоё поселение.')
                     d=row['data']
-                    if action in ('recruit','march','reform','siege'):finance.guard(row)
+                    if action in ('recruit','march','reform','siege','camp_march','special_build'):finance.guard(row)
                     if action in ('annex','promote') and d['military'].get('siege_lock'):
                         raise ValueError('Территория и этап поселения заблокированы до завершения осады.')
-                    if action in ('budget_deposit','tax_activate','tax_rate'):
+                    if action=='camp_march':
+                        result['notice']=camps.march(self,row,data,now);self._kingdom_log(row,result['notice'],now)
+                    elif action in ('land_style','land_decor','special_build','special_remove'):
+                        result['notice']=estate.action(self,row,action,data,now);self._kingdom_log(row,result['notice'],now)
+                    elif action in ('budget_deposit','tax_activate','tax_rate'):
                         result['notice']=finance.action(self,row,action,data,now)
                     elif action in ('siege','cancel_siege','defense'):
                         result.update(self._kingdom_siege_action_locked(row,action,data,now))
@@ -337,6 +358,7 @@ class KingdomMixin(KingdomSiegeMixin):
                         result['notice']=kingdom_war.action(self,row,action,data,now)
                         self._kingdom_log(row,result['notice'],now)
                     elif action=='build':
+                        if estate.initialize(d)['job']:raise ValueError('Общая строительная очередь занята особой постройкой.')
                         if d['construction']:raise ValueError('Сначала дождись завершения текущего строительства.')
                         job=construction(d,data.get('building'),now)
                         for key in ('wood','stone'):
@@ -346,6 +368,7 @@ class KingdomMixin(KingdomSiegeMixin):
                         d['construction']=job;self._kingdom_log(row,'Начато строительство: '+BUILDINGS[job['building']]['name'],now)
                     elif action=='annex':
                         q,r=coordinates(data.get('q'),data.get('r'));owned=self._kingdom_tiles_locked(row,world)
+                        if camps.occupied(self,chat,q,r):raise ValueError('Сначала уничтожьте лагерь на этой земле.')
                         if len(owned)>=land_cap(d):raise ValueError('Достигнут жёсткий предел территории этого этапа.')
                         if not any((q,r) in neighbours(t['q'],t['r']) for t in owned):raise ValueError('Земля должна прилегать к твоей территории.')
                         if (q,r) in SITES or (q,r) in NEUTRAL_LANDS or not TERRAINS[terrain(world['seed'],q,r)]['buildable']:raise ValueError('Эту клетку нельзя присоединить.')
@@ -367,7 +390,7 @@ class KingdomMixin(KingdomSiegeMixin):
                         if not quote:raise ValueError('Столица — последний этап хозяйства этой версии.')
                         if not quote['allowed']:
                             raise ValueError('Для следующего этапа нужно: '+', '.join(c['text'] for c in quote['checks'] if not c['ok']))
-                        if d['construction']:raise ValueError('Дождись завершения текущей стройки перед сменой этапа.')
+                        if d['construction'] or estate.initialize(d)['job']:raise ValueError('Дождись завершения текущей стройки перед сменой этапа.')
                         finance.spend(self,row,quote['price']);d['stage']=quote['stage']
                         self._kingdom_log(row,f"Новый этап: {quote['name']}. Предел земель — {quote['lands']}; уровень построек — {quote['building_cap']}.",now)
                     elif action in ('event','help'):

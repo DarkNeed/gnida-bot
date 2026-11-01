@@ -50,6 +50,8 @@ def recruit_terms(d, definition):
 def supplies(d, count):
     g=initialize(d);multiplier={'military':1.3,'intrigue':1.1}.get(g['policy'],1)
     if g['religion']=='fortune':multiplier*=1.1
+    from arena_kingdom_estate import has
+    if has(d,'caravan'):multiplier*=.85
     return math.ceil((25+30*count)*multiplier)
 
 
@@ -70,7 +72,8 @@ def buff(d, fighters, *, guard=False):
             if 'mage' in u['tags'] or 'necro' in u['tags']:u['attack']*=1.15
         if g['religion']=='fortune':u['evasion']+=5;u['fortune']=True
         u['evasion']=min(35,u['evasion']);u['max_hp']=round(u['max_hp']*hp);u['hp']=max(1,round(u['max_hp']*ratio))
-    return fighters
+    from arena_kingdom_estate import buffs
+    return buffs(d,fighters)
 
 
 def advance(d, now):

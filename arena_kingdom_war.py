@@ -199,6 +199,7 @@ def resolve_battle(snapshot, seed):
 def advance(data, now):
     m=initialize(data);campaign=m['campaign']
     if not campaign or campaign['finish']>now:return None
+    if campaign.get('kind')=='living_camp':return None  # Shared world transaction resolves these once.
     report=resolve_battle(campaign['snapshot'],campaign['seed']);target=campaign['snapshot'].get('outpost') or OUTPOSTS[campaign['snapshot']['target']]
     report.update(id=campaign['id'],target=campaign['snapshot']['target'],name=target['name'],at=campaign['finish'])
     fighters={u['source_id']:u for u in report['final']['own']};survivors=[];lost=[]
