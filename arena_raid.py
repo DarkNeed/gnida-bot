@@ -430,6 +430,30 @@ class RaidMixin:
             self._raid_finish_locked(row, data)
         else:
             self._raid_save_locked(row, data)
+            if data.get('_queue_wait'):
+                from arena_qte_live import challenge
+                from arena_qte_combined import combine
+                pending = data['_queue_wait']
+                for key in pending['eligible']:
+                    actor = int(key)
+                    if key in pending['results'] or key not in alive_players(data) or self._qte_load_locked('raid', row['token'], actor):
+                        continue
+                    fighter = data['players'][key]['fighter']
+                    members = []
+                    for released in pending['released']:
+                        intent = released['intent']
+                        if key not in intent['targets']:
+                            continue
+                        source = released['fighter']
+                        from arena_raid_engine import pair_state
+                        from arena_engine import effective_skill
+                        variant = effective_skill(pair_state(source, fighter), 'a', intent['skill'], skills)
+                        member = challenge('defense', source, fighter, variant, actor)
+                        member.update(encounter_enemy=released['source'], name=source['name'] + ' · ' + variant.name)
+                        members.append(member)
+                    incoming = combine(members, actor, fighter['hp'])
+                    self._qte_save_locked(dict(scope='raid', token=row['token'], owner=actor, actor=actor,
+                        turn=data['round'], skill='', stages=[incoming], result={}, queue_group=pending['id']), True)
             if data.get('whaler_reaction'):
                 from arena_qte_live import challenge
                 from arena_whaler import WHALER_SKILLS
@@ -720,6 +744,23 @@ class RaidMixin:
         async with self._lock:
             return self._arena_raid_action_locked(token,actor,round_number,skill,target=target)
 
+    async def arena_raid_intercept(self, token, actor, round_number, source):
+        async with self._lock:
+            with self.connection:
+                row = self._raid_cleanup_locked(self._raid_row_locked(token))
+                data = json.loads(row['data_json'])
+                if row['status'] != 'active' or row['deadline'] <= time.time() or type(round_number) is not int or round_number != data['round']:
+                    raise ValueError('Раунд уже изменился.')
+                if not isinstance(source, str) or self._qte_load_locked('raid', token, actor):
+                    raise ValueError('Сначала заверши текущее действие.')
+                _, skills = self._fighter_catalog_locked()
+                from arena_rp import rp_skills
+                from arena_action_queue import intercept
+                intercept(data, actor, source, rp_skills(skills))
+                self._raid_save_locked(row, data)
+                self.connection.execute('UPDATE arena_raids SET deadline=? WHERE token=?', (row['deadline'], token))
+                return self._raid_row_locked(token)
+
     def _arena_raid_action_locked(self,token,actor,round_number,skill,*,_qte=None,target=None):
         with self.connection:
             try:
@@ -773,6 +814,11 @@ class RaidMixin:
                             skill,
                             skills,
                         )
+                    if player.get('intercept_source') and skill != 'defend':
+                        from copy import deepcopy
+                        reserved = deepcopy(player['fighter'])
+                        reserved['resource'] -= 8
+                        validate_skill(pair_state(reserved, opponent), 'a', skill, skills)
                     if skill=='casino_all_in' and not player['fighter'].get('rp_sandbox'):
                         from arena_casino_chance import native_roulette
                         native_roulette(self,'raid',token,actor,_qte)

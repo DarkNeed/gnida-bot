@@ -9,7 +9,7 @@
   function createReplay(stage){
     const options={damageBase:stage.damage_base,hp:stage.target_hp,referenceDamage:stage.damage_base,
       endOnDeath:false,criticalBase:stage.critical_base,criticalStrikes:stage.critical_strikes,enabledStrikes:stage.enabled_strikes,preparation:stage.defense_preparation??0};
-    const sim=stage.version===3?B.create(stage.profile,stage.stats,stage.seed,options):
+    const sim=stage.version===4?(root.QTECombined||require('./qte-combined.js')).create(stage):stage.version===3?B.create(stage.profile,stage.stats,stage.seed,options):
       (stage.kind==='defense'?E.defense:E.attack)(E.profile(stage.profile),stage.stats,stage.seed,options);
     return {stage,sim,tick:0,knownTick:0,inputs:[],clicks:[],inputIndex:0,clickIndex:0,control:{},ended:false,aborted:false};
   }
@@ -28,7 +28,8 @@
       else{
         while(model.inputIndex<model.inputs.length&&model.inputs[model.inputIndex].t<=model.tick){model.control=model.inputs[model.inputIndex++];}
         const c=model.control;
-        if(model.stage.version===3)B.step(model.sim,1/120,c);
+        if(model.stage.version===4)(root.QTECombined||require('./qte-combined.js')).step(model.sim,c);
+        else if(model.stage.version===3)B.step(model.sim,1/120,c);
         else E.defenseStep(model.sim,1/120,c.target?{target:{x:c.target[0],y:c.target[1]}}:c);
       }
       model.tick++;
@@ -47,7 +48,7 @@
   function auth(){return root.Telegram?.WebApp?.initData||'';}
   function source(stage,context,snapshot){
     const noop={finish(){}};
-    if(!context?.token||!auth()||![2,3].includes(stage.version)||!root.WebSocket)return noop;
+    if(!context?.token||!auth()||![2,3,4].includes(stage.version)||!root.WebSocket)return noop;
     let ws;try{ws=socket(context.scope,context.token);}catch{return noop;}
     let wanted=false,reset=true,inputs=0,clicks=0,lastTick=-1,done=false,aborted=false,closed=false;
     function flush(){
@@ -141,7 +142,7 @@
         if(d.type==='begin'){
           if(root.ArenaMiniGames?.active){pause();return;}
           attempts=0;selected=d.stage.actor;
-          model=createReplay(d.stage);seek=true;cover.classList.toggle('qte-block',d.stage.version===3);canvas.height=d.stage.version===3?400:320;
+          model=createReplay(d.stage);seek=true;cover.classList.toggle('qte-block',d.stage.version===3||d.stage.defense_mode==='block');canvas.height=d.stage.version===3||d.stage.defense_mode==='block'?400:320;
           title.textContent=(names[selected]?names[selected]+' · ':'')+d.stage.name;status.textContent='Получаем действия игрока…';chooseButtons();show();
         }else if(d.type==='data'&&model){model=extendReplay(model,d);if(d.reset)seek=true;}
         else if(d.type==='end'&&model&&d.id===model.stage.id){model.ended=true;status.textContent='Мини-игра завершена. Ждём следующий ход.';}
@@ -171,7 +172,7 @@
           const ticks=Math.floor(budget);budget-=ticks;
           stepReplay(model,Math.min(target,model.tick+ticks));
         }
-        (model.stage.version===3?root.QTEBlockView:root.QTEView)?.draw(ctx,canvas,model.sim);
+        (model.stage.version===4?root.QTECombined:model.stage.version===3?root.QTEBlockView:root.QTEView)?.draw(ctx,canvas,model.sim);
         if(model.tick>=model.knownTick&&model.ended){
           status.textContent='Мини-игра завершена. Следующая откроется автоматически.';
           if(hideTimer==null)hideTimer=root.setTimeout(hide,650);

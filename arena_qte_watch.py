@@ -57,7 +57,10 @@ class Stream:
         ended, aborted = data.get('ended', False), data.get('aborted', False)
         if any(type(x) is not bool for x in (reset, ended, aborted)):
             raise ValueError('Некорректный пакет трансляции.')
-        if self.stage.get('version') == 3:
+        if self.stage.get('version') == 4:
+            from arena_qte_combined import duration
+            total = math.ceil(duration(self.stage)*120-1e-7)
+        elif self.stage.get('version') == 3:
             from arena_nazarick_patterns import block_duration
             from arena_qte_patterns import profile
             total = round(block_duration(profile(self.stage['profile']))*120) if self.stage.get('profile') else 1140
@@ -83,7 +86,7 @@ class Stream:
                 raise ValueError('Некорректное управление.')
             t = integer(item.get('t'), previous + 1, min(tick, total - 1))
             previous = t
-            if self.stage.get('version') == 3:
+            if self.stage.get('version') == 3 or self.stage.get('defense_mode') == 'block':
                 if type(item.get('active')) is not bool:
                     raise ValueError('Некорректное состояние щита.')
                 value = dict(t=t, angle=number(item.get('angle'), -math.pi, math.pi), active=item['active'])

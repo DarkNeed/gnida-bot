@@ -19,8 +19,12 @@ import test_arena_market_client as client_tests
 def encounter(roster=None, actors=(20,)):
     participants = [dict(actor_id=k, fighter_id=k, personal=True, slave_owner=k) for k in actors]
     sources = [dict(slave_id=k, owner_id=k, class_id='ragamuffin', level=1) for k in actors]
-    return create_encounter(participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS,
+    data = create_encounter(participants, sources, FIGHTER_CLASSES, BUILTIN_SKILLS,
                             roster or ['goblin', 'goblin', 'shaman'], 10)
+    # Compatibility suite for encounters already persisted before cast queues.
+    # New versioned encounters are exercised in test_action_queue_live.py.
+    data.pop('action_queue_version', None)
+    return data
 
 
 class EncounterEngineTests(unittest.TestCase):
@@ -109,7 +113,12 @@ class EncounterStoreTests(unittest.IsolatedAsyncioTestCase):
     async def start(self):
         row = await self.lobby()
         await self.db.arena_raid_setup(row['token'], 20, 'join')
-        return await self.db.arena_raid_setup(row['token'], 10, 'start')
+        row = await self.db.arena_raid_setup(row['token'], 10, 'start')
+        data = json.loads(row['data_json'])
+        data.pop('action_queue_version', None)
+        with self.db.connection:
+            self.db._raid_save_locked(row, data)
+        return await self.db.arena_raid_get(row['token'])
 
     async def test_master_not_reserved_not_joined_and_only_master_can_control(self):
         row = await self.lobby()

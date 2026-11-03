@@ -45,6 +45,9 @@ def number(value, low, high):
 
 
 def replay(challenge, proof, elapsed):
+    if challenge.get('version') == 4:
+        from arena_qte_combined import replay as combined_replay
+        return combined_replay(challenge, proof, elapsed)
     if challenge.get('casino_mode') and challenge.get('kind') == 'attack':
         from arena_casino_chance import replay as replay_casino
         return replay_casino(challenge, proof, elapsed)

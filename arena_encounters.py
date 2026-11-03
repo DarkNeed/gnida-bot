@@ -147,7 +147,7 @@ def create_encounter(participants, sources, classes, skills, roster, master_id):
                        mob_id=mob, enemy_id=f'e{index}', effects=[], mechanics={},
                        loadout=[info['skill']], controller_id=0, is_boss=True)
         enemies[f'e{index}'] = fighter
-    data.update(kind='encounter', boss_id='encounter', master_id=master_id,
+    data.update(kind='encounter', boss_id='encounter', master_id=master_id, action_queue_version=1,
                 enemies=enemies, boss=next(iter(enemies.values())), rewards_enabled=False)
     set_intents(data, skills)
     return data
@@ -223,6 +223,10 @@ def finish(data):
 
 
 def resolve(data, skills, rng=None):
+    if data.get('action_queue_version'):
+        from arena_action_queue import advance
+        from arena_rp import rp_skills
+        return advance(data, rp_skills(skills), rng)
     from arena_raid_engine import (alive_players, native_attack, defend, log_event,
                                    raid_snapshot, RAID_MAX_ROUNDS)
     from arena_engine import effective_stat

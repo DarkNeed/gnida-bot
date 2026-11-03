@@ -1289,6 +1289,10 @@ function raidScreen(data){
     if(field&&data.data?.chaplain?.swap_target){const line=document.createElement('div');line.className='chaplain-swap-link';line.textContent='ПОДМЕНА ОБРАЗОВ · ИМЕНА И HP НЕ МЕНЯЮТСЯ';field.append(line);}
     if(data.data?.chaplain?.notification){const note=document.createElement('div');note.className='chaplain-system';note.setAttribute('role','status');note.textContent='SYSTEM › '+data.data.chaplain.notification;document.querySelector('.chaplain-regulation')?.prepend(note);}
   }
+  if(data.status==='active'){
+    document.querySelector?.('.raid-intent')?.remove();
+    window.RaidIntentLines?.mount(document.querySelector?.('.raid-field'),data,source=>raidAction('intercept',{round:data.data.round,source}));
+  }
   updateRaidTimer();if(raidInspect)showRaidDetails(raidInspect);
   if(data.data?.nazarick_view){
     const n=data.data.nazarick_view,field=document.querySelector('.nazarick-field');
@@ -1379,10 +1383,18 @@ async function receiveRaid(data){
   try{
     const intentHeight=document.querySelector('.raid-intent')?.getBoundingClientRect().height||0;
     let snapshot=events[0].before||{boss:previous.data.boss,...Object.fromEntries(Object.entries(previous.data.players).map(([k,p])=>[k,p.fighter]))};
+    let castClock=previous.data.action_queue?.round===events[0].round?previous.data.action_queue.time||0:0;
     for(const e of events){
       if(raidCurrent?.token!==data.token)return;
       const frame=raidVisual(data,e.before||snapshot);
       frame.data.round=e.round;frame.data.intent={text:'Разыгрывается раунд',targets:[]};
+      const announced=data.data.action_queue;
+      const timeline=announced?.round===e.round?announced:announced?.last?.round===e.round?announced.last:null;
+      if(timeline&&Number.isFinite(e.cast_at)){
+        frame.status='active';
+        frame.data.action_queue={...timeline,phase:'resolve',time:e.cast_at,animate_from:castClock};
+        castClock=e.cast_at;
+      }
       frame.data.dialogue=e.dialogue?{speaker:data.boss_id==='whaler'?'КИТОБОЙ':'ФУФЕЛШМЕРЦ',text:e.dialogue,warning:'',persistent:false}:null;
       frame.data.log=frame.data.log.filter(item=>!item.seq||item.seq<=e.seq);
       raidScreen(frame);

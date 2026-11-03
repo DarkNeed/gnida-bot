@@ -156,6 +156,13 @@ async def raid_view(db, row, actor):
             )
         )
     if data:
+        if data.get('action_queue_version'):
+            from arena_action_queue import public_queue
+            data['action_queue'] = public_queue(data, skills, actor)
+        # Never expose released attacker snapshots, input proofs or private plans.
+        data.pop('_queue_wait', None)
+        data.pop('_cast_queue', None)
+        data.pop('_last_cast_timeline', None)
         # Authoritative full combat checkpoints are private and can be large.
         data.pop('_chaplain_snapshot', None)
         data.pop('_chaplain_results', None)

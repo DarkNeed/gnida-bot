@@ -720,7 +720,9 @@ def create_arena_app(
         if not isinstance(body, dict) or not isinstance(body.get("action"), str):
             raise ValueError("Некорректный запрос.")
         action = body["action"]
-        if action in {"skill","qte"}:
+        if action == 'intercept':
+            row = await db.arena_raid_intercept(row['token'], actor, int_field(body, 'round'), body.get('source'))
+        elif action in {"skill","qte"}:
             participant = next(
                 (p for p in row["participants"] if p["actor_id"] == actor), None
             )

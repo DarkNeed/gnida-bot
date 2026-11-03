@@ -275,6 +275,9 @@ class ArenaQteMixin:
         if new_stage:
             if stage.get('casino_mode'):
                 duration = 30
+            elif stage.get('version') == 4:
+                from arena_qte_combined import duration as combined_duration
+                duration = combined_duration(stage)
             elif stage.get("version") == 3:
                 from arena_nazarick_patterns import block_duration
                 from arena_qte_patterns import profile
@@ -334,7 +337,8 @@ class ArenaQteMixin:
                 and player
                 and not player.get("withdrawn")
                 and player["fighter"]["hp"] > 0
-                and (player["selected"] is None or flow.get('reaction') and
+                and (flow.get('queue_group') and state.get('_queue_wait', {}).get('id') == flow['queue_group']
+                     or player["selected"] is None or flow.get('reaction') and
                      state.get('whaler_reaction', {}).get('target') == str(flow['owner']))
             )
         except (ValueError, KeyError):
@@ -409,6 +413,15 @@ class ArenaQteMixin:
             dict(abort=True) if expired else proof,
             time.time() - stage["started"],
         )
+        if flow.get('queue_group'):
+            row = self._raid_row_locked(flow['token'])
+            data = json.loads(row['data_json'])
+            pending = data.get('_queue_wait')
+            if pending and pending['id'] == flow['queue_group']:
+                pending['results'][str(flow['owner'])] = result['sources']
+                self._qte_delete_locked(flow)
+                self._raid_resolve_locked(row, data)
+            return
         key = "attack" if stage["kind"] == "attack" else "dodge"
         mask = result["mask"] if isinstance(result, dict) else result
         flow["result"][key] = mask
@@ -523,7 +536,7 @@ class ArenaQteMixin:
                 if not flow.get('stages') or not self._qte_valid_locked(flow):
                     continue
                 s = flow['stages'][0]
-                if s.get('version') in (2, 3) and s['actor'] != viewer and s['expires'] > time.time():
+                if s.get('version') in (2, 3, 4) and s['actor'] != viewer and s['expires'] > time.time():
                     result.append(dict(actor=s['actor'], id=s['id'], name=s['name'], kind=s['kind']))
             return result
 
@@ -534,7 +547,7 @@ class ArenaQteMixin:
             if not flow or not flow.get('stages') or not self._qte_valid_locked(flow):
                 raise ValueError('Мини-игра уже завершена.')
             stage = flow['stages'][0]
-            if stage['actor'] != actor or stage['id'] != ident or stage.get('version') not in (2, 3):
+            if stage['actor'] != actor or stage['id'] != ident or stage.get('version') not in (2, 3, 4):
                 raise ValueError('Транслировать можно только собственную текущую мини-игру.')
             if stage['expires'] <= time.time():
                 raise ValueError('Время мини-игры истекло.')
@@ -666,6 +679,10 @@ class ArenaQteMixin:
                             pair_state(fighter, boss), "a", skill, skills
                         )
                     )
+                    if player.get('intercept_source') and used:
+                        reserved = deepcopy(fighter)
+                        reserved['resource'] -= 8
+                        validate_skill(pair_state(reserved, boss), 'a', skill, skills)
                     if data["qte_modes"].get(str(actor)):
                         if used and used.hostile:
                             stages.append(
@@ -673,7 +690,7 @@ class ArenaQteMixin:
                             )
                         multi = data.get('kind') == 'encounter' or data.get('boss_id') == 'nazarick'
                         intents = data.get('enemy_intents', {}) if multi else {'boss': data['intent']}
-                        for enemy_key, intent in intents.items():
+                        for enemy_key, intent in ({} if data.get('action_queue_version') else intents).items():
                             incoming = (skills if data.get('kind') == 'encounter' else BOSS_SKILLS).get(intent.get('skill'))
                             if incoming and incoming.hostile and str(actor) in [str(k) for k in intent.get('targets', [])]:
                                 attacker = data['enemies'][enemy_key] if multi else boss
