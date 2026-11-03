@@ -90,9 +90,10 @@ class RaidPublisher:
                     ),
                 ],
             ]
-        if row.get('boss_id') == 'encounter' and row['status'] == 'active':
+        protection=bool(row.get('encounter_json') and json.loads(row['encounter_json']).get('protection'))
+        if row.get('boss_id') == 'encounter' and row['status'] == 'active' and not protection:
             buttons.append([InlineKeyboardButton(text='Завершить · только мастер', callback_data='rr:finish:' + row['token'])])
-        if row.get('boss_id') == 'encounter':
+        if row.get('boss_id') == 'encounter' and not protection:
             buttons.append([InlineKeyboardButton(text='🎭 RP-меню · свои персонажи и мобы', url=arena_link(self.username, 'rp_' + str(row['chat_id'])))])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -104,6 +105,12 @@ class RaidPublisher:
                 user["display_name"] if user else str(p["actor_id"])
             )
         boss = BOSSES.get(row.get("boss_id", "iron"), BOSSES["iron"])
+        if row.get('encounter_json') and json.loads(row['encounter_json']).get('protection'):
+            text='🪓 <b>Орочья трудовая инспекция · защита предприятий</b>\nТри орка A-ранга, фиксированный уровень 19. Гильдия рэкета желает вам удачи. Бесплатно.\n'
+            text+='\nОтряд: '+str(len(names))+'/3\n'+'\n'.join('• '+n for n in names.values())
+            if row['status']=='lobby':return text+'\n\nНужны 2–3 игрока. Владелец собирает команду и начинает бой. Выберите личного персонажа в «Открыть рейд». Победа спасает предприятия; поражение — 12 часов простоя. Наград за фарм нет.'
+            if row['status']=='active':return text+'\n\nРаунд '+str(row['round'])+'. Намерения, цели и мини-игры — в арене. Наблюдатели могут смотреть бой.'
+            return text+'\n\n'+(html.escape(json.loads(row['data_json'])['result']) if row['data_json'] else 'Сбор отменён. Угроза предприятиям сохраняется до её разрешения.')
         if row.get('boss_id') == 'encounter':
             from arena_encounters import roster_text
             master = await self.db.get_user(row['chat_id'], row['creator_id'])

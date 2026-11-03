@@ -8,7 +8,7 @@ def render_arena_index(root: Path) -> str:
     revision = hashlib.sha256()
     for name in ("style.css", "battle-client", "arena-audio"):
         revision.update((root / name).read_bytes())
-    for name in ("holdings.css", "holdings-client"):
+    for name in ("holdings.css", "holdings-client", "npc-workers.js", "npc-workers.css"):
         if (root / name).exists():
             revision.update((root / name).read_bytes())
     for name in (
@@ -52,6 +52,7 @@ def render_arena_index(root: Path) -> str:
     return (
         (root / "index.html")
         .read_text(encoding="utf-8")
+        .replace('<script src="/static/holdings.js"', f'<link rel="stylesheet" href="/static/npc-workers.css?v={version}"><script src="/static/npc-workers.js?v={version}"></script><script src="/static/holdings.js"')
         .replace('href="/static/style.css"', f'href="/static/style.css?v={version}"')
         .replace('src="/static/client.js"', f'src="/static/client.js?v={version}"')
         .replace('src="/static/audio.js"', f'src="/static/audio.js?v={version}"')

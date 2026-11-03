@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from enterprises import CATALOG
 from pathlib import Path
 from contextlib import closing
 from types import SimpleNamespace
@@ -241,12 +242,14 @@ class AccountTests(unittest.IsolatedAsyncioTestCase):
     async def test_old_combat_slots_do_not_block_business_work(self):
         await self.db.force_enslave(1,30,10)
         self.db.connection.execute('INSERT INTO arena_combat_slots VALUES(1,10,30,1)');self.db.connection.commit()
+        await self.db.credit_francs(1, 10, CATALOG['field']['price'])
         await self.db.create_business(1,10,'field')
         self.assertEqual(await self.db.set_business_worker_role(1,10,30,'collector'),'updated')
         self.assertIsNone(self.db._arena_combat_slot_locked(1,10,30))
 
     async def test_disabled_business_does_not_accrue_or_pay_after_resume(self):
         await self.db.force_enslave(1,30,10)
+        await self.db.credit_francs(1, 10, CATALOG['field']['price'])
         await self.db.create_business(1,10,'field')
         await self.db.set_business_worker_role(1,10,30,'collector')
         await self.toggle('slavery',False)

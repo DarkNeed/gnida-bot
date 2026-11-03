@@ -80,6 +80,7 @@ async function runPendingMiniGames(){
   let data=raidCurrent||current;
   if(!data?.qte?.challenge)return;
   closeCombatSettings();
+  closeEffect();if(inspectSide)closeStats();if(raidInspect)closeRaidDetails();
   qtePlaying=true;busy=true;
   const raid=!!raidCurrent,id=data.token;
   try{
@@ -163,7 +164,7 @@ function describeEffect(e){
   if(e.kind==='plague_infect')return 'Чума: −'+esc(e.value)+' HP в начале '+esc(e.turns||3)+' ходов и +1 стак спор (до 3). Лечение снимает стак; очищение или отдельное восстановление энергии снимает всю чуму.';
   if(e.kind==='skill_cost_flat')return 'Следующий платный навык дороже на '+esc(e.value)+' энергии; бесплатные навыки остаются бесплатными.';
   if(e.kind==='family_cover')return 'Великий брат принимает 30% прямого урона. Кровотечение и самоурон не перенаправляются.';
-  const kind=String(e.kind||'effect'),rpg={rpg_armor_break:'Раскол: −15% физ. защиты за применение, до −45%',rpg_counter:'Один ответный контрудар при попадании врага',rpg_parry:'Прерывание следующей атаки: открывает висцеральный удар. Босс не пропускает ход, его урон −35%',rpg_summon:'Скелет атакует после каждого из трёх следующих действий хозяина и собирает Души',rpg_blood_bullets:'−10% максимального HP, +35 энергии; не может убить',burn:'Горение: '+esc(e.value)+' урона при любом собственном действии',damage_taken_pct:'Получаемый урон: +'+Math.round(e.value*100)+'%'};
+  const kind=String(e.kind||'effect'),rpg={rpg_armor_break:'Раскол: −15% физ. защиты за применение, до −45%',rpg_counter:'Один ответный контрудар при попадании врага',rpg_parry:'Прерывание следующей атаки: открывает висцеральный удар. Босс не пропускает ход, его урон −35%',rpg_summon:'Скелет атакует после каждого из трёх следующих действий хозяина и собирает Души',rpg_blood_bullets:'−10% максимального HP, +35 энергии; не может убить',burn:'Горение: '+esc(e.value)+' урона при любом собственном действии',damage_taken_pct:'Получаемый урон: '+(Number(e.value)>0?'+':'')+Math.round(e.value*100)+'%'};
   if(Object.hasOwn(rpg,kind))return rpg[kind];
   if(kind==='incoming_damage_multiplier')return 'Получаемый прямой урон: −'+Math.round((1-e.value)*100)+'%'+(e.turns?' · '+e.turns+' х.':'');
   if(kind==='dispel_buffs')return 'Снимает все временные усиления врага';
@@ -292,8 +293,11 @@ function fighterStatuses(side){
   if(pet&&(p.ready||p.charge||p.incoming||p.used||p.task))items.push({id:'pet:'+pet.id,name:pet.name+(p.ready?' · бонус готов':''),icon:15,count:String(p.ready||p.used?1:p.charge||p.incoming||1),detail:esc(pet.description)+'<br>'+(p.used?'Уже использован в этом бою.':p.ready?'Бонус подготовлен к следующему подходящему навыку.':'Накопление: '+esc(p.charge||p.incoming||0)+'. Это не длительность.')+(p.task?'<br>Поручение: '+esc(({attack:'атаковать',restore:'восстановить энергию',support:'применить поддержку'})[p.task]||p.task):'')});
   return items.map(item=>illustratedStatus(item,side));
 }
-function statusSide(key){return statusViews?.[key]||current?.state?.sides?.[key];}
-function statusButtons(side,key){return fighterStatuses(side).map(e=>'<button class="status-token" data-status-side="'+key+'" data-status-id="'+esc(e.id)+'" aria-label="'+esc(e.name)+' · '+esc(e.count)+'" title="'+esc(e.name)+'">'+statusIcon(e.icon,e.direction)+'<span class="status-count">'+esc(e.count)+'</span></button>').join('');}
+function statusSide(key){
+  if(String(key).startsWith('raid:')){const id=key.slice(5),data=raidCurrent?.data;return id==='boss'?data?.boss:data?.enemies?.[id]||data?.players?.[id]?.fighter;}
+  return statusViews?.[key]||current?.state?.sides?.[key];
+}
+function statusButtons(side,key,extraClass=''){return fighterStatuses(side).map(e=>'<button type="button" class="status-token'+(extraClass?' '+extraClass:'')+'" data-status-side="'+esc(key)+'" data-status-id="'+esc(e.id)+'" aria-label="'+esc(e.name)+' · '+esc(e.count)+'" title="'+esc(e.name)+'">'+statusIcon(e.icon,e.direction)+'<span class="status-count">'+esc(e.count)+'</span></button>').join('');}
 function statusDetails(side){return fighterStatuses(side).map(e=>'<div class="detail-status">'+statusIcon(e.icon,e.direction)+'<div><b>'+esc(e.name)+'</b><p class="muted">'+e.detail+'</p></div></div>').join('')||'<p class="muted">Нет временных эффектов или накопленных зарядов.</p>';}
 function renderBattleStatuses(snapshot){
   if(snapshot)statusViews=Object.fromEntries(['a','b'].map(key=>[key,{...current.state.sides[key],...(snapshot[key]||{})}]));
@@ -776,7 +780,7 @@ function menuScreen(data){
   }
   if(data.active?.length)body+='<div class="card"><h3>Твои бои во всех чатах</h3>'+data.active.map(b=>'<div class="row">'+button('Открыть бой','battle:'+b.token)+button(b.status==='pending'?'Отменить приглашение':'Сдаться / выйти','leavebattle:'+b.token,'small danger')+'</div>').join('')+'</div>';
   if(data.mirror_runs?.length)body+='<div class="card"><h3>Зеркальные забеги</h3><div class="stack">'+data.mirror_runs.map(r=>button((r.status==='active'?'Продолжить':'Итоги')+' · этаж '+r.floor+' / 5 · '+r.xp+' XP','mirror:'+r.token,r.status==='active'?'primary':'')+(r.status==='active'?button('Оставить забег','leavemirror:'+r.token,'small danger'):'' )).join('')+'</div></div>';
-  if(data.raids?.length)body+='<div class="card"><h3>Рейды и РП-встречи</h3><div class="stack">'+data.raids.map(r=>raidButton((r.boss_id==='encounter'?'РП-встреча · ':'')+(r.status==='active'?'Продолжить':r.status==='lobby'?'Сбор отряда':'Итоги')+' · раунд '+r.round,'open:'+r.token)+((r.status==='active'||r.status==='lobby')&&!(r.boss_id==='encounter'&&r.creator_id===data.actor_id)?button('Выйти из рейда','leaveraid:'+r.token,'small danger'):'' )).join('')+'</div></div>';
+  if(data.raids?.length)body+='<div class="card"><h3>Рейды и РП-встречи</h3><div class="stack">'+data.raids.map(r=>raidButton((r.protection_event?'Защита предприятий · ':r.boss_id==='encounter'?'РП-встреча · ':'')+(r.status==='active'?'Продолжить':r.status==='lobby'?'Сбор отряда':'Итоги')+' · раунд '+r.round,'open:'+r.token)+((r.status==='active'||r.status==='lobby')&&!(r.boss_id==='encounter'&&r.creator_id===data.actor_id)?button('Выйти из рейда','leaveraid:'+r.token,'small danger'):'' )).join('')+'</div></div>';
   app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content"><div class="stack">'+button('🏰 Владения · рабы и предприятия','holdings')+button('✦ Питомцы · посылки и коллекция','pets')+'</div>'+body+'</div></section>';
   audio.refresh();
   if(page==='appearance')syncSpritePreview();
@@ -1156,6 +1160,7 @@ function chaplainArt(f,key){
   return {...f,class_avatar_url:other.class_avatar_url,sprite_url:other.sprite_url,pixel_art:other.pixel_art};
 }
 function raidPhaseLabel(data){
+  if(data.enterprise_defense)return 'ЗАЩИТА ПРЕДПРИЯТИЙ · РАУНД '+(data.data?.round||1);
   if(data.kingdom_id)return 'ЗАЩИТА ПОСЕЛЕНИЯ · РАУНД '+data.data.round;
   if(data.guild_run_id)return 'ЗАКАЗ ГИЛЬДИИ · РАУНД '+data.data.round;
   const nz=data.data?.nazarick_view;if(nz)return 'НАЗАРИК · БОСС '+nz.stage+' / 5 · '+nz.phase_name+' · РАУНД '+nz.stage_round;
@@ -1193,7 +1198,7 @@ function raidSoundtrack(data){
 }
 function raidPortrait(f,key,player=null,index=0,spriteTarget=null){
   const disabled=player?.withdrawn||f.hp<=0;
-  const effects=fighterStatuses(f).map(e=>'<span class="raid-effect" title="'+esc(e.name)+'">'+statusIcon(e.icon,e.direction)+'<span class="status-count">'+esc(e.count)+'</span></span>').join('');
+  const effects=statusButtons(f,'raid:'+key,'raid-effect');
   const own=key===String(raidCurrent.actor_id),boss=key==='boss'||!!raidCurrent.data?.enemies?.[key];
   const art=spriteTarget?'<button type="button" class="raid-art encounter-target" data-raid="target:'+esc(key)+'" aria-label="Выбрать цель: '+esc(f.name)+'" aria-pressed="'+(key===encounterTarget)+'"'+(disabled?' disabled':'')+'>':'<div class="raid-art">';
   const floatingStaff=key==='boss'&&raidCurrent.data?.nazarick_view?.floating_staff?'<img class="nz-floating-staff" src="/static/assets/nazarick/staff_floating.png" alt="" aria-hidden="true">':'';
@@ -1220,9 +1225,12 @@ function selectEncounterTarget(key){
 }
 function raidName(data,key){return key==='boss'?data.boss_name:data.data?.enemies?.[key]?.name||data.data?.players[key]?.fighter.name||'Участник';}
 function encounterLobby(data){
+  if(data.enterprise_defense)return '<div class="card"><span class="eyebrow">ЗАЩИТА ПРЕДПРИЯТИЙ · КОМАНДНЫЙ БОЙ</span><h2>Орочья трудовая инспекция</h2><p>Три орка A-ранга, Lv.19. Фиксированные 410–480 HP, атака 32–33, защита 18–23. Без подстройки под слабого участника.</p><p>Соберите 2–3 игроков. Владелец начинает бой; сам может остаться наблюдателем. Каждый орк действует отдельно. Выбирайте цель нажатием на спрайт.</p><p>Победа предотвращает разграбление. Поражение — 12 часов простоя предприятий. XP, франков и предметов за защиту нет; RP-сборки недоступны.</p><p>Отряд: '+data.participants.length+' / 3</p>'+data.participants.map(p=>'<p>⚔️ '+esc(p.name)+' · '+esc(p.fighter_name)+'</p>').join('')+'</div>';
   return '<div class="card"><span class="eyebrow">РП · БЕЗ НАГРАД</span><h2>Встреча: '+data.encounter_roster.map(m=>esc(m.name)).join(', ')+'</h2><p>Мастер: '+esc(data.master_name)+(data.participants.some(p=>p.actor_id===data.creator_id)?'. Участвует в отряде и управляет встречей.':'. Может остаться наблюдателем или вступить в отряд.')+'</p><p>Отряд: '+data.participants.length+' / 3</p>'+data.participants.map(p=>'<p>⚔️ '+esc(p.name)+' · '+esc(p.fighter_name)+(p.rp_template?' · RP':' · обычный')+'</p>').join('')+'<p class="muted">До трёх врагов с отдельными HP, эффектами и намерениями. Выбирай цель перед навыком. Свои мобы сохраняют заданные уровни и характеристики; готовые мобы подстраиваются под отряд.</p><p class="muted">На сбор — 10 минут, на выбор действия — 2 минуты. Только мастер начинает и завершает встречу. XP, деньги, предметы и награды питомцев не выдаются; кулдауны наград не меняются.</p></div>';
 }
 function raidScreen(data){
+  if(current||raidCurrent?.token!==data.token)closeEffect();
+  statusViews=null;
   if(data.token!==raidCurrent?.token)encounterTarget='';
   if((data.kind==='encounter'||data.data?.multi_enemy)&&data.data&&!data.data.enemies[encounterTarget]?.hp)encounterTarget=Object.keys(data.data.enemies).find(k=>data.data.enemies[k].hp>0)||'';
   window.ArenaQTEWatch?.context('raid',data.token,data.status==='active');
@@ -1236,8 +1244,8 @@ function raidScreen(data){
     body='<div class="card"><h2>'+esc(data.boss_name)+'</h2>'+(data.loot_name?'<p class="muted">'+esc(data.loot_name)+': 70% при полной награде; пятая такая победа без выпадения гарантирует трактат. '+esc(data.encounter_rules||(data.fixed_level?'Фиксированный уровень '+data.fixed_level+', без подстройки характеристик под отряд.':'Уровень босса подстраивается под отряд и выше самого сильного бойца.'))+'</p>':'')+'<p>Отряд: '+data.participants.length+' / 3</p><div class="stack">'+data.participants.map(p=>'<div>'+esc(p.name)+' · '+(p.personal?'личный персонаж':'раб: '+esc(p.fighter_name))+'</div>').join('')+'</div><p class="muted">От 1 до 3 игроков против одного босса. Можно начать в одиночку или вдвоём. Вход бесплатный. Каждый выбирает одно действие за раунд одновременно с остальными.</p><p class="muted">На сбор — 10 минут. На выбор в бою — 2 минуты. После трёх пропусков подряд награды отключаются; для награды нужны минимум два ручных действия.</p><p>'+esc(raidRewardStatus(data.reward_status))+'</p><p class="muted">Кулдаун полной награды — 1 час на аккаунт и босса, общий для всех чатов и бойцов. Поражение и повторные победы не продлевают его.</p></div>';
     if(data.kind==='encounter')body=encounterLobby(data);
     if(data.boss_id==='nazarick')body='<div class="card"><span class="eyebrow">НАЗАРИК · ПЯТЬ ПОЛНОЦЕННЫХ БОССОВ</span><h2>'+esc(data.boss_name)+'</h2><p>Шалтир → Демиург → Альбедо → ложный король → Аинз. У каждого две фазы. От одного до трёх игроков, противники сменяют друг друга.</p><p>После каждого из трёх стражей отряд полностью восстанавливается, включая погибших. Между фазами и после Пандоры восстановления нет. После поражения можно единогласно принять благословение: переиграть текущего босса с «Сюжетной бронёй», отказавшись от билета для всей группы. Только один раз за поход.</p><p>Полная награда за весь рейд: одна случайная легендарная пассивка и 70% на билет смены класса без потери уровня. До 100 раундов на каждого противника.</p><p>Отряд: '+data.participants.length+' / 3</p>'+data.participants.map(p=>'<p>'+esc(p.name)+'</p>').join('')+'</div>';
-    body+='<div class="card"><h3>'+(me?'Твой боец':data.is_master?'Присоединиться самому · необязательно':'Присоединиться')+'</h3><div class="stack">'+data.choices.map(c=>raidButton(esc(c.name),c.rp_template?'joinrp:'+c.rp_template:'join:'+(c.personal?'p':'s')+':'+c.fighter_id,me?.fighter_id===c.fighter_id&&me?.personal===c.personal&&(me?.rp_template||null)===(c.rp_template||null)?'primary':'',!me&&data.participants.length>=3)).join('')+'</div><p class="muted">'+(data.kind==='encounter'?'Обычный персонаж использует текущую сборку; RP-персонаж — отдельный шаблон из /рп. Изменения сохраняются только внутри встречи.':'Перед стартом заверши обязательный выбор класса в меню арены. В рейде участвует твой личный персонаж.')+'</p></div>';
-    if(data.actor_id===data.creator_id)body+='<div class="row">'+raidButton(data.kind==='encounter'?'Начать встречу':'Начать рейд','start','primary',data.participants.length<1||data.participants.length>3)+raidButton('Отменить сбор','cancel','danger')+'</div>';
+    body+='<div class="card"><h3>'+(me?'Твой боец':data.is_master?'Присоединиться самому · необязательно':'Присоединиться')+'</h3><div class="stack">'+data.choices.map(c=>raidButton(esc(c.name),c.rp_template?'joinrp:'+c.rp_template:'join:'+(c.personal?'p':'s')+':'+c.fighter_id,me?.fighter_id===c.fighter_id&&me?.personal===c.personal&&(me?.rp_template||null)===(c.rp_template||null)?'primary':'',!me&&data.participants.length>=3)).join('')+'</div><p class="muted">'+(data.enterprise_defense?'Только обычные личные персонажи. Снимки фиксируются при старте; постоянная прогрессия не меняется.':data.kind==='encounter'?'Обычный персонаж использует текущую сборку; RP-персонаж — отдельный шаблон из /рп. Изменения сохраняются только внутри встречи.':'Перед стартом заверши обязательный выбор класса в меню арены. В рейде участвует твой личный персонаж.')+'</p></div>';
+    if(data.actor_id===data.creator_id)body+='<div class="row">'+raidButton(data.kind==='encounter'?'Начать встречу':'Начать рейд','start','primary',data.participants.length<(data.enterprise_defense?2:1)||data.participants.length>3)+raidButton('Отменить сбор','cancel','danger')+'</div>';
     if(me&&(data.actor_id!==data.creator_id||data.kind==='encounter'))body+=raidButton('Выйти из отряда','leave');
   }else if(data.data){
     const d=data.data,own=d.players[String(data.actor_id)];
@@ -1246,7 +1254,7 @@ function raidScreen(data){
     body='<div class="raid-intent"><span class="eyebrow">'+raidPhaseLabel(data)+'</span><h3>'+esc(d.intent.text)+'</h3>'+(targets?'<p class="muted">Цель: '+targets+'</p>':'')+prediction+'</div><div class="raid-field'+(data.boss_id==='doofenshmirtz'?' doof-field':data.boss_id==='kit'?' kit-field':'')+'" data-boss="'+esc(data.boss_id)+'" data-phase="'+esc(d.phase)+'" aria-label="Поле боя: отряд слева внизу, босс справа вверху">'+raidPortrait(d.boss,'boss')+raidSupport(data)+raidDialogue(data)+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
     if(data.kind==='encounter'){
       const intents=raidPlaying?'<p>Разыгрывается раунд</p>':Object.entries(d.enemy_intents||{}).filter(([key])=>d.enemies[key].hp>0).map(([key,i])=>'<p><b>'+esc(d.enemies[key].name)+'</b>: '+esc(i.text)+(i.targets.length?' → '+i.targets.map(k=>esc(d.players[k]?.fighter.name)).join(', '):'')+'</p>').join('');
-      body='<div class="raid-intent"><span class="eyebrow">'+raidPhaseLabel(data)+'</span><h3>Намерения противников</h3>'+intents+'<small>'+(data.guild_run_id?'Гильдия охотников · награда после завершения заказа':'Мастер: '+esc(data.master_name)+' · награды отключены')+'</small></div><div class="raid-field encounter-field'+(data.guild_run_id?' guild-field':'')+'" data-biome="'+esc(data.guild_biome||'mines')+'" aria-label="Отряд слева внизу, противники справа вверху">'+Object.entries(d.enemies).map(([key,f],i)=>encounterPortrait(f,key,i)).join('')+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
+      body='<div class="raid-intent"><span class="eyebrow">'+raidPhaseLabel(data)+'</span><h3>Намерения противников</h3>'+intents+'<small>'+(data.guild_run_id?'Гильдия охотников · награда после завершения заказа':data.enterprise_defense?'Защита предприятий · три орка A-ранга':'Мастер: '+esc(data.master_name)+' · награды отключены')+'</small></div><div class="raid-field encounter-field'+(data.guild_run_id?' guild-field':data.enterprise_defense?' enterprise-defense-field':'')+'" data-biome="'+esc(data.guild_biome||'mines')+'" aria-label="Отряд слева внизу, противники справа вверху">'+Object.entries(d.enemies).map(([key,f],i)=>encounterPortrait(f,key,i)).join('')+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
     }
     body+=chaplainPanel(data,own);
     if(d.nazarick_view){
@@ -1277,7 +1285,7 @@ function raidScreen(data){
   }else body='<div class="card"><h2>Сбор рейда закрыт</h2><p>Новый отряд можно собрать командой /рейд в чате.</p></div>';
   if(data.status==='finished')body+=petRewards(data.data?.rewards?.[String(data.actor_id)]?.pet_rewards);
   if(data.kingdom_id)body=body.replace('Мастер: '+esc(data.master_name)+' · награды отключены','Защита поселения · без обычных наград арены');
-  app.innerHTML='<section class="menu raid-screen">'+top(data.kingdom_id?'Вылазка · поселение':data.guild_run_id?'Гильдия · заказ':data.kind==='encounter'?'РП-встреча':data.silent?'Тихий рейд':'Командный рейд','ГНИДА · ЧАТ '+chat,raidButton('Обновить','refresh','small'))+'<div class="content">'+body+'<div class="row">'+raidButton(data.kingdom_id?'К поселению':data.guild_run_id?'К карте похода':data.kind==='encounter'?'В RP-меню':'В меню арены',data.kingdom_id?'kingdom':data.guild_run_id?'guild':data.kind==='encounter'?'rp':'menu','small')+'</div></div></section>';
+  app.innerHTML='<section class="menu raid-screen">'+top(data.enterprise_defense?'Защита предприятий':data.kingdom_id?'Вылазка · поселение':data.guild_run_id?'Гильдия · заказ':data.kind==='encounter'?'РП-встреча':data.silent?'Тихий рейд':'Командный рейд','ГНИДА · ЧАТ '+chat,raidButton('Обновить','refresh','small'))+'<div class="content">'+body+'<div class="row">'+raidButton(data.kingdom_id?'К поселению':data.guild_run_id?'К карте похода':data.enterprise_defense?'К предприятиям':data.kind==='encounter'?'В RP-меню':'В меню арены',data.kingdom_id?'kingdom':data.guild_run_id?'guild':data.enterprise_defense?'holdings':data.kind==='encounter'?'rp':'menu','small')+'</div></div></section>';
   if(data.boss_id==='whaler'){
     document.querySelector('.raid-field')?.classList.add('whaler-field');
     const intent=document.querySelector('.raid-intent');
@@ -1294,6 +1302,7 @@ function raidScreen(data){
     window.RaidIntentLines?.mount(document.querySelector?.('.raid-field'),data,source=>raidAction('intercept',{round:data.data.round,source}));
   }
   updateRaidTimer();if(raidInspect)showRaidDetails(raidInspect);
+  if(inspectEffect)showEffect(inspectEffect.side,inspectEffect.id);
   if(data.data?.nazarick_view){
     const n=data.data.nazarick_view,field=document.querySelector('.nazarick-field');
     if(field)field.style.backgroundImage='linear-gradient(#080b1720,#080b1740),url("'+n.background+'")';
@@ -1473,6 +1482,7 @@ app.addEventListener('click',async event=>{
   if(cmd==='join'){await raidAction('join',{personal:parts[0]==='p',fighter:Number(parts[1])});return;}
   if(cmd==='joinrp'){await raidAction('join',{personal:true,fighter:raidCurrent.actor_id,rp_template:arg});return;}
   if(cmd==='rp'){await openRP(raidCurrent.chat_id);return;}
+  if(cmd==='holdings'){await openHoldings(raidCurrent.chat_id);return;}
   if(cmd==='guild'){await openGuild(raidCurrent.chat_id,raidCurrent.guild_run_id);return;}
   if(cmd==='kingdom'){await openKingdom(raidCurrent.chat_id);return;}
   if(cmd==='target'){selectEncounterTarget(arg);return;}

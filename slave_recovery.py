@@ -62,30 +62,8 @@ class RecoveryMixin:
             AND status IN ('announcing','pending','playing')""",(timestamp(),))
 
     async def enterprise_due_recoveries(self, rng=None):
-        rng=rng or random.SystemRandom();now=timestamp();created=[]
-        async with self._lock:
-            with self.connection:
-                # An interrupted publication never pauses work or loses a slave.
-                self.connection.execute("UPDATE slave_recovery_events SET status='cancelled',ended_at=?,revision=revision+1 WHERE status='announcing' AND created_at<?",(now,now-300))
-                if not 10<=datetime.fromtimestamp(now,RECOVERY_TZ).hour<22:return []
-                owners=self.connection.execute('SELECT chat_id,owner_id,COUNT(*) AS amount FROM ownership GROUP BY chat_id,owner_id HAVING COUNT(*)>? ORDER BY chat_id,owner_id',(RECOVERY_THRESHOLD,)).fetchall()
-                for owner in owners:
-                    chat,user=owner['chat_id'],owner['owner_id']
-                    if not self._feature_enabled_locked(chat,'slavery'):continue
-                    active=self.connection.execute('SELECT last_seen FROM users WHERE chat_id=? AND user_id=?',(chat,user)).fetchone()
-                    if not active or active['last_seen'] is None or not now-RECOVERY_OWNER_ACTIVE_SECONDS<=active['last_seen']<=now:continue
-                    if self.connection.execute("SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND owner_id=? AND (status IN ('announcing','pending','playing') OR created_at>?)",(chat,user,now-RECOVERY_COOLDOWN)).fetchone():continue
-                    if self.connection.execute('SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND created_at>?',(chat,now-RECOVERY_CHAT_COOLDOWN)).fetchone():continue
-                    if rng.random()>=.10:continue
-                    workers=self.connection.execute('''SELECT slave_id FROM ownership WHERE chat_id=? AND owner_id=?
-                        AND slave_id NOT IN (SELECT user_id FROM slave_expedition_members WHERE active=1)
-                        AND slave_id NOT IN (SELECT worker_id FROM slave_trader_listings WHERE chat_id=? AND status='active' AND expires_at>?)
-                        ORDER BY slave_id''',(chat,user,chat,now)).fetchall()
-                    if not workers:continue
-                    worker=rng.choice(workers)['slave_id'];pattern=rng.sample(range(len(RECOVERY_SYMBOLS)),RECOVERY_CODE_LENGTH)
-                    cursor=self.connection.execute("INSERT INTO slave_recovery_events(chat_id,owner_id,slave_id,kind,created_at,pattern_json,game_type) VALUES(?,?,?,?,?,?,'code')",(chat,user,worker,rng.choice(('escaped','kidnapped')),now,json.dumps(pattern)))
-                    created.append(dict(self.connection.execute('SELECT * FROM slave_recovery_events WHERE id=?',(cursor.lastrowid,)).fetchone()))
-        return created
+        """Legacy games still resolve, but new incidents use workforce warnings."""
+        return []
 
     async def recovery_published(self, event_id, chat, message_id):
         async with self._lock:

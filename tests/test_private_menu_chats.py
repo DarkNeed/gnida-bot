@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+from enterprises import CATALOG
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -103,7 +104,9 @@ class PrivateMenuChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("50 ₣", body)
 
     async def test_selected_chat_scopes_all_menu_sections(self):
+        await self.db.credit_francs(-100, 10, CATALOG['field']['price'])
         await self.db.create_business(-100, 10, "field")
+        await self.db.credit_francs(-300, 10, CATALOG['brothel']['price'])
         await self.db.create_business(-300, 10, "brothel")
         await self.db.create_challenge(-100, 10, 30, game_type="rps", friendly=True)
         await self.db.create_challenge(-200, 10, 30, game_type="blackjack", friendly=True)
@@ -204,7 +207,9 @@ class PrivateMenuChatTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(message.answer.await_args.kwargs['reply_markup'].inline_keyboard[0][0].url,'https://t.me/GnidoBot')
 
     async def test_business_role_work_and_buyout_mutate_only_the_button_chat(self):
+        await self.db.credit_francs(-100, 10, CATALOG['field']['price'])
         self.assertEqual(await self.db.create_business(-100, 10, "field"), "created")
+        await self.db.credit_francs(-200, 30, CATALOG['brothel']['price'])
         self.assertEqual(await self.db.create_business(-200, 30, "brothel"), "created")
         callback = await self.click("sm:c:-100:br:-100:20:collector")
         self.assertIn("Чат: Каргассия", self.view(callback)[0])
@@ -240,7 +245,9 @@ class PrivateMenuChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.db.selected_menu_chat(10), -100)
 
     async def test_private_enterprise_statistics_follow_selected_chat_and_membership(self):
+        await self.db.credit_francs(-100, 10, CATALOG['field']['price'])
         await self.db.create_business(-100, 10, "field")
+        await self.db.credit_francs(-200, 30, CATALOG['brothel']['price'])
         await self.db.create_business(-200, 30, "brothel")
         await self.db.select_menu_chat(10, -200)
         handler = next(item.callback for item in self.router.message.handlers

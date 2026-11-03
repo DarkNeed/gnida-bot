@@ -1,6 +1,7 @@
 import asyncio
 import tempfile
 import unittest
+from enterprises import CATALOG
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -155,6 +156,7 @@ class ChallengeRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def assign_to_new_owner(self):
         self.assertEqual(await self.db.transfer_slave(-100, 1, 2, 3), "transferred")
+        await self.db.credit_francs(-100, 3, CATALOG['field']['price'])
         self.assertEqual(await self.db.create_business(-100, 3, "field"), "created")
         self.assertEqual(await self.db.set_business_worker_role(-100, 3, 2, "collector"), "updated")
 
@@ -207,6 +209,7 @@ class ChallengeRecoveryTests(unittest.IsolatedAsyncioTestCase):
         await self.db.record_challenge_result(challenge_id, 4)
         self.assertEqual(await self.db.transfer_after_loss(-100, 1, 4, challenge_id=challenge_id), ("transferred", 2))
         await self.db.transfer_slave(-100, 4, 2, 3)
+        await self.db.credit_francs(-100, 3, CATALOG['field']['price'])
         await self.db.create_business(-100, 3, "field")
         await self.db.set_business_worker_role(-100, 3, 2, "collector")
         await self.db.close()
@@ -250,6 +253,7 @@ class ChallengeRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_played_result_preserves_worker_then_concurrent_replays_apply_once(self):
         challenge_id = await self.db.create_challenge(-100, 1, 4, awaiting_acceptance=False)
         await self.db.force_enslave(-100, 2, 1)
+        await self.db.credit_francs(-100, 1, CATALOG['field']['price'])
         await self.db.create_business(-100, 1, "field")
         await self.db.set_business_worker_role(-100, 1, 2, "collector")
         await self.db.finish_challenge(challenge_id)

@@ -83,10 +83,24 @@ class ClassModulesMixin:
                                 self._expedition_finish_locked(trip,cancel=True)
                             self.connection.execute("UPDATE challenges SET friendly=1,forced=0,opponent_newcomer=0 WHERE chat_id=? AND status IN ('pending','betting','active')",(chat,))
                             from slave_recovery import timestamp
+                            # New recoveries are cancelled, never lost, on disable.
+                            for event in self.connection.execute("SELECT * FROM workforce_events WHERE chat=? AND status IN ('announcing','open','playing','search')",(chat,)).fetchall():
+                                self._workforce_finish_locked(event,True)
+                                self.connection.execute("UPDATE workforce_events SET status='cancelled' WHERE id=?",(event['id'],))
+                            self.connection.execute("UPDATE workforce_warnings SET status='resolved' WHERE chat=?",(chat,))
+                            for worker in self.connection.execute("SELECT * FROM fictional_workers WHERE chat=? AND status='expedition'",(chat,)).fetchall():
+                                r=self._npc_decode(worker);r['status']='rest';r['tick']=timestamp();self._npc_save_locked(r)
+                            self.connection.execute("UPDATE npc_trips SET status='cancelled' WHERE chat=? AND status='active'",(chat,))
+                            self.connection.execute("UPDATE slave_expedition_members SET active=0,ended_at=? WHERE active=1 AND expedition_id IN (SELECT id FROM npc_trips WHERE chat=? AND status='cancelled')",(timestamp(),chat))
                             self.connection.execute("""UPDATE slave_recovery_events SET status='cancelled',
                                 ended_at=?,deadline=NULL,revision=revision+1 WHERE chat_id=?
                                 AND status IN ('announcing','pending','playing')""",(timestamp(),chat))
+                        self._npc_pause_locked(chat,enabled)
                     if module=='arena' and not enabled:
+                        for worker in self.connection.execute("SELECT * FROM fictional_workers WHERE chat=? AND status='expedition'",(chat,)).fetchall():
+                            r=self._npc_decode(worker);r['status']='rest';r['tick']=int(time.time());self._npc_save_locked(r)
+                        self.connection.execute("UPDATE npc_trips SET status='cancelled' WHERE chat=? AND status='active'",(chat,))
+                        self.connection.execute("UPDATE slave_expedition_members SET active=0,ended_at=? WHERE active=1 AND expedition_id IN (SELECT id FROM npc_trips WHERE chat=? AND status='cancelled')",(int(time.time()),chat))
                         for trip in self.connection.execute("SELECT * FROM slave_expeditions WHERE chat_id=? AND status='active'",(chat,)).fetchall():
                             self._expedition_finish_locked(trip,cancel=True)
                 self.connection.execute("""INSERT INTO chat_feature_modules VALUES(?,?,?,?,?)

@@ -2,6 +2,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from enterprises import CATALOG
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -446,6 +447,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_business_income_shifts_transfers_and_buyout(self):
         self.assertEqual(await self.database.create_business(1, 10, "brothel"), "no_slaves")
         self.assertEqual(await self.database.force_enslave(1, 20, 10), "enslaved")
+        await self.database.credit_francs(1, 10, CATALOG['brothel']['price'])
         self.assertEqual(await self.database.create_business(1, 10, "brothel"), "created")
         self.assertEqual(
             await self.database.set_business_worker_role(1, 10, 20, "courtesan"),
@@ -500,6 +502,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_part_time_shift_pays_random_20_to_100_francs(self):
         await self.database.force_enslave(1, 20, 10)
+        await self.database.credit_francs(1, 10, CATALOG['field']['price'])
         self.assertEqual(await self.database.create_business(1, 10, "field"), "created")
         with patch("database.random.randint", return_value=20):
             result, worker_pay, owner_pay, _ = await self.database.work_at_business(1, 10, 30)
@@ -517,6 +520,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_business_income_periods_and_chat_listing(self):
         await self.database.force_enslave(1, 20, 10)
+        await self.database.credit_francs(1, 10, CATALOG['field']['price'])
         self.assertEqual(await self.database.create_business(1, 10, "field"), "created")
         today = datetime.now(BUSINESS_STATS_TZ).date()
         yesterday = today - timedelta(days=1)

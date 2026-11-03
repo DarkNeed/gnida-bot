@@ -135,7 +135,7 @@ async def raid_view(db, row, actor):
         user = await db.get_user(row["chat_id"], p["actor_id"])
         fighter = await db.get_user(row["chat_id"], p["fighter_id"])
         rp_template = None
-        if row.get('boss_id') == 'encounter':
+        if row.get('boss_id') == 'encounter' and not json.loads(row.get('encounter_json') or '{}').get('protection'):
             async with db._lock:
                 selected = db.connection.execute('SELECT template_id FROM arena_rp_selections WHERE token=? AND actor_id=?', (row['token'], p['actor_id'])).fetchone()
                 if selected:
@@ -195,7 +195,7 @@ async def raid_view(db, row, actor):
         choices.append(
             dict(fighter_id=actor, personal=True, name="Мой личный персонаж")
         )
-        if row.get('boss_id') == 'encounter':
+        if row.get('boss_id') == 'encounter' and not json.loads(row.get('encounter_json') or '{}').get('protection'):
             for template in await db.arena_rp_templates(actor):
                 if template['kind'] == 'character':
                     choices.append(dict(fighter_id=actor, personal=True, rp_template=template['id'],
@@ -212,7 +212,8 @@ async def raid_view(db, row, actor):
         kind='encounter' if config else 'raid',
         rp_menu=bool(config and config.get('rp')),
         master_name=master['display_name'] if master else str(row['creator_id']),
-        is_master=bool(config and not config.get('guild') and not config.get('kingdom') and actor == row['creator_id']),
+        is_master=bool(config and not config.get('guild') and not config.get('kingdom') and not config.get('protection') and actor == row['creator_id']),
+        enterprise_defense=bool(config and config.get('protection')),
         kingdom_id=data.get('kingdom_id') if data else None,
         guild_run_id=data.get('guild_run_id') if data else None,
         guild_biome=guild_biome,

@@ -111,11 +111,15 @@ class ExpeditionMixin:
         users = participant_ids(users)
         if self.connection.execute("SELECT 1 FROM slave_expeditions WHERE owner_id=? AND status='active'", (owner,)).fetchone():
             raise ValueError('У тебя уже есть экспедиция. Лимит общий для всех чатов.')
+        if self.connection.execute("SELECT 1 FROM npc_trips WHERE owner=? AND status='active'",(owner,)).fetchone():
+            raise ValueError('У тебя уже есть экспедиция NPC. Лимит общий для всех чатов.')
         members = [];catalog=self._fighter_catalog_locked()
         for user in users:
             owned = self.connection.execute('SELECT acquired_at FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?', (chat, owner, user)).fetchone()
             if not owned:
                 raise ValueError('Один из участников больше не принадлежит тебе.')
+            if self._workforce_away_locked(chat,owner,user,now(),now()+1):
+                raise ValueError('Участник находится в розыске.')
             if self._trader_listed_locked(chat,user):
                 raise ValueError('Участник выставлен на продажу. Сначала сними предложение у работорговца.')
             if self.connection.execute("SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND slave_id=? AND status IN ('announcing','pending','playing')", (chat, user)).fetchone():

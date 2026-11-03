@@ -12,6 +12,7 @@ from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from enterprises import CATALOG, CAPACITIES, MAX_ENTERPRISES, UPGRADE_PRICES, config, title, role_labels
+from arena_links import arena_link
 from slave_recovery import (RECOVERY_CODE_LENGTH, RECOVERY_MAX_ATTEMPTS,
                             RECOVERY_SYMBOLS, RECOVERY_TZ, timestamp)
 from datetime import datetime
@@ -35,7 +36,7 @@ async def enterprise_menu(db, actor, chat):
     if len(sites)<MAX_ENTERPRISES:rows.append([button('➕ Открыть предприятие',f'ent:new:{chat}')])
     rows.append([button('← Меню',f'sm:c:{chat}:home')])
     lines.append('\nДо трёх разных типов в чате. Одно своё предприятие, один управляющий на каждое. Вместимость: 10 → 15 → 20. Налог общий для всех предприятий владельца в этом чате.')
-    lines.append('При более чем 20 рабах возможен побег или похищение. Проигрыш мини-игры освобождает пропавшего раба.')
+    lines.append('Игроки и NPC находятся в общем списке рабов. Содержание NPC автоматически оплачивается из кошелька чата. Побеги зависят от условий: сначала предупреждение, затем 8 часов на розыск в обзоре владений.')
     return '\n'.join(lines),keyboard(rows)
 
 
@@ -266,7 +267,7 @@ def create_enterprise_router(db):
     return router
 
 
-async def sweep_recovery_events(db,bot,*,create=True):
+async def sweep_recovery_events(db,bot,*,create=True,username=None):
     for row in await db.recovery_expire():
         if row['message_id']:
             try:
@@ -278,6 +279,15 @@ async def sweep_recovery_events(db,bot,*,create=True):
                 await db.recovery_notified(row['id'])
             except TelegramAPIError:logging.warning('Could not update recovery event %s',row['id'])
     if not create:return
+    for row in await db.workforce_notifications():
+        text=('⚠️ В хозяйстве плохие условия. Есть 24 часа на исправление: проверь кошелёк для содержания, дай NPC отдохнуть, назначь управляющего. '
+              if row['kind']=='warning' else f'🚨 {esc(row["name"])} пропал. Есть 8 часов: мини-игра, поисковая группа, награда помощнику или выкуп при похищении. ')
+        text+=f'<a href="tg://user?id={row["owner"]}">Владелец</a>, открой обзор владений в личном меню бота.'
+        try:
+            markup=keyboard([[InlineKeyboardButton(text='Условия и розыск',url=arena_link(username,f'holdings_{row["chat"]}'))]]) if username else None
+            await bot.send_message(row['chat'],text,reply_markup=markup,parse_mode='HTML')
+        except (TelegramAPIError,asyncio.TimeoutError):continue
+        await db.workforce_notified(row)
     for row in await db.enterprise_due_recoveries():
         try:
             view=await recovery_view(db,row)

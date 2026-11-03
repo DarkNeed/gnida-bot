@@ -75,7 +75,7 @@ dialog.effect-dialog:not([open]){display:none}dialog.effect-dialog::backdrop{bac
 /* One shared battlefield, not individual character cards. */
 .raid-intent{margin-bottom:0}.raid-field{position:relative;display:block;padding:0;height:490px;overflow:hidden;border:1px solid #456278;border-radius:22px;margin-bottom:4px;background:radial-gradient(ellipse at 20% 95%,#577780,transparent 65%),linear-gradient(#182c45,#385568 67%,#405a65)}
 .raid-field:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,#b9d8cb25,transparent 35%),linear-gradient(145deg,transparent 45%,#203b4e55 45%,transparent 55%);pointer-events:none}
-.raid-fighter{position:absolute;width:23%;padding:0;border:0;border-radius:0;background:none;text-align:center;z-index:2}
+.raid-fighter{position:absolute;width:23%;padding:0;border:0;border-radius:0;background:none;text-align:center;z-index:auto}
 .raid-fighter.slot-0{left:1%;bottom:19%}.raid-fighter.slot-1{left:24%;bottom:14%}.raid-fighter.slot-2{left:47%;bottom:9%}
 .raid-enemy{left:70%;width:28%;top:10px}.raid-art{position:relative;display:flex;align-items:flex-end;justify-content:center;height:200px;isolation:isolate}.raid-enemy .raid-art{height:220px}
 .raid-art .raid-sprite{position:relative;z-index:2;height:100%;width:100%;max-width:100%;object-fit:contain;transform-origin:50% 90%;animation:raid-idle 3s ease-in-out infinite}
@@ -232,6 +232,11 @@ dialog.audio-dialog,dialog.stats-dialog,dialog.holdings-dialog{
 .encounter-field .enemy-0{right:40%;top:2%}
 .encounter-field .enemy-1{right:20%;top:7%}
 .encounter-field .enemy-2{right:0;top:12%}
+.encounter-field.enterprise-defense-field .encounter-enemy{width:22%}
+.enterprise-defense-field .enemy-0{right:44%;top:0}
+.enterprise-defense-field .enemy-1{right:22%;top:5%}
+.enterprise-defense-field .enemy-2{right:0;top:10%}
+.encounter-field.enterprise-defense-field{min-height:540px}
 .encounter-field .encounter-enemy .raid-art{height:140px}
 .guild-field .raid-enemy .raid-sprite{transform:none}
 .guild-field .raid-enemy .raid-sprite:not(.raid-strike-left):not(.raid-cast):not(.raid-hit){animation:raid-idle 3s ease-in-out infinite}

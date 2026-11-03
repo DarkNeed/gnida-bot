@@ -249,6 +249,8 @@ class RaidMixin:
             self._guild_battle_finished_locked(row,data)
         if data.get('kingdom_id'):
             self._kingdom_battle_finished_locked(row,data)
+        if data.get('protection_event'):
+            self._protection_battle_finished_locked(row,data)
         if data["won"] and row.get('boss_id') != 'encounter' and data.get('kind') != 'encounter':
             rng = random.SystemRandom()
             now = raid_reward_now()
@@ -512,7 +514,8 @@ class RaidMixin:
             return [
                 dict(r)
                 for r in self.connection.execute(
-                    """SELECT DISTINCT r.token,r.status,r.round,r.boss_id,r.creator_id FROM arena_raids r
+                    """SELECT DISTINCT r.token,r.status,r.round,r.boss_id,r.creator_id,
+                   json_extract(r.encounter_json,'$.protection') AS protection_event FROM arena_raids r
                    LEFT JOIN arena_raid_players p ON p.token=r.token WHERE (p.actor_id=?
                    OR (r.boss_id='encounter' AND r.creator_id=?))
                    AND NOT EXISTS(SELECT 1 FROM arena_rp_requests rp WHERE rp.token=r.token)
@@ -585,6 +588,9 @@ class RaidMixin:
         async with self._lock:
             try:
                 row = self._raid_row_locked(token)
+                protection=bool(row.get('encounter_json') and json.loads(row['encounter_json']).get('protection'))
+                if protection and (rp_template is not None or action=='finish'):
+                    raise ValueError('Это защита предприятий, не RP-встреча. RP-сборки и досрочное завершение мастером недоступны.')
                 if row.get('encounter_json') and json.loads(row['encounter_json']).get('guild'):
                     raise ValueError('Составом и завершением этого похода управляют через гильдию.')
                 if row.get('encounter_json') and json.loads(row['encounter_json']).get('kingdom'):
@@ -720,8 +726,11 @@ class RaidMixin:
                         classes, skills = self._fighter_catalog_locked()
                         if row.get('boss_id') == 'encounter':
                             from arena_encounters import create_encounter
-                            data = create_encounter(members, sources, classes, skills,
-                                self._rp_roster_locked(row), row['creator_id'])
+                            if protection:
+                                data=self._protection_combat_locked(row,members,sources,classes,skills)
+                            else:
+                                data = create_encounter(members, sources, classes, skills,
+                                    self._rp_roster_locked(row), row['creator_id'])
                         else:
                             data = create_raid_state(members, sources, classes, skills, row['boss_id'])
                         for player in data['players'].values():

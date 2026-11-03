@@ -51,10 +51,18 @@ class EnterpriseTests(unittest.IsolatedAsyncioTestCase):
         return await self.db.get_business(chat,10,business_type=kind)
 
     async def event(self):
-        rows=await self.db.enterprise_due_recoveries(Fixed())
+        rows=await self.legacy_events()
         row=next(r for r in rows if r['chat_id']==-100)
         await self.db.recovery_published(row['id'],-100,999)
         return await self.db.recovery_get(row['id'])
+
+    async def legacy_events(self):
+        # Existing games must remain playable after the generator is retired.
+        cursor=self.db.connection.execute("""INSERT INTO slave_recovery_events
+            (chat_id,owner_id,slave_id,kind,created_at,pattern_json,game_type)
+            VALUES(-100,10,100,'escaped',?,'[0,1,2]','code')""",(self.clock,))
+        self.db.connection.commit()
+        return [await self.db.recovery_get(cursor.lastrowid)]
 
     async def guess(self,event,values):
         for value in values:event=await self.db.recovery_action(event['id'],10,event['revision'],str(value))
@@ -63,12 +71,12 @@ class EnterpriseTests(unittest.IsolatedAsyncioTestCase):
     async def test_three_different_types_custom_unique_and_chat_local_cost(self):
         for kind in ('tavern','mine','custom'):await self.site(kind)
         balance=await self.db.franc_balance(-100,10)
-        self.assertEqual(balance,8000)
+        self.assertEqual(balance,6750)
         self.assertEqual(await self.db.create_business(-100,10,'custom'),'exists')
         self.assertEqual(await self.db.create_business(-100,10,'workshop'),'limit')
         self.assertEqual(await self.db.franc_balance(-100,10),balance)
         await self.site('custom',-200)
-        self.assertEqual(await self.db.franc_balance(-200,10),9250)
+        self.assertEqual(await self.db.franc_balance(-200,10),8750)
         self.assertEqual(await self.db.franc_balance(-100,10),balance)
 
     async def test_creation_and_upgrade_are_atomic_on_replay_or_insufficient(self):
@@ -77,7 +85,7 @@ class EnterpriseTests(unittest.IsolatedAsyncioTestCase):
         site=await self.db.get_business(-100,10)
         results=await asyncio.gather(self.db.enterprise_upgrade(-100,10,site['id'],1),self.db.enterprise_upgrade(-100,10,site['id'],1))
         self.assertCountEqual(results,['upgraded','stale'])
-        self.assertEqual(await self.db.franc_balance(-100,10),8850)
+        self.assertEqual(await self.db.franc_balance(-100,10),7750)
         self._balance(50)
         self.assertEqual(await self.db.enterprise_upgrade(-100,10,site['id'],2),'insufficient')
         self.assertEqual((await self.db.get_business(-100,10))['level'],2)
@@ -136,7 +144,7 @@ class EnterpriseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_recovery_threshold_cooldowns_and_no_absence_before_publication(self):
         site=await self.site();await self.db.enterprise_assign(-100,10,100,'worker',site['id'])
-        rows=await self.db.enterprise_due_recoveries(Fixed());row=next(r for r in rows if r['chat_id']==-100)
+        rows=await self.legacy_events();row=next(r for r in rows if r['chat_id']==-100)
         self.assertFalse((await self.db.enterprise_view(-100,site['id']))['workers'][0]['away'])
         await self.db.recovery_published(row['id'],-100,999)
         self.assertTrue((await self.db.enterprise_view(-100,site['id']))['workers'][0]['away'])
@@ -192,7 +200,7 @@ class EnterpriseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.get_owner(-100,100))['owner_id'],30)
 
     async def test_failed_delivery_never_pauses_and_old_bot_message_cannot_start(self):
-        rows=await self.db.enterprise_due_recoveries(Fixed());event=rows[0]
+        rows=await self.legacy_events();event=rows[0]
         await self.db.recovery_cancel_publication(event['id'])
         self.assertEqual((await self.db.recovery_get(event['id']))['status'],'cancelled')
         self.assertIsNotNone(await self.db.get_owner(event['chat_id'],event['slave_id']))
@@ -321,7 +329,7 @@ class EnterpriseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(await self.db.get_owner(-100,100))
 
     async def test_sweep_send_failure_cancels_unpublished_event(self):
-        events=await self.db.enterprise_due_recoveries(Fixed())
+        events=await self.legacy_events()
         bot=SimpleNamespace(send_message=AsyncMock(side_effect=TelegramNetworkError(
             method=SendMessage(chat_id=-100,text='event'),message='offline')))
         with patch.object(self.db,'enterprise_due_recoveries',AsyncMock(return_value=events)):
@@ -331,7 +339,7 @@ class EnterpriseTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(await self.db.get_owner(row['chat_id'],row['slave_id']))
 
     async def test_publication_not_creation_starts_clock_and_late_start_never_extends_it(self):
-        rows=await self.db.enterprise_due_recoveries(Fixed());event=rows[0]
+        rows=await self.legacy_events();event=rows[0]
         self.clock+=45
         await self.db.recovery_published(event['id'],event['chat_id'],999)
         event=await self.db.recovery_get(event['id']);deadline=self.clock+RECOVERY_GAME_SECONDS
@@ -402,13 +410,13 @@ class EnterpriseTests(unittest.IsolatedAsyncioTestCase):
             self.db.connection.execute('UPDATE users SET last_seen=? WHERE user_id=10',(self.clock,))
             self.db.connection.commit()
             rows=await self.db.enterprise_due_recoveries(Fixed())
-            self.assertEqual(len(rows),2 if eligible else 0)
+            self.assertEqual(rows,[]) # New incidents have a warning and daily account roll.
         self.clock=int(day.replace(hour=12).timestamp())
         self.db.connection.execute('DELETE FROM slave_recovery_events')
         self.db.connection.execute('UPDATE users SET last_seen=? WHERE user_id=10 AND chat_id=-100',(self.clock-3600,))
         self.db.connection.execute('UPDATE users SET last_seen=? WHERE user_id=10 AND chat_id=-200',(self.clock-3601,))
         self.db.connection.commit()
-        self.assertEqual([r['chat_id'] for r in await self.db.enterprise_due_recoveries(Fixed())],[-100])
+        self.assertEqual(await self.db.enterprise_due_recoveries(Fixed()),[])
 
     async def test_legacy_memory_games_are_cancelled_without_losing_slaves(self):
         site=await self.site();await self.db.enterprise_assign(-100,10,100,'worker',site['id'])

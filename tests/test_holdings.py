@@ -89,7 +89,7 @@ class HoldingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.db.connection.execute('SELECT SUM(gross_income) FROM enterprise_income_daily WHERE business_id=?',(s['id'],)).fetchone()[0],3)
         with self.assertRaises(ValueError):await self.db.enterprise_close(-100,10,s['id'],v['revision'])
         self.assertEqual(await self.db.enterprise_create(-100,10,'mine'),'created')
-        self.assertEqual(await self.db.franc_balance(-100,10),before+3-750)
+        self.assertEqual(await self.db.franc_balance(-100,10),before+3-1250)
 
     async def test_close_does_not_cancel_expedition_or_restore_deleted_job(self):
         s=await self.site();await self.db.enterprise_assign(-100,10,100,'worker',s['id'])

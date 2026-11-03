@@ -76,6 +76,29 @@ class StatusSnapshotTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("node"), "Node is needed for client tests")
 class StatusClientTests(unittest.TestCase):
+    def test_raid_effect_buttons_resolve_boss_players_and_independent_mobs(self):
+        for key,side in [('boss',dict(name='Босс')),('20',dict(name='Союзник')),('e2',dict(name='Моб'))]:
+            with self.subTest(key=key):
+                result=json.loads(self.run_client("""
+raidCurrent={actor_id:10,data:{round:1,boss:input.side,players:{'20':{fighter:input.side}},enemies:{e2:input.side}}};
+out=JSON.stringify({name:statusSide('raid:'+input.key).name,html:raidPortrait(input.side,input.key)});
+""",dict(key=key,side=dict(side,class_id='ragamuffin',level=1,hp=30,resource=50,
+                    resource_name='Энергия',stats=dict(max_hp=30,resource_max=100),
+                    effects=[dict(id='dust',kind='accuracy_flat',value=-20,duration=3)]))))
+                self.assertEqual(result['name'],side['name'])
+                self.assertIn('class="status-token raid-effect"',result['html'])
+                self.assertIn('data-status-side="raid:'+key+'"',result['html'])
+                self.assertIn('data-status-id="effect:dust:accuracy_flat"',result['html'])
+                self.assertIn('aria-label="Понижение точности · 3"',result['html'])
+
+    def test_raid_status_scope_does_not_leak_previous_battle_or_removed_fighters(self):
+        value=self.run_client("""
+current={state:{sides:{a:{name:'Дуэль'}}}};statusViews={a:{name:'Снимок'}};
+raidCurrent={data:{players:{},enemies:{},boss:{name:'Рейд'}}};
+out=JSON.stringify([statusSide('a').name,statusSide('raid:boss').name,statusSide('raid:missing')??null]);
+""",{})
+        self.assertEqual(json.loads(value),['Снимок','Рейд',None])
+
     def run_client(self, code, data):
         return client_tests.ArenaMarketClientTests().run_client(code, data)
 

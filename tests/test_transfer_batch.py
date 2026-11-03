@@ -5,6 +5,7 @@ import json
 import logging
 import tempfile
 import unittest
+from enterprises import CATALOG
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -130,6 +131,7 @@ class BatchTransferTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.db.get_owner(-100, uid))["owner_id"], 20)
 
     async def test_missing_item_rolls_back_ownership_workers_and_first_item(self):
+        await self.db.credit_francs(-100, 10, CATALOG['field']['price'])
         await self.db.create_business(-100, 10, "field")
         await self.db.set_business_worker_role(-100, 10, 30, "collector")
         with self.assertRaises(ValueError):
@@ -139,6 +141,7 @@ class BatchTransferTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(worker[0], 10)
 
     async def test_success_removes_old_worker_and_survives_restart(self):
+        await self.db.credit_francs(-100, 10, CATALOG['field']['price'])
         await self.db.create_business(-100, 10, "field")
         await self.db.set_business_worker_role(-100, 10, 30, "collector")
         await self.db.transfer_batch(-100, 10, [self.slave(), self.slave(31)])

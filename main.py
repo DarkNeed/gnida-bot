@@ -112,8 +112,11 @@ async def main() -> None:
                 current=asyncio.get_running_loop().time()
                 create=current-last_create>=60
                 if create:last_create=current
-                await sweep_recovery_events(database,bot,create=create)
+                await sweep_recovery_events(database,bot,create=create,username=username if webapp_url else None)
                 await sweep_finance(database,bot)
+                if webapp_url:
+                    from enterprise_protection_notices import publish_protection
+                    await publish_protection(database,bot,username,publisher.raids)
                 for trip in await database.expedition_sweep():
                     try:
                         await bot.send_message(trip['owner_id'],

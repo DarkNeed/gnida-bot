@@ -84,6 +84,8 @@ class SlaveTraderMixin:
             JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.slave_id
             WHERE o.chat_id=? AND o.owner_id=? AND o.slave_id=?''', (chat,owner,worker)).fetchone()
         if not row:raise ValueError('Этот работник больше тебе не принадлежит в выбранном чате.')
+        if available and self._workforce_away_locked(chat,owner,worker,now(),now()+1):
+            raise ValueError('Работник находится в розыске. Сначала верни его.')
         if available and (self.connection.execute("SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND slave_id=? AND status IN ('announcing','pending','playing')",(chat,worker)).fetchone() or
                           self.connection.execute('SELECT 1 FROM slave_expedition_members WHERE user_id=? AND active=1',(worker,)).fetchone()):
             raise ValueError('Работник пропал или находится в экспедиции. Сначала дождись его возвращения.')

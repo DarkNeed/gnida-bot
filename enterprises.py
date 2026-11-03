@@ -10,17 +10,19 @@ from slave_expeditions import ExpeditionMixin, EXPEDITIONS, digest
 from slave_trader import SlaveTraderMixin
 from slave_identity import SlaveIdentityMixin
 from slave_finance import SlaveFinanceMixin
+from npc_workers import NpcWorkersMixin
+from enterprise_protection import EnterpriseProtectionMixin
 
 MAX_ENTERPRISES = 3
 CAPACITIES = {1: 10, 2: 15, 3: 20}
-UPGRADE_PRICES = {1: 400, 2: 1000}
+UPGRADE_PRICES = {1: 1000, 2: 2500}
 CATALOG = {
-    'brothel': dict(name='Бордель', emoji='🏩', producer='Куртизанка', leader='Управляющий', price=0),
-    'field': dict(name='Хлопковое поле', emoji='🌾', producer='Сборщик', leader='Надзиратель', price=0),
-    'tavern': dict(name='Таверна', emoji='🍺', producer='Трактирщик', leader='Управляющий', price=500),
-    'mine': dict(name='Шахта', emoji='⛏', producer='Шахтёр', leader='Бригадир', price=750),
-    'workshop': dict(name='Мастерская', emoji='🔨', producer='Мастер', leader='Старший мастер', price=1000),
-    'custom': dict(name='Своё предприятие', emoji='🏢', producer='Работник', leader='Управляющий', price=750),
+    'brothel': dict(name='Бордель', emoji='🏩', producer='Куртизанка', leader='Управляющий', price=1500),
+    'field': dict(name='Хлопковое поле', emoji='🌾', producer='Сборщик', leader='Надзиратель', price=1000),
+    'tavern': dict(name='Таверна', emoji='🍺', producer='Трактирщик', leader='Управляющий', price=750),
+    'mine': dict(name='Шахта', emoji='⛏', producer='Шахтёр', leader='Бригадир', price=1250),
+    'workshop': dict(name='Мастерская', emoji='🔨', producer='Мастер', leader='Старший мастер', price=1750),
+    'custom': dict(name='Своё предприятие', emoji='🏢', producer='Работник', leader='Управляющий', price=1250),
 }
 NEW_CONFIG = {
     key: dict(producer_role='worker', leader_role='leader', owner_per_producer=rate,
@@ -49,7 +51,7 @@ def role_labels(site):
     return (site['producer_title'] or defaults['producer'], site['leader_title'] or defaults['leader'])
 
 
-class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, ExpeditionMixin, RecoveryMixin):
+class EnterpriseMixin(EnterpriseProtectionMixin, NpcWorkersMixin, SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, ExpeditionMixin, RecoveryMixin):
     async def business_for_worker(self, chat, owner, worker):
         async with self._lock:
             return self._enterprise_locked(chat,owner,worker=worker)
@@ -106,6 +108,8 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
         self._init_slave_identities()
         self._init_slave_trader()
         self._init_slave_finance()
+        self._init_npc_workers()
+        self._init_protection()
 
     def _enterprise_locked(self, chat, owner, site_id=None, worker=None):
         if site_id is None and worker is not None:
@@ -129,12 +133,13 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
             ORDER BY w.assigned_at,w.worker_id''',(site['chat_id'],site['owner_id'],site['id'],site['chat_id'],site['owner_id'])).fetchall()
 
     def _enterprise_away_locked(self, chat, owner, worker, begin, end):
-        return self._expedition_away_locked(chat,owner,worker,begin,end) or self.connection.execute('''SELECT 1 FROM slave_recovery_events WHERE chat_id=?
+        return self._workforce_away_locked(chat,owner,worker,begin,end) or self._expedition_away_locked(chat,owner,worker,begin,end) or self.connection.execute('''SELECT 1 FROM slave_recovery_events WHERE chat_id=?
             AND owner_id=? AND slave_id=? AND activated_at IS NOT NULL AND activated_at<?
             AND (ended_at IS NULL OR ended_at>?) LIMIT 1''',(chat,owner,worker,end,begin)).fetchone() is not None
 
     def _enterprise_credit_site_locked(self, site, day, gross):
-        net,tax=self._credit_business_income_locked(site['chat_id'],site['owner_id'],day,gross)
+        net,tax=self._credit_business_income_locked(site['chat_id'],site['owner_id'],day,gross,
+            tax_exempt=not self._protection_enabled_locked(site['chat_id'],site['owner_id']))
         self.connection.execute('''INSERT INTO enterprise_income_daily VALUES(?,?,?,?,?)
             ON CONFLICT(business_id,income_day) DO UPDATE SET gross_income=gross_income+excluded.gross_income,
             net_income=net_income+excluded.net_income,tax_paid=tax_paid+excluded.tax_paid''',
@@ -163,12 +168,13 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
                 producers=producers[:CAPACITIES[site['level']]-len(leaders)]
             present=[w for w in (*leaders,*producers) if not self._enterprise_away_locked(chat,owner,w['worker_id'],begin,end)]
             live_leaders=[w for w in leaders if w in present]
-            bonus=sum(20//(2**i) for i in range(min(5,len(live_leaders)))) if legacy else (20 if live_leaders else 0)
+            bonus=sum(20//(2**i) for i in range(min(5,len(live_leaders)))) if legacy else (20 if live_leaders or self._npc_leader_locked(site,begin,end) else 0)
             bonus+=sum(manager_bonus(identity_at(identity_context[w['worker_id']],begin)) for w in live_leaders[:1])
             active=[w for w in present if w['role']==cfg['producer_role'] and w['last_seen'] is not None and end<=w['last_seen']+BUSINESS_ACTIVE_SECONDS]
             inactive=sum(w['role']==cfg['producer_role'] for w in present)-len(active)
             production=sum(cfg['owner_per_producer']*work_percent(identity_at(identity_context[w['worker_id']],begin),site['business_type']) for w in active)
             gross,remainder=divmod(production*(100+bonus)+inactive*cfg['inactive_owner_per_producer']*10000+remainder,10000)
+            if self._protection_outage_locked(chat,owner,begin,end):gross=0
             day=datetime.fromtimestamp(end-1,BUSINESS_STATS_TZ).date().isoformat()
             daily[day]=daily.get(day,0)+gross
             for w in present:
@@ -187,9 +193,11 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
         return result
 
     def _enterprise_settle_owner_locked(self, chat, owner, timestamp):
+        npc_income=self._npc_tick_locked(chat,owner,timestamp)
         sites=self.connection.execute('SELECT * FROM businesses WHERE chat_id=? AND owner_id=? ORDER BY id',(chat,owner)).fetchall()
         if not sites:return None
         total=dict(hours=0,owner_income=0,gross_income=0,tax=0,business_type=sites[0]['business_type'])
+        total.update(npc_income)
         for site in sites:
             r=self._enterprise_settle_site_locked(site,timestamp)
             total['hours']=max(total['hours'],r['hours'])
@@ -204,7 +212,7 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
                 sites=self.connection.execute('SELECT * FROM businesses WHERE chat_id=? AND owner_id=?',(chat,owner)).fetchall()
                 if any(s['business_type']==kind for s in sites):return 'exists'
                 if len(sites)>=MAX_ENTERPRISES:return 'limit'
-                if not self.connection.execute('SELECT 1 FROM ownership WHERE chat_id=? AND owner_id=?',(chat,owner)).fetchone():return 'no_slaves'
+                if not self.connection.execute('SELECT 1 FROM ownership WHERE chat_id=? AND owner_id=?',(chat,owner)).fetchone() and not self.connection.execute('SELECT 1 FROM fictional_workers WHERE chat=? AND owner=?',(chat,owner)).fetchone():return 'no_slaves'
                 price=CATALOG[kind]['price']
                 balance=self.connection.execute('SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?',(chat,owner)).fetchone()
                 if price and (not balance or balance['balance']<price):return 'insufficient'
@@ -226,13 +234,14 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
                 cfg=config(site)
                 if role is not None and role not in (cfg['producer_role'],cfg['leader_role']):return 'invalid_role'
                 if not self.connection.execute('SELECT 1 FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?',(chat,owner,worker)).fetchone():return 'not_owned'
+                if self._workforce_away_locked(chat,owner,worker,now(),now()+1):return 'away'
                 if self._expedition_away_locked(chat,owner,worker,now(),now()+1):return 'away'
                 if self.connection.execute("SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND owner_id=? AND slave_id=? AND status IN ('pending','playing')",(chat,owner,worker)).fetchone():return 'away'
                 rows=self._enterprise_workers_locked(site)
                 others=[w for w in rows if w['worker_id']!=worker]
                 if role is not None:
-                    if len(others)>=CAPACITIES[site['level']]:return 'full'
-                    if role==cfg['leader_role'] and any(w['role']==role for w in others):return 'leader_full'
+                    if len(others)+self._npc_count_locked(site)>=CAPACITIES[site['level']]:return 'full'
+                    if role==cfg['leader_role'] and (any(w['role']==role for w in others) or self._npc_leader_locked(site,now(),now()+1)):return 'leader_full'
                 timestamp=now()
                 self._enterprise_settle_owner_locked(chat,owner,timestamp)
                 current=self.connection.execute('SELECT * FROM business_workers WHERE chat_id=? AND owner_id=? AND worker_id=?',(chat,owner,worker)).fetchone()
@@ -285,7 +294,7 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
             site=dict(self.connection.execute('SELECT * FROM businesses WHERE id=?',(site_id,)).fetchone())
             workers=[dict(w) for w in self._enterprise_workers_locked(site)]
             for w in workers:w['away']=self._enterprise_away_locked(chat,site['owner_id'],w['worker_id'],now(),now()+1)
-            site.update(workers=workers,capacity=CAPACITIES[site['level']],can_edit=actor==site['owner_id'])
+            site.update(workers=workers,npc_count=self._npc_count_locked(site),capacity=CAPACITIES[site['level']],can_edit=actor==site['owner_id'])
             self.connection.commit()
             return site
 
@@ -309,7 +318,8 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
         trips=[tuple(r) for r in self.connection.execute('SELECT user_id,expedition_id FROM slave_expedition_members WHERE chat_id=? AND owner_id=? AND active=1 ORDER BY user_id',(chat,owner))]
         listings=[tuple(r) for r in self.connection.execute("SELECT id,worker_id FROM slave_trader_listings WHERE chat_id=? AND seller_id=? AND status='active' AND expires_at>? ORDER BY id",(chat,owner,now()))]
         identities=[(r[0],self._slave_identity_locked(r[0])) for r in owned]
-        return digest([sites,owned,absent,trips,listings,identities])
+        npcs=[tuple(r) for r in self.connection.execute('SELECT id,site,status,revision FROM fictional_workers WHERE chat=? AND owner=? ORDER BY id',(chat,owner))]
+        return digest([sites,owned,absent,trips,listings,identities,npcs])
 
     def _holdings_check_locked(self, chat, owner, revision):
         self._require_feature_locked(chat,'slavery')
@@ -317,8 +327,11 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
         if not isinstance(revision,str) or revision!=self._holdings_revision_locked(chat,owner):
             raise ValueError('Владения изменились. Обнови список и подтверди заново.')
 
-    async def enterprise_batch(self, chat, owner, users, site_id, role, revision):
-        if (not isinstance(users,list) or not 1<=len(users)<=1000 or
+    async def enterprise_batch(self, chat, owner, users, site_id, role, revision, npcs=None):
+        npcs=[] if npcs is None else npcs
+        if (not isinstance(npcs,list) or len(npcs)>1000 or any(not isinstance(i,str) or len(i)!=32 for i in npcs) or len(set(npcs))!=len(npcs)):
+            raise ValueError('Некорректный список NPC.')
+        if (not isinstance(users,list) or not 1<=len(users)+len(npcs)<=1000 or
             any(type(u) is not int or u<=0 for u in users) or len(set(users))!=len(users)):
             raise ValueError('Выбери разных работников (не более 1000).')
         if role not in ('worker','leader','remove') or (role!='remove' and type(site_id) is not int):
@@ -332,13 +345,25 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
                 for user in users:
                     if not self._arena_owns_locked(chat,owner,user):raise ValueError('Один из работников больше не твой.')
                     if self._enterprise_away_locked(chat,owner,user,now(),now()+1):raise ValueError('Пропавшего участника или участника экспедиции нельзя переназначить.')
+                npc_rows=[]
+                for npc_id in npcs:
+                    row=self.connection.execute('SELECT * FROM fictional_workers WHERE id=? AND chat=? AND owner=?',(npc_id,chat,owner)).fetchone()
+                    if not row:raise ValueError('Один из NPC больше не твой в этом чате.')
+                    r=self._npc_decode(row)
+                    if r['status'] not in ('rest','work'):raise ValueError('NPC пропал, учится или находится в экспедиции.')
+                    npc_rows.append(r)
                 if site:
                     others=[w for w in self._enterprise_workers_locked(site) if w['worker_id'] not in selected]
-                    if len(others)+len(users)>CAPACITIES[site['level']]:raise ValueError('На предприятии не хватает мест. Никто не переназначен.')
+                    npc_others=[r for r in self._npc_rows_locked(chat,owner) if r['site']==site_id and r['id'] not in npcs]
+                    if len(others)+len(users)+len(npc_others)+len(npcs)>CAPACITIES[site['level']]:raise ValueError('На предприятии не хватает мест. Никто не переназначен.')
                     cfg=config(site)
-                    if role=='leader' and (len(users)!=1 or any(w['role']==cfg['leader_role'] for w in others)):
+                    if role=='leader' and (len(users)+len(npcs)!=1 or any(w['role']==cfg['leader_role'] for w in others) or any(r['data'].get('role')=='leader' for r in npc_others)):
                         raise ValueError('На предприятии может быть только один управляющий.')
                 stamp=now();self._enterprise_settle_owner_locked(chat,owner,stamp)
+                for row in npc_rows:
+                    r=self._npc_decode(self.connection.execute('SELECT * FROM fictional_workers WHERE id=?',(row['id'],)).fetchone())
+                    r['status']='rest' if role=='remove' else 'work';r['site']=None if role=='remove' else site_id
+                    r['data']['role']=role;r['data']['work_since']=stamp;self._npc_save_locked(r)
                 for user in users:
                     current=self.connection.execute('SELECT * FROM business_workers WHERE chat_id=? AND owner_id=? AND worker_id=?',(chat,owner,user)).fetchone()
                     if role=='remove':
@@ -349,7 +374,7 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
                             VALUES(?,?,?,?,?,?,?) ON CONFLICT(chat_id,owner_id,worker_id) DO UPDATE SET role=excluded.role,
                             assigned_at=excluded.assigned_at,business_id=excluded.business_id,wage_hours=excluded.wage_hours''',
                             (chat,owner,user,actual,stamp,site_id,current['wage_hours'] if current and current['role']==actual else 0))
-                return f'Назначения обновлены: {len(users)}.'
+                return f'Назначения обновлены: {len(users)+len(npcs)}.'
 
     async def enterprise_close(self, chat, owner, site_id, revision):
         if type(site_id) is not int:raise ValueError('Некорректное предприятие.')
@@ -364,6 +389,7 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
                 for user in ids:
                     self.connection.execute('DELETE FROM business_workers WHERE chat_id=? AND owner_id=? AND worker_id=?',(chat,owner,user))
                 self._archive_enterprise_locked(site, now())
+                self.connection.execute("UPDATE fictional_workers SET site=NULL,status=CASE WHEN status='work' THEN 'rest' ELSE status END,revision=revision+1 WHERE site=?",(site_id,))
                 self.connection.execute('DELETE FROM businesses WHERE id=? AND chat_id=? AND owner_id=?',(site_id,chat,owner))
                 # Keep income ledgers and ownership, including active searches/trips.
                 return 'Предприятие закрыто. Работники сняты с должностей, но остаются твоими. Возврата стоимости нет.'
@@ -377,9 +403,12 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
         async with self._lock:
             with self.connection:
                 self._require_feature_locked(chat,'slavery')
+                protection=self._protection_view_locked(chat,owner)
                 self._expedition_finish_due_locked()
                 self._finance_tick_locked()
                 self._enterprise_settle_owner_locked(chat,owner,now())
+                self._workforce_tick_locked(chat,owner)
+                npc=self._npc_view_locked(chat,owner)
                 sites=[]
                 for row in self.connection.execute('SELECT * FROM businesses WHERE chat_id=? AND owner_id=? ORDER BY id',(chat,owner)):
                     s=dict(row);cfg=config(s);producer,leader=role_labels(s)
@@ -387,6 +416,7 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
                         capacity=CAPACITIES[s['level']],producer_label=producer,leader_label=leader,
                         upgrade_price=UPGRADE_PRICES.get(s['level']),active_rate=cfg['owner_per_producer'],inactive_rate=cfg['inactive_owner_per_producer'])
                     s['workers']=[dict(w,away=self._enterprise_away_locked(chat,owner,w['worker_id'],now(),now()+1)) for w in self._enterprise_workers_locked(row)]
+                    s['npc_count']=self._npc_count_locked(s)
                     s['income']=[dict(r) for r in self.connection.execute('SELECT * FROM enterprise_income_daily WHERE business_id=? ORDER BY income_day DESC LIMIT 7',(s['id'],))]
                     sites.append(s)
                 people=[];catalog=self._fighter_catalog_locked()
@@ -409,11 +439,11 @@ class EnterpriseMixin(SlaveFinanceMixin, SlaveIdentityMixin, SlaveTraderMixin, E
                 balance=self.connection.execute('SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?',(chat,owner)).fetchone()
                 chat_row=self.connection.execute('SELECT title FROM chats WHERE chat_id=?',(chat,)).fetchone()
                 trips=self._expedition_public_locked(chat,owner)
-                other=self.connection.execute("SELECT chat_id FROM slave_expeditions WHERE owner_id=? AND status='active' AND chat_id<>?",(owner,chat)).fetchone()
+                other=self.connection.execute("SELECT chat_id FROM slave_expeditions WHERE owner_id=? AND status='active' AND chat_id<>? UNION ALL SELECT chat AS chat_id FROM npc_trips WHERE owner=? AND status='active' AND chat<>? LIMIT 1",(owner,chat,owner,chat)).fetchone()
                 recovery=[dict(id=r['id'],slave_id=r['slave_id'],deadline=r['deadline'],kind=r['kind']) for r in self.connection.execute("SELECT * FROM slave_recovery_events WHERE chat_id=? AND owner_id=? AND status IN ('pending','playing')",(chat,owner))]
                 return dict(chat_id=chat,chat_title=chat_row['title'] if chat_row else str(chat),actor_id=owner,
                     server_time=now(),revision=self._holdings_revision_locked(chat,owner),balance=balance['balance'] if balance else 0,
                     sites=sites,people=people,expeditions=trips,other_expedition_chat=other['chat_id'] if other else None,
-                    recoveries=recovery,arena_enabled=self._feature_enabled_locked(chat,'arena'),trader=self._trader_view_locked(chat,owner),
+                    recoveries=recovery,npc=npc,protection=protection,arena_enabled=self._feature_enabled_locked(chat,'arena'),trader=self._trader_view_locked(chat,owner),
                     catalog=[dict(id=k,**v) for k,v in CATALOG.items()],max_enterprises=MAX_ENTERPRISES,
                     missions=[dict(id=k,**v) for k,v in EXPEDITIONS.items()])

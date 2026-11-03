@@ -39,6 +39,19 @@ def register_holdings(app, db, bot, actor_key, require_member, int_field):
         body=await request.json()
         if not isinstance(body,dict):raise ValueError('Некорректный запрос.')
         kind=body.get('action');notice=''
+        if isinstance(kind,str) and kind.startswith('protection_'):
+            result=await db.protection_action(chat,actor,body)
+            return web.json_response(dict(**result,holdings=await db.holdings_view(chat,actor)))
+        if isinstance(kind,str) and kind.startswith(('npc_','workforce_')):
+            if kind in ('npc_trip','npc_trip_quote'):
+                users=body.get('users',[])
+                if not isinstance(users,list) or len(users)>5:raise ValueError('Некорректный список участников.')
+                for worker in users:
+                    if type(worker) is not int or worker<=0:raise ValueError('Некорректный участник.')
+                    member=await require_member(bot,chat,worker)
+                    if getattr(getattr(member,'user',None),'is_bot',False):raise ValueError('Telegram-бот не участвует в экспедиции.')
+            result=await db.npc_action(chat,actor,body)
+            return web.json_response(dict(**result,holdings=await db.holdings_view(chat,actor)))
         if isinstance(kind,str) and kind.startswith('finance_'):
             users=[]
             if kind in ('finance_quote','finance_buy'):
@@ -83,7 +96,7 @@ def register_holdings(app, db, bot, actor_key, require_member, int_field):
             await db.expedition_start(chat,actor,body.get('mission'),users,body.get('revision'),body.get('nonce'))
             notice='Отряд отправлен. Состав и риски зафиксированы.'
         elif kind=='assign':
-            notice=await db.enterprise_batch(chat,actor,body.get('users'),body.get('site'),body.get('role'),body.get('revision'))
+            notice=await db.enterprise_batch(chat,actor,body.get('users'),body.get('site'),body.get('role'),body.get('revision'),npcs=body.get('npcs',[]))
         elif kind=='close':
             if body.get('confirm') is not True:raise ValueError('Сначала подтверди закрытие предприятия.')
             notice=await db.enterprise_close(chat,actor,int_field(body,'site'),body.get('revision'))

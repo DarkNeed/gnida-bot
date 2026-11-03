@@ -2312,25 +2312,27 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
         return max(0, (active_end - start) // BUSINESS_HOUR_SECONDS)
 
     def _credit_business_income_locked(
-        self, chat_id: int, owner_id: int, day: str, gross_income: int
+        self, chat_id: int, owner_id: int, day: str, gross_income: int, *, tax_exempt: bool = False
     ) -> tuple[int, int]:
         """Record gross/net income and withhold incremental tax under the DB lock."""
         if gross_income <= 0:
             return 0, 0
         previous = self.connection.execute(
-            """SELECT gross_income, tax_paid FROM business_tax_daily
+            """SELECT gross_income, tax_paid, taxable_income FROM business_tax_daily
                WHERE chat_id=? AND owner_id=? AND income_day=?""",
             (chat_id, owner_id, day),
         ).fetchone()
         daily_gross = (int(previous["gross_income"]) if previous else 0) + gross_income
-        daily_tax = business_income_tax(daily_gross)
+        taxable = (int(previous['taxable_income'] if previous['taxable_income'] is not None else previous['gross_income']) if previous else 0)
+        taxable += 0 if tax_exempt else gross_income
+        daily_tax = business_income_tax(taxable)
         tax = daily_tax - (int(previous["tax_paid"]) if previous else 0)
         net_income = gross_income - tax
         self.connection.execute(
-            """INSERT INTO business_tax_daily(chat_id, owner_id, income_day, gross_income, tax_paid)
-               VALUES (?, ?, ?, ?, ?) ON CONFLICT(chat_id, owner_id, income_day)
-               DO UPDATE SET gross_income=excluded.gross_income, tax_paid=excluded.tax_paid""",
-            (chat_id, owner_id, day, daily_gross, daily_tax),
+            """INSERT INTO business_tax_daily(chat_id, owner_id, income_day, gross_income, tax_paid, taxable_income)
+               VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chat_id, owner_id, income_day)
+               DO UPDATE SET gross_income=excluded.gross_income, tax_paid=excluded.tax_paid,taxable_income=excluded.taxable_income""",
+            (chat_id, owner_id, day, daily_gross, daily_tax, taxable),
         )
         self.connection.execute(
             """INSERT INTO business_income_daily(chat_id, owner_id, income_day, owner_income)
@@ -2389,10 +2391,8 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
         self, chat_id: int, owner_id: int
     ) -> dict[str, int | str] | None:
         async with self._lock:
-            result = self._settle_business_locked(chat_id, owner_id, utc_timestamp())
-            if result and int(result["hours"]):
-                self.connection.commit()
-            return result
+            with self.connection:
+                return self._settle_business_locked(chat_id, owner_id, utc_timestamp())
 
     async def settle_businesses_for_user(self, user_id: int) -> None:
         async with self._lock:
@@ -3054,6 +3054,9 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
                 return "own_business", None, None, None
             now = utc_timestamp()
             if self.connection.execute('SELECT 1 FROM slave_expedition_members WHERE user_id=? AND active=1',(worker_id,)).fetchone():
+                return 'away',None,None,None
+            actual=self.connection.execute('SELECT owner_id FROM ownership WHERE chat_id=? AND slave_id=?',(chat_id,worker_id)).fetchone()
+            if actual and self._workforce_away_locked(chat_id,actual['owner_id'],worker_id,now,now+1):
                 return 'away',None,None,None
             if self.connection.execute("SELECT 1 FROM slave_recovery_events WHERE chat_id=? AND slave_id=? AND status IN ('pending','playing')",(chat_id,worker_id)).fetchone():
                 return 'away',None,None,None
