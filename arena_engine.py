@@ -38,6 +38,7 @@ from arena_rpg import (
     build_rpg_catalog, rpg_variant, rpg_restriction, rpg_modifiers, rpg_parry,
     rpg_received_damage, rpg_effect, rpg_after_action, branch as rpg_branch,
 )
+from arena_assassin import build_catalog as build_assassin_catalog
 from arena_rpg_combat import context as rpg_action_context, incoming as rpg_incoming, incoming_multiplier as rpg_incoming_multiplier, paid_action as rpg_paid_action, revive as rpg_revive
 from arena_finals import (context as final_context, modifiers as final_modifiers,
     incoming as final_incoming, received as final_received, after_action as final_after_action,
@@ -106,6 +107,7 @@ class Skill:
     description: str = ""
     pierce: float | None = None
     tags: tuple[str, ...] = ()
+    cast_base: float | None = None
 
     @property
     def hostile(self) -> bool:
@@ -621,6 +623,10 @@ BUILTIN_PASSIVES.update(build_relic_catalog(PassiveSkill))
 _rpg_classes, _rpg_skills = build_rpg_catalog(FighterClass, Skill, effect)
 FIGHTER_CLASSES.update(_rpg_classes)
 BUILTIN_SKILLS.update(_rpg_skills)
+_assassin_classes, _assassin_skills = build_assassin_catalog(FighterClass, Skill, effect)
+FIGHTER_CLASSES.update(_assassin_classes)
+BUILTIN_SKILLS.update(_assassin_skills)
+VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _assassin_classes.items()})
 from arena_casino import build_catalog as build_casino_catalog
 _casino_classes, _casino_skills = build_casino_catalog(FighterClass, Skill, effect)
 FIGHTER_CLASSES.update(_casino_classes)
@@ -876,6 +882,7 @@ def create_battle_state(
     *,
     classes: dict[str, FighterClass] | None = None,
     skills: dict[str, Skill] | None = None,
+    action_queue_version: bool = False,
 ) -> dict[str, Any]:
     class_catalog = classes or FIGHTER_CLASSES
     skill_catalog = skills or BUILTIN_SKILLS
@@ -972,6 +979,11 @@ def create_battle_state(
         "flow": "single_click",
         "phase": "skill",
         "active_side": "a",
+        # Existing saved fights retain alternating turns.  New live fights opt
+        # in at creation time, where speed is a time between actions.
+        "action_queue_version": bool(action_queue_version),
+        **({"unified_version": 3} if action_queue_version else {}),
+        "action_times": {"a": 0.0, "b": 0.0} if action_queue_version else {},
     }
 
 
@@ -1187,7 +1199,48 @@ def battle_status_snapshot(state: dict) -> dict:
     }
 
 
-def _advance_turn(state: dict, side_key: str) -> None:
+def _advance_turn(state: dict, side_key: str, skill: Skill | None = None) -> None:
+    if state.get("action_queue_version"):
+        from arena_action_queue import cast_time
+
+        times = state.setdefault("action_times", {"a": 0.0, "b": 0.0})
+        actor = state["sides"][side_key]
+        other = "b" if side_key == "a" else "a"
+        times[side_key] = round(float(times.get(side_key, 0)) + cast_time(actor, skill), 3)
+        state["turn"] += 1
+        if actor["hp"] <= 0 and state["sides"][other]["hp"] <= 0:
+            state.update(finished=True, winner=None, finish_reason="mutual_knockout")
+            return
+        if actor["hp"] <= 0:
+            state.update(finished=True, winner=other, finish_reason="self_damage")
+            return
+        if state["sides"][other]["hp"] <= 0:
+            state.update(finished=True, winner=side_key)
+            return
+        if state["turn"] > 200:
+            state.update(finished=True, winner=None, finish_reason="turn_limit")
+            return
+        # On a tie, the side that has just acted waits behind the opponent.
+        next_key = min(("a", "b"), key=lambda k: (times.get(k, 0), k == side_key))
+        state["active_side"] = next_key
+        _begin_resource_turn(state, next_key)
+        if any(e["kind"] == "stun" for e in state["sides"][next_key]["effects"]):
+            stunned, opponent = state["sides"][next_key], state["sides"]["b" if next_key == "a" else "a"]
+            order_note = obey_enemy_prescript(stunned, None, opponent)
+            _tick(stunned)
+            times[next_key] = round(float(times.get(next_key, 0)) + cast_time(stunned), 3)
+            state["log"].append({
+                "seq": state["turn"], "side": next_key,
+                "text": "Ошеломление: ход пропущен." + (" · " + order_note if order_note else ""),
+                "damage": 0, "hit": False, "status_after": battle_status_snapshot(state),
+            })
+            state["turn"] += 1
+            if stunned["hp"] <= 0:
+                state.update(finished=True, winner="b" if next_key == "a" else "a", finish_reason="burn")
+                return
+            state["active_side"] = min(("a", "b"), key=lambda k: (times.get(k, 0), k == next_key))
+            _begin_resource_turn(state, state["active_side"])
+        return
     other = "b" if side_key == "a" else "a"
     target = state["sides"][other]
     state["turn"] += 1
@@ -1810,7 +1863,7 @@ def resolve_skill(
     state["log"].append(event)
     state["log"] = state["log"][-60:]
     if advance_turn:
-        _advance_turn(state, side_key)
+        _advance_turn(state, side_key, skill)
     return event
 
 

@@ -15,6 +15,7 @@ from arena_mirror_effects import gift_cost
 from arena_pets import pet_cost
 from arena_encounters import MOBS
 from arena_casino import public_state as casino_public_state
+from arena_action_queue import cast_time
 
 
 async def raid_view(db, row, actor):
@@ -125,6 +126,10 @@ async def raid_view(db, row, actor):
                     asdict(variant),
                     description=rpg_skill_description(variant,side),
                     cost=pet_cost(side, variant, gift_cost(side, variant)),
+                    cast_time=cast_time(side, variant, legacy=data.get('unified_version') != 3),
+                    **({'queue_forecast': __import__('arena_unified_queue').forecast_skill(data,
+                       next((k for k,p in data['players'].items() if p['fighter'] is side), ''), variant)}
+                       if data.get('unified_version') == 3 and not boss else {}),
                     evolution=info,
                     unavailable_reason=roulette_block or skill_restriction(side, variant),
                 )
@@ -186,10 +191,16 @@ async def raid_view(db, row, actor):
             player.pop('qte_result',None)
             await decorate(player["fighter"], player["fighter_id"],character_slot=player.get('character_slot',1))
             player["ready"] = player["selected"] is not None
+            if data.get('unified_version') == 3:
+                from arena_unified_queue import ready, choice
+                player['ready'] = key not in ready(data)
+                if player['actor_id'] == actor and not player['ready']:
+                    player['choice_id'] = choice(data, key)
             # Other players see only readiness, not the selected ability.
             if player["actor_id"] != actor:
                 player["selected"] = None
                 player.pop('selected_target', None)
+        data.pop('_unified', None)
     choices = []
     if row["status"] == "lobby":
         choices.append(

@@ -39,6 +39,7 @@ def choice_avatar(class_id, archclass_id="", stage=10):
         "middle",
         "ring",
         "pinky",
+        "assassin",
     }
     return (
         "/static/assets/" + (class_id if class_id in native else "ragamuffin") + ".png"

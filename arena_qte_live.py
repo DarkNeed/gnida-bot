@@ -326,6 +326,8 @@ class ArenaQteMixin:
             state = json.loads(
                 row["data_json"] if flow["scope"] == "raid" else row["state_json"]
             )
+            if flow.get('unified_group'):
+                return bool(state.get('_queue_wait', {}).get('id') == flow['unified_group'])
             if flow["scope"] == "battle":
                 return (
                     state["turn"] == flow["turn"]
@@ -393,6 +395,8 @@ class ArenaQteMixin:
             if row["status"] != "active" or self._qte_load_locked("battle", token):
                 return row
             state = json.loads(row["state_json"])
+            if state.get('unified_version') == 3:
+                return row
             if row["mode"] != "wasteland" or state["active_side"] != "b":
                 return row
             _, skills = self._fighter_catalog_locked()
@@ -413,6 +417,10 @@ class ArenaQteMixin:
             dict(abort=True) if expired else proof,
             time.time() - stage["started"],
         )
+        if flow.get('unified_group'):
+            from arena_unified_store import complete
+            complete(self, flow, stage, result)
+            return
         if flow.get('queue_group'):
             row = self._raid_row_locked(flow['token'])
             data = json.loads(row['data_json'])
@@ -570,7 +578,7 @@ class ArenaQteMixin:
                 return outcome
 
     async def arena_interactive_action(
-        self, token, actor, revision, action, skill="", proof=None, challenge_id=None
+        self, token, actor, revision, action, skill="", proof=None, challenge_id=None, choice_id=None
     ):
         async with self._lock:
             with self.connection:
@@ -582,6 +590,10 @@ class ArenaQteMixin:
                 if actor not in {s["controller_id"] for s in state["sides"].values()}:
                     raise ValueError("Это не твой бой.")
                 flow = self._qte_load_locked("battle", token)
+                if state.get('unified_version') == 3 and action != 'qte':
+                    from arena_unified_store import direct
+                    direct(self, row, actor, revision, skill, choice_id)
+                    return self._arena_row_locked(token)
                 if action == "qte":
                     if (
                         not flow
@@ -615,7 +627,7 @@ class ArenaQteMixin:
             return self._arena_row_locked(token)
 
     async def arena_interactive_raid(
-        self, token, actor, round_number, skill="", proof=None, challenge_id=None, target=None
+        self, token, actor, round_number, skill="", proof=None, challenge_id=None, target=None, choice_id=None
     ):
         from arena_engine import validate_skill
         from arena_raid_engine import pair_state, BOSS_SKILLS
@@ -635,6 +647,10 @@ class ArenaQteMixin:
                 ):
                     raise ValueError("Ты не управляешь живым бойцом.")
                 flow = self._qte_load_locked("raid", token, actor)
+                if data.get('unified_version') == 3 and not challenge_id:
+                    from arena_unified_store import raid
+                    raid(self, row, actor, round_number, skill, target, choice_id)
+                    return self._raid_row_locked(token)
                 if challenge_id:
                     if not flow or flow["stages"][0]["id"] != challenge_id:
                         raise ValueError("Мини-игра уже изменилась. Обнови рейд.")

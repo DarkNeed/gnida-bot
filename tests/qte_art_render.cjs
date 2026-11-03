@@ -31,7 +31,7 @@ process.stdin.on('end',()=>{
    E.attackStep(attack,1/120);if(i%30===0)render('QTEView',attack);
   }
  }
- assert.equal(classes.size,13); // Gambler keeps its existing bespoke casino art.
+ assert.equal(classes.size,14); // Gambler keeps its existing bespoke casino art.
  assert(motifs.size>=25,`Only ${motifs.size} visual motifs`);
  for(const cls of Object.keys(window.QTEArt.themes).filter(c=>c!=='gambler'))assert([...handled].some(k=>k.startsWith(cls+':')),'Unstyled '+cls);
  const find=id=>E.profile(catalog.find(s=>s.base_id===id));

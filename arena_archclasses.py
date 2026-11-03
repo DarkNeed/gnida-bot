@@ -128,6 +128,20 @@ ARCHCLASSES = {
         "При трёх зарядах сосредоточенности «Падающая звезда» становится «Рассечь небеса»: сила 21, цена 45. Расходует 2 заряда только при попадании; прежний шанс критического удара, максимум 75%.",
         "Сила 22, цена остаётся 45.",
     ),
+    "assassin_shadow": branch(
+        "assassin",
+        "Теневой клинок",
+        "Безликий",
+        "Темповая ветвь: дым ускоряет самого ассасина и сбивает точность цели, а «Игла в сухожилие» сильнее режет скорость. Побеждает, пока враг не успел развернуть тяжёлый каст.",
+        "«Безликий» оставляет ещё меньше следов: ускорение и срыв точности становятся сильнее, а короткие действия чаще успевают до ответа врага.",
+    ),
+    "assassin_blood": branch(
+        "assassin",
+        "Кровавый резчик",
+        "Алый Жнец",
+        "Ветвь долгих ран: «Открытая рана» и «Перерезать нить» усиливают кровотечение. Боец создаёт угрозу, которую врагу приходится переживать собственной атакой.",
+        "«Алый Жнец» превращает финишер в жатву: тяжёлая рана держится дольше и сильнее, а вскрытая цель получает больше входящего урона.",
+    ),
 }
 from arena_rpg_paths import PATHS
 
@@ -359,6 +373,42 @@ def arch_rule(skill, source):
             power=22 if final else 21,
             cost=50,
             tags=("consume_focus",),
+        )
+    elif key == "assassin_shadow" and skill.skill_id == "assassin_smoke":
+        changes = dict(
+            name="Не оставить следа",
+            effects=(
+                e("assassin_smoke", "evasion_flat", 28 if final else 24, 2, "self"),
+                e("assassin_shadow_speed", "speed_pct", .35 if final else .25, 2, "self"),
+                e("assassin_shadow_aim", "accuracy_flat", -15 if final else -10, 1),
+            ),
+        )
+    elif key == "assassin_shadow" and skill.skill_id == "assassin_needle":
+        changes = dict(
+            name="Стереть шаг",
+            power=10 if final else 9,
+            effects=(
+                e("assassin_limp", "speed_pct", -.45 if final else -.35, 2),
+                e("assassin_needle_bleed", "bleed", 2, 3),
+            ),
+        )
+    elif key == "assassin_blood" and skill.skill_id == "assassin_expose":
+        changes = dict(
+            name="Раскрыть артерию",
+            power=15 if final else 13,
+            cost=26 if final else 24,
+            effects=(
+                e("assassin_expose", "damage_taken_pct", .30 if final else .25, 2),
+                e("assassin_expose_bleed", "bleed", 5 if final else 4, 3),
+            ),
+        )
+    elif key == "assassin_blood" and skill.skill_id == "assassin_execution":
+        changes = dict(
+            name="Собрать жатву",
+            power=30 if final else 26,
+            cost=46 if final else 43,
+            pierce=.50 if final else .40,
+            effects=(e("assassin_execution_bleed", "bleed", 7 if final else 6, 3),),
         )
     if changes is None:
         return None

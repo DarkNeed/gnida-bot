@@ -20,6 +20,8 @@ UPGRADES_12 = {
     "ring_fauvist": "«Завершённый шедевр»: точность +5.",
     "pinky_dihui": "«Затмение»: пробитие 50% вместо 45%.",
     "pinky_tiansha": "«Рассечь небеса»: сила 22 вместо 21.",
+    "assassin_shadow": "«Не оставить следа»: скорость +30% и точность цели −15 вместо −10.",
+    "assassin_blood": "«Собрать жатву»: сила 28 вместо 26 и пробитие 45% вместо 40%.",
 }
 UPGRADES_12.update({key:'Родные превращённые атаки получают +1 к силе; классовые комбинации сохраняются.'
                    for key in RPG_BRANCHES})
@@ -252,6 +254,32 @@ def build_arch_skills(Skill):
             ),
         ),
         s("pinky_tiansha", "Небесная рассечка", "physical", 17, 90, 40, 3, pierce=0.25),
+        s(
+            "assassin_shadow",
+            "Шаг за гранью",
+            "physical",
+            14,
+            100,
+            25,
+            3,
+            (
+                e("arch_assassin_shadow_speed", "speed_pct", .25, 2, "self"),
+                e("arch_assassin_shadow_evasion", "evasion_flat", 12, 1, "self"),
+            ),
+        ),
+        s(
+            "assassin_blood",
+            "Плата кровью",
+            "physical",
+            12,
+            100,
+            28,
+            3,
+            (
+                e("arch_assassin_blood_bleed", "bleed", 4, 3),
+                e("arch_assassin_blood_guard", "physical_defense_pct", -0.15, 2),
+            ),
+        ),
     )
     return {skill.skill_id: skill for skill in skills}
 
@@ -262,6 +290,8 @@ def upgrade_description(branch_id):
         "programmer": "«Откат версии»: подготовка следующей магии +35% вместо +25%.",
         "thumb_discipline": "«Построение»: точность +20, физическая защита +25%.",
         "index_messenger": "«Непрошеный совет»: физическая атака цели −15% вместо −10%.",
+        "assassin_shadow": "«Шаг за гранью»: скорость +35% и уклонение +18 вместо +12.",
+        "assassin_blood": "«Плата кровью»: кровотечение −5 вместо −4, физическая защита цели −20%.",
     }.get(branch_id, "Уникальный навык 15 уровня: сила +2, цена и перезарядка прежние.")
 
 
@@ -309,6 +339,8 @@ def unique_rule(skill, source):
         "programmer": {"next_magic_damage": 0.35},
         "thumb_discipline": {"accuracy_flat": 20, "physical_defense_pct": 0.25},
         "index_messenger": {"physical_attack_pct": -0.15},
+        "assassin_shadow": {"speed_pct": .35, "evasion_flat": 18},
+        "assassin_blood": {"bleed": 5, "physical_defense_pct": -0.20},
     }.get(key)
     if values:
         changes["effects"] = tuple(
@@ -337,6 +369,7 @@ def improve_rule(rule, source, skill):
         "index_proxy": {"proxy_refund": 7},
         "middle_guardian": {"grit_guard": 0.40, "grit_magic": 0.30},
         "ring_pointillist": {"bleed": 5},
+        "assassin_shadow": {"assassin_shadow_speed": .30, "assassin_shadow_aim": -15},
     }.get(key)
     if values:
         changes["effects"] = tuple(
@@ -368,6 +401,9 @@ def improve_rule(rule, source, skill):
         changes["pierce"] = max(changes["pierce"], 0.50)
     elif key == "pinky_tiansha":
         changes["power"] = max(changes["power"], 22)
+    elif key == "assassin_blood" and skill.skill_id == "assassin_execution":
+        changes["power"] = max(changes["power"], 28)
+        changes["pierce"] = max(changes["pierce"], .45)
     rule["description"] += " Развитие 12 уровня: " + UPGRADES_12[key]
     return rule
 

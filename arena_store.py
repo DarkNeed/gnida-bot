@@ -860,7 +860,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             )
             for k in ("a", "b")
         ]
-        state = create_battle_state(*sources, classes=classes, skills=skills)
+        state = create_battle_state(*sources, classes=classes, skills=skills, action_queue_version=True)
         state['qte_modes']={str(s['controller_id']):self._qte_enabled_locked(s['controller_id']) for s in state['sides'].values()}
         if row.get("ranked"):
             state.update(ranked=True, ranked_actions={"a": 0, "b": 0}, ranked_timeouts={"a": 0, "b": 0})
@@ -873,6 +873,8 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             if a_speed == b_speed
             else "a" if a_speed > b_speed else "b"
         )
+        from arena_unified_queue import initialize
+        initialize(state, skills)
         self.connection.execute(
             "UPDATE arena_battles SET status='active',state_json=?,deadline=? WHERE id=?",
             (
@@ -1204,6 +1206,11 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             if row["revision"] != revision:
                 raise ValueError("Ход уже изменился. Обновите бой.")
             state = json.loads(row["state_json"])
+            if state.get('unified_version') == 3:
+                from arena_unified_store import direct
+                direct(self, row, actor, revision, skill_id)
+                self.connection.commit()
+                return self._arena_row_locked(token)
             key = state["active_side"]
             if skill_id == "surrender":
                 key = next(
@@ -1325,6 +1332,11 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 self._arena_refund_locked(row, "cancelled")
             elif row["status"] == "active" and row["state_json"]:
                 state = json.loads(row["state_json"])
+                if state.get('unified_version') == 3:
+                    from arena_unified_store import expire
+                    expire(self, 'battle', row, state)
+                    expired.append(self._arena_row_locked(row['token']))
+                    continue
                 expired_side = state["active_side"]
                 skip_turn(state)
                 if row.get("ranked") and not state["finished"]:
@@ -1415,17 +1427,19 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
             source["controlled"] = False
             enemy = enemy_source(source["level"] + floor - 1, previous_class, enabled_classes={k for k in FIGHTER_CLASSES if self._arena_class_enabled_locked(chat,k)})
             classes, skills = self._fighter_catalog_locked()
-            state = create_battle_state(source, enemy, classes=classes, skills=skills)
+            state = create_battle_state(source, enemy, classes=classes, skills=skills, action_queue_version=True)
             # The owner can pilot a slave in PvE; the same 20% control penalty applies.
             if not personal and fighter != actor:
                 source["controlled"] = True
                 state = create_battle_state(
-                    source, enemy, classes=classes, skills=skills
+                    source, enemy, classes=classes, skills=skills, action_queue_version=True
                 )
             token = secrets.token_urlsafe(16)
             now = utc_timestamp()
             state["turn_timer_seconds"] = 0
             state['qte_modes']={str(s['controller_id']):self._qte_enabled_locked(s['controller_id']) for s in state['sides'].values()}
+            from arena_unified_queue import initialize
+            initialize(state, skills)
             self.connection.execute(
                 """INSERT INTO arena_battles(token,chat_id,mode,a_owner,b_owner,a_fighter,b_fighter,a_control,b_accepted,status,state_json,floor,created_at,deadline)
                    VALUES(?,?,'wasteland',?,0,?,0,?,1,'active',?,?,?,?)""",

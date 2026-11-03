@@ -53,6 +53,8 @@ class ArchEngineTests(unittest.TestCase):
         ring_fauvist="last_stroke",
         pinky_dihui="moon_arc",
         pinky_tiansha="falling_star",
+        assassin_shadow="assassin_smoke",
+        assassin_blood="assassin_execution",
     )
 
     def state(self, branch="programmer", level=10):
@@ -81,8 +83,8 @@ class ArchEngineTests(unittest.TestCase):
             dict(id="doxxing_magic", kind="magic_defense_pct", value=-0.2, duration=3),
         ]
 
-    def test_all_sixteen_branches_native_only_and_two_stages(self):
-        self.assertEqual(len(ARCHCLASSES), 27)
+    def test_all_native_branches_only_and_two_stages(self):
+        self.assertEqual(len(ARCHCLASSES), 29)
         for key, sid in self.SKILLS.items():
             for level in (10, 20):
                 with self.subTest(branch=key, level=level):

@@ -219,6 +219,10 @@ class RaidMixin:
         return owner
 
     def _raid_save_locked(self, row, data, status=None):
+        if data.get('unified_version') == 3 and not data.get('finished'):
+            from arena_unified_queue import initialize
+            from arena_unified_store import catalog
+            initialize(data, catalog(self))
         status = status or row["status"]
         self.connection.execute(
             """UPDATE arena_raids SET data_json=?,status=?,round=?,deadline=?,
@@ -414,6 +418,10 @@ class RaidMixin:
                 self._raid_save_locked(row,data)
                 self.connection.execute('UPDATE arena_raids SET deadline=? WHERE token=?',(row['deadline'],row['token']))
             return
+        if data.get('unified_version') == 3:
+            from arena_unified_store import drive
+            drive(self, 'raid', row, data)
+            return
         pending = data.get('whaler_reaction')
         if (pending and not pending.get('result') and pending['target'] in alive_players(data)
                 and self._qte_load_locked('raid', row['token'], int(pending['target']))):
@@ -489,7 +497,11 @@ class RaidMixin:
                     (now, row["token"]),
                 )
             elif row["status"] == "active" and row["deadline"] <= now:
-                self._raid_resolve_locked(row, json.loads(row["data_json"]))
+                data = json.loads(row['data_json'])
+                if data.get('unified_version') == 3 and not data.get('_queue_wait'):
+                    from arena_unified_store import expire
+                    expire(self, 'raid', row, data)
+                else:self._raid_resolve_locked(row, data)
             fresh = self._raid_row_locked(row["token"])
             if fresh["revision"] != original["revision"]:
                 changed.append(fresh)
@@ -733,6 +745,7 @@ class RaidMixin:
                                     self._rp_roster_locked(row), row['creator_id'])
                         else:
                             data = create_raid_state(members, sources, classes, skills, row['boss_id'])
+                        data['unified_version'] = 3
                         for player in data['players'].values():
                             player['character_slot']=1 if player['fighter'].get('rp_sandbox') else self._character_active_locked(player['actor_id'])
                         data['qte_modes']={str(p['actor_id']):self._qte_enabled_locked(p['actor_id']) for p in data['players'].values()}
@@ -786,6 +799,12 @@ class RaidMixin:
                     self.connection.commit()
                     raise ValueError("Время выбора истекло. Обновите рейд.")
                 data = json.loads(row["data_json"])
+                if data.get('unified_version') == 3:
+                    from arena_unified_store import raid
+                    from arena_unified_queue import choice
+                    raid(self, row, actor, round_number, skill, target, choice(data, str(actor)))
+                    self.connection.commit()
+                    return self._raid_row_locked(token)
                 if data.get('nazarick',{}).get('blessing_offer'):
                     raise ValueError('Бой приостановлен: отряд голосует за благословение.')
                 if type(round_number) is not int or round_number != data["round"]:

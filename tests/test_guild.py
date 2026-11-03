@@ -265,7 +265,9 @@ class GuildTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_active_battle_expiry_cancels_qte_and_releases_reservations(self):
         run=await self.start('c_hunt')
-        await self.db.arena_interactive_raid(run['battle'],10,1,'bum_punch',target='e1')
+        data=json.loads((await self.db.arena_raid_get(run['battle']))['data_json'])
+        from arena_unified_queue import choice
+        await self.db.arena_interactive_raid(run['battle'],10,1,'bum_punch',target='e1',choice_id=choice(data,'10'))
         self.assertIsNotNone(self.db._qte_load_locked('raid',run['battle'],10))
         self.db.connection.execute('UPDATE guild_runs SET expires=0 WHERE id=?',(run['id'],));self.db.connection.commit()
         ended=await self.db.guild_get(run['id'],10)
@@ -282,11 +284,13 @@ class GuildTests(unittest.IsolatedAsyncioTestCase):
                 data['players']['10']['fighter']['hp']=10000
                 data['players']['10']['fighter']['stats']['max_hp']=10000
                 self.db._raid_save_locked(raid,data)
-        await self.db.arena_interactive_raid(run['battle'],10,1,'armor_split',target='e1')
+        from arena_unified_queue import choice,clock
+        await self.db.arena_interactive_raid(run['battle'],10,1,'armor_split',target='e1',choice_id=choice(data,'10'))
         while flow:=self.db._qte_load_locked('raid',run['battle'],10):
             await self.db.arena_interactive_raid(run['battle'],10,1,proof=dict(abort=True),challenge_id=flow['stages'][0]['id'])
         native=json.loads((await self.db.arena_raid_get(run['battle']))['data_json'])
-        self.assertEqual(native['round'],2)
+        self.assertGreater(clock(native)['time'],0)
+        self.assertEqual(native['players']['10']['manual_turns'],1)
         self.assertEqual(native['players']['10']['fighter']['resource'],93) # 100−15+8 next-turn regen
         self.assertTrue(any(e.get('skill','').startswith('guild_') for e in native['log']))
 

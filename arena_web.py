@@ -112,6 +112,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                     else ("Пустошь" if not user else str(user))
                 )
     if state:
+        from arena_action_queue import direct_public_queue, cast_time
         for key, side in state["sides"].items():
             side["name"] = names.get(key + "_fighter", "Боец")
             cls = classes.get(side["class_id"], classes["ragamuffin"])
@@ -134,7 +135,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side["class_rarity_name"] = RARITY_LABELS[cls.rarity]
             side["sprite"] = (
                 side["class_id"]
-                if side["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter", "gambler"} | FINGER_IDS
+                if side["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter", "gambler", "assassin"} | FINGER_IDS
                 else "ragamuffin"
             )
             side.update(
@@ -169,6 +170,8 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                         asdict(variant),
                         description=rpg_skill_description(variant,side),
                         cost=pet_cost(side, variant, gift_cost(side, variant)),
+                        cast_time=cast_time(side, variant, legacy=state.get('unified_version') != 3),
+                        **({'queue_forecast': __import__('arena_unified_queue').forecast_skill(state, key, variant)} if state.get('unified_version') == 3 else {}),
                         evolution=info,
                         unavailable_reason=roulette_block or skill_restriction(
                             side, variant, completed_turns(state, key)
@@ -224,6 +227,19 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 )
             ):
                 side["skill_details"].append(asdict(skills["bum_punch"]))
+        state["action_queue"] = direct_public_queue(state, skills)
+        if state.get('unified_version') == 3:
+            from arena_unified_queue import ready, public
+            state['ready_sides'] = ready(state)
+            own_key = next((k for k, f in state['sides'].items() if f['controller_id'] == actor), None)
+            if own_key in state['ready_sides']:
+                from arena_unified_queue import choice
+                state['active_side'] = own_key
+                state['choice_id'] = choice(state, own_key)
+            state['action_queue'] = public(state, actor)
+            state.pop('_unified', None)
+            state.pop('_queue_wait', None)
+            state.pop('_cast_queue', None)
     own_side = (
         "a" if actor == row["a_owner"] else "b" if actor == row["b_owner"] else None
     )
@@ -338,7 +354,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
         profile["catchup_level"] = level_from_total_xp(target) if target > profile["xp"] else 0
         profile["sprite"] = (
             profile["class_id"]
-            if profile["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter", "gambler"} | FINGER_IDS
+            if profile["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter", "gambler", "assassin"} | FINGER_IDS
             else "ragamuffin"
         )
         profile.update(await db.arena_sprite_info(chat, profile["user_id"]))
@@ -679,6 +695,7 @@ def create_arena_app(
                 int_field(body, "revision"),
                 str(action),str(body.get("skill", "")),
                 proof=body.get('proof'),challenge_id=body.get('challenge_id'),
+                choice_id=body.get('choice_id'),
             )
         else:
             controlled = body.get("controlled", True)
@@ -732,6 +749,7 @@ def create_arena_app(
                 row["token"], actor, int_field(body, "round"), body.get("skill"),
                 proof=body.get('proof'),challenge_id=body.get('challenge_id') if action=='qte' else None,
                 target=body.get('target'),
+                choice_id=body.get('choice_id'),
             )
         else:
             personal = body.get("personal", True)

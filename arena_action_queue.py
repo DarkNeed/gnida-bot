@@ -6,13 +6,33 @@ import random
 import secrets
 
 COLORS = ('#79c8df', '#a8d5ad', '#d8ae73', '#dc9279', '#b39ce5', '#db9fc7', '#8ebdc6', '#c8be87')
+MIN_CAST_TIME = .75
 
 
-def cast_time(fighter, skill=None):
+def cast_time(fighter, skill=None, *, legacy=True):
+    if legacy:
+        from arena_engine import effective_stat
+        base = (1.6 if skill is None else 2.4 if not skill.hostile else
+                4.2 if skill.power >= 35 or 'six_strike' in skill.tags else 3)
+        return round((1.25 + base / (1 + max(0, effective_stat(fighter, 'speed')) * .018)) * 4) / 4
+    if skill is not None:
+        from arena_skill_timing import duration
+        return duration(fighter, skill)
     from arena_engine import effective_stat
-    base = (1.6 if skill is None else 2.4 if not skill.hostile else
-            4.2 if skill.power >= 35 or 'six_strike' in skill.tags else 3)
-    return round((1.25 + base / (1 + max(0, effective_stat(fighter, 'speed')) * .018)) * 4) / 4
+    import math
+    base = skill.cast_base if skill is not None else None
+    if base is None:
+        base = {'arch_assassin_shadow': 2.65, 'arch_assassin_blood': 3.4}.get(
+            skill.skill_id if skill else '')
+    if base is None:
+        base = (1.6 if skill is None else 2.4 if not skill.hostile else
+                4.2 if skill.power >= 35 or 'six_strike' in skill.tags else 3)
+        if skill and 'quick' in skill.tags:
+            base *= .8
+    # Speed is time between own actions, not a flat "go first" flag.  The
+    # lower bound prevents an extreme build from starving the other side.
+    speed = max(0, effective_stat(fighter, 'speed'))
+    return max(MIN_CAST_TIME, math.floor(base / (1 + speed * .035) * 20 + .5) / 20)
 
 
 def entries(data, skills):
@@ -26,16 +46,20 @@ def entries(data, skills):
         enemy = enemies.get(target, data['boss'])
         sid = p.get('selected')
         s = effective_skill(pair_state(p['fighter'], enemy), 'a', sid, skills) if sid in skills else None
-        out.append(dict(actor=key, target=target, team='players', at=cast_time(p['fighter'], s), skill=sid))
+        out.append(dict(actor=key, target=target, team='players', at=cast_time(p['fighter'], s, legacy=True), skill=sid))
     for key, i in intents.items():
         f = enemies[key]
         if f['hp'] > 0:
             s = skills.get(i.get('skill'))
-            out.append(dict(actor=key, team='enemies', at=cast_time(f, s), skill=i.get('skill')))
+            out.append(dict(actor=key, team='enemies', at=cast_time(f, s, legacy=True), skill=i.get('skill')))
     return sorted(out, key=lambda e: (e['at'], e['actor']))
 
 
 def public_queue(data, skills, viewer):
+    if data.get('unified_version') == 3:
+        from arena_unified_queue import initialize, public
+        initialize(data, skills)
+        return public(data, viewer)
     if not data.get('action_queue_version'):
         return None
     queue = data.get('_cast_queue')
@@ -45,13 +69,48 @@ def public_queue(data, skills, viewer):
                 round=data['round'], last=data.get('_last_cast_timeline'),
                 time=queue.get('time', 0) if queue else 0,
                 entries=[dict(actor=e['actor'], at=e['at'], team=e['team'],
+                              slot=e.get('slot', 0), follow_up=bool(e.get('follow_up')),
                               skill=e['skill'] if e['team'] == 'enemies' or e['actor'] == str(viewer) else None)
                          for e in planned if e['team'] == 'enemies' or e['actor'] == str(viewer) or queue],
                 intercept_cost=8)
 
 
+def direct_public_queue(state, skills):
+    """Small authoritative readiness clock for a normal one-on-one battle.
+
+    Unlike the raid queue there are no preselected skills here.  The clock
+    therefore exposes the next available action of each side and lets the
+    browser preview the duration of the skill currently under the pointer.
+    """
+    if state.get('unified_version') == 3:
+        from arena_unified_queue import initialize, public
+        initialize(state, skills)
+        return public(state, -1)
+    if not state.get('action_queue_version'):
+        return None
+    times = state.get('action_times') or {'a': 0.0, 'b': 0.0}
+    now = min(float(times.get(k, 0)) for k in ('a', 'b'))
+    entries = []
+    for key in ('a', 'b'):
+        entries.append(dict(
+            actor=key,
+            team='players' if key == 'a' else 'enemies',
+            at=round(max(0, float(times.get(key, 0)) - now), 2),
+            slot=0,
+            follow_up=False,
+        ))
+    return dict(
+        colors={'a': COLORS[0], 'b': COLORS[3]},
+        phase='choose', round=state.get('turn', 1), time=0, horizon=5,
+        entries=entries,
+    )
+
+
 def intercept(data, actor, source, skills):
     """Reserve one single-target attack before either participant commits."""
+    if data.get('unified_version') == 3:
+        from arena_unified_queue import intercept as unified_intercept
+        return unified_intercept(data, actor, source)
     from arena_raid_engine import alive_players
     key = str(actor)
     p = alive_players(data).get(key)
@@ -85,7 +144,7 @@ def _log(data, actor, target, event, skill=None):
     data['log'][-1]['cast_at'] = data['_cast_queue']['time']
 
 
-def _player(data, key, skills, rng):
+def _player(data, key, skills, rng, entry=None):
     from arena_raid_engine import alive_players, native_attack, defend
     from arena_engine import _tick
     p = alive_players(data).get(key)
@@ -111,7 +170,10 @@ def _player(data, key, skills, rng):
         _log(data, key, key, dict(text='Защита: обе защиты +35%.' if selected in (None, 'defend') else
                                 'Цель уже повержена: защита без расхода энергии.'))
         return
-    proof = p.get('qte_result', {})
+    # A physical second cast is a new action.  It is deliberately not granted
+    # the first cast's QTE proof; otherwise one perfect input could be replayed
+    # into a guaranteed multi-hit chain.
+    proof = p.get('qte_result', {}) if not (entry or {}).get('follow_up') else {}
     for field in ('attack', 'pattern_attack'):
         if field in proof:
             actor['_qte_' + field] = proof[field]
@@ -260,7 +322,7 @@ def advance(data, skills, rng=None):
         released = [r for e in group if e['team'] == 'enemies' and (r := _release(data, e['actor'], skills))]
         for e in group:
             if e['team'] == 'players':
-                _player(data, e['actor'], skills, rng)
+                _player(data, e['actor'], skills, rng, e)
         targets = {k for r in released for k in r['intent']['targets']}
         eligible = sorted(k for k in targets if k in alive_players(data) and data.get('qte_modes', {}).get(k))
         if eligible:

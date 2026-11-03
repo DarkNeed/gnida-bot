@@ -186,7 +186,7 @@ class MirrorMixin:
             enabled_classes={k for k in FIGHTER_CLASSES if self._arena_class_enabled_locked(row['chat_id'],k)}
         )
         classes, skills = self._fighter_catalog_locked()
-        state = create_battle_state(source, enemy, classes=classes, skills=skills)
+        state = create_battle_state(source, enemy, classes=classes, skills=skills, action_queue_version=True)
         state['qte_modes']={str(s['controller_id']):self._qte_enabled_locked(s['controller_id']) for s in state['sides'].values()}
         a, b = state["sides"].values()
         if not first:
@@ -205,6 +205,8 @@ class MirrorMixin:
             b["stats"]["max_hp"] = max(1, round(b["stats"]["max_hp"] * 1.4))
             b["hp"] = b["stats"]["max_hp"]
         state.update(mirror_token=row["token"], turn_timer_seconds=0)
+        from arena_unified_queue import initialize
+        initialize(state, skills)
         token = secrets.token_urlsafe(16)
         self.connection.execute(
             """INSERT INTO arena_battles(token,chat_id,mode,a_owner,b_owner,a_fighter,b_fighter,a_control,b_accepted,status,state_json,floor,created_at,deadline,personal_solo)

@@ -61,7 +61,7 @@ class ProgressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(choice["level"], 5)
         self.assertTrue(choice["options"][0]["current"])
         self.assertEqual(choice["options"][0]["id"], "stay")
-        self.assertEqual(len(choice["options"]), 13)
+        self.assertEqual(len(choice["options"]), 14)
         before = (p["xp"], p["loadout"])
         await self.choose("stay")
         p = await self.profile()

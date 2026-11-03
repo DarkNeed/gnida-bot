@@ -204,6 +204,10 @@ class GuildMixin:
                 enemy['passive_details'].append(dict(name='Плоть болот',rarity='rare',effects=[dict(kind='guild_regen',value=.04,description='Восстанавливает 4% HP перед действием. Горение подавляет восстановление.')]))
         set_intents(combat,skills)
         combat['qte_modes']={str(u):self._qte_enabled_locked(u) for u in row['members']}
+        combat['unified_version'] = 3
+        from arena_unified_queue import initialize
+        from arena_raid_engine import BOSS_SKILLS
+        initialize(combat, {**BOSS_SKILLS, **skills})
         token=secrets.token_urlsafe(12);now=int(time.time())
         config=dict(guild=True,roster=[dict(id=t['guild_monster'],name=t['definition']['name']) for t in templates])
         self.connection.execute('''INSERT INTO arena_raids(token,chat_id,creator_id,status,round,data_json,created_at,deadline,boss_id,silent,encounter_json)

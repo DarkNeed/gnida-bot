@@ -17,6 +17,7 @@
     mage:['mana','#80ceef','Мана, стихии, души и пустота'],
     priest:['holy','#dfd3a4','Свет, руны и священное оружие'],
     hunter:['claw','#c5bccf','Серебро, кровь и бледная луна'],
+    assassin:['dagger','#a895c8','Кинжалы, дым и вскрытые раны'],
     gambler:['card','#edc581','Карты, кости и рулетка'],
   };
   function appearance(p){
@@ -46,6 +47,10 @@
     else if(cls==='warrior'&&/пепел|пыла|феникс|жар/.test(n)){motif='flame';color='#eb956e';}
     else if(cls==='warrior'&&/кров|берсерк/.test(n)){motif='bloodblade';color='#d46e7f';}
     else if(cls==='warrior'&&kind==='impact'){motif='shield';color='#99bada';}
+    else if(cls==='assassin'){
+      motif=kind==='thrust'?'needle':/дым|уход/.test(n)?'smoke':/нить|рана/.test(n)?'bloodblade':'dagger';
+      color=motif==='smoke'?'#aab1c8':motif==='needle'?'#b9c7e2':'#b75c79';
+    }
     if(cls==='mage'||cls==='priest'){
       if(kind==='void'){motif='void';color='#bc9ae8';}
       else if(kind==='death'){motif='soul';color='#84bba0';}
@@ -90,9 +95,9 @@
         stroke(c,[[-8,-3],[3,-3],[8,0]],shine,1.6);stroke(c,[[-7,-5],[-7,5]],'#6b5943',1.5);
         if(silver){stroke(c,[[-3,-3],[-3,3]],'#68567b',1);stroke(c,[[-5,0],[-1,0]],'#68567b',1);}break;
       }
-      case 'sword':case 'blade':case 'bloodblade':case 'saw':case 'bayonet':case 'starblade':case 'glaive':{
+      case 'sword':case 'blade':case 'bloodblade':case 'saw':case 'bayonet':case 'starblade':case 'glaive':case 'dagger':{
         const serrated=motif==='saw',gold=motif==='glaive'?'#d1b876':'#8da8c0';
-        polygon(c,[[-6,-3],[5,-3],[12,0],[5,3],[-6,3]],light);
+        polygon(c,[[-6,-3],[motif==='dagger'?1:5,-3],[12,0],[motif==='dagger'?1:5,3],[-6,3]],light);
         stroke(c,[[-5,0],[8,0]],color,1.4);stroke(c,[[-6,-6],[-6,6]],gold,2);
         stroke(c,[[-10,0],[-6,0]],'#795d4b',3);
         if(serrated)for(let i=-4;i<6;i+=3)polygon(c,[[i,3],[i+3,3],[i,6]],'#bfc9d2');
@@ -100,6 +105,12 @@
         if(motif==='bloodblade')for(let i=0;i<3;i++)disc(c,-3+i*4,3,1.5,color);
         if(motif==='glaive')polygon(c,[[7,0],[-1,-10],[2,-1],[-1,8]],color);
         break;
+      }
+      case 'needle':{
+        stroke(c,[[-11,0],[10,0]],'#dbe6f6',2);disc(c,10,0,2,color);stroke(c,[[-6,-2],[-6,2]],color,1.4);break;
+      }
+      case 'smoke':{
+        for(const [x,y,r]of[[-7,2,4],[-1,-3,5],[6,1,4]]){c.globalAlpha=.35;disc(c,x,y,r,color);}c.globalAlpha=1;break;
       }
       case 'heart':heart(c,color);stroke(c,[[-3,-5],[1,-7]],'#ffdeee',1.5);break;
       case 'kiss':
@@ -188,7 +199,7 @@
     }else{
       // Every pixel in the authoritative collision strip remains visibly filled.
       c.globalAlpha*=.40;c.fillStyle=a.color;c.fillRect(0,-r,length,r*2);c.globalAlpha/= .40;
-      const m=a.motif,steel=['sword','blade','bloodblade','bayonet','glaive','saw','starblade'].includes(m);
+      const m=a.motif,steel=['sword','blade','bloodblade','bayonet','glaive','saw','starblade','dagger'].includes(m);
       if(steel){
         polygon(c,[[0,-r*.6],[length*.75,-r*.48],[length,0],[length*.75,r*.48],[0,r*.6]],'#d7e5ee');
         stroke(c,[[0,-r*.85],[length*.8,-r*.65]],a.color,2);stroke(c,[[0,0],[length,0]],a.color,1);
@@ -320,8 +331,9 @@
     c.restore();
   }
   function field(c,s,height=320){
-    const a=appearance(s.p);if(!a)return;
-    c.save();c.globalAlpha=.6;c.fillStyle=a.color;c.fillRect(0,0,4,28);c.fillRect(716,height-28,4,28);c.restore();
+    // The old corner bars looked like unexplained hazards in shared defense.
+    // Class identity is already carried by the real projectiles and glyphs.
+    void c;void s;void height;
   }
   window.QTEArt={appearance,glyph,hazard,block,attack,field,themes:THEMES};
 })();

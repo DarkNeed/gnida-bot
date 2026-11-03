@@ -271,7 +271,7 @@ def raid_boss_level(levels):
     return max(math.ceil(sum(levels) / len(levels)) + 2, max(levels) + 1)
 
 
-def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
+def create_raid_state(participants, sources, classes, skills, boss_id="iron", *, unified=False):
     if boss_id not in BOSSES:
         raise ValueError("Неизвестный босс.")
     if not 1 <= len(participants) <= RAID_SIZE or len(sources) != len(participants):
@@ -363,6 +363,7 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
         control_resistance=0,
         control_lock=0,
         action_queue_version=1,
+        **({'unified_version': 3} if unified else {}),
     )
     if boss_id == 'chaplain':
         from arena_chaplain import initialize
@@ -460,6 +461,9 @@ def finish_if_needed(data):
 
 
 def resolve_round(data, skills, rng=None):
+    if data.get('unified_version') == 3:
+        from arena_unified_queue import advance
+        return advance(data, {**BOSS_SKILLS, **skills}, rng)
     if data.get('action_queue_version') and data.get('kind') != 'encounter':
         from arena_boss_queue import advance
         return advance(data, skills, rng)

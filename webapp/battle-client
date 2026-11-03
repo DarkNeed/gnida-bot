@@ -119,7 +119,8 @@ const sprite=c=>{
 };
 function fighterImage(p,cls="",id=""){
   const rpStyle=p.rp_sandbox?' style="scale:'+((p.rp_flip?-1:1)*(p.rp_scale||1))+' '+(p.rp_scale||1)+'"':'';
-  const image='<img class="'+cls+(p.sprite_url&&p.pixel_art?' pixel-art':'')+'"'+rpStyle+(id?' id="'+id+'"':'')+' src="'+sprite(p)+'" data-fallback="'+sprite(p.sprite)+'" alt="'+esc(p.class_name)+'">';
+  const classId=String(p?.class_id||p?.sprite||'').replace(/[^a-z0-9_-]/gi,'');
+  const image='<img class="'+cls+(classId?' class-'+classId:'')+(p.sprite_url&&p.pixel_art?' pixel-art':'')+'"'+rpStyle+(id?' id="'+id+'"':'')+' src="'+sprite(p)+'" data-fallback="'+sprite(p.sprite)+'" alt="'+esc(p.class_name)+'">';
   return image+(cls.includes('sprite')?petImage(p,cls):'');
 }
 function petImage(p,cls=''){
@@ -328,7 +329,7 @@ function skillInfo(s){const e=s.evolution;return '<div class="muted">'+(s.cost!=
 function battleSkillButton(skill,side){
   const evolved=skill.evolution?.active, prescribed=side.mechanics?.prescript===skill.skill_id, enemyOrder=(side.mechanics?.enemy_prescript?.allowed||[side.mechanics?.enemy_prescript?.skill_id]).includes(skill.skill_id);
   const label=prescribed?'ПРЕДПИСАНИЕ':enemyOrder?'ПРЕДПИСАНИЕ ВРАГА':skill.damage_type==='magic'?'МАГИЯ':skill.damage_type==='physical'?'АТАКА':'ЭФФЕКТ';
-  return '<button class="skill'+(evolved?' evolved':'')+((prescribed||enemyOrder)?' prescribed':'')+'" data-skill="'+esc(skill.skill_id)+'" '+(skill.evolution?'title="'+esc(skill.evolution.condition)+'" ':'')+(side.resource<skill.cost||side.cooldowns[skill.skill_id]||skill.unavailable_reason?'disabled':'')+'><span class="type">'+(evolved?(skill.evolution.specialization?'ВЕТКА · ':'УСИЛЕНО · '):'')+label+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(side.cooldowns[skill.skill_id]?' · ещё '+side.cooldowns[skill.skill_id]+' х.':'')+(skill.unavailable_reason?' · '+esc(skill.unavailable_reason):'')+'</span></button>';
+  return '<button class="skill'+(evolved?' evolved':'')+((prescribed||enemyOrder)?' prescribed':'')+'" data-skill="'+esc(skill.skill_id)+'" '+(skill.evolution?'title="'+esc(skill.evolution.condition)+'" ':'')+(side.resource<skill.cost||side.cooldowns[skill.skill_id]||skill.unavailable_reason?'disabled':'')+'><span class="type">'+(evolved?(skill.evolution.specialization?'ВЕТКА · ':'УСИЛЕНО · '):'')+label+'</span>'+esc(skill.name)+'<span>'+skill.cost+' '+esc(side.resource_name)+(Number.isFinite(skill.cast_time)?' · '+skill.cast_time.toFixed(2)+' с':'')+(side.cooldowns[skill.skill_id]?' · ещё '+side.cooldowns[skill.skill_id]+' х.':'')+(skill.unavailable_reason?' · '+esc(skill.unavailable_reason):'')+'</span></button>';
 }
 function archInfo(p){
   const a=p.archclass;
@@ -399,11 +400,23 @@ function battleScreen(data){
   const far=near==="a"?"b":"a",a=data.state.sides[near],b=data.state.sides[far];
   app.innerHTML='<section class="battle">'+top("Арена",data.state.mirror_token?'ЗЕРКАЛО · '+(data.floor===5?'БОСС':'ЭТАЖ '+data.floor+' / 5'):data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":data.ranked?"РЕЙТИНГ":"БЕЗ СТАВКИ")+'</span>')+
     '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'<div class="status-row enemy" id="statuses-'+far+'" aria-label="Эффекты противника"></div><div class="status-row player" id="statuses-'+near+'" aria-label="Эффекты твоего бойца"></div></div><div class="turnbanner" id="turn"></div><div class="turn-timer" id="turn-timer" role="timer" hidden></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+(data.state.mirror_token&&data.actor_id===data.state.sides.a.controller_id?button("К забегу","mirror:"+data.state.mirror_token,"small"):"")+button("В меню","menu","small")+'</footer></section>';
+  mountBattleTimeline(data.state);
   renderBattleStatuses();
   renderActions();
   audio.refresh();
   if(inspectSide)showStats(inspectSide);
 }
+function mountBattleTimeline(state){
+  const field=app.querySelector?.('.battle .field'),queue=state?.action_queue;
+  if(!field||!queue)return;
+  const names=Object.fromEntries(['a','b'].map(key=>[key,state.sides[key]?.name||key]));
+  window.RaidTimeline?.mountSolo(field,queue,names);
+}
+function previewBattleCast(skill,side){
+  if(!current?.state?.action_queue)return;
+  window.RaidTimeline?.preview(app.querySelector('.battle .field'),current.state.active_side,side,skill);
+}
+function clearBattleCast(){window.RaidTimeline?.clearPreview(app.querySelector('.battle .field'));}
 function renderActions(){
   if(!current?.state||!document.getElementById("panel"))return;
   const st=current.state,side=st.sides[st.active_side],mine=side.controller_id===current.actor_id;
@@ -435,7 +448,18 @@ function renderActions(){
     const names=Object.fromEntries(Object.values(st.sides).map(s=>[s.controller_id,s.name]));
     panel.innerHTML+=window.ArenaQTEWatch?.buttons('battle',current.token,current.qte_watch,names)||'';
   }
+  if(mine&&st.action_queue){
+    panel.querySelectorAll('[data-skill]').forEach(button=>{
+      const skill=side.skill_details.find(item=>item.skill_id===button.dataset.skill);
+      if(!skill)return;
+      button.addEventListener('pointerenter',()=>previewBattleCast(skill,side));
+      button.addEventListener('focus',()=>previewBattleCast(skill,side));
+      button.addEventListener('pointerleave',clearBattleCast);
+      button.addEventListener('blur',clearBattleCast);
+    });
+  }
   updateTurnTimer();
+  if(st.unified_version===3&&mine&&!st.finished)window.RaidTimeline?.bind(panel,app.querySelector('.field'),st.active_side,side,'[data-skill]');
 }
 function updateTurnTimer(){
   const el=document.getElementById('turn-timer');if(!el)return;
@@ -517,19 +541,51 @@ async function action(action,extra={}){
       }
       const key=current.state.active_side,other=key==="a"?"b":"a",s=current.state.sides;
       const used=s[key].skill_details.find(x=>x.skill_id===extra.skill)||s[key].skill_details[0];
+      if(action==='skill'&&used?.damage_type&&current.state.demo_qte?.[used.skill_id]&&window.ArenaMiniGames?.play){
+        qtePlaying=true;
+        try{await window.ArenaMiniGames.play(current.state.demo_qte[used.skill_id],{scope:'demo',token:'demo'});}
+        finally{qtePlaying=false;}
+      }
       const demoStatus=side=>{side.effects=(side.effects||[]).filter(e=>e.duration>1).map(e=>({...e,duration:e.duration-1}));};
       const demoSnapshot=()=>structuredClone(Object.fromEntries(['a','b'].map(k=>[k,{effects:s[k].effects,mechanics:s[k].mechanics||{}}])));
+      const demoEffects=(from,to,skill)=>{
+        for(const effect of skill.effects||[]){
+          if(effect.target==='self')continue;
+          const duration=Number(effect.duration??effect.turns??1);
+          if(!effect.kind||duration<=0)continue;
+          to.effects=(to.effects||[]).filter(item=>item.kind!==effect.kind);
+          to.effects.push({...effect,id:'demo:'+skill.skill_id+':'+effect.kind, duration});
+        }
+      };
+      const demoQueue=()=>{
+        const times=current.state.action_times||{a:0,b:0},now=Math.min(times.a||0,times.b||0);
+        current.state.action_queue={colors:{a:'#79c8df',b:'#dc9279'},phase:'choose',round:current.state.turn,time:0,horizon:5,
+          entries:['a','b'].map(actor=>({actor,team:actor==='a'?'players':'enemies',at:Math.max(0,Math.round(((times[actor]||0)-now)*100)/100),slot:0,follow_up:false}))};
+      };
+      const spendDemoTime=(actor,skill)=>{
+        const cast=window.RaidTimeline?.castTime(s[actor],skill)||3;
+        current.state.action_times=current.state.action_times||{a:0,b:0};
+        current.state.action_times[actor]=Math.round(((current.state.action_times[actor]||0)+cast)*100)/100;
+      };
       demoStatus(s[key]);
+      demoEffects(s[key],s[other],used);
       s[other].hp=Math.max(0,s[other].hp-12);
       current.state.log.push({seq:current.state.turn++,side:key,skill_name:used.name,damage_type:used.damage_type,text:"Попадание · −12 HP",hit:true,damage:12,status_after:demoSnapshot(),after:{a:{hp:s.a.hp,resource:s.a.resource},b:{hp:s.b.hp,resource:s.b.resource}}});
-      current.state.active_side=other;current.revision++;data=current;
-      if(!current.state.finished){
+      spendDemoTime(key,used);
+      current.state.active_side=(current.state.action_times[key]<current.state.action_times[other]?key:other);
+      current.revision++;data=current;
+      // Only answer when the opponent is actually ready. Fast actions can
+      // leave time for another player choice instead of forcing alternation.
+      while(!current.state.finished&&current.state.active_side===other){
         const enemyMove=s[other].skill_details[0];s[key].hp=Math.max(0,s[key].hp-8);
         demoStatus(s[other]);
         current.state.log.push({seq:current.state.turn++,side:other,skill_name:enemyMove.name,damage_type:"physical",text:"Ответ противника · −8 HP",hit:true,damage:8,status_after:demoSnapshot(),after:{a:{hp:s.a.hp,resource:s.a.resource},b:{hp:s.b.hp,resource:s.b.resource}}});
-        current.state.active_side=key;
+        spendDemoTime(other,enemyMove);
+        current.state.active_side=(current.state.action_times[key]<=current.state.action_times[other]?key:other);
+        if(s[key].hp<=0){current.state.finished=true;current.state.winner=other;}
       }
-    }else data=await api("/api/battle/"+token,{action,revision:current.revision,...extra});
+      demoQueue();
+    }else data=await api("/api/battle/"+token,{action,revision:current.revision,choice_id:current.state?.choice_id,...extra});
     if(action==='potion')audio.effect('heal');
     await applyBattle(data);
   }catch(error){toast(error.message);if(!demo)try{await applyBattle(await api("/api/battle/"+token),false);}catch{}}
@@ -705,7 +761,7 @@ function menuScreen(data){
   else if(page==="raids"){
     body+='<div class="note">Выбери босса и создай тихий рейд — сообщение в группу не отправляется. В рейд отправляется твой общий персонаж. Можно сразу начать соло. На сбор — 10 минут.</div>';
     body+='<div class="note">Лей Хенг и Фуфелшмерц подстраиваются под отряд: уровень равен большему из среднего уровня (вверх) +2 и уровня самого сильного бойца +1. У Кита фиксированный 25 уровень, без подстройки. Шанс трактата — 70%; после четырёх неудачных подходящих побед пятая гарантирована. Часовой кулдаун наград запускается только при выпадении трактата. Не выпал — следующая победа снова даёт полную награду и попытку дропа. Во время кулдауна: 20% франков и XP, без трактатов и ресурсов питомцев. Таймер отдельный для каждого босса, общий для всех чатов и бойцов; повторы его не продлевают.</div>';
-    body+=(data.raid_bosses||[]).map(b=>'<div class="card"><div class="profile">'+(b.sprite?'<img class="portrait" src="'+esc(b.sprite)+'" alt="">':'')+'<div><h2>'+esc(b.name)+'</h2>'+(b.id==='whaler'?'<p class="muted">С 20 уровня · 600 / 900 / 1200 HP на 1 / 2 / 3 бойцов. Без брони. Восстановление энергии может вызвать Кару.</p>':b.fixed_level?'<p class="muted">'+esc(b.difficulty)+' · фиксированный Lv.'+esc(b.fixed_level)+' · без подстройки. Рекомендуется тройка подготовленных бойцов 20 уровня.</p>':'')+'<p class="muted">'+esc(raidRewardStatus(b))+'</p></div></div>'+button((data.personal?.level||0)<(b.min_level||1)?'Нужен '+b.min_level+' уровень':'Создать тихий рейд','raidcreate:'+b.id,'primary',(data.personal?.level||0)<(b.min_level||1))+'</div>').join('');
+    body+=(data.raid_bosses||[]).map(b=>b.id==='nazarick'?'<div class="card"><span class="eyebrow">СОХРАНЯЕМОЕ ПОДЗЕМЕЛЬЕ · 10 ЭТАЖЕЙ</span><h2>Великая гробница Назарик</h2><p>От гробниц до тронного зала. Новые стражи, две фазы, отряд до трёх игроков. Пройденные комнаты сохраняются; между ними отряд восстанавливается.</p><p class="muted">За завершение: трактат и эксклюзивное снаряжение на выбор, гарантированный билет смены класса. Обычный случайный дроп рейда здесь не применяется.</p>'+button('Открыть подземелье','raidcreate:nazarick','primary')+'</div>':'<div class="card"><div class="profile">'+(b.sprite?'<img class="portrait" src="'+esc(b.sprite)+'" alt="">':'')+'<div><h2>'+esc(b.name)+'</h2>'+(b.id==='whaler'?'<p class="muted">С 20 уровня · 600 / 900 / 1200 HP на 1 / 2 / 3 бойцов. Без брони. Восстановление энергии может вызвать Кару.</p>':b.fixed_level?'<p class="muted">'+esc(b.difficulty)+' · фиксированный Lv.'+esc(b.fixed_level)+' · без подстройки. Рекомендуется тройка подготовленных бойцов 20 уровня.</p>':'')+'<p class="muted">'+esc(raidRewardStatus(b))+'</p></div></div>'+button((data.personal?.level||0)<(b.min_level||1)?'Нужен '+b.min_level+' уровень':'Создать тихий рейд','raidcreate:'+b.id,'primary',(data.personal?.level||0)<(b.min_level||1))+'</div>').join('');
   }else if(page==='sellConfirm'){
     const pending=sellPending,item=(data.inventory||[]).find(i=>i.id===pending?.item);
     if(!item){sellPending=null;page='inventory';menuScreen(data);return;}
@@ -1083,7 +1139,7 @@ async function boot(){
     const mirrorPreview=new URLSearchParams(location.search).get('mirror_preview');
     if(mirrorPreview){try{mirrorScreen(await api('/demo/mirror/'+encodeURIComponent(mirrorPreview)));return;}catch{}}
     const cls=new URLSearchParams(location.search).get('fighter');
-    if(['cutie','jock','nerd','thumb','index','middle','ring','pinky','warrior','mage','priest','hunter'].includes(cls)){
+    if(['cutie','jock','nerd','thumb','index','middle','ring','pinky','warrior','mage','priest','hunter','assassin'].includes(cls)){
       const previewParams=new URLSearchParams(location.search);
       try{battleScreen(await api('/demo/fighter/'+cls+'?arch='+encodeURIComponent(previewParams.get('arch')||'')+'&stage='+encodeURIComponent(previewParams.get('stage')||'20')+'&mastery='+encodeURIComponent(previewParams.get('mastery')||'0')));return;}catch{}
     }
@@ -1142,7 +1198,7 @@ function chaplainSkills(data,f){
   const list=[...f.skill_details];if(data.boss_id==='chaplain'&&order.length)list.sort((a,b)=>{const ai=order.indexOf(a.skill_id),bi=order.indexOf(b.skill_id);return (ai<0?999:ai)-(bi<0?999:bi);});
   const render=s=>{
     const hidden=data.boss_id==='chaplain'&&m.ui_scramble;
-    const label='<span class="skill-type">'+(s.damage_type==='physical'?'АТАКА':s.damage_type==='magic'?'МАГИЯ':'ЭФФЕКТ')+'</span><strong>'+(hidden?'<span aria-hidden="true">ДОСТУП ▓▒░</span><span class="chaplain-real-name">'+esc(s.name)+'</span>':esc(s.name))+'</strong><small>'+s.cost+' '+esc(f.resource_name)+(f.cooldowns[s.skill_id]?' · ещё '+f.cooldowns[s.skill_id]+' х.':'')+(s.unavailable_reason?' · '+esc(s.unavailable_reason):'')+'</small>';
+    const label='<span class="skill-type">'+(s.damage_type==='physical'?'АТАКА':s.damage_type==='magic'?'МАГИЯ':'ЭФФЕКТ')+'</span><strong>'+(hidden?'<span aria-hidden="true">ДОСТУП ▓▒░</span><span class="chaplain-real-name">'+esc(s.name)+'</span>':esc(s.name))+'</strong><small>'+s.cost+' '+esc(f.resource_name)+(data.data.unified_version===3&&Number.isFinite(s.cast_time)?' · '+s.cast_time.toFixed(2)+' времени':'')+(f.cooldowns[s.skill_id]?' · ещё '+f.cooldowns[s.skill_id]+' х.':'')+(s.unavailable_reason?' · '+esc(s.unavailable_reason):'')+'</small>';
     return raidButton(label,'skill:'+s.skill_id,'skill'+(s.evolution?.active?' evolved':'')+(hidden?' chaplain-obscured':''),s.cost>f.resource||!!f.cooldowns[s.skill_id]||!!s.unavailable_reason);
   };
   if(f.rp_sandbox&&list.length>8){
@@ -1266,7 +1322,7 @@ function raidScreen(data){
       body+='<div id="raid-timer" class="turn-timer"></div><div class="card raid-actions">';
       if(own&&!own.withdrawn&&own.fighter.hp>0){
         if(data.qte?.waiting)body+='<h3>Заверши мини-игру</h3><p class="muted">После неё действие будет принято. По истечении времени — неуспех.</p>';
-        else if(own.ready)body+='<h3>Действие принято — ждём отряд</h3><p class="muted">Когда все выберут навыки, раунд разыграется по скорости.</p>';
+        else if(own.ready)body+=d.unified_version===3?'<h3>Готовится твоё действие</h3><p class="muted">После завершения каста ты снова выберешь навык. Боевые часы ждут выбор готовых участников.</p>':'<h3>Действие принято — ждём отряд</h3><p class="muted">Когда все выберут навыки, раунд разыграется по скорости.</p>';
         else{
           const f=own.fighter;
           if(data.kind==='encounter'||d.multi_enemy)body+='<p class="encounter-target-note" role="status">Цель: <strong id="encounter-target-name">'+esc(d.enemies[encounterTarget]?.name||'—')+'</strong><small>Нажми на спрайт врага на арене, чтобы сменить цель.</small></p>';
@@ -1299,7 +1355,18 @@ function raidScreen(data){
   }
   if(data.status==='active'){
     document.querySelector?.('.raid-intent')?.remove();
-    window.RaidIntentLines?.mount(document.querySelector?.('.raid-field'),data,source=>raidAction('intercept',{round:data.data.round,source}));
+    const timelineField=document.querySelector?.('.raid-field');
+    window.RaidIntentLines?.mount(timelineField,data,source=>raidAction('intercept',{round:data.data.round,source}));
+    const ownForTimeline=data.data?.players?.[String(data.actor_id)]?.fighter;
+    if(timelineField&&data.data?.action_queue&&ownForTimeline){
+      if(data.data.unified_version===3)window.RaidTimeline?.bind(app.querySelector('.raid-actions'),timelineField,String(data.actor_id),ownForTimeline,'[data-raid^="skill:"]');
+      const showCast=event=>{const action=event.currentTarget?.dataset?.raid||'',id=action.startsWith('skill:')?action.slice(6):'';const skill=ownForTimeline.skill_details?.find(s=>s.skill_id===id);window.RaidTimeline?.preview(timelineField,String(data.actor_id),ownForTimeline,skill);};
+      const hideCast=()=>window.RaidTimeline?.clearPreview(timelineField);
+      document.querySelectorAll('.raid-actions [data-raid^="skill:"]').forEach(button=>{
+        button.addEventListener('pointerenter',showCast);button.addEventListener('pointerleave',hideCast);
+        button.addEventListener('focusin',showCast);button.addEventListener('focusout',hideCast);
+      });
+    }
   }
   updateRaidTimer();if(raidInspect)showRaidDetails(raidInspect);
   if(inspectEffect)showEffect(inspectEffect.side,inspectEffect.id);
@@ -1457,7 +1524,7 @@ async function raidAction(action,extra={}){
   if(demo){toast('Демо рейда: действия не сохраняются.');return;}
   busy=true;
   const captured=raidCurrent.token;
-  try{const data=await api('/api/raid/'+captured,{action,...extra});if(raidCurrent?.token===captured)await receiveRaid(data);}
+  try{const data=await api('/api/raid/'+captured,{action,choice_id:raidCurrent.data?.players?.[String(raidCurrent.actor_id)]?.choice_id,...extra});if(raidCurrent?.token===captured)await receiveRaid(data);}
   catch(error){toast(error.message);try{raidScreen(await api('/api/raid/'+raidCurrent.token));}catch{}}
   finally{busy=false;}
 }
