@@ -151,7 +151,9 @@ def resolve_doof_action(data, rng):
         )
         return
     living = alive_players(data)
-    targets = [k for k in intent["targets"] if k in living] or list(living)[:1]
+    targets = [k for k in intent["targets"] if k in living]
+    if not targets and not data.get('action_queue_version'):
+        targets = list(living)[:1]
     original = deepcopy(boss)
     pending_bleed = bleeding_damage(original) + sum(max(0,int(e['value'])) for e in original['effects'] if e['kind']=='burn')
     boss_after = None

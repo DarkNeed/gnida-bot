@@ -14,6 +14,9 @@ from arena_qte_rules import replay
 
 
 def recording(challenge, perfect=False):
+    if challenge.get('version') == 4 and len(challenge['members']) == 1:
+        # One native member has exactly the same input stream and duration.
+        return recording(challenge['members'][0], perfect)
     result = subprocess.run(
         [
             shutil.which("node"),
@@ -236,8 +239,10 @@ class InteractiveStoreTests(unittest.IsolatedAsyncioTestCase):
             )
         row = await self.db.arena_interactive_raid(row["token"], 20, 1, "bum_punch")
         self.assertTrue(json.loads(row["data_json"])["players"]["20"]["selected"])
-        for actor in (10, 50):
-            for _ in range(2):
+        # Attack submissions are independent. Shared defenses appear only after
+        # the last submission, including for actors whose first flow ended.
+        for _ in range(4):
+            for actor in (10, 50):
                 if await self.db.arena_qte_view("raid", row["token"], actor):
                     row = await self.complete(row, actor, abort=True, scope="raid")
         after = json.loads(row["data_json"])
@@ -385,13 +390,15 @@ class InteractiveStoreTests(unittest.IsolatedAsyncioTestCase):
             row["token"], 10, data["round"], "defend"
         )
         c = (await self.db.arena_qte_view("raid", row["token"], 10))["challenge"]
-        self.assertEqual(c["version"], 2)
-        self.assertEqual(c["profile"]["strikes"], 2)
-        self.assertEqual(c["subskills"], ["kit_reflection", "kit_ash"])
+        self.assertEqual(c["version"], 4)
+        member=c['members'][0]
+        self.assertEqual(member['version'],2)
+        self.assertEqual(member["profile"]["strikes"], 2)
+        self.assertEqual(member["subskills"], ["kit_reflection", "kit_ash"])
         row = await self.complete(row, 10, abort=True, scope="raid")
         after = json.loads(row["data_json"])
         self.assertEqual(after["round"], 2)
         self.assertIsNone(await self.db.arena_qte_view("raid", row["token"], 10))
-        events = [e for e in after["log"] if e.get("skill") in c["subskills"]]
+        events = [e for e in after["log"] if e.get("skill") in member["subskills"]]
         self.assertEqual(len(events), 2)
         self.assertTrue(all(e["damage"] > 0 for e in events))

@@ -110,6 +110,8 @@ class KitEngineTests(unittest.TestCase):
 
     def test_accepted_stun_prevents_field_counter(self):
         data = encounter()
+        # Interruption BEFORE the boss's action, rather than after a fast cast.
+        data['players']['10']['fighter']['stats']['speed'] = 150
         data['boss']['hp'] = 700
         data['round'] = 4
         set_intent(data)

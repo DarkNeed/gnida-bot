@@ -301,7 +301,12 @@ class RaidEngineTests(unittest.TestCase):
 
 
 class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = test_arena.ArenaStoreTests.asyncSetUp
+    async def asyncSetUp(self):
+        await test_arena.ArenaStoreTests.asyncSetUp(self)
+        # These store/reward tests submit actions without interactive proofs.
+        # Enabled-QTE scheduling is covered by test_boss_action_queue.
+        for actor in (10,20,30,40,50):
+            await self.db.arena_combat_settings(actor, enabled=False)
     asyncTearDown = test_arena.ArenaStoreTests.asyncTearDown
     balance = test_arena.ArenaStoreTests.balance
 

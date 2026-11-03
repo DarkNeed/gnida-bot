@@ -354,6 +354,7 @@ class ChaplainStoreTests(unittest.IsolatedAsyncioTestCase):
         return await self.db.arena_raid_setup(row['token'], 10, 'start')
 
     async def test_private_checkpoint_hidden_and_invalid_anchor_rejected(self):
+        await self.db.arena_combat_settings(10, enabled=False)
         row = await self.start()
         view = await raid_view(self.db, row, 10)
         self.assertNotIn('_chaplain_snapshot', view['data'])

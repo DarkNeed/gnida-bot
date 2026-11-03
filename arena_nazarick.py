@@ -326,18 +326,19 @@ def summon(data):
     log_event(data,'boss','boss','Портал раскрыт. Призывы начнут действовать со следующего раунда.')
 
 
-def resolve(data, skills, rng=None):
+def resolve(data, skills, rng=None, *, actor_keys=None, enemy_keys=None, complete=True, defense_guards=None):
     from arena_raid_engine import alive_players, native_attack, defend, log_event, raid_snapshot
     from arena_plague import begin_turn
     rng=rng or random.SystemRandom()
     if data.get('finished'):raise ValueError('Рейд завершён.')
     bind(data)
-    data['round_before']=raid_snapshot(data)
-    guards={}
+    if complete:data['round_before']=raid_snapshot(data)
+    guards=dict(defense_guards or {})
     m=data['nazarick']
     who,phase=identity(data)
     order=sorted(alive_players(data),key=lambda k:(-effective_stat(data['players'][k]['fighter'],'speed'),int(k)))
-    boss_stunned=False
+    if actor_keys is not None:order=[k for k in order if k in actor_keys]
+    boss_stunned=data.get('_queue_stunned',False) if not complete else False
     for key in order:
         if data['boss']['hp']<=0:
             break
@@ -386,9 +387,14 @@ def resolve(data, skills, rng=None):
                 log_event(data,'boss','boss','Стойка разрушена: +30% входящего урона до конца следующего раунда.')
     data['_qte_boss_phase']=True
     # A defeated phase/stage never executes its prepared attack.
+    data['_queue_stunned']=boss_stunned
+    if not complete and enemy_keys == []:
+        data.pop('_qte_boss_phase',None)
+        return data
     transition=progress(data)
     if not transition and not data.get('finished'):
         for enemy_key,intent in list(data['enemy_intents'].items()):
+            if enemy_keys is not None and enemy_key not in enemy_keys:continue
             enemy=data['enemies'].get(enemy_key)
             if not enemy or enemy['hp']<=0 or not alive_players(data):continue
             if enemy_key=='boss' and boss_stunned:
@@ -449,8 +455,9 @@ def resolve(data, skills, rng=None):
                 log_event(data,enemy_key,enemy_key,f'Кровотечение / горение: −{dot} HP.',damage=dot)
             if enemy_key=='boss' and enemy['hp']<=0:break
     data.pop('_qte_boss_phase',None)
-    data['control_lock']=max(0,data['control_lock']-1)
+    if complete:data['control_lock']=max(0,data['control_lock']-1)
     progress(data)
+    if not complete:return data
     if m.get('blessing_offer'):
         data.pop('round_before',None)
         data['log']=data['log'][-80:]
@@ -468,5 +475,6 @@ def resolve(data, skills, rng=None):
                 restore_turn_resource(p['fighter'])
         if not alive_players(data):offer_blessing(data)
         else:set_intent(data)
+        data['action_queue_version']=1
     data['log']=data['log'][-80:]
     return data

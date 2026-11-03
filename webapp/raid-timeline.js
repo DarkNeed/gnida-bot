@@ -2,6 +2,8 @@
 (function(root,factory){const api=factory(root);if(typeof module==='object'&&module.exports)module.exports=api;else root.RaidTimeline=api;})(globalThis,function(root){
  'use strict';let current=null;
  const clamp=x=>Math.max(0,Math.min(1,x));
+ function eventGroups(events){const groups=[];for(const e of events){const last=groups.at(-1),prior=last?.[0],barrier=e.chaplain_event||e.nazarick_event;
+  if(!barrier&&Number.isFinite(e.cast_at)&&prior&&!prior.chaplain_event&&!prior.nazarick_event&&prior.round===e.round&&prior.cast_at===e.cast_at)last.push(e);else groups.push([e]);}return groups;}
  function model(queue,time=queue.time||0){const end=Math.max(1,...queue.entries.map(e=>e.at));return queue.entries.map((e,i)=>({...e,lane:i%4,position:clamp(1-(e.at-time)/end),done:e.at<time-.01,active:Math.abs(e.at-time)<.01&&queue.phase!=='choose'}));}
  function create(queue,names,palette,from=queue.time||0){
   const host=root.document.createElement('div');host.className='raid-timeline';host.setAttribute('aria-label','Шкала очереди действий: цветные отметки движутся к правой черте');
@@ -15,9 +17,9 @@
  }
  function mount(field,data){
   const queue=data.data?.action_queue;current=null;if(!field||!queue)return;
-  const names=Object.fromEntries([...Object.entries(data.data.players).map(([k,p])=>[k,p.fighter.name]),...Object.entries(data.data.enemies||{}).map(([k,f])=>[k,f.name])]);
+  const names=Object.fromEntries([...Object.entries(data.data.players).map(([k,p])=>[k,p.fighter.name]),...Object.entries(data.data.enemies||{boss:data.data.boss}).map(([k,f])=>[k,f.name])]);
   current={queue,names,palette:queue.colors||{}};const view=create(queue,names,current.palette,queue.animate_from??queue.time??0);field.append(view.host);view.animate();
  }
  function attach(section){if(!current)return ()=>{};const {queue,names,palette}=current,view=create(queue,names,palette);view.host.classList.add('raid-timeline-mini');const heading=section.querySelector('.qte-heading');heading?heading.after(view.host):section.prepend(view.host);return ()=>view.host.remove();}
- return {model,mount,attach};
+ return {model,mount,attach,eventGroups};
 });

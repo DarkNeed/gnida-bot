@@ -1,7 +1,5 @@
-"""Versioned cast queue for independent encounter actors, using the native resolver.
-
-Only new encounters opt in. Old persisted battles and scripted single-boss raids
-retain their existing scripts; no client damage or queue times are accepted.
+"""Shared cast timing and independent-mob execution. Scripted raids use
+arena_boss_queue with their native phase handlers; all times are server-owned.
 """
 from copy import deepcopy
 import random
@@ -21,14 +19,16 @@ def entries(data, skills):
     from arena_raid_engine import alive_players, pair_state
     from arena_engine import effective_skill
     out = []
+    enemies = data.get('enemies') or {'boss': data['boss']}
+    intents = data.get('enemy_intents') or {'boss': data['intent']}
     for key, p in alive_players(data).items():
-        target = p.get('selected_target') or next((k for k, f in data['enemies'].items() if f['hp'] > 0), None)
-        enemy = data['enemies'].get(target, data['boss'])
+        target = p.get('selected_target') or next((k for k, f in enemies.items() if f['hp'] > 0), None)
+        enemy = enemies.get(target, data['boss'])
         sid = p.get('selected')
         s = effective_skill(pair_state(p['fighter'], enemy), 'a', sid, skills) if sid in skills else None
         out.append(dict(actor=key, target=target, team='players', at=cast_time(p['fighter'], s), skill=sid))
-    for key, i in data['enemy_intents'].items():
-        f = data['enemies'][key]
+    for key, i in intents.items():
+        f = enemies[key]
         if f['hp'] > 0:
             s = skills.get(i.get('skill'))
             out.append(dict(actor=key, team='enemies', at=cast_time(f, s), skill=i.get('skill')))
@@ -40,7 +40,7 @@ def public_queue(data, skills, viewer):
         return None
     queue = data.get('_cast_queue')
     planned = queue['entries'] if queue else entries(data, skills)
-    colors = {k: COLORS[i % len(COLORS)] for i, k in enumerate([*data['players'], *data['enemies']])}
+    colors = {k: COLORS[i % len(COLORS)] for i, k in enumerate([*data['players'], *(data.get('enemies') or {'boss': data['boss']})])}
     return dict(colors=colors, phase='defense' if data.get('_queue_wait') else 'resolve' if queue else 'choose',
                 round=data['round'], last=data.get('_last_cast_timeline'),
                 time=queue.get('time', 0) if queue else 0,
@@ -57,7 +57,7 @@ def intercept(data, actor, source, skills):
     p = alive_players(data).get(key)
     if not data.get('action_queue_version') or not p or data.get('_cast_queue') or p['selected'] is not None:
         raise ValueError('Перехват доступен до выбора своего навыка.')
-    intent = data['enemy_intents'].get(source)
+    intent = (data.get('enemy_intents') or {'boss': data['intent']}).get(source)
     if not intent or not skills.get(intent.get('skill')) or not skills[intent['skill']].hostile:
         raise ValueError('У противника нет перехватываемой атаки.')
     if intent.get('interceptor') == key:
@@ -236,7 +236,7 @@ def advance(data, skills, rng=None):
     rng = rng or random.SystemRandom()
     if not data.get('_cast_queue'):
         data['round_before'] = raid_snapshot(data)
-        data['_cast_queue'] = dict(entries=entries(data, skills), cursor=0, time=0)
+        data['_cast_queue'] = dict(entries=entries(data, skills), cursor=0, time=0, round=data['round'])
         for key, p in alive_players(data).items():
             if p.get('intercept_source'):
                 cost = min(8, p['fighter']['resource'])

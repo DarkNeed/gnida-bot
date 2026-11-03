@@ -362,6 +362,7 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron"):
         rewards={},
         control_resistance=0,
         control_lock=0,
+        action_queue_version=1,
     )
     if boss_id == 'chaplain':
         from arena_chaplain import initialize
@@ -391,6 +392,8 @@ def raid_snapshot(data):
 
 
 def log_event(data, actor, target, text, **extra):
+    if data.get('_cast_queue', {}).get('round') == data['round']:
+        extra.setdefault('cast_at', data['_cast_queue']['time'])
     if data.get('boss_id') == 'nazarick' and actor in data.get('enemies', {}):
         extra.setdefault('actor_name', data['enemies'][actor]['name'])
     data["event_seq"] = data.get("event_seq", 0) + 1
@@ -457,6 +460,13 @@ def finish_if_needed(data):
 
 
 def resolve_round(data, skills, rng=None):
+    if data.get('action_queue_version') and data.get('kind') != 'encounter':
+        from arena_boss_queue import advance
+        return advance(data, skills, rng)
+    return _resolve_round_legacy(data, skills, rng)
+
+
+def _resolve_round_legacy(data, skills, rng=None, *, actor_keys=None, defer_boss=False):
     if data.get('boss_id') == 'nazarick':
         from arena_nazarick import resolve
         return resolve(data, skills, rng)
@@ -469,11 +479,14 @@ def resolve_round(data, skills, rng=None):
     if data.get('whaler_reaction'):
         from arena_whaler import resume_reaction
         return resume_reaction(data, skills, rng)
-    data["round_before"] = raid_snapshot(data)
+    if not defer_boss:
+        data["round_before"] = raid_snapshot(data)
     boss = data["boss"]
     boss["is_boss"] = True
-    stunned = False
+    stunned = data.get('_queue_stunned', False) if defer_boss else False
     living = alive_players(data)
+    if actor_keys is not None:
+        living = {k: living[k] for k in actor_keys if k in living}
     for player in living.values():
         result=player.pop('qte_result',{})
         if 'attack' in result:player['fighter']['_qte_attack']=result['attack']
@@ -596,6 +609,9 @@ def resolve_round(data, skills, rng=None):
                 log_event(data, "boss", "boss", "Босс сопротивляется ошеломлению.")
         if prepared and not stunned:
             kit_react(data, key, event, prepared, rng)
+    if defer_boss:
+        data['_queue_stunned'] = stunned
+        return data
     if data.get('boss_id') == 'whaler' and not finish_if_needed(data):
         from arena_whaler import prepare_reaction
         if prepare_reaction(data, rng, stunned):
@@ -606,18 +622,18 @@ def resolve_round(data, skills, rng=None):
     return _finish_boss_round(data, skills, rng, stunned)
 
 
-def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
+def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True, *, act=True, complete=True):
     boss, living = data['boss'], alive_players(data)
-    if tick_whaler:
+    if tick_whaler and act:
         from arena_plague import begin_turn
         poison = begin_turn(boss)
         if poison:
             log_event(data, 'boss', 'boss', f'Чума: −{poison} HP.', damage=poison)
-    if data.get('boss_id') == 'chaplain':
+    if act and data.get('boss_id') == 'chaplain':
         from arena_chaplain import transition
         transition(data)
     data['_qte_boss_phase']=True
-    if not finish_if_needed(data) and not data.get('_chaplain_rewound') and not data.get('_chaplain_transitioned'):
+    if act and not finish_if_needed(data) and not data.get('_chaplain_rewound') and not data.get('_chaplain_transitioned'):
         if stunned:
             from arena_archclasses import obey_enemy_prescript
             obey_enemy_prescript(boss,None,next(iter(living.values()))['fighter'],data)
@@ -668,7 +684,7 @@ def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
                 )
             else:
                 targets = [k for k in intent["targets"] if k in alive_players(data)]
-                if not targets:
+                if not targets and not data.get('action_queue_version'):
                     targets = list(alive_players(data))[:1]
                 # An area attack is one boss action, not three ticks of its buffs.
                 original = deepcopy(boss)
@@ -755,12 +771,15 @@ def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
                         "Перегрев: босс получает на 25% больше урона в следующем раунде.",
                     )
             data["control_lock"] = max(0, data["control_lock"] - 1)
-    if not data['finished'] and boss.get('mechanics',{}).get('enemy_prescript'):
+    if act and not data['finished'] and boss.get('mechanics',{}).get('enemy_prescript'):
         # Dialogues, phase utilities and other non-native boss actions also
         # consume an order. Native attacks already popped it, including AoE.
         from arena_archclasses import obey_enemy_prescript
         note=obey_enemy_prescript(boss,None,next(iter(data['players'].values()))['fighter'],data)
         if note:log_event(data,'boss','boss',note)
+    data.pop('_qte_boss_phase', None)
+    if not complete:
+        return data
     if not finish_if_needed(data) and data["round"] >= RAID_MAX_ROUNDS:
         data.update(
             finished=True,
@@ -796,6 +815,9 @@ def _finish_boss_round(data, skills, rng, stunned, tick_whaler=True):
         data.pop('round_before', None)
         if not finish_if_needed(data):
             set_intent(data)
+        # An already persisted legacy round finishes with its old proofs; only
+        # the next round switches to the queue. Never reinterpret an open QTE.
+        data['action_queue_version'] = 1
     data.pop('_chaplain_rewound', None)
     data.pop('_chaplain_transitioned', None)
     if data.get('boss_id') == 'whaler' and data.get('won'):

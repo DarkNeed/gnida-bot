@@ -289,7 +289,7 @@ class RevisedMechanicsTests(unittest.TestCase):
     def test_actual_raid_applies_fire_only_to_contacted_target(self):
         for touched in (False,True):
             with self.subTest(touched=touched):
-                d=encounter(1);d['nazarick'].update(stage=1,phase=2);load_stage(d)
+                d=encounter(1);d.pop('action_queue_version');d['nazarick'].update(stage=1,phase=2);load_stage(d)
                 p=d['players']['10'];p['fighter']['hp']=p['fighter']['stats']['max_hp']=10000
                 p['qte_result']=dict(encounter_guards=dict(boss=dict(dodge=[not touched],pattern_dodge=dict(
                     contacts=[dict(id='fire',strike=0,weight=.3,tier='normal',status='burn')] if touched else []))))
@@ -337,6 +337,11 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
         await self.db.arena_combat_settings(10,enabled=True,defense_mode='block')
         row=await self.db.arena_raid_create(1,10,boss_id='nazarick',silent=True)
         self.row=await self.db.arena_raid_setup(row['token'],10,'start')
+        # These tests cover the saved sequential-proof format. The shared native
+        # defense and new boss scheduling have separate integration tests.
+        d=json.loads(self.row['data_json']);d.pop('action_queue_version')
+        self.db._raid_save_locked(self.row,d);self.db.connection.commit()
+        self.row=self.db._raid_row_locked(row['token'])
 
     async def asyncTearDown(self):
         await self.db.close();self.temp.cleanup()

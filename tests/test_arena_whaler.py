@@ -37,9 +37,12 @@ def encounter(size=1):
         )
         for p in members
     ]
-    return create_raid_state(
+    data = create_raid_state(
         members, sources, FIGHTER_CLASSES, BUILTIN_SKILLS, "whaler"
     )
+    # Compatibility coverage for persisted legacy reactions and their proofs.
+    data.pop('action_queue_version')
+    return data
 
 
 class WhalerTests(unittest.TestCase):
@@ -275,6 +278,7 @@ class WhalerStoreTests(unittest.IsolatedAsyncioTestCase):
             row["token"], 10, "start", expected_revision=row["revision"]
         )
         d = json.loads(row["data_json"])
+        d.pop('action_queue_version', None)
         d["players"]["10"]["fighter"]["resource"] = 50
         self.db._raid_save_locked(row, d)
         self.db.connection.commit()

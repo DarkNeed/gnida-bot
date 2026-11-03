@@ -6,4 +6,6 @@ assert(during[0].active);assert(!during[1].active);assert.equal(released[1].posi
 assert(released[1].active&&released[2].active);assert.notEqual(released[1].lane,released[2].lane);
 assert(released[0].done);assert.equal(T.model(q)[0].position,before[0].position);
 assert(T.model(q,100).every(x=>x.position===1));assert(T.model(q,-10).every(x=>x.position===0));
+const e=(round,cast_at,extra={})=>({round,cast_at,...extra});
+assert.deepEqual(T.eventGroups([e(1,2),e(1,3),e(1,3),e(2,3),e(2,3,{chaplain_event:'rewind'}),e(2,3),e(2,undefined)]).map(g=>g.length),[1,2,1,1,1,1]);
 console.log('PASS moving cast markers, simultaneous group, distinct lanes, completion and next-round reset');

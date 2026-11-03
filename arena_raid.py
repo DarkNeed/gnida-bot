@@ -447,7 +447,8 @@ class RaidMixin:
                         source = released['fighter']
                         from arena_raid_engine import pair_state
                         from arena_engine import effective_skill
-                        variant = effective_skill(pair_state(source, fighter), 'a', intent['skill'], skills)
+                        from arena_raid_engine import BOSS_SKILLS
+                        variant = effective_skill(pair_state(source, fighter), 'a', intent['skill'], {**BOSS_SKILLS, **skills})
                         member = challenge('defense', source, fighter, variant, actor)
                         member.update(encounter_enemy=released['source'], name=source['name'] + ' · ' + variant.name)
                         members.append(member)
@@ -756,6 +757,8 @@ class RaidMixin:
                 _, skills = self._fighter_catalog_locked()
                 from arena_rp import rp_skills
                 from arena_action_queue import intercept
+                from arena_raid_engine import BOSS_SKILLS
+                skills = {**BOSS_SKILLS, **skills}
                 intercept(data, actor, source, rp_skills(skills))
                 self._raid_save_locked(row, data)
                 self.connection.execute('UPDATE arena_raids SET deadline=? WHERE token=?', (row['deadline'], token))
