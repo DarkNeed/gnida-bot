@@ -494,10 +494,13 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
     async def get_owner_profile(self, chat_id: int, user_id: int) -> dict[str, Any]:
         async with self._lock:
             profile = self._settle_materials_locked(chat_id, user_id)
+            counts=self._owned_worker_counts_locked(chat_id,user_id)
             self.connection.commit()
             return {
                 **dict(profile),
-                "slave_count": self._slave_count_locked(chat_id, user_id),
+                "slave_count": counts['total'],
+                "human_slave_count": counts['human'],
+                "npc_slave_count": counts['npc'],
                 "slave_capacity": self._owner_capacity_for_level(int(profile["level"])),
                 "material_capacity": self._material_capacity_for_level(
                     int(profile["level"])

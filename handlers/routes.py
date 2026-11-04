@@ -794,7 +794,7 @@ def slave_report(sections: list[tuple[str, list]]) -> str:
     blocks: list[str] = []
     for title, rows in sections:
         entries = "\n".join(
-            f"{index}. {slave_tag(row)}" for index, row in enumerate(rows, 1)
+            f"{index}. "+(html.escape(row['display_name'])+' · NPC' if 'is_npc' in row.keys() and row['is_npc'] else slave_tag(row)) for index, row in enumerate(rows, 1)
         )
         blocks.append(f"<b>{html.escape(title)}</b>\n{entries or 'Рабов нет.'}")
     return "\n\n".join(blocks) if blocks else "Рабов нет."
@@ -1673,15 +1673,14 @@ def create_router(
 
     async def slave_menu_home(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         await database.settle_businesses_for_user(user_id)
-        slaves, owners = await asyncio.gather(
-            database.list_slaves_globally(user_id),
+        counts, owners = await asyncio.gather(
+            database.owned_worker_counts(chat_id,user_id),
             database.list_owners_globally(user_id),
         )
-        slaves = [row for row in slaves if int(row["ownership_chat_id"]) == chat_id]
         owners = [row for row in owners if int(row["chat_id"]) == chat_id]
-        if slaves and owners:
+        if counts['total'] and owners:
             status = "раб и рабовладелец"
-        elif slaves:
+        elif counts['total']:
             status = "рабовладелец"
         elif owners:
             status = "раб"
@@ -1706,22 +1705,18 @@ def create_router(
         return (
             "<b>Рабовладение</b>\n"
             f"Статус: <b>{status}</b>\n"
-            f"Твоих рабов: {len(slaves)}\n"
+            f"Твоих рабов: {counts['total']} (игроки: {counts['human']}, NPC: {counts['npc']})\n"
             f"Франки: <b>{francs} ₣</b>{owner_text}\n\n"
             "Личный персонаж общий для всех чатов. Выбери раздел.",
             keyboard,
         )
 
     async def slave_menu_slaves(user_id: int, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
-        rows = await database.list_slaves_globally(user_id)
-        rows = [row for row in rows if int(row["ownership_chat_id"]) == chat_id]
-        grouped: dict[int, tuple[str, list]] = {}
-        for row in rows:
-            chat_id = int(row["ownership_chat_id"])
-            title = row["chat_title"] or f"Чат {chat_id}"
-            grouped.setdefault(chat_id, (title, []))[1].append(row)
+        rows = await database.list_owned_workers(chat_id,user_id)
+        chat=next((c for c in await database.list_menu_chats() if c['chat_id']==chat_id),None)
+        title=chat['title'] if chat and chat['title'] else f'Чат {chat_id}'
         return (
-            "<b>Твои рабы</b>\n" + slave_report(list(grouped.values())),
+            "<b>Твои рабы</b>\n" + slave_report([(title,rows)]),
             slave_menu_back_keyboard(),
         )
 
@@ -1840,8 +1835,8 @@ def create_router(
     async def slave_menu_business_type(
         user_id: int, chat_id: int
     ) -> tuple[str, InlineKeyboardMarkup]:
-        slaves = await database.list_slaves(chat_id, user_id)
-        if not slaves:
+        counts = await database.owned_worker_counts(chat_id, user_id)
+        if not counts['total']:
             return "<b>🏢 Предприятия</b>\nВ этом чате у тебя больше нет рабов.", slave_menu_back_keyboard()
         return (
             "<b>Выбери предприятие</b>\nПока можно открыть только одно предприятие. Оно будет работать в этом чате.",
@@ -5418,7 +5413,7 @@ def create_router(
                 owner_id, owner_name, _ = target
             else:
                 owner_id, owner_name = message.from_user.id, display_name(message.from_user)
-            rows = await database.list_slaves(message.chat.id, owner_id)
+            rows = await database.list_owned_workers(message.chat.id, owner_id)
             body = (
                 f"Рабы пользователя {html.escape(owner_name)}:\n"
                 + slave_report([(message.chat.title or f"Чат {message.chat.id}", rows)])
@@ -5455,7 +5450,7 @@ def create_router(
                     if not allowed:
                         continue
                     owner_name = candidate["display_name"] or candidate["username"] or token
-                    rows = await database.list_slaves(chat_id, int(candidate["user_id"]))
+                    rows = await database.list_owned_workers(chat_id, int(candidate["user_id"]))
                     title = candidate["chat_title"] or f"Чат {chat_id}"
                     allowed_sections.append((title, rows))
                 if not allowed_sections:

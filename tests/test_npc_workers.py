@@ -84,6 +84,51 @@ class NpcTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):await self.act('npc_rest',actor=20,id=id,revision=self.row(id)['revision'])
         with self.assertRaises(ValueError):await self.act('npc_buy',actor=20,id=id)
 
+    async def test_owned_totals_roster_and_tops_include_npcs_without_extra_passive_income(self):
+        id=await self.buy()
+        self.assertEqual(await self.db.owned_worker_counts(-100,10),dict(human=1,npc=1,total=2))
+        self.assertEqual(await self.db.owned_worker_counts(-200,10),dict(human=1,npc=0,total=1))
+        self.assertEqual((await self.db.holdings_view(-100,10))['worker_counts']['total'],2)
+        top=await self.db.top_owners(-100);self.assertEqual(top[0]['amount'],2)
+        # Counters used for income/arena remain human-only; presentation uses a
+        # separate roster with no fake Telegram identifier for an NPC.
+        self.assertEqual(self.db._slave_count_locked(-100,10),1)
+        profile=await self.db.get_owner_profile(-100,10)
+        self.assertEqual(profile['slave_count'],2);self.assertEqual(profile['npc_slave_count'],1)
+        roster=await self.db.list_owned_workers(-100,10)
+        self.assertEqual(len(roster),2)
+        npc=next(r for r in roster if r['is_npc'])
+        self.assertIsNone(npc['user_id']);self.assertEqual(npc['npc_id'],id)
+        with self.db.connection:
+            self.db.connection.execute("UPDATE fictional_workers SET status='missing' WHERE id=?",(id,))
+        self.assertEqual((await self.db.owned_worker_counts(-100,10))['total'],2)
+        with self.db.connection:
+            self.db.connection.execute("UPDATE fictional_workers SET status='rest' WHERE id=?",(id,))
+        await self.act('npc_release',id=id,revision=self.row(id)['revision'],confirm=True)
+        self.assertEqual((await self.db.owned_worker_counts(-100,10))['total'],1)
+        self.assertEqual((await self.db.top_owners(-100))[0]['amount'],1)
+
+    async def test_appraisal_survives_hourly_revision_change_but_never_charges_twice(self):
+        id=await self.buy();revision=self.row(id)['revision']
+        self.stamp+=HOUR;await self.db.holdings_view(-100,10)
+        self.assertNotEqual(self.row(id)['revision'],revision)
+        balance=await self.db.franc_balance(-100,10)
+        body=dict(action='npc_appraise',id=id,revision=revision,nonce=uuid4().hex)
+        await self.db.npc_action(-100,10,body)
+        await self.db.npc_action(-100,10,body)
+        self.assertEqual(await self.db.franc_balance(-100,10),balance-50)
+        with self.assertRaises(ValueError):await self.act('npc_appraise',id=id,revision=revision)
+        self.assertEqual(await self.db.franc_balance(-100,10),balance-50)
+        with self.assertRaises(ValueError):await self.act('npc_rest',id=id,revision=revision)
+
+    async def test_enterprise_top_includes_assigned_npc_and_excludes_market_stock(self):
+        id=await self.buy();await self.db.enterprise_create(-100,10,'mine')
+        site=await self.db.get_business(-100,10,business_type='mine')
+        await self.act('npc_assign',id=id,site=site['id'],revision=self.row(id)['revision'])
+        for kind in ('owners','sites'):
+            top=await self.db.enterprise_leaderboard(-100,kind=kind)
+            self.assertEqual(top['entries'][0]['workers'],1)
+
     async def test_shared_capacity_close_and_income_with_wallet_upkeep(self):
         id=await self.buy();await self.db.enterprise_create(-100,10,'mine')
         v=await self.db.holdings_view(-100,10);site=v['sites'][0]

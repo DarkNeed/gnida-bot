@@ -20,6 +20,25 @@ def now():
 
 
 class NpcWorkersMixin(WorkforceMixin):
+    def _owned_worker_counts_locked(self, chat, owner):
+        human=self.connection.execute('SELECT COUNT(*) FROM ownership WHERE chat_id=? AND owner_id=?',(chat,owner)).fetchone()[0]
+        npc=self.connection.execute('SELECT COUNT(*) FROM fictional_workers WHERE chat=? AND owner=?',(chat,owner)).fetchone()[0]
+        return dict(human=human,npc=npc,total=human+npc)
+
+    async def owned_worker_counts(self, chat, owner):
+        """Display totals only: never grant human passive income for NPCs."""
+        async with self._lock:return self._owned_worker_counts_locked(chat,owner)
+
+    async def list_owned_workers(self, chat, owner):
+        """Presentation roster. NPC UUIDs never masquerade as Telegram IDs."""
+        async with self._lock:
+            rows=[dict(r,is_npc=False) for r in self.connection.execute('''SELECT u.*,o.slave_id AS user_id,o.transfer_priority
+                FROM ownership o LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.slave_id
+                WHERE o.chat_id=? AND o.owner_id=? ORDER BY o.acquired_at DESC''',(chat,owner))]
+            rows.extend(dict(is_npc=True,npc_id=r['id'],user_id=None,username=None,display_name=json.loads(r['data'])['name'],transfer_priority=0)
+                for r in self.connection.execute('SELECT id,data FROM fictional_workers WHERE chat=? AND owner=? ORDER BY created DESC,id',(chat,owner)))
+            return rows
+
     def _init_npc_workers(self):
         self.connection.executescript('''
             CREATE TABLE IF NOT EXISTS npc_estates(
@@ -296,7 +315,12 @@ class NpcWorkersMixin(WorkforceMixin):
             d['loyalty']=max(40,d['loyalty']);d['history']=(d['history']+[dict(at=stamp,text='Новый владелец')])[-30:]
         else:
             if r['owner']!=actor:raise ValueError('Это не твой NPC.')
-            if r['revision']!=b.get('revision'):raise ValueError('Состояние NPC изменилось. Обнови карточку.')
+            # Hourly upkeep may update the revision immediately before this
+            # request. Appraisal reveals immutable identity: ownership and the
+            # appraised flag under this same lock protect the single charge.
+            # Other mutations still require an exact current revision.
+            if type(b.get('revision')) is not int or (r['revision']!=b['revision'] and action!='npc_appraise'):
+                raise ValueError('Состояние NPC изменилось. Обнови карточку.')
             if r['status'] in ('missing','expedition'):raise ValueError('Сначала дождись возвращения NPC.')
             if action=='npc_appraise':
                 if d['appraised']:raise ValueError('Редкость уже известна и никогда не меняется.')

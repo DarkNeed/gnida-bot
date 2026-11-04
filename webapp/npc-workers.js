@@ -57,6 +57,7 @@ window.NpcWorkers=(()=>{
   }
   function modal(title,body){ctx.modal(title,body);return document.querySelector('.holdings-dialog')}
   function wById(id){const n=ctx.getData().npc;return [...n.workers,...n.market].find(w=>w.id===id)}
+  function openCard(id){details(wById(id))}
   function eventById(id){return ctx.getData().npc.workforce.events.find(e=>e.id===id)}
   function passport(w){
     const p=w.passport;if(!p)return '<p><b>Особенность:</b> '+esc(w.trait_text)+'</p><p class="muted">Обнови страницу, чтобы получить подробный паспорт NPC.</p>';
@@ -124,5 +125,5 @@ window.NpcWorkers=(()=>{
     if(!bound.has(c.app)){c.app.addEventListener('click',click);bound.add(c.app)}
   }
   document.addEventListener('click',e=>{if(e.target.closest('.holdings-dialog'))click(e)});
-  return {mount,people,row,expeditions,quoteSelection,leave(){},due(data,stamp){if(!data?.npc)return false;const n=data.npc;return data.protection?.events.some(e=>e.status==='open'&&e.deadline<=stamp)||(!data.protection?.enabled&&data.protection?.next_event<=stamp)||n.trips.some(t=>t.status==='active'&&t.ends<=stamp)||n.workers.some(w=>w.training&&w.training.ends<=stamp)||n.workforce.events.some(e=>['open','playing','search'].includes(e.status)&&(e.deadline<=stamp||e.search_ends<=stamp||e.game_ends<=stamp))}};
+  return {mount,people,row,expeditions,quoteSelection,openCard,leave(){},due(data,stamp){if(!data?.npc)return false;const n=data.npc;return data.protection?.events.some(e=>e.status==='open'&&e.deadline<=stamp)||(!data.protection?.enabled&&data.protection?.next_event<=stamp)||n.trips.some(t=>t.status==='active'&&t.ends<=stamp)||n.workers.some(w=>w.training&&w.training.ends<=stamp)||n.workforce.events.some(e=>['open','playing','search'].includes(e.status)&&(e.deadline<=stamp||e.search_ends<=stamp||e.game_ends<=stamp))}};
 })();

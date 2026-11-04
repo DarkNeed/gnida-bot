@@ -197,6 +197,11 @@ class LeaderboardsMixin:
                 site_counts = Counter(s["owner_id"] for s in sites if not s["closed"])
                 worker_counts = Counter(w["owner_id"] for w in staff)
                 staff_counts = Counter(w["effective_site"] for w in staff)
+                valid_sites={s['id']:s['owner_id'] for s in sites if not s['closed']}
+                for w in self.connection.execute('SELECT owner,site FROM fictional_workers WHERE chat=? AND owner IS NOT NULL AND site IS NOT NULL',(chat,)):
+                    if valid_sites.get(w['site'])==w['owner']:
+                        worker_counts[w['owner']]+=1
+                        staff_counts[w['site']]+=1
                 if kind == "owners":
                     income = {r["owner_id"]: r["amount"] for r in self.connection.execute("""SELECT owner_id,SUM(owner_income) AS amount
                         FROM business_income_daily WHERE chat_id=? AND income_day>=? AND income_day<? GROUP BY owner_id""", (chat, start, end))}

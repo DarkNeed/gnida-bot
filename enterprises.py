@@ -443,7 +443,7 @@ class EnterpriseMixin(EnterpriseProtectionMixin, NpcWorkersMixin, SlaveFinanceMi
                 recovery=[dict(id=r['id'],slave_id=r['slave_id'],deadline=r['deadline'],kind=r['kind']) for r in self.connection.execute("SELECT * FROM slave_recovery_events WHERE chat_id=? AND owner_id=? AND status IN ('pending','playing')",(chat,owner))]
                 return dict(chat_id=chat,chat_title=chat_row['title'] if chat_row else str(chat),actor_id=owner,
                     server_time=now(),revision=self._holdings_revision_locked(chat,owner),balance=balance['balance'] if balance else 0,
-                    sites=sites,people=people,expeditions=trips,other_expedition_chat=other['chat_id'] if other else None,
+                    sites=sites,people=people,worker_counts=self._owned_worker_counts_locked(chat,owner),expeditions=trips,other_expedition_chat=other['chat_id'] if other else None,
                     recoveries=recovery,npc=npc,protection=protection,arena_enabled=self._feature_enabled_locked(chat,'arena'),trader=self._trader_view_locked(chat,owner),
                     catalog=[dict(id=k,**v) for k,v in CATALOG.items()],max_enterprises=MAX_ENTERPRISES,
                     missions=[dict(id=k,**v) for k,v in EXPEDITIONS.items()])

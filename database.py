@@ -3353,12 +3353,12 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
         async with self._lock:
             return self.connection.execute(
                 """SELECT o.owner_id, COUNT(*) AS amount, u.display_name, u.username
-                   FROM ownership o
-                   LEFT JOIN users u ON u.chat_id=o.chat_id AND u.user_id=o.owner_id
-                   WHERE o.chat_id=?
+                   FROM (SELECT owner_id FROM ownership WHERE chat_id=?
+                         UNION ALL SELECT owner AS owner_id FROM fictional_workers WHERE chat=? AND owner IS NOT NULL) o
+                   LEFT JOIN users u ON u.chat_id=? AND u.user_id=o.owner_id
                    GROUP BY o.owner_id
                    ORDER BY amount DESC, o.owner_id ASC LIMIT ?""",
-                (chat_id, limit),
+                (chat_id, chat_id, chat_id, limit),
             ).fetchall()
 
     async def is_vulnerable(self, chat_id: int, user_id: int) -> bool:

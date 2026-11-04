@@ -103,6 +103,19 @@ class PrivateMenuChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Чат: Другой чат", body)
         self.assertIn("50 ₣", body)
 
+    async def test_npc_only_owner_sees_count_status_and_safe_plain_name_in_menu(self):
+        from uuid import uuid4
+        await self.db.credit_francs(-100,10,10000)
+        view=await self.db.holdings_view(-100,10);npc=view['npc']['market'][0]
+        await self.db.npc_action(-100,10,dict(action='npc_buy',id=npc['id'],nonce=uuid4().hex))
+        with self.db.connection:self.db.connection.execute('DELETE FROM ownership WHERE chat_id=-100 AND owner_id=10')
+        home,_=self.view(await self.click('sm:select:-100'))
+        self.assertIn('Твоих рабов: 1 (игроки: 0, NPC: 1)',home)
+        self.assertIn('<b>рабовладелец</b>',home)
+        roster,_=self.view(await self.click('sm:c:-100:slaves'))
+        self.assertIn(npc['name'],roster);self.assertIn('NPC',roster)
+        self.assertNotIn('tg://user?id=None',roster)
+
     async def test_selected_chat_scopes_all_menu_sections(self):
         await self.db.credit_francs(-100, 10, CATALOG['field']['price'])
         await self.db.create_business(-100, 10, "field")
