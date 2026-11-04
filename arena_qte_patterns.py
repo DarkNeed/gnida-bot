@@ -60,6 +60,8 @@ def family(s):
     if ident.startswith('nz_'):
         from arena_nazarick_patterns import identity
         who, phase, move = identity(dict(skill=s))
+        from arena_nazarick_dungeon_patterns import FAMILIES
+        if who in FAMILIES:return FAMILIES[who][move]
         if who=='pyromancer':return 'fire'
         return {'shalltear': (('slash','death','edict'),('thrust','slash','beast')),
                 'demiurge': (('fire','edict','script'),('fire','script','death')),
@@ -136,6 +138,8 @@ def family(s):
         return "beast"
     if "глаз" in ident or "dust_in_eyes" in ident:
         return "dust"
+    if cls == 'assassin':
+        return 'thrust' if ident=='assassin_needle' else 'dagger'
     if cls == "cutie":
         return "charm"
     if "clench" in ident or "gachi" in ident or contains("захват", "club"):
@@ -212,6 +216,7 @@ STYLES = dict(
     eclipse="orbit",
     dust="bar",
     tiger="arc",
+    dagger="bar",
 )
 
 
@@ -518,7 +523,7 @@ def prepare(s, e):
                 h,
                 start=start + delay,
                 end=start + delay + duration,
-                strike=e["strike"],
+                strike=h.get('strike',e["strike"]),
                 at=e["at"],
                 index=i,
             )
@@ -598,6 +603,13 @@ def prepare(s, e):
     elif p.get('chaplain', 0) >= 2:
         from arena_chaplain_qte import prepare as chaplain_prepare
         chaplain_prepare(s, e, add, beam, circle, bullet)
+    elif k == 'dagger':
+        bx=W-28 if not odd else 28
+        by=clamp(55+e['jitter']*210,18,H-18)
+        theta=math.atan2(ty-by,tx-bx)
+        fan(bx,by,theta,5,.11*p['spread'],0,'blade')
+        diagonal(theta+(.85 if odd else -.85),8,.24)
+        if 'нить' in n or 'рана' in n:aimed(not odd,.09*p['spread'],3,.42,'blade')
     elif k == "slash":
         diagonal((i * 0.61 + p["phase"]) % math.pi, 16 + d["pressure"] * 4)
     elif k == "thrust":

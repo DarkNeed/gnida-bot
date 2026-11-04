@@ -11,7 +11,7 @@ from arena_engine import BUILTIN_SKILLS, FIGHTER_CLASSES
 from arena_raid_engine import resolve_round
 from arena_qte_live import challenge
 from arena_qte_combined import combine, replay
-from arena_action_queue import intercept
+from arena_action_queue import entries, intercept
 import test_arena
 
 
@@ -26,6 +26,26 @@ def state(actors=(20,), roster=('goblin', 'goblin', 'shaman')):
 
 
 class QueueTests(unittest.TestCase):
+    def test_fast_fighter_gets_one_follow_up_before_slow_enemy_cast(self):
+        from arena_raid_engine import BOSS_SKILLS, create_raid_state
+        participants=[dict(actor_id=20,fighter_id=20,personal=True,slave_owner=20)]
+        sources=[dict(slave_id=20,owner_id=20,class_id='ragamuffin',level=1)]
+        data=create_raid_state(participants,sources,FIGHTER_CLASSES,BUILTIN_SKILLS,'iron')
+        player=data['players']['20']
+        player.update(selected='bum_punch')
+        player['fighter']['stats']['speed']=60
+        data['boss']['stats']['speed']=0
+        queue=entries(data,{**BUILTIN_SKILLS,**BOSS_SKILLS})
+        player_entries=[entry for entry in queue if entry['team']=='players']
+        enemy_time=min(entry['at'] for entry in queue if entry['team']=='enemies')
+        self.assertEqual([entry['slot'] for entry in player_entries],[0,1])
+        self.assertTrue(all(entry['at']<enemy_time for entry in player_entries))
+        from test_arena_raids import Roll
+        data['boss']['hp']=data['boss']['stats']['max_hp']=10000
+        resolve_round(data,BUILTIN_SKILLS,Roll())
+        self.assertEqual(player['manual_turns'],2)
+        self.assertEqual(len([event for event in data['log'] if event['actor']=='20' and event.get('skill')]),2)
+
     def test_per_source_contacts_are_applied_not_replaced_with_full_hit(self):
         from test_arena_raids import Roll
         data=state()

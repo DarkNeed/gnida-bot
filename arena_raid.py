@@ -19,7 +19,7 @@ from arena_raid_engine import (
     finish_if_needed,
 )
 from arena_archprogress import skill_branch
-from arena_relics import RELIC_IDS,TICKET_ID,TICKET_NAME
+from arena_relics import RELIC_IDS,DUNGEON_RELIC_IDS,TICKET_ID,TICKET_NAME
 
 RAID_LOBBY_SECONDS = 600
 RAID_REWARD_COOLDOWN = 3600
@@ -255,7 +255,9 @@ class RaidMixin:
             self._kingdom_battle_finished_locked(row,data)
         if data.get('protection_event'):
             self._protection_battle_finished_locked(row,data)
-        if data["won"] and row.get('boss_id') != 'encounter' and data.get('kind') != 'encounter':
+        if data.get('nazarick_run_id'):
+            self._nazarick_dungeon_battle_finished_locked(row,data)
+        if data["won"] and not data.get('nazarick_run_id') and row.get('boss_id') != 'encounter' and data.get('kind') != 'encounter':
             rng = random.SystemRandom()
             now = raid_reward_now()
             day = raid_day(now)
@@ -269,7 +271,7 @@ class RaidMixin:
             pool += [
                 ("passive", p.skill_id, p.rarity, p.name)
                 for p in BUILTIN_PASSIVES.values()
-                if p.skill_id not in RELIC_IDS
+                if p.skill_id not in DUNGEON_RELIC_IDS
             ]
             for key, player in data["players"].items():
                 if (
@@ -600,6 +602,8 @@ class RaidMixin:
         async with self._lock:
             try:
                 row = self._raid_row_locked(token)
+                if row.get('encounter_json') and json.loads(row['encounter_json']).get('nazarick_dungeon'):
+                    raise ValueError('Отрядом и контрольными точками управляют через меню подземелья Назарика.')
                 protection=bool(row.get('encounter_json') and json.loads(row['encounter_json']).get('protection'))
                 if protection and (rp_template is not None or action=='finish'):
                     raise ValueError('Это защита предприятий, не RP-встреча. RP-сборки и досрочное завершение мастером недоступны.')

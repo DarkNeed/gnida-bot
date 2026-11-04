@@ -284,6 +284,11 @@ def create_raid_router(db, bot, enabled, publisher):
                 or getattr(message, "caption", None)
                 or ""
             )
+            if raid_boss_id(match)=='nazarick':
+                run=await db.nazarick_create(message.chat.id,message.from_user.id)
+                await message.answer('🏰 <b>Назарик · подземелье на 10 этажей</b>\nОтряд до трёх игроков. Сохранение контрольных точек, восстановление после защитников и личные награды на выбор. Вступайте или продолжайте поход через меню.',
+                    parse_mode='HTML',reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='🏰 Открыть поход · вступить в отряд',url=arena_link(publisher.username,'nzrun_'+run['id']))]]))
+                return
             row = await db.arena_raid_create(
                 message.chat.id,
                 message.from_user.id,

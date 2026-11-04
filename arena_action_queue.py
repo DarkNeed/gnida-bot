@@ -206,6 +206,10 @@ def _release(data, key, skills):
         _log(data, key, key, dict(text='Ошеломление: намерение сорвано.'))
         return None
     i = deepcopy(data['enemy_intents'][key])
+    if i['kind']=='recover':
+        _tick(enemy)
+        _log(data,key,key,dict(text='Восстановление сил: готовится к следующему действию.'))
+        return None
     if enemy.get('guild_monster') == 'troll' and not any(e['kind'] == 'burn' for e in enemy['effects']):
         heal = min(enemy['stats']['max_hp'] - enemy['hp'], round(enemy['stats']['max_hp'] * .04))
         enemy['hp'] += heal
@@ -236,9 +240,9 @@ def _release(data, key, skills):
         return None
     try:
         validate_skill(pair_state(enemy, living[i['targets'][0]]['fighter']), 'a', i['skill'], skills)
-    except ValueError:
+    except ValueError as error:
         _tick(enemy)
-        _log(data, key, key, dict(text='Объявленный навык недоступен: каст сорван.'))
+        _log(data, key, key, dict(text='Объявленный навык недоступен: '+str(error)+' Каст сорван.'))
         return None
     return dict(source=key, fighter=deepcopy(enemy), intent=i)
 

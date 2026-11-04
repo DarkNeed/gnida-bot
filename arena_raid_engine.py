@@ -107,6 +107,8 @@ BOSS_SKILLS.update(WHALER_SKILLS)
 BOSS_SKILLS.update(CHAPLAIN_SKILLS)
 BOSS_SKILLS.update(MOB_SKILLS)
 BOSS_SKILLS.update(NAZARICK_SKILLS)
+from arena_nazarick_dungeon_rules import build_skills as build_nzd_skills
+BOSS_SKILLS.update(build_nzd_skills(Skill))
 from arena_guild_rules import SKILLS as GUILD_SKILLS
 BOSS_SKILLS.update(GUILD_SKILLS)
 

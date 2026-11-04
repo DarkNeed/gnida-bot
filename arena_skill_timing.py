@@ -5,6 +5,8 @@ Explicit cast_base overrides the role-based default; speed is sampled at cast st
 """
 import math
 
+SIMULTANEOUS_WINDOW = .5
+
 
 def base_duration(skill):
     if skill.cast_base is not None:
@@ -42,7 +44,7 @@ def forecast(now, duration, enemy_end):
     finish = round(now + duration, 3)
     remaining = round(enemy_end - finish, 3) if enemy_end is not None else None
     return dict(end=finish, remaining=remaining,
-                outcome='none' if remaining is None else 'together' if abs(remaining) < .001
+                outcome='none' if remaining is None else 'together' if abs(remaining) <= SIMULTANEOUS_WINDOW + 1e-9
                 else 'before' if remaining > 0 else 'after')
 
 
@@ -59,7 +61,9 @@ def release(queue):
     if not queue['pending']:
         return []
     at = min(e['end'] for e in queue['pending'])
-    queue['time'] = at
-    group = [e for e in queue['pending'] if abs(e['end'] - at) < .001]
+    # Anchor to the earliest cast, not a transitive chain of near neighbours.
+    # Settle at the last included completion: no attack fires before its cast ends.
+    group = [e for e in queue['pending'] if e['end'] - at <= SIMULTANEOUS_WINDOW + 1e-9]
+    queue['time'] = max(e['end'] for e in group)
     queue['pending'] = [e for e in queue['pending'] if e not in group]
     return group

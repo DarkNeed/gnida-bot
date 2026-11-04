@@ -18,6 +18,9 @@ def render_arena_index(root: Path) -> str:
         "raid-timeline.js",
         "raid-intents.css",
         "nazarick-qte.js",
+        "nazarick-dungeon-qte.js",
+        "nazarick-dungeon.js",
+        "nazarick-dungeon.css",
         "qte-watch",
         "qte-live.css",
         "qte-lab/engine",
@@ -57,6 +60,9 @@ def render_arena_index(root: Path) -> str:
         .replace('src="/static/client.js"', f'src="/static/client.js?v={version}"')
         .replace('src="/static/audio.js"', f'src="/static/audio.js?v={version}"')
         .replace('src="/static/nazarick-qte.js"', f'src="/static/nazarick-qte.js?v={version}"')
+        .replace('src="/static/nazarick-dungeon-qte.js"', f'src="/static/nazarick-dungeon-qte.js?v={version}"')
+        .replace('src="/static/nazarick-dungeon.js"', f'src="/static/nazarick-dungeon.js?v={version}"')
+        .replace('href="/static/nazarick-dungeon.css"', f'href="/static/nazarick-dungeon.css?v={version}"')
         .replace('src="/rp/client.js"', f'src="/rp/client.js?v={version}"')
         .replace('href="/static/rp.css"', f'href="/static/rp.css?v={version}"')
         .replace('src="/static/holdings.js"', f'src="/static/holdings.js?v={version}"')

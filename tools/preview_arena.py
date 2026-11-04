@@ -30,6 +30,8 @@ from arena_raid_engine import (
     raid_boss_sprite,
 )
 from arena_engine import effective_skill
+from arena_qte_live import challenge
+from arena_action_queue import direct_public_queue, cast_time
 from arena_archclasses import class_title, ARCHCLASSES, archclass_view
 from arena_progression import choice_avatar
 
@@ -75,6 +77,10 @@ async def demo_fighter(request):
     owned = [
         k for k in unlocked_skill_ids(cls, 20,archclass_id=arch,progression_level=resolved) if BUILTIN_SKILLS[k].class_id == cls
     ]
+    if cls == 'assassin' and not arch:
+        # Four combat slots: the defensive smoke is still available in the
+        # reaction atlas, while the main preview shows the finisher too.
+        owned = ['assassin_cut', 'assassin_needle', 'assassin_expose', 'assassin_execution']
     if arch:
         primary={'warrior':['armor_split','steel_charge','counter_lunge'],
                  'mage':['mana_shot','mana_blob','mana_focus' if arch=='mage_archmage' else 'mana_overload' if arch=='mage_elementalist' else 'mana_barrier'],
@@ -87,11 +93,16 @@ async def demo_fighter(request):
             'middle':['grit_teeth','whole_family','answer_for_it'],
             'ring':['first_stroke','red_etude','last_stroke'],
             'pinky':['calm_breath','moon_arc','falling_star']}
-        owned=primary.get(cls,humour_fingers.get(cls,owned[:3]))+['arch_'+arch]
+        assassin_preview={
+            'assassin_shadow':['assassin_cut','assassin_needle','assassin_smoke'],
+            'assassin_blood':['assassin_cut','assassin_expose','assassin_execution'],
+        }
+        owned=primary.get(cls,humour_fingers.get(cls,assassin_preview.get(arch,owned[:3])))+['arch_'+arch]
     source = dict(slave_id=1, owner_id=1, class_id=cls, level=20, loadout=owned,archclass_id=arch,archclass_stage=stage,progression_level=resolved)
     state = create_battle_state(
         source,
         dict(source, slave_id=2, owner_id=2, class_id="ragamuffin", loadout=None,archclass_id='',progression_level=0),
+        action_queue_version=True,
     )
     if arch:
         state['sides']['a']['rpg_state']={
@@ -129,7 +140,7 @@ async def demo_fighter(request):
         b['effects']=[dict(id='adoration',kind='damage_pct',value=-.4,duration=3),dict(id='doxxing_magic',kind='magic_defense_pct',value=-.2,duration=3),dict(id='rpg_burn',kind='burn',value=3,duration=3)]
         if cls not in ('cutie','nerd','ring') and arch!='mage_elementalist':b['effects']=[]
         if not arch:
-            primary=dict(ragamuffin=['bum_punch','dust_in_eyes','street_breath'],cutie=['uwu','meow','posing'],jock=['smack','clench','butt_peak'],nerd=['humiliate','doxxing','go_to_store'],thumb=['bayonet','warning_shot','senior_verdict'],index=['receive_prescript','first_line','last_line'],middle=['grit_teeth','answer_for_it','whole_family'],ring=['first_stroke','unfinished_portrait','last_stroke'],pinky=['calm_breath','moon_arc','falling_star'],warrior=['armor_split','steel_charge','warrior_execute'],mage=['mana_shot','mana_focus','mana_overload'],priest=['light_word','priest_heal','holy_judgment'],hunter=['hunter_cut','hunter_transform','hunter_visceral'])
+            primary=dict(ragamuffin=['bum_punch','dust_in_eyes','street_breath'],cutie=['uwu','meow','posing'],jock=['smack','clench','butt_peak'],nerd=['humiliate','doxxing','go_to_store'],thumb=['bayonet','warning_shot','senior_verdict'],index=['receive_prescript','first_line','last_line'],middle=['grit_teeth','answer_for_it','whole_family'],ring=['first_stroke','unfinished_portrait','last_stroke'],pinky=['calm_breath','moon_arc','falling_star'],warrior=['armor_split','steel_charge','warrior_execute'],mage=['mana_shot','mana_focus','mana_overload'],priest=['light_word','priest_heal','holy_judgment'],hunter=['hunter_cut','hunter_transform','hunter_visceral'],assassin=['assassin_cut','assassin_needle','assassin_expose'])
             a['loadout']=primary[cls]+['mastery_'+cls]
             if cls=='hunter':a['rpg_state']=dict(visceral_ready=True,visceral_until=8)
     for key, side in state["sides"].items():
@@ -142,11 +153,17 @@ async def demo_fighter(request):
             sprite=c.class_id,
             class_rarity=c.rarity,
             resource_name=c.resource_name,
-            skill_details=[asdict(effective_skill(state,key,k)) for k in side["loadout"]],
+            skill_details=[dict(asdict(effective_skill(state,key,k)), cast_time=cast_time(side,effective_skill(state,key,k))) for k in side["loadout"]],
             effective_stats={k: effective_stat(side, k) for k in side["stats"]},
         )
         from arena_mastery import view as mastery_view
         side['mastery']=mastery_view(side)
+    state['demo_qte']={
+        skill_id: challenge('attack', state['sides']['a'], state['sides']['b'], effective_skill(state, 'a', skill_id), 1)
+        for skill_id in state['sides']['a']['loadout']
+        if skill_id in BUILTIN_SKILLS and effective_skill(state, 'a', skill_id).damage_type
+    }
+    state['action_queue']=direct_public_queue(state, BUILTIN_SKILLS)
     return web.json_response(
         dict(
             token="demo",

@@ -22,7 +22,7 @@ from database import Database
 TOKEN = "disposable-reaction-preview-not-a-bot-token"
 
 
-async def application():
+async def application(whaler=False):
     temporary = tempfile.TemporaryDirectory(prefix="gnida-qte-preview-")
     db = Database(Path(temporary.name) / "preview.sqlite3")
     await db.connect()
@@ -37,6 +37,45 @@ async def application():
         )
     )
     app = create_arena_app(db, bot, TOKEN)
+    if whaler:
+        from arena_engine import fighter_xp_limit
+        for actor, cls, branch, loadout in [
+            (10, 'mage', 'mage_archmage', ['mana_shot', 'mana_focus', 'mana_barrier', 'swamp_miasma']),
+            (20, 'priest', 'priest_bishop', ['holy_strike', 'priest_heal']),
+        ]:
+            db._arena_profile_locked(1, actor, True)
+            db._grant_profile_xp_locked('personal_profiles', 1, actor, fighter_xp_limit())
+            db.connection.execute('''UPDATE personal_profiles SET class_id=?,archclass_id=?,archclass_stage=20,
+                progression_level=20,progression_pending_level=0,loadout=? WHERE chat_id=0 AND user_id=?''',
+                (cls, branch, json.dumps(loadout), actor))
+            db.connection.execute('INSERT OR IGNORE INTO arena_learned VALUES(?,?,?,?,?)',
+                                   (0, actor, 1, 'skill', 'swamp_miasma'))
+        db.connection.commit()
+
+        async def whaler_demo(request):
+            # Explicit sandbox reset: production code never registers this route.
+            rows = db.connection.execute("SELECT token,data_json FROM arena_raids WHERE status IN ('active','lobby')").fetchall()
+            for row in rows:
+                db.connection.execute("UPDATE arena_raids SET status='cancelled' WHERE token=?", (row['token'],))
+                db.connection.execute("DELETE FROM arena_qte_flows WHERE token=?", (row['token'],))
+            db.connection.commit()
+            row = await db.arena_raid_create(1, 10, boss_id='whaler', silent=True)
+            row = await db.arena_raid_setup(row['token'], 10, 'start', expected_revision=row['revision'])
+            data = json.loads(row['data_json'])
+            data['players']['10']['fighter']['resource'] = 50
+            if request.query.get('mode') == 'rot':
+                from arena_whaler import set_intent
+                data['boss']['hp'] = data['boss']['stats']['max_hp'] // 4
+                set_intent(data)
+            if request.query.get('mode') == 'miasma':
+                from arena_whaler import set_intent
+                data['round'] = 3
+                set_intent(data)
+            db._raid_save_locked(row, data)
+            db.connection.commit()
+            raise web.HTTPFound('/preview?tgWebAppStartParam=r_' + row['token'])
+
+        app.router.add_get('/whaler-demo', whaler_demo)
 
     async def preview(request):
         actor = 20 if request.query.get("player") == "20" else 10
@@ -80,4 +119,6 @@ async def application():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8104)
-    web.run_app(application(), host="127.0.0.1", port=parser.parse_args().port)
+    parser.add_argument('--whaler', action='store_true', help='Seed disposable level-20 Whaler review')
+    args = parser.parse_args()
+    web.run_app(application(whaler=args.whaler), host="127.0.0.1", port=args.port)

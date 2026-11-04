@@ -894,6 +894,7 @@ def create_arena_app(
             notice=await db.arena_casino_action(chat,actor,body,expected_slot)
             return web.json_response(dict(notice=notice,menu=await app_menu(chat,actor)))
         if action == "raid_create":
+            if body.get('boss')=='nazarick':raise ValueError('Назарик теперь — сохраняемое подземелье. Обнови мини-приложение или используй /рейд назарик в чате.')
             if member.user.is_bot:
                 raise ValueError("Боты не участвуют в рейдах.")
             row = await db.arena_raid_create(chat, actor, str(body.get("boss", "")), silent=True,expected_slot=expected_slot)
@@ -1062,4 +1063,6 @@ def create_arena_app(
     register_guild(app,db,bot,ACTOR,require_member,read_member,guild_publisher)
     from arena_kingdom_web import register_kingdom
     register_kingdom(app,db,bot,ACTOR,require_member,read_member)
+    from arena_nazarick_dungeon_web import register_nazarick
+    register_nazarick(app,db,bot,ACTOR,require_member,read_member)
     return app

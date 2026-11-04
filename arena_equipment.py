@@ -60,6 +60,12 @@ _SPECS = (
  ('caldera','accessory','spark','Искра над пропастью','evasion','opener'),
  ('caldera','relic','ledger','Драконья бухгалтерия','physical_attack','cycle'),
  ('caldera','relic','blood','Чаша пепельной крови','magic_attack','leech'),
+ ('nazarick','weapon','nz_frost','Клинок ледяной чести','physical_attack','execution'),
+ ('nazarick','weapon','nz_forest','Посох шестого этажа','magic_attack','summoner'),
+ ('nazarick','armor','nz_dragon','Одеяние серебряного дракона','physical_defense','stone'),
+ ('nazarick','armor','nz_throne','Мантия тронного зала','magic_defense','immortal'),
+ ('nazarick','accessory','nz_pledge','Клятва Плеяд','max_hp','mercy'),
+ ('nazarick','relic','nz_sacrifice','Печать восьмого этажа','magic_attack','empty'),
 )
 CATALOG = {key:dict(key=key, biome=biome, slot=slot, name=name, main=main, effect=effect)
            for biome,slot,key,name,main,effect in _SPECS}

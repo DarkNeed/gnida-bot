@@ -1,14 +1,17 @@
 /* Mirrored by arena_nazarick_patterns.py. No client-trusted outcomes. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.NazarickQTE=api;})(globalThis,function(){
 'use strict';
+const ND=typeof module==='object'&&module.exports?require('./nazarick-dungeon-qte.js'):globalThis.NazarickDungeonQTE;
 const colors={shalltear:'#ff244c',demiurge:'#e74620',albedo:'#8145cf',pandora:'#b48bd8',ainz:'#a58aff',knight:'#8d8fb6',lich:'#75c89e',hellguard:'#ef4723',pyromancer:'#ff642b'};
+Object.assign(colors,ND?.colors||{});
 function identity(p){const a=(p.skill.base_id||'').split('_');return a.length===4&&a[0]==='nz'?{who:a[1],phase:Number(a[2].slice(1)),move:Number(a[3])}:null;}
 const STONE_COLORS=['#ff593c','#70c6ff','#b69bff','#86e478','#f4db75','#ee86da','#e4edff'];
 const STONE_STATUSES=['burn','shock','curse','venom','exposed','sealed','frailty'];
-function activeDuration(p){const n=identity(p);return n?.who==='ainz'&&n.phase===1&&n.move===0?18.8:n?.who==='ainz'&&n.phase===2&&n.move===0?10.4:6.8;}
-function blockDuration(p){return activeDuration(p)===6.8?9.5:1+activeDuration(p);}
-function schedule(p,count,span){const n=identity(p);if(!n)return[count,span];if(n.who==='ainz'&&n.phase===1&&n.move===0)return[7,15.3];if(n.who==='ainz'&&n.phase===2&&n.move===0)return[2,5.2];if(n.who==='demiurge'&&(n.phase===1&&n.move===2||n.phase===2&&n.move===1)||n.who==='ainz'&&n.phase===2&&n.move===1)return[3,4.0];if(n.who==='ainz'&&n.phase===2&&n.move===2)return[3,4.4];return[count,span];}
+function activeDuration(p){const n=identity(p);if(n?.who==='sebas')return 8.4;if(n?.who==='victim'&&n.phase===2&&n.move===4)return 44;if(n&&ND?.revisionSchedule(n.who,n.phase,n.move))return 6.8;if(ND?.families?.[n?.who]&&n.move===4)return 5.2;return n?.who==='ainz'&&n.phase===1&&n.move===0?18.8:n?.who==='ainz'&&n.phase===2&&n.move===0?10.4:6.8;}
+function blockDuration(p){const n=identity(p);if(n?.who==='victim'&&n.phase===2&&n.move===4)return 45;return n?.who==='ainz'&&[[1,0],[2,0]].some(([ph,m])=>n.phase===ph&&n.move===m)?1+activeDuration(p):9.5;}
+function schedule(p,count,span){const n=identity(p);if(!n)return[count,span];const revised=ND?.revisionSchedule(n.who,n.phase,n.move);if(revised)return revised;if(ND?.families?.[n.who]&&n.move===4)return[1,0];if(n.who==='ainz'&&n.phase===1&&n.move===0)return[7,15.3];if(n.who==='ainz'&&n.phase===2&&n.move===0)return[2,5.2];if(n.who==='demiurge'&&(n.phase===1&&n.move===2||n.phase===2&&n.move===1)||n.who==='ainz'&&n.phase===2&&n.move===1)return[3,4.0];if(n.who==='ainz'&&n.phase===2&&n.move===2)return[3,4.4];return[count,span];}
 function shapes(s,e){
+ const dungeon=ND?.shapes(s,e);if(dungeon)return dungeon;
  const {who,phase,move}=identity(s.p),x=s.player.x,y=s.player.y,d=s.d,i=e.index,sign=i%2?1:-1,color=colors[who]||'#9ba9de',out=[];
  const add=(h,delay=0,duration=.24,extra={})=>out.push({color,...h,delay,duration,...extra});
  const line=(ax,ay,bx,by,width=7,delay=0,extra={})=>add({type:'line',ax,ay,bx,by,r:width*d.beamScale},delay,.24,extra);
@@ -98,6 +101,7 @@ function advanceHoming(h,p,t,dt){
  h.px=h.lastX+h.vx*dt;h.py=h.lastY+h.vy*dt;
 }
 function blockThreats(p,seed,params,rng){
+ const dungeon=identity(p)&&ND?.blocks(p,seed,params,rng);if(dungeon)return dungeon;
  const which=identity(p);if(!which)return null;const{who,phase,move}=which,r=rng((seed^p.seed)>>>0),offset=Math.floor(r()*8)*Math.PI/4,out=[];
  if(who==='ainz'&&(phase===1&&move===0||phase===2&&move===0)){
   if(phase===1){for(let stone=0;stone<7;stone++)for(let j=0;j<3;j++){const angle=offset+stone*Math.PI*2/7+j*.55;out.push({id:'',at:2.05+stone*2.55+j*.62,warning:Math.max(.85,params.warning),angle:Math.atan2(Math.sin(angle),Math.cos(angle)),kind:[2,5].includes(stone)&&j===2?'wave':'bolt',motif:['fire','lightning','blackhole','venom','holy','sigil','skull'][stone],color:STONE_COLORS[stone],stone,tier:'normal',weight:.24,strike:0,resolved:false});}}
@@ -128,5 +132,5 @@ function blockThreats(p,seed,params,rng){
  out.forEach((e,i)=>Object.assign(e,{id:'block:'+i,at:e.at+delay,strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/out.length))}));return out;
 }
 function blockFlight(e,t){const elapsed=t-(e.at-e.warning);if(e.freezeStart===undefined)return Math.max(0,Math.min(1,elapsed/e.warning));const pause=e.freezeEnd-e.freezeStart,paused=Math.max(0,Math.min(pause,t-e.freezeStart));return Math.max(0,Math.min(1,(elapsed-paused)/(e.warning-pause)));}
-return{identity,colors,shapes,blockThreats,blockFlight,timeStopped,advanceHoming,activeDuration,blockDuration,schedule,STONE_COLORS,STONE_STATUSES};
+return{identity,colors,shapes,blockThreats,blockFlight,timeStopped,advanceHoming,activeDuration,blockDuration,schedule,STONE_COLORS,STONE_STATUSES,guardianFamily:skill=>ND?.families?.[identity({skill})?.who]?.[identity({skill})?.move]};
 });

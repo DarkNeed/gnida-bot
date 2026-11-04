@@ -29,7 +29,7 @@ from arena_archprogress import branch_skill_allowed, skill_branch
 from arena_forge import ForgeMixin
 from arena_global import RPG_SCOPE
 from arena_casino_unlock import CasinoUnlockMixin
-from arena_relics import RELIC_IDS,TICKET_ID,TICKET_NAME,TICKET_DESCRIPTION
+from arena_relics import DUNGEON_RELIC_IDS as RELIC_IDS,TICKET_ID,TICKET_NAME,TICKET_DESCRIPTION
 from arena_public_scrolls import NATIVE_RESOURCE_SCROLLS
 
 MSK = timezone(timedelta(hours=3))

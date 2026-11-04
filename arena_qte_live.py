@@ -11,6 +11,7 @@ from arena_qte_rules import replay
 
 
 def strike_count(skill):
+    if 'five_strike' in skill.tags:return 5
     return (
         6
         if "six_strike" in skill.tags
@@ -60,7 +61,7 @@ def challenge(kind, attacker, target, skill, actor):
         strikes=n,
         tags=list(skill.tags),
         description=skill.description,
-        npc_tier=(max(0,min(4,int(attacker.get('npc_tier', 0)))) if attacker.get('controller_id') == 0 else 0),
+        npc_tier=(max(0,min(4,int(attacker.get('npc_tier', 0)))) if attacker.get('controller_id') == 0 and not attacker.get('nzd_guardian') else 0),
     )
     if skill.skill_id=='nz_pandora_p2_1' and attacker.get('nz_copy'):
         descriptor['copy_skill']=deepcopy(attacker['nz_copy'])

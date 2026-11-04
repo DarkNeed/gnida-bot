@@ -14,15 +14,27 @@ STONE_STATUSES=('burn','shock','curse','venom','exposed','sealed','frailty')
 
 def active_duration(p):
     which=identity(p)
+    if which and which[0]=='sebas':return 8.4
+    if which and which[0]=='victim' and which[1]==2 and which[2]==4:return 44.0
+    from arena_nazarick_revision_patterns import schedule as revised_schedule
+    if which and revised_schedule(*which) is not None:return 6.8
+    from arena_nazarick_dungeon_patterns import COLORS as guardian_colors
+    if which and which[0] in guardian_colors and which[2]==4:return 5.2
     return 18.8 if which==('ainz',1,0) else 10.4 if which==('ainz',2,0) else 6.8
 
 
 def block_duration(p):
+    if identity(p)==('victim',2,4):return 45.0
     return 1+active_duration(p) if identity(p) in (('ainz',1,0),('ainz',2,0)) else 9.5
 
 
 def schedule(p,count,span):
     which=identity(p)
+    from arena_nazarick_revision_patterns import schedule as revised_schedule
+    revised=revised_schedule(*which) if which else None
+    if revised is not None:return revised
+    from arena_nazarick_dungeon_patterns import COLORS as guardian_colors
+    if which and which[0] in guardian_colors and which[2]==4:return 1,0
     if which==('ainz',1,0):return 7,15.3
     if which==('ainz',2,0):return 2,5.2
     if which in (('demiurge',1,2),('demiurge',2,1),('ainz',2,1)):return 3,4.0
@@ -31,6 +43,9 @@ def schedule(p,count,span):
 
 
 def shapes(s, e):
+    from arena_nazarick_dungeon_patterns import shapes as dungeon_shapes
+    dungeon=dungeon_shapes(s,e)
+    if dungeon is not None:return dungeon
     who, phase, move = identity(s['p'])
     x, y = s['player']['x'], s['player']['y']
     d, i = s['d'], e['index']
@@ -307,6 +322,13 @@ def prepare(s,e,add):
 def block_threats(p,seed,params):
     which=identity(p)
     if not which:return None
+    from arena_nazarick_dungeon_patterns import blocks as dungeon_blocks
+    from arena_qte_patterns import random_values
+    def rng(seed):
+        values=random_values(seed)
+        return lambda:next(values)
+    dungeon=dungeon_blocks(p,seed,params,rng)
+    if dungeon is not None:return dungeon
     who,phase,move=which
     from arena_qte_patterns import random_values
     r=random_values((seed^p['seed'])&0xffffffff)

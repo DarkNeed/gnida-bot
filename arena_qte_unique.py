@@ -32,6 +32,7 @@ def review_catalog():
                 else 2 if "two_strike" in skill.tags else 1
             )
         )
+        if 'five_strike' in skill.tags:strikes=5
         key = f"{skill.skill_id}:{skill.name}:{strikes}:{skill.damage_type}"
         if npc_tier:key += ':npc'+str(npc_tier)
         if key in result:

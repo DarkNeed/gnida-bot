@@ -17,6 +17,7 @@
     ctx.clearRect(0,0,720,320);ctx.fillStyle='#09111d';ctx.fillRect(0,0,720,320);
     ctx.strokeStyle='#1b3040';ctx.lineWidth=1;for(let x=20;x<720;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,320);ctx.stroke();}for(let y=20;y<320;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(720,y);ctx.stroke();}
     window.QTEArt?.field(ctx,s);
+    window.NazarickDungeonQTE?.field(ctx,s,320);
     const nz=window.NazarickQTE?.identity(p);
     if(nz){
       ctx.save();ctx.globalAlpha=.7;text('НАЗАРИК · '+p.skill.name,18,23,color,12);
@@ -104,7 +105,7 @@
         const warning=t<h.start,g=E.geometry(h,t),spent=!h.visualOnly&&(h.disabled||s.hitIds.includes(h.damageId)),major=h.tier==='heavy'||h.tier==='critical',c=h.color||(major?(h.tier==='critical'?'#fff0b7':'#e8bd7c'):color);
         ctx.save();ctx.strokeStyle=c;ctx.fillStyle=c;ctx.globalAlpha=spent?.1:warning?.55:h.tier==='minor'?.65:.95;ctx.setLineDash(warning?[7,6]:[]);
         if(!warning&&major&&!spent){ctx.shadowColor=c;ctx.shadowBlur=h.tier==='critical'?14:6;}
-        if(window.QTEArt?.hazard(ctx,s,h,g,{warning,spent})){ctx.restore();return;}
+        if(window.NazarickDungeonQTE?.hazard(ctx,s,h,g,{warning,spent})||window.QTEArt?.hazard(ctx,s,h,g,{warning,spent})){ctx.restore();return;}
         if(h.uniform){
           // Trap and shelter share ALL visual properties; only the inscription differs.
           ctx.shadowBlur=0;ctx.globalAlpha=warning?.65:.95;ctx.setLineDash(warning?[6,5]:[]);
@@ -144,6 +145,7 @@
           else if(g.motif==='bone'){
             ctx.translate(g.x,g.y);ctx.rotate(Math.atan2(g.vy,g.vx));ctx.lineWidth=g.r*.8;ctx.beginPath();ctx.moveTo(-g.r*1.6,0);ctx.lineTo(g.r*1.6,0);ctx.stroke();for(const end of[-1,1])for(const side of[-1,1])dot(end*g.r*1.6,side*g.r*.45,g.r*.6,'#e4dfda');
           }
+          else if(window.NazarickDungeonQTE?.glyph(ctx,g.motif,g.x,g.y,g.r,Math.atan2(g.vy,g.vx),c,t)){}
           else if(['ice','train'].includes(g.motif)){ctx.translate(g.x,g.y);ctx.rotate(Math.atan2(g.vy,g.vx));ctx.fillRect(-g.r*2,-g.r,g.r*4,g.r*2);}
           else{dot(g.x,g.y,g.r,c);if(g.motif==='ghost')arc(g.x,g.y,g.r+4,0,Math.PI*2,c,1);if(g.motif==='orb')arc(g.x,g.y,g.r+5,0,Math.PI*2,c,2);}
         }else if(h.type==='polyline'){

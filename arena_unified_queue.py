@@ -58,7 +58,16 @@ def _enemy_ids(data):
 
 def _plan(data, skills):
     from arena_engine import effective_skill
+    if data.get('nazarick_run_id'):
+        from arena_nazarick_guardians import prepare
+        prepare(data)
     q, fighters = clock(data), roster(data)
+    if data.get('nazarick_run_id') and data.get('kind')=='encounter':
+        stale={e['actor'] for e in q['pending'] if fighters.get(e['actor'],{}).get('nzd_guardian') and e.get('intent',{}).get('phase')!=fighters[e['actor']].get('nzd_phase')}
+        if stale:
+            q['pending']=[e for e in q['pending'] if e['actor'] not in stale]
+            from arena_encounters import set_intents
+            set_intents(data,skills)
     busy = {e['actor'] for e in q['pending'] + q['group']}
     for key in _enemy_ids(data):
         if key in busy or fighters[key]['hp'] <= 0 or not humans(data):
@@ -177,6 +186,7 @@ def _release_group(data, skills, rng):
     q['group'] = release(q)
     data['_cast_queue'] = dict(time=q['time'], round=data.get('round'), entries=[],
         signature=[data.get('nazarick', {}).get('stage'), data.get('nazarick', {}).get('phase')])
+    data['_cast_queue']['guardian_phases']={key:f.get('nzd_phase') for key,f in fighters.items() if f.get('nzd_guardian')}
     if 'sides' not in data:
         from arena_raid_engine import raid_snapshot
         data['round_before'] = raid_snapshot(data)
@@ -346,6 +356,13 @@ def _settle(data, skills, rng):
     q['pending'] = [e for e in q['pending'] if roster(data).get(e['actor'], {}).get('hp', 0) > 0]
     if _finish(data):
         return
+    if data.get('nazarick_run_id') and data.get('kind')=='encounter':
+        before=data.get('_cast_queue',{}).get('guardian_phases',{})
+        changed={key for key,phase in before.items() if roster(data).get(key,{}).get('nzd_phase')!=phase}
+        if changed:
+            q['pending']=[e for e in q['pending'] if e['actor'] not in changed]
+            from arena_encounters import set_intents
+            set_intents(data,skills)
     for event in completed:
         _begin(data, event['actor'])
     if 'sides' not in data:

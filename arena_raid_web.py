@@ -90,6 +90,16 @@ async def raid_view(db, row, actor):
             from arena_guild_rules import MONSTERS
             side.update(class_avatar_url=side['guild_sprite'],sprite_url=side['guild_sprite'],pixel_art=False,
                 class_name=MONSTERS[side['guild_monster']]['role'])
+        if side.get('nzd_guardian'):
+            from arena_nazarick_dungeon_rules import GUARDIANS,sprite
+            who=side['nzd_guardian']
+            side.update(class_avatar_url=sprite(who,side.get('nzd_phase',1)),sprite_url=sprite(who,side.get('nzd_phase',1)),
+                sprite_flip=False,rp_flip=False,pixel_art=False,class_name=GUARDIANS[who][1])
+        if data.get('nazarick_run_id') and boss:
+            side['class_rarity']='epic' if side.get('nzd_guardian') in ('yuri','narberal','lupusregina','solution','entoma','cz') else 'legendary'
+        if data.get('nazarick_run_id') and boss:
+            from arena_rp import rp_skills
+            catalog=rp_skills(skills)
         pair = pair_state(side, target)
         from arena_rpg import prayer_actions
         ids = list(dict.fromkeys(list(side["loadout"]) + prayer_actions(side)))
@@ -131,7 +141,7 @@ async def raid_view(db, row, actor):
                        next((k for k,p in data['players'].items() if p['fighter'] is side), ''), variant)}
                        if data.get('unified_version') == 3 and not boss else {}),
                     evolution=info,
-                    unavailable_reason=roulette_block or skill_restriction(side, variant),
+                    unavailable_reason=('Посмертную печать нельзя атаковать — переживи испытание.' if not boss and variant.hostile and target.get('nzd_ritual') and not target.get('nzd_ritual_complete') else roulette_block or skill_restriction(side, variant)),
                 )
             )
 
@@ -178,6 +188,9 @@ async def raid_view(db, row, actor):
             for enemy in data['enemies'].values():
                 await decorate(enemy, 0, True, mob=True)
             data['boss'] = next(iter(data['enemies'].values()))
+            if data.get('nazarick_run_id'):
+                from arena_nazarick_dungeon_rules import view
+                data['nazarick_view']=view(data)
         elif nazarick:
             from arena_nazarick import presentation
             for enemy in data['enemies'].values():
@@ -187,6 +200,9 @@ async def raid_view(db, row, actor):
             data['nazarick'].pop('initial_players', None)
         else:
             await decorate(data['boss'], 0, True)
+        if data.get('nazarick_run_id') and data.get('nazarick_view'):
+            from arena_nazarick_dungeon_rules import ROOMS
+            data['nazarick_view'].update(stage=ROOMS[data['nazarick_room']]['floor'],stage_count=10)
         for key, player in data["players"].items():
             player.pop('qte_result',None)
             await decorate(player["fighter"], player["fighter_id"],character_slot=player.get('character_slot',1))
@@ -223,7 +239,8 @@ async def raid_view(db, row, actor):
         kind='encounter' if config else 'raid',
         rp_menu=bool(config and config.get('rp')),
         master_name=master['display_name'] if master else str(row['creator_id']),
-        is_master=bool(config and not config.get('guild') and not config.get('kingdom') and not config.get('protection') and actor == row['creator_id']),
+        is_master=bool(config and not config.get('guild') and not config.get('kingdom') and not config.get('protection') and not config.get('nazarick_dungeon') and actor == row['creator_id']),
+        nazarick_run_id=data.get('nazarick_run_id') if data else None,
         enterprise_defense=bool(config and config.get('protection')),
         kingdom_id=data.get('kingdom_id') if data else None,
         guild_run_id=data.get('guild_run_id') if data else None,
@@ -237,7 +254,7 @@ async def raid_view(db, row, actor):
         revision=row["revision"],
         deadline=row["deadline"],
         server_time=int(time.time()),
-        boss_name=data['boss']['name'] if nazarick else boss_info["name"],
+        boss_name=data['nazarick_view']['title'] if data and data.get('nazarick_run_id') else data['boss']['name'] if nazarick else boss_info["name"],
         boss_id=row.get("boss_id", "iron"),
         silent=bool(row.get("silent", False)),
         recommended_level=boss_info.get("recommended_level", 1),

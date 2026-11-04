@@ -1,6 +1,12 @@
 /* Pointer input only. No movement bonuses: the simulation/server enforce speed. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.QTETouch=api;})(globalThis,function(){
   'use strict';
+  const SIDE_KEY='gnida.qte.joystick-side';
+  let memorySide='right';
+  try{memorySide=localStorage.getItem(SIDE_KEY)==='left'?'left':'right';}catch{}
+  function getSide(){return memorySide;}
+  function setSide(side){const value=side==='left'?'left':'right';memorySide=value;try{localStorage.setItem(SIDE_KEY,value);}catch{}if(typeof document!=='undefined')document.documentElement.dataset.joystickSide=value;return value;}
+  if(typeof document!=='undefined')document.documentElement.dataset.joystickSide=getSide();
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const swipeLocks=new WeakMap();
   function lockSwipes(){
@@ -97,5 +103,5 @@
     if(typeof window!=='undefined'){on(window,'resize',clear);on(window,'blur',clear);on(window,'pagehide',clear);}
     return {input(){return held!==null?{...vector}:target?{target:[...target]}:{x:0,y:0};},clear,destroy(){clear();abort.abort();}};
   }
-  return {relativeStart,relativeTarget,stickVector,attach,lockViewport};
+  return {relativeStart,relativeTarget,stickVector,attach,lockViewport,getSide,setSide};
 });

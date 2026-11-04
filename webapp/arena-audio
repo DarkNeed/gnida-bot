@@ -34,6 +34,13 @@
       for(const k of ['music','effects']) if(Number.isFinite(p[k])) prefs[k] = Math.max(0,Math.min(100,p[k]));
     }
   } catch {}
+  const dungeonThemes={gargantua:[68,[28,28,31,26]],cocytus:[104,[38,41,43,36]],aura:[124,[45,48,43,40]],mare:[82,[40,43,38,36]],
+    victim:[66,[41,40,34,37]],sebas:[112,[38,45,41,36]],yuri:[118,[40,43,38,41]],narberal:[130,[38,39,43,36]],
+    lupusregina:[126,[43,40,45,38]],solution:[94,[37,40,36,39]],entoma:[122,[41,40,34,38]],cz:[136,[38,38,41,36]],crypt:[78,[29,32,28,31]]};
+  for(const[who,[bpm,roots]]of Object.entries(dungeonThemes))for(const phase of[1,2]){
+    THEMES['nz_'+who+phase]={style:'nazarick',who,phase,bpm:bpm+(phase-1)*16,roots};
+    THEME_LABELS['nz_'+who+phase]=({gargantua:'Гаргантюа',cocytus:'Коцит',aura:'Аура',mare:'Маре',victim:'Виктим',sebas:'Себас',crypt:'Гробницы',yuri:'Юри',narberal:'Нарберал',lupusregina:'Люпусрегина',solution:'Солюшн',entoma:'Энтома',cz:'СиЗет'})[who]+' · '+phase+' фаза';
+  }
   let ctx, master, fx, musicBus, noiseBuffer, timer, scene = 'menu', playing = '', step = 0, next = 0;
   let generation = 0, opener = null, unavailable = false;
   let roomNodes = [];
@@ -215,7 +222,31 @@
   }
   function nazarickPhrase(theme,root,within,bar,beat,tick,at){
     const who=theme.who,phase=theme.phase,bus=musicBus,part=Math.floor(within/2),royal=[7,12,10,7,3,5,2,0];
-    if(who==='shalltear'){
+    if(['gargantua','crypt'].includes(who)){
+      if(within%4===0){drum(at,bus,true);tone(root,at,beat*1.6,.10,bus,'sine');brass(root+7,at,beat*.8,.04,bus);}
+      if(within===0||within===8)abyssChoir(root+12+(bar%2?1:0),at,beat*3,.055,bus);
+      if(phase===2&&within%2===0)tone(root+12+[0,7,3,1][part%4],at,tick*.6,.035,bus,'sawtooth');
+    }else if(who==='cocytus'||who==='narberal'){
+      if(within%2===0){clockBell(root+36+[0,7,3,10,7,12,10,3][part],at,.045,bus);tone(root+12,at,tick*.7,.04,bus,'triangle');}
+      if(within%4===0)drum(at,bus,phase===2);
+      if(within===0){pipe(root+19,at,beat*3.5,.035,bus);tone(root,at,beat*3.6,.08,bus,'sine');}
+      if(phase===2&&within===12)brass(root+24,at,beat*1.2,.06,bus);
+    }else if(['aura','mare','lupusregina','solution','entoma'].includes(who)){
+      const n=[0,7,10,5,3,12,7,2][part%8];
+      if(within%2===0){tone(root+24+n,at,beat*.36,.05,bus,'triangle');if(who==='entoma')noise(at,.045,.015,bus,2300);}
+      if(within%4===0){drum(at,bus,phase===2);tone(root,at,beat*.9,.07,bus,'sine');}
+      if(within===0)pipe(root+19,at,beat*3.3,.035,bus);
+      if(phase===2&&within%4===2)brass(root+12+n,at,beat*.5,.04,bus);
+    }else if(who==='victim'){
+      if(within===0){abyssChoir(root+12,at,beat*3.8,.07,bus);pipe(root+25,at,beat*3.6,.028,bus);}
+      if(within%4===0)clockBell(root+36+[0,1,7,6][Math.floor(within/4)],at,.035,bus);
+      if(phase===2&&within%2===0){drum(at,bus,true);tone(root,at,beat*.8,.08,bus,'sine');}
+    }else if(['sebas','yuri','cz'].includes(who)){
+      if(within%2===0){tone(root+12+[0,7,0,10,3,7,5,2][part],at,tick*.7,.06,bus,'sawtooth');if(who==='cz')noise(at,.035,.02,bus,1600);}
+      if(within%4===0){drum(at,bus,true);brass(root+24,at,beat*.65,phase===2?.07:.04,bus);}
+      if(within===0)pipe(root+19,at,beat*3.3,.03,bus);
+      if(phase===2&&within===14)abyssChoir(root+24,at,beat,.04,bus);
+    }else if(who==='shalltear'){
       if(within===0){tone(root,at,beat*2.7,.10,bus,'sine');pipe(root+24,at,beat*2.8,.035,bus);}
       if(within%4===0){for(const n of[3,7])tone(root+12+n,at,beat*.5,.04,bus,'triangle');drum(at,bus,phase===2);}
       if(within%2===0){const melody=[12,15,14,10,7,11][part%6];tone(root+24+melody,at,tick*1.8,.04,bus,'sawtooth',null,-5);tone(root+24+melody,at,tick*1.6,.025,bus,'triangle',null,5);}
@@ -359,6 +390,12 @@
       tone(43,at,.4,.1,fx,'sawtooth',83,-12);tone(55,at,.32,.09,fx,'triangle',91,12);
       noise(at,.22,.12,fx,2800);tone(30,at,.2,.15,fx,'sine',20);
     }
+    else if(name === 'qte_hit'||name === 'qte_hurt') {
+      const hurt=name==='qte_hurt';
+      tone(hurt?38:64,at,.11,hurt?.14:.10,fx,'triangle',hurt?24:35);
+      noise(at,.07,hurt?.18:.13,fx,hurt?850:2100);
+      noise(at+.015,.10,.045,fx,3900);
+    }
     else if(name === 'hit' || name === 'critical') {
       const critical=name==='critical';drum(at,fx,true);
       noise(at,.12,critical?.32:.24,fx,1600);noise(at+.012,.22,.09,fx,4200);
@@ -429,6 +466,8 @@
     if(k === 'effects') gain(fx,prefs.effects/100);
     else if(!prefs.music) stopMusic(); else { gain(musicBus,prefs.music/100); startMusic(); }
   }));
+  document.addEventListener('pointerdown',safe(unlock),{passive:true});
+  document.addEventListener('keydown',safe(unlock));
   document.addEventListener('visibilitychange',safe(()=>{
     if(document.hidden) { stopAll(); ctx?.suspend().catch(()=>{}); }
     else if(!prefs.muted) unlock();

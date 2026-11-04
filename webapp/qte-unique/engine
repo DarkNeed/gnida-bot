@@ -48,6 +48,7 @@
     eclipse:['Глаза во тьме','#bc9ec8','Глаза открывают линии взгляда. Уйди с лучей до закрытия зрачка.','orbit'],
     dust:['Пыль и ослепление','#c7b69e','Два веера пыли сходятся в точке. Ищи зазор, не теряй свой маркер.','bar'],
     tiger:['Поступь тигробоя','#e8b786','Шесть разрезов: горизонталь, вертикаль, диагонали и финальная пара.','arc'],
+    dagger:['Клинки из тени','#bb779b','Короткие выпады идут веером. Считай паузу между ними и не уходи в тот же угол.','bar'],
   };
   const GUILD_FAMILIES={guild_stab:'slash',guild_net:'paint',guild_fang:'beast',guild_hex:'mana',guild_smash:'impact',guild_bone:'death',guild_soul:'death',guild_claw:'beast',guild_fire:'fire',guild_ice:'ice',guild_lightning:'lightning'};
   const GUILD_MOVES={stab:'slash',net:'paint',fang:'beast',hex:'mana',smash:'impact',bone:'death',soul:'death',claw:'beast',fire:'fire',ice:'ice',lightning:'lightning',acid:'paint',sticky:'paint',poison_bite:'beast',pounce:'beast',cleaver:'slash',troll_quake:'impact',spectral_blade:'slash',rune_cross:'lightning',stone_rain:'impact',venom_rain:'paint',dragon_dive:'beast',tail:'slash',wings:'fire',ice_tomb:'ice',soul_prison:'death',grave_crown:'death',crypt_blades:'slash',ancient_sun:'fire',ash_orbit:'fire'};
@@ -95,6 +96,7 @@
     result.forEach((e,i)=>e.strike=Math.min(p.strikes-1,Math.floor(i*p.strikes/result.length)));return result;
   }
   function family(skill){
+    const guardianFamily=NZ?.guardianFamily?.(skill);if(guardianFamily)return guardianFamily;
     const guild=GUILD_MOVES[(skill.base_id||'').slice(6)];if((skill.base_id||'').startsWith('guild_')&&guild)return guild;
     if(GUILD_FAMILIES[skill.base_id])return GUILD_FAMILIES[skill.base_id];
     if((skill.base_id||'').startsWith('nz_pyromancer_'))return 'fire';
@@ -127,6 +129,7 @@
     if(id==='hunter_shot')return 'gun';
     if(/beast|fauvist/.test(branch+id)||/звер|хищник|разорвать|первобыт/.test(n))return 'beast';
     if(/глаз|dust_in_eyes/.test(id))return 'dust';
+    if(cls==='assassin')return id==='assassin_needle'?'thrust':'dagger';
     if(cls==='cutie')return 'charm';
     if(/clench|gachi/.test(id)||/захват|club/.test(n))return 'grapple';
     if(cls==='jock'||cls==='middle')return 'impact';
@@ -270,7 +273,7 @@
     const {x,y}=s.player,p=s.p,d=s.d,i=e.index,odd=i%2,sign=odd?1:-1;
     const tx=clamp(x+(s.player.vx||0)*d.lead,12,W-12),ty=clamp(y+(s.player.vy||0)*d.lead,12,H-12);
     const angle=e.angle,warning=d.warning,shapes=[],start=e.at+warning,n=p.skill.name.toLowerCase(),id=p.skill.base_id;
-    const add=(h,delay=0,duration=.24)=>shapes.push({...h,start:start+delay,end:start+delay+duration,strike:e.strike,at:e.at,index:i});
+    const add=(h,delay=0,duration=.24)=>shapes.push({...h,start:start+delay,end:start+delay+duration,strike:h.strike??e.strike,at:e.at,index:i});
     const beam=(a,b,c,f,width=15,delay=0,duration=.2)=>add(line(a,b,c,f,width*d.beamScale),delay,duration);
     const circle=(cx,cy,r,delay=0,duration=.25)=>add({type:'circle',x:cx,y:cy,r},delay+Math.max(0,.44-warning),duration);
     const bullet=(bx,by,vx,vy,r=7,delay=0,extra={})=>add({type:'bullet',x:bx,y:by,vx,vy,r,...extra},delay,2.9);
@@ -413,6 +416,12 @@
         const direction=[0,Math.PI/2,Math.PI*.24,-Math.PI*.24,0,Math.PI/2][e.strike%6];
         diagonal(direction,(odd?7:12)+d.pressure*3);
         shapes[0].tier=odd?'minor':e.strike===p.strikes-1?'critical':'heavy';shapes[0].weight=odd?.15:e.strike===p.strikes-1?1:.6;break;}
+      case 'dagger':{
+        const bx=odd?28:W-28,by=clamp(55+e.jitter*210,18,H-18),theta=Math.atan2(ty-by,tx-bx);
+        fan(bx,by,theta,5,.11*p.spread,0,'blade');
+        diagonal(theta+(odd?.85:-.85),8,.24);
+        if(/нить|рана/.test(n))aimed(!odd,.09*p.spread,3,.42,'blade');
+        break;}
       default:throw new Error('Unknown pattern '+p.kind);
     }
     for(let j=0;j<shapes.length;j++){

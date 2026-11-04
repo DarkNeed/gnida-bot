@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+let now=0;const sounds=[],scope={window:{ArenaAudio:{effect:name=>sounds.push(name)}},performance:{now:()=>now}};
+vm.runInNewContext(fs.readFileSync('webapp/qte-live','utf8'),scope);
+const tracker=scope.window.ArenaMiniGames.damageFeedback('defense'),s={contacts:[]};
+tracker(s);assert.equal(sounds.length,0);
+s.contacts.push({damage:3});tracker(s);tracker(s);assert.deepEqual(sounds,['qte_hurt']);
+now=20;s.contacts.push({damage:4});tracker(s);assert.equal(sounds.length,1,'coalesce pellet burst');
+now=120;s.contacts.push({damage:0,outcome:'perfect'});tracker(s);assert.equal(sounds.length,1,'exact block is not injury');
+s.contacts.push({damage:2});tracker(s);assert.equal(sounds.length,2);
+const attack=scope.window.ArenaMiniGames.damageFeedback('attack');now=220;
+attack({contacts:[{damage:20,critical:true}]});assert.equal(sounds.at(-1),'critical');
+now=400;attack({contacts:[{damage:20,critical:true},{damage:12}]});assert.equal(sounds.at(-1),'qte_hit');
+scope.window.ArenaAudio.effect=()=>{throw Error('no audio')};now=600;s.contacts.push({damage:2});assert.doesNotThrow(()=>tracker(s));
+console.log('PASS damage sounds once per new contact, burst limit, critical, exact-block silence, unavailable audio safe');

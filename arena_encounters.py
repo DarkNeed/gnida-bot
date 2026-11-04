@@ -154,6 +154,9 @@ def create_encounter(participants, sources, classes, skills, roster, master_id):
 
 
 def set_intents(data, skills=None):
+    if data.get('nazarick_run_id') and any(f.get('nzd_guardian') for f in data['enemies'].values()):
+        from arena_nazarick_dungeon_rules import intents
+        return intents(data)
     from arena_raid_engine import alive_players
     players = list(alive_players(data))
     intents = {}
@@ -212,6 +215,9 @@ def finish(data):
     from arena_raid_engine import alive_players
     if data.get('finished'):
         return True
+    if data.get('nazarick_run_id'):
+        from arena_nazarick_dungeon_rules import phases
+        phases(data)
     living, enemies = alive_players(data), alive_enemies(data)
     if not living or not enemies:
         won = bool(living) and not enemies
@@ -335,7 +341,7 @@ def resolve(data, skills, rng=None):
                     fighter['_qte_guard']['pattern_dodge'] = guard['pattern_dodge']
             data['intent'] = intent
             try:
-                event = native_attack(enemy, fighter, intent['skill'], skills if enemy.get('rp_sandbox') else MOB_SKILLS,
+                event = native_attack(enemy, fighter, intent['skill'], skills if enemy.get('rp_sandbox') or data.get('nazarick_run_id') else MOB_SKILLS,
                                       rng, allies=list(alive_enemies(data).values()), raid_context=data)
             except ValueError:
                 # An announced resource-dependent ability may become unavailable

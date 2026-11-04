@@ -1,0 +1,54 @@
+.nzd{max-width:1160px;margin:0 auto;padding:24px 20px 60px;color:#e5e5ec}.nzd button,.nzd select{font:inherit;border:1px solid #4c4b62;border-radius:9px;background:#1a2336;color:#e5dfee;padding:12px 16px;cursor:pointer}.nzd button:disabled{opacity:.45;cursor:default}.nzd .primary{background:#cfb782;color:#171523;border-color:#ddc78e;font-weight:700}.nzd .small{padding:8px 12px;font-size:12px}.nzd .quiet{background:transparent;color:#aaa5b8;border-color:#343a50}.nzd-kicker{font-size:10px;letter-spacing:.16em;color:#d9bd82;text-transform:uppercase;line-height:1.7}.nzd-head{display:flex;align-items:center;justify-content:space-between;padding:10px 0 24px;gap:15px}.nzd h1{font-family:Georgia,serif;font-size:46px;line-height:1.05;margin:0}.nzd h2{font-family:Georgia,serif;font-size:30px;margin:10px 0}.nzd h3{margin:6px 0 16px}.nzd p{line-height:1.65}.nzd-layout{display:grid;grid-template-columns:290px minmax(0,1fr);gap:20px}.nzd-floors{display:flex;flex-direction:column;gap:3px;border-left:1px solid #3a354a;padding-left:12px}.nzd-floor{display:flex;align-items:center;gap:12px;padding:13px 12px;border-radius:9px;color:#777c91}.nzd-floor>span{font:24px Georgia,serif;color:#68647b}.nzd-floor div{flex:1;min-width:0}.nzd-floor b{font-size:13px;display:block}.nzd-floor small{font-size:10px;display:block;line-height:1.4;margin-top:4px}.nzd-floor i{font-size:11px;font-style:normal}.nzd-floor.active{background:#28253a;color:#eee3cb;box-shadow:inset 2px 0 #d6bc84}.nzd-floor.active>span{color:#d6bc84}.nzd-floor.cleared{color:#a6b4b4}.nzd-floor.cleared>span{color:#7da596}.nzd-main{background:#11192a;border:1px solid #343c55;border-radius:16px;overflow:hidden;align-self:start;min-width:0}.nzd-scene{min-height:295px;padding:30px;display:flex;align-items:end;background:linear-gradient(0deg,#11192a 0%,#11192a30 65%),var(--nzd-bg) center/cover}.nzd-scene h2{font-size:34px;text-shadow:0 2px 15px #000}.nzd-scene p{color:#d1cbd8;font-size:13px;max-width:420px}.nzd-content{padding:8px 28px 28px}.nzd-actions{display:flex;flex-direction:column;gap:12px}.nzd-party{margin:25px 0;padding-top:20px;border-top:1px solid #30384d}.nzd-party>div{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #232e42}.nzd-party small{color:#9da7bc;font-weight:400;font-size:11px}.nzd details{border-top:1px solid #34374b;margin-top:20px;padding-top:16px;font-size:13px}.nzd summary{cursor:pointer;color:#d2bf95}.nzd-prizes{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.nzd-prizes label{font-size:11px;color:#a6b3ca}.nzd select{display:block;width:100%;min-width:0;margin-top:7px;font-size:12px}.nzd #nzd-prize-description{color:#abb5c8;font-size:12px}.nzd .muted{font-size:12px;color:#8896ae}.nzd-blessing{background:#282339;border:1px solid #625475;border-radius:12px;padding:16px;font-size:13px}.nzd-other{margin-top:25px}.nzd-other button{margin:5px}@media(max-width:700px){.nzd{padding:14px 12px 70px}.nzd h1{font-size:36px}.nzd-head{padding-bottom:16px}.nzd-kicker{font-size:8px;letter-spacing:.10em}.nzd-layout{grid-template-columns:48px minmax(0,1fr);gap:9px}.nzd-floors{padding-left:0;gap:8px;border:0}.nzd-floor{padding:10px 4px;justify-content:center}.nzd-floor div,.nzd-floor i{display:none}.nzd-floor>span{font-size:21px}.nzd-scene{min-height:235px;padding:18px}.nzd-scene h2{font-size:27px;overflow-wrap:anywhere}.nzd-content{padding:4px 16px 20px}.nzd-prizes{grid-template-columns:1fr}.nzd-scene p{font-size:12px}.nzd button{font-size:13px;padding:12px}.nzd-head>div{min-width:0}.nzd-party>div{gap:12px}.nzd-member{overflow-wrap:anywhere}}
+.nzd-field[data-guardian="victim"][data-phase="2"] .enemy-0 .raid-sprite{visibility:hidden}
+.nzd-field[data-guardian="victim"][data-phase="2"] .enemy-0 .raid-art:after{content:'Ⅷ';position:absolute;inset:15%;display:grid;place-items:center;border:3px double #eeabd5;border-radius:50%;color:#eec2dd;font:70px Georgia;box-shadow:0 0 30px #cb78b977}
+.nzd-field[data-guardian="victim"][data-phase="2"] .enemy-0 .raid-bar{display:none}
+.nzd-field[data-guardian="victim"][data-phase="2"] .enemy-0 .raid-hud:after{content:'Шесть испытаний · 45 секунд';display:block;color:#efb7dd;font-size:10px}
+.nzd-field[data-guardian="gargantua"] .enemy-0 .raid-sprite{scale:-1 1;transform:none;animation:raid-idle 3s ease-in-out infinite}
+.encounter-field.nzd-field[data-guardian="gargantua"][data-phase="2"] .enemy-0{width:67%;right:0;top:3%}
+.encounter-field.nzd-field[data-guardian="gargantua"][data-phase="2"] .enemy-0 .raid-art{height:370px!important}
+@media(max-width:550px){.encounter-field.nzd-field[data-guardian="gargantua"][data-phase="2"] .enemy-0{width:76%;right:0;top:13%}.encounter-field.nzd-field[data-guardian="gargantua"][data-phase="2"] .enemy-0 .raid-art{height:280px!important}.encounter-field.nzd-field[data-guardian="gargantua"][data-phase="2"] .enemy-0 .raid-hud{transform:translateY(-24px)}}
+.nzd-field[data-guardian="victim"][data-phase="2"] .enemy-0 .raid-ground{box-shadow:0 0 14px #da8fa6;border:2px solid #eeb0d0;border-radius:50%;background:repeating-conic-gradient(#bca5dd33 0deg 18deg,transparent 18deg 36deg)}
+.nzd-field[data-guardian="cocytus"][data-phase="2"] .raid-enemy .raid-sprite{filter:drop-shadow(0 0 10px #8ad6ee66)}
+.encounter-field.nzd-field[data-guardian="cocytus"] .enemy-0{right:8%;top:3%;width:49%}
+.encounter-field.nzd-field[data-guardian="cocytus"] .enemy-0 .raid-art{height:245px!important}
+.encounter-field.nzd-field[data-guardian="gargantua"] .enemy-0{right:5%;top:4%;width:53%}
+.encounter-field.nzd-field[data-guardian="gargantua"] .enemy-0 .raid-art{height:265px!important}
+.encounter-field.nzd-field[data-nzd-formation="pleiades"] .raid-enemy{top:24%!important;width:25%!important}
+.encounter-field.nzd-field[data-nzd-formation="pleiades"] .enemy-0{right:48%!important}
+.encounter-field.nzd-field[data-nzd-formation="pleiades"] .enemy-1{right:24%!important}
+.encounter-field.nzd-field[data-nzd-formation="pleiades"] .enemy-2{right:0!important}
+.encounter-field.nzd-field[data-nzd-formation="pleiades"] .raid-art{height:150px!important;display:flex;align-items:flex-end;justify-content:center}
+.encounter-field.nzd-field[data-nzd-formation="pleiades"] .raid-sprite{height:100%;object-fit:contain;object-position:center bottom}
+.encounter-field.nzd-field[data-nzd-formation="pleiades"] .raid-hud{position:absolute;top:-78px;left:0;width:100%;min-height:72px;box-sizing:border-box}
+.encounter-field.nzd-field[data-nzd-formation="pleiades"] .raid-effects{position:absolute;top:-99px;left:0;width:100%}
+.encounter-field.nzd-field[data-nzd-formation="pleiades"] .raid-dialogue{width:24%}
+@media(max-width:550px){
+ .encounter-field.nzd-field[data-guardian="cocytus"] .enemy-0{right:0;top:13%;width:56%}
+ .encounter-field.nzd-field[data-guardian="cocytus"] .enemy-0 .raid-art{height:190px!important}
+ .encounter-field.nzd-field[data-guardian="gargantua"] .enemy-0{right:0;top:16%;width:58%}
+ .encounter-field.nzd-field[data-guardian="gargantua"] .enemy-0 .raid-art{height:200px!important}
+ .encounter-field.nzd-field[data-nzd-formation="pleiades"] .raid-enemy{top:38%!important;width:30%!important}
+ .encounter-field.nzd-field[data-nzd-formation="pleiades"] .enemy-0{right:60%!important}
+ .encounter-field.nzd-field[data-nzd-formation="pleiades"] .enemy-1{right:30%!important}
+ .encounter-field.nzd-field[data-nzd-formation="pleiades"] .raid-art{height:125px!important}
+ .encounter-field.nzd-field[data-nzd-formation="pleiades"] .raid-dialogue{width:78%;left:2%;transform:none}
+}
+.encounter-field.nzd-field[data-nzd-layout="2"] .enemy-0{right:29%;top:1%;width:30%}
+.encounter-field.nzd-field[data-nzd-layout="2"] .enemy-1{right:3%;top:22%;width:30%}
+.encounter-field.nzd-field[data-nzd-layout="3"] .enemy-0{right:40%;top:1%;width:27%}
+.encounter-field.nzd-field[data-nzd-layout="3"] .enemy-1{right:22%;top:19%;width:27%}
+.encounter-field.nzd-field[data-nzd-layout="3"] .enemy-2{right:3%;top:37%;width:27%}
+.encounter-field.nzd-field[data-nzd-layout] .raid-enemy .raid-art{height:128px}
+.encounter-field.nzd-field[data-nzd-layout="1"][data-guardian="gargantua"] .enemy-0 .raid-art{height:190px}
+.encounter-field.nzd-field[data-nzd-layout] .raid-dialogue{left:2%;top:3%;width:29%;padding:9px;grid-template-columns:1fr}
+.encounter-field.nzd-field[data-nzd-layout] .raid-dialogue-portrait{display:none}
+@media(max-width:550px){
+ .encounter-field.nzd-field[data-nzd-layout="2"] .enemy-0{right:29%;top:16%;width:38%}
+ .encounter-field.nzd-field[data-nzd-layout="2"] .enemy-1{right:0;top:34%;width:38%}
+ .encounter-field.nzd-field[data-nzd-layout="3"] .enemy-0{right:40%;top:16%;width:33%}
+ .encounter-field.nzd-field[data-nzd-layout="3"] .enemy-1{right:21%;top:34%;width:33%}
+ .encounter-field.nzd-field[data-nzd-layout="3"] .enemy-2{right:1%;top:52%;width:33%}
+ .encounter-field.nzd-field[data-nzd-layout] .raid-dialogue{width:57%;top:2%;font-size:11px}
+ .encounter-field.nzd-field[data-nzd-layout] .raid-enemy .raid-art{height:105px}
+ .encounter-field.nzd-field[data-nzd-layout="1"][data-guardian="gargantua"] .enemy-0 .raid-art{height:140px}
+}

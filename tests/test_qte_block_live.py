@@ -61,7 +61,7 @@ class BlockReplayTests(unittest.TestCase):
             )
         )
         for c, trace in zip(configs, traces(configs), strict=True):
-            actual = replay(c, trace["proof"], 20)
+            actual = replay(c, trace["proof"], max(20,create(c)['duration']+1))
             self.assertEqual(
                 actual["mask"],
                 trace["result"]["mask"],

@@ -152,7 +152,9 @@ def action_before(data):
 
 def record_action(data, before):
     from arena_epic import temporary_debuff
-    results = data['_chaplain_results']
+    # A jointly released player action may land on the same boundary as a phase
+    # restore, which intentionally clears the previous phase's journal.
+    results = data.setdefault('_chaplain_results',dict(healing={},cleansed={}))
     for key, old in before.items():
         current = data['players'][key]['fighter']
         results['healing'][key] = results['healing'].get(key, 0) + max(0, current['hp'] - old['hp'])

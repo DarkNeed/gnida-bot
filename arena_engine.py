@@ -1047,6 +1047,9 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
         skill_id not in side["loadout"] and skill_id != "bum_punch" and skill_id not in prayer_actions(side)
     ) or skill_id not in catalog:
         raise ValueError("Навык недоступен.")
+    target=state['sides']['b' if side_key=='a' else 'a']
+    if catalog[skill_id].hostile and target.get('nzd_ritual') and not target.get('nzd_ritual_complete'):
+        raise ValueError('Посмертную печать нельзя атаковать. Защищайся или используй поддержку до испытания.')
     if not side.get('rp_sandbox') and (not branch_skill_allowed(
         catalog[skill_id], side.get("archclass_id", ""), side["level"]
     ) or (
@@ -1125,11 +1128,12 @@ def _tick(side: dict, *, tick_dot=True, preserve_rally=False) -> None:
 def restore_turn_resource(side: dict) -> int:
     """Once per own turn after the first; never a projectile/action refund.
 
-    Ignore old persisted resource_regen values and leave boss resources alone.
+    Ignore old persisted resource_regen values. Scripted raid bosses keep their
+    own resource rules; native Nazarick guardians use ordinary start-turn regen.
     The saved turn marker makes repeated start hooks/readbacks idempotent.
     """
     turn = side.get("own_turns", 0)
-    if side.get("is_boss") or side["hp"] <= 0 or turn <= 0:
+    if (side.get("is_boss") and not side.get('nzd_guardian')) or side["hp"] <= 0 or turn <= 0:
         return 0
     if side.get("resource_regen_turn", -1) >= turn:
         return 0
@@ -1415,8 +1419,8 @@ def resolve_skill(
     pattern_contacts = None
     blocked_contact = False
     block_pattern = bool(qte and qte.get('pattern_dodge',{}).get('mode')=='block')
-    strike_count = 6 if 'six_strike' in skill.tags else 3 if 'three_strike' in skill.tags else 2
-    if any(tag in skill.tags for tag in ('six_strike','three_strike','two_strike')) and skill.damage_type:
+    strike_count = 6 if 'six_strike' in skill.tags else 5 if 'five_strike' in skill.tags else 3 if 'three_strike' in skill.tags else 2
+    if any(tag in skill.tags for tag in ('six_strike','five_strike','three_strike','two_strike')) and skill.damage_type:
         # One paid action, six independent accuracy/evasion checks. The total
         # power, buffs and critical multiplier still belong to the whole action.
         rolls = [roll] + [rng.random() * 100 for _ in range(strike_count-1)]
@@ -1640,6 +1644,15 @@ def resolve_skill(
             if rng.random() >= effect.get("chance", 1):
                 continue
             recipient = target if effect.get("target") == "enemy" else actor
+            if recipient.get('nzd_guardian') or recipient.get('nzd_legacy'):
+                from arena_nazarick_guardians import allows_effect
+                if not allows_effect(recipient,effect):continue
+            if effect['kind'].startswith('nzd_'):
+                from arena_nazarick_guardians import effect as guardian_effect
+                note=guardian_effect(actor,target,effect,allies,raid_context)
+                if note is not None:
+                    effects_text.append(note)
+                    continue
             resource_before_effect = actor['resource']
             rpg_note = rpg_effect(actor,target,effect,rng,allies,raid_context)
             if rpg_note is not None:
@@ -1741,6 +1754,9 @@ def resolve_skill(
     if actor.get('controller_id') == 0:
         actor['npc_skill_history'] = (actor.get('npc_skill_history', []) + [skill_id])[-4:]
     class_after_action(actor, target, skill, hit, dodged, adored, charmed)
+    if actor.get('nzd_guardian'):
+        from arena_nazarick_guardians import after_action as guardian_after
+        guardian_after(actor)
     gift_after_action(actor, target, skill, hit, damage, actual_cost, bleeding, charmed)
     evolution_after_action(actor, target, skill, hit, evolved)
     after_action(

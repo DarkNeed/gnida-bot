@@ -110,7 +110,7 @@ class EquipmentMixin:
                     equipped=equipped,items=items,slots=SLOTS,stat_names=STATS,base_stats=base,stats=total,
                     stat_bonuses={key:round(total.get(key,0)-base.get(key,0),2) for key in STATS},
                     materials={r['rank']:r['quantity'] for r in self.connection.execute('SELECT * FROM gear_materials WHERE actor=?',(actor,))},
-                    catalog=[dict(v,description=EFFECTS[v['effect']]) for v in CATALOG.values()],ranks=list(RANKS),min_levels=list(LEVELS),hunter_rank=RANKS[hunter['rank']],
+                    catalog=[dict(v,description=EFFECTS[v['effect']]) for v in CATALOG.values() if v['biome']!='nazarick'],ranks=list(RANKS),min_levels=list(LEVELS),hunter_rank=RANKS[hunter['rank']],
                     chances=[dict(zip(RARITIES,row)) for row in CHANCES])
 
     @staticmethod
@@ -141,6 +141,7 @@ class EquipmentMixin:
                 if action in ('craft','buy'):
                     key=body.get('key');rank=body.get('rank');rarity='epic' if action=='craft' else 'uncommon'
                     if not isinstance(key,str) or key not in CATALOG or rank not in RANKS:raise ValueError('Неизвестный предмет или ранг.')
+                    if CATALOG[key]['biome']=='nazarick':raise ValueError('Это снаряжение можно получить только за завершение Назарика.')
                     if RANKS.index(rank)>self._guild_hunter_locked(actor)['rank']:raise ValueError('Нужен соответствующий ранг гильдии.')
                     self._gear_material_locked(actor,rank,-40 if action=='craft' else -8)
                     self._gear_grant_locked(actor,key,rank,rarity)

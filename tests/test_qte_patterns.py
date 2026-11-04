@@ -264,7 +264,7 @@ class PatternReplayTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         for c, trace in zip(configs, json.loads(result.stdout), strict=True):
             self.assertEqual(
-                replay(c, trace["proof"], 30),
+                replay(c, trace["proof"], max(30,duration(c)+1)),
                 trace["result"],
                 (c["profile"]["name"], c["kind"], c["stats"]),
             )

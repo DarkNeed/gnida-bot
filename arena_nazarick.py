@@ -102,6 +102,9 @@ def initialize(data):
 def offer_blessing(data):
     """A wipe pauses this raid, not a paid result; no reward settlement yet."""
     m=data['nazarick']
+    if m.get('dungeon_single'):
+        data.update(finished=True,won=False,result='Отряд повержен. Контрольная точка Назарика сохранена.')
+        return True
     if data.get('finished'):return True
     eligible=[k for k,p in data['players'].items() if not p.get('withdrawn')]
     if m.get('blessed') or not eligible:
@@ -281,6 +284,9 @@ def progress(data):
         log_event(data,'boss','boss',QUOTES[who][1],nazarick_event='phase')
         return True
     if data['boss']['hp']<=0:
+        if m.get('dungeon_single'):
+            data.update(finished=True,won=True,result='Защитник повержен. Контрольная точка сохранена.')
+            return True
         if m['stage']==4:
             data.update(finished=True,won=True,result='Назарик пройден. Король-колдун повержен!')
             return True
@@ -315,6 +321,8 @@ def summon(data):
         key='boss_'+kind
         if data['enemies'].get(key,{}).get('hp',0)>0:continue
         f=deepcopy(data['boss'])
+        f.pop('nzd_legacy',None)
+        f['passive_details']=[]
         hp=(100 if kind=='knight' else 70)+40*(len(data['players'])-1)
         f['stats']=dict(f['stats'],max_hp=hp,physical_attack=0,magic_attack=3,physical_defense=5,magic_defense=5,evasion=0)
         f.update(hp=hp,name=('Рыцарь смерти' if kind=='knight' else 'Костяной заклинатель') if who=='ainz' else

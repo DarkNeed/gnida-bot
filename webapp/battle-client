@@ -5,6 +5,9 @@ const app=document.getElementById("app");
 const audio=window.ArenaAudio||{scene(){},effect(){},actionStart(){},impact(){},refresh(){}};
 let current=null, menu=null, busy=false, lastSeq=0, polling=false, token="", chat=null, page="personal", profileId=null, near="a";
 const demo=new URLSearchParams(location.search).get("demo")==="1" && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+// This entry point exists only on the loopback review server. Live routes and
+// battle settings never enable the candidate queue.
+const queueReview=location.pathname==='/arena-queue-review'&&/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 let spriteDraft=null;
 let inspectSide=null,classUsePending=null,skillUsePending=null,resetPending=null,leavePending=null;
@@ -23,6 +26,7 @@ function combatSettingsBody(enabled){
   return '<h2>Боевые мини-игры</h2><div class="minigames-toggle"><b>'+(enabled?'Включены':'Выключены · обычные броски')+'</b><button data-combat-enabled="'+!enabled+'" class="'+(enabled?'enabled':'primary')+'">'+(enabled?'Выключить':'Включить')+'</button></div><p class="muted">Настройка общая для всех твоих персонажей и чатов. По умолчанию включена. Изменение действует со следующего боя.</p><p>Включены: попадание через QTE, защита — выбранное для персонажа блокирование или уклонение. Характеристики меняют сложность. Успешная защита соперника имеет приоритет над успешным попаданием.</p><p>Выключены: выбираешь навык, а попадание и уклонение рассчитываются обычными бросками. В PvP соперник сохраняет свой режим; при выключенных мини-играх твоё уклонение остаётся случайным.</p><p class="muted">Лечение, поддержка и зелья — без QTE. Кровотечение, горение и ответные реакции не отменяются прохождением отдельной атаки. Закрытие или сворачивание мини-игры засчитывает неуспех; бой не ждёт бесконечно.</p>';
 }
 function closeCombatSettings(){document.getElementById('combat-settings')?.close();}
+function joystickSettingsBody(){const side=window.QTETouch?.getSide()||'right';return '<h3>Джойстик на телефоне</h3><div class="minigames-toggle">'+[['left','Слева'],['right','Справа']].map(([id,name])=>'<button data-joystick-side="'+id+'" aria-pressed="'+(side===id)+'" class="'+(side===id?'enabled':'')+'">'+name+'</button>').join('')+'</div><p class="muted">По умолчанию справа. Сохраняется на этом устройстве для уклонения и блока.</p>';}
 function defenseSettingsBody(){
   if(page==='rp'||raidCurrent?.kind==='encounter')return '<h3>Защита RP-персонажа</h3><p class="muted">Уклонение или блокирование выбирается в редакторе RP-сборки. Обычный персонаж использует свою настройку. Начатая встреча сохраняет снимок режима.</p>';
   const mode=combatPreferences?.defense_mode||'dodge',slot=combatPreferences?.character_slot||menu?.characters?.active_slot||1;
@@ -44,13 +48,14 @@ async function openCombatSettings(){
     const data=demo?menu:await api(page==='rp'||raidCurrent?.kind==='encounter'?'/api/rp/settings':'/api/menu/'+chat);
     if(request!==combatSettingsRequest)return;
     combatPreferences=data?.combat_settings||combatPreferences||{minigames:true};
-    body.innerHTML=combatSettingsBody(combatPreferences.minigames!==false)+defenseSettingsBody();
+    body.innerHTML=combatSettingsBody(combatPreferences.minigames!==false)+defenseSettingsBody()+joystickSettingsBody();
   }catch(error){if(request===combatSettingsRequest)body.innerHTML='<p role="alert">'+esc(error.message)+'</p><p class="muted">Закрой настройки и попробуй ещё раз.</p>';}
 }
 document.addEventListener('click',async event=>{
   const button=event.target.closest('button');if(!button||button.disabled)return;
   if(button.hasAttribute('data-combat-open')){await openCombatSettings();return;}
   if(button.hasAttribute('data-combat-close')){closeCombatSettings();return;}
+  if(button.hasAttribute('data-joystick-side')){window.QTETouch?.setSide(button.dataset.joystickSide);document.querySelectorAll('button[data-joystick-side]').forEach(b=>{const active=b.dataset.joystickSide===(window.QTETouch?.getSide()||'right');b.classList.toggle('enabled',active);b.setAttribute('aria-pressed',String(active));});return;}
   if(button.hasAttribute('data-defense-mode')){
     if(combatSettingsSaving)return;
     combatSettingsSaving=true;button.disabled=true;const request=++combatSettingsRequest;
@@ -59,7 +64,7 @@ document.addEventListener('click',async event=>{
       const response=demo?null:await api('/api/menu/'+chat,{action:'combat_settings',defense_mode:mode,character_slot:slot});
       combatPreferences=response?.menu?.combat_settings||{...combatPreferences,defense_mode:mode,character_slot:slot};
       if(menu){menu.combat_settings=combatPreferences;if(response?.menu?.characters)menu.characters=response.menu.characters;}
-      if(request===combatSettingsRequest)document.querySelector('[data-combat-body]').innerHTML=combatSettingsBody(combatPreferences.minigames!==false)+defenseSettingsBody();
+      if(request===combatSettingsRequest)document.querySelector('[data-combat-body]').innerHTML=combatSettingsBody(combatPreferences.minigames!==false)+defenseSettingsBody()+joystickSettingsBody();
       toast(demo?'Демо: настройка не сохраняется.':response.notice);
     }catch(error){toast(error.message);}finally{combatSettingsSaving=false;button.disabled=false;}
     return;
@@ -71,7 +76,7 @@ document.addEventListener('click',async event=>{
     const response=demo?null:await api(page==='rp'||raidCurrent?.kind==='encounter'?'/api/rp/settings':'/api/menu/'+chat,{action:'combat_settings',enabled});
     combatPreferences=response?.combat_settings||response?.menu?.combat_settings||{...combatPreferences,minigames:enabled};
     if(menu){menu.combat_settings=combatPreferences;if(response?.menu?.characters)menu.characters=response.menu.characters;}
-    if(request===combatSettingsRequest)document.querySelector('[data-combat-body]').innerHTML=combatSettingsBody(combatPreferences.minigames!==false)+defenseSettingsBody();
+    if(request===combatSettingsRequest)document.querySelector('[data-combat-body]').innerHTML=combatSettingsBody(combatPreferences.minigames!==false)+defenseSettingsBody()+joystickSettingsBody();
     toast(demo?'Демо: настройка не сохраняется.':response.notice);
   }catch(error){toast(error.message);}finally{combatSettingsSaving=false;button.disabled=false;}
 });
@@ -109,7 +114,7 @@ const sprite=c=>{
   if(/^\/sprites\/[0-9a-f]{64}\.png$/.test(data.sprite_url||""))return data.sprite_url;
   if(/^\/rp\/images\/[0-9a-f]{64}\.png$/.test(data.sprite_url||''))return data.sprite_url;
   if(/^\/rp\/images\/[0-9a-f]{64}\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
-  if(/^\/static\/assets\/nazarick\/[a-z0-9_]+\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
+  if(/^\/static\/assets\/nazarick(?:-dungeon-v2)?\/[a-z0-9_-]+\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(/^\/static\/assets\/guild\/[a-z]+-v1\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(/^\/static\/assets\/(?:(?:archclasses|rpg|casino)\/)?[a-z_]+\.png$/.test(data.class_avatar_url||""))return data.class_avatar_url;
   if(/^\/static\/assets\/encounters\/(?:goblin|brute|shaman)\.svg$/.test(data.class_avatar_url||''))return data.class_avatar_url;
@@ -190,7 +195,7 @@ function illustratedStatus(item,side){
   const id=item.id;
   const named=id.startsWith('pet:')?'pet_ready':
     id.startsWith('effect:nz_plot_armor:')?'plot_armor':
-    id.startsWith('effect:rpg_frost:')?'frost':
+    id.startsWith('effect:rpg_frost:')||id.startsWith('effect:nzd_frost')?'frost':
     id==='rpg:skeleton'&&side.rpg_state?.death_servants?'death_servants':statusArtIds[id];
   return named?{...item,icon:named}:item;
 }
@@ -870,6 +875,12 @@ async function openGuild(selectedChat=null,runId='',boardOnly=false){
     onRaid:async id=>{try{raidScreen(await api('/api/raid/'+id));}catch(error){toast(error.message);await openGuild(selectedChat,runId);}},
     onArena:async id=>{if(id){chat=id;page='personal';await openMenu();}}});
 }
+async function openNazarick(selectedChat=null,runId=''){
+  window.ArenaQTEWatch?.close();closeEffect();closeStats();closeRaidDetails();
+  current=null;raidCurrent=null;mirrorRun=null;token='';page='nazarick';audio.scene('menu');
+  await window.NazarickDungeonApp.open({app,chat:selectedChat,runId,toast,initData:tg?.initData||'',
+    onRaid:async id=>raidScreen(await api('/api/raid/'+id)),onArena:async id=>{chat=id;page='personal';await openMenu();}});
+}
 async function openKingdom(selectedChat=null){
   window.ArenaQTEWatch?.close();closeEffect();closeStats();closeRaidDetails();
   current=null;raidCurrent=null;mirrorRun=null;token='';page='kingdom';audio.scene('menu');
@@ -951,7 +962,7 @@ app.addEventListener("click",async event=>{
     if(window.confirm('Стать Лудоманом? Текущий персонаж станет 5 уровня, его класс и навыки будут сброшены. Другие слоты сохранятся.'))await menuAction('casino',{move:'equip',confirm:true,revision:menu.casino.revision});return;
   }
   if(cmd==='pets'){location.assign('/pets?chat='+chat+location.hash);return;}
-  if(cmd==='raidcreate'){await menuAction('raid_create',{boss:arg});return;}
+  if(cmd==='raidcreate'){if(arg==='nazarick'){await openNazarick(chat);return;}await menuAction('raid_create',{boss:arg});return;}
   if(cmd==='forgemode'){forgeMode=arg;page='forge';menuScreen(menu);return;}
   if(cmd==='sellitem'){
     const item=menu?.inventory?.find(i=>i.id===Number(arg)),quantity=Number(document.getElementById('sell-quantity-'+arg)?.value);
@@ -1059,6 +1070,7 @@ app.addEventListener("click",async event=>{
 app.addEventListener('change',event=>{if(event.target.id==='characters-agree'){const b=app.querySelector('[data-do="characterinvoice"]');if(b)b.disabled=!event.target.checked||menu.characters.payments_enabled===false;}else if(event.target.id==='forge-pool'){forgePool=event.target.value;menuScreen(menu);}else if(event.target.id?.startsWith('forge-rewrite-'))forgeUpdateSelection();});
 app.addEventListener('input',event=>{if(event.target.id?.startsWith('forge-rewrite-'))forgeUpdateSelection();});
 async function poll(){
+  if(queueReview)return;
   if(raidCurrent){await pollRaid();return;}
   if(polling||busy||!token||demo||document.hidden||current?.status!=="active"&&current?.status!=="pending")return;
   polling=true;
@@ -1131,6 +1143,13 @@ function configureViewport(){
 }
 async function boot(){
   configureViewport();
+  if(queueReview){
+    const review=await import('/queue-review/ui/arena.js');
+    await review.start({battleScreen,raidScreen,showStats,showRaidDetails,
+      close:()=>{closeEffect();closeStats();closeRaidDetails();},
+      target:selectEncounterTarget, animateEvent,raidAnimate});
+    return;
+  }
   if(demo){
     if(new URLSearchParams(location.search).has('holdings')){await openHoldings(-1);return;}
     if(new URLSearchParams(location.search).has('skills_preview')){startDemoMenu();return;}
@@ -1151,6 +1170,8 @@ async function boot(){
     if(/^equipment_-?\d+$/.test(start)){await openEquipment(Number(start.slice(10)));return;}
     if(start==='guild'||/^guild_-?\d+$/.test(start)||start.startsWith('guildrun_')){await openGuild(/^guild_-?\d+$/.test(start)?Number(start.slice(6)):null,start.startsWith('guildrun_')?start.slice(9):'');return;}
     if(start==='guildboard'||/^guildboard_-?\d+$/.test(start)){await openGuild(start==='guildboard'?null:Number(start.slice(11)),'',true);return;}
+    if(start.startsWith('nzrun_')){await openNazarick(null,start.slice(6));return;}
+    if(/^nazarick_-?\d+$/.test(start)){await openNazarick(Number(start.slice(9)));return;}
     if(start==='rp'||/^rp_-?\d+$/.test(start)||location.pathname==='/rp'){await openRP(/^rp_-?\d+$/.test(start)?Number(start.slice(3)):null);return;}
     if(start==='pets'||/^pets_-?\d+$/.test(start)){location.replace('/pets'+(start==='pets'?'':'?chat='+start.slice(5))+location.hash);return;}
     if(start==='holdings'||/^holdings_-?\d+$/.test(start)){await openHoldings(start==='holdings'?null:Number(start.slice(9)));}
@@ -1219,7 +1240,7 @@ function raidPhaseLabel(data){
   if(data.enterprise_defense)return 'ЗАЩИТА ПРЕДПРИЯТИЙ · РАУНД '+(data.data?.round||1);
   if(data.kingdom_id)return 'ЗАЩИТА ПОСЕЛЕНИЯ · РАУНД '+data.data.round;
   if(data.guild_run_id)return 'ЗАКАЗ ГИЛЬДИИ · РАУНД '+data.data.round;
-  const nz=data.data?.nazarick_view;if(nz)return 'НАЗАРИК · БОСС '+nz.stage+' / 5 · '+nz.phase_name+' · РАУНД '+nz.stage_round;
+  const nz=data.data?.nazarick_view;if(nz)return 'НАЗАРИК · '+(data.nazarick_run_id?'ЭТАЖ ':'БОСС ')+nz.stage+' / '+(data.nazarick_run_id?10:5)+' · '+nz.phase_name+' · РАУНД '+nz.stage_round;
   if(data.kind==='encounter')return 'РП-ВСТРЕЧА · РАУНД '+data.data.round;
   const d=data.data;return (data.boss_id==='chaplain'&&d.phase<3?'РЕГЛАМЕНТ':('ФАЗА '+d.phase+' / '+(data.phase_count||d.phase_count||2)))+' · РАУНД '+d.round;
 }
@@ -1370,6 +1391,15 @@ function raidScreen(data){
   }
   updateRaidTimer();if(raidInspect)showRaidDetails(raidInspect);
   if(inspectEffect)showEffect(inspectEffect.side,inspectEffect.id);
+  if(data.nazarick_run_id){
+    const nzdField=app.querySelector('.nazarick-field');nzdField?.classList.add('nzd-field');
+    if(nzdField&&data.data.kind==='encounter')nzdField.dataset.nzdLayout=Object.values(data.data.enemies).filter(f=>f.hp>0).length;
+    if(nzdField&&Object.values(data.data.enemies||{}).some(f=>['yuri','narberal','lupusregina','solution','entoma','cz'].includes(f.nzd_guardian)))nzdField.dataset.nzdFormation='pleiades';
+    const title=app.querySelector('h1');if(title)title.textContent='Назарик · этаж '+data.data.nazarick_view.stage;
+    const content=app.querySelector('.content');
+    if(content){const back=document.createElement('button');back.className='small';back.textContent='↥ К этажам Назарика';back.addEventListener('click',()=>openNazarick(data.chat_id,data.nazarick_run_id));content.prepend(back);}
+    const last=app.querySelector('.content > .row:last-child');if(last)last.remove();
+  }
   if(data.data?.nazarick_view){
     const n=data.data.nazarick_view,field=document.querySelector('.nazarick-field');
     if(field)field.style.backgroundImage='linear-gradient(#080b1720,#080b1740),url("'+n.background+'")';

@@ -39,6 +39,11 @@
 }
 @media(max-height:500px) and (min-width:600px){.qte-block .qte-window{width:min(760px,100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 190px) * 1.8 + 190px))}.qte-block .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 190px) * 1.8))}.qte-block-raise{width:100%}}
 .qte-watch-buttons{gap:8px;margin-top:10px;flex-wrap:wrap}.qte-watch-buttons button{text-align:left;white-space:normal}
+/* Explicit handedness survives DOM order and wrapping in combined defenses. */
+.qte-controls>.qte-stick{order:2;margin-left:auto;margin-right:0}.qte-controls>.qte-touch-help{order:1}.qte-controls>.qte-block-raise{order:1}
+html[data-joystick-side=left] .qte-controls>.qte-stick{order:0;margin-left:0;margin-right:auto}
+@media(max-height:500px) and (min-width:600px){html[data-joystick-side=left] .qte-cover:not(.qte-spectator) .qte-window{grid-template-columns:140px minmax(0,1fr)}html[data-joystick-side=left] .qte-cover:not(.qte-spectator) .qte-field,html[data-joystick-side=left] .qte-cover:not(.qte-spectator) .qte-health,html[data-joystick-side=left] .qte-cover:not(.qte-spectator) .qte-live-status{grid-column:2}html[data-joystick-side=left] .qte-cover:not(.qte-spectator) .qte-controls{grid-column:1}}
+@media(pointer:coarse){.qte-controls>.qte-abort{order:3}.qte-controls:has(>.qte-abort)>.qte-abort{width:100%;margin-top:4px}}
 .qte-spectator .qte-window{display:flex;flex-direction:column;width:min(760px,100%);gap:10px}
 .qte-spectator .qte-field{width:min(100%,calc(max(80px,100dvh - var(--app-inset-top,0px) - var(--app-inset-bottom,0px) - 270px) * 1.8));align-self:center}
 .qte-watch-players{gap:6px;flex-wrap:wrap}.qte-watch-players:has(button:only-child){display:none}.qte-watch-close{flex-shrink:0;min-height:40px}

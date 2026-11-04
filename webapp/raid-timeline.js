@@ -32,8 +32,9 @@
  function attach(section){if(!current)return ()=>{};const {queue,names,palette}=current,view=create(queue,names,palette);view.host.classList.add('raid-timeline-mini');const heading=section.querySelector('.qte-heading');heading?heading.after(view.host):section.prepend(view.host);return ()=>view.host.remove();}
  function castTime(fighter,skill){if(Number.isFinite(skill?.cast_time))return skill.cast_time;const speed=Math.max(0,Number(fighter?.effective_stats?.speed??fighter?.stats?.speed??0)),hostile=!!(skill?.damage_type||(skill?.effects||[]).some(e=>e.target==='enemy'));let base=skill?.cast_base??({arch_assassin_shadow:2.65,arch_assassin_blood:3.4}[skill?.skill_id]);if(base==null){base=!skill?1.6:!hostile?2.4:skill.power>=35||(skill.tags||[]).includes('six_strike')?4.2:3;if(skill?.tags?.includes('quick'))base*=.8;}return Math.max(.75,Math.round(base/(1+speed*.035)*20)/20);}
  function preview(field,actor,fighter,skill){if(!field||!current)return;const {queue,names,palette}=current,track=field.querySelector('.raid-timeline-track');if(!track)return;clearPreview(field);const at=castTime(fighter,skill),end=horizon(queue),dot=root.document.createElement('span');dot.className='raid-timeline-preview';dot.style.setProperty('--actor',palette[String(actor)]||'#c9a7ea');dot.style.left=(2+96*clamp(queue.version===3?at/end:1-at/end))+'%';const text=(skill?.name||'Защита')+' · '+at.toFixed(2)+' времени';dot.title=text;dot.setAttribute('aria-label',text);track.append(dot);
+  const range=root.document.createElement('span');range.className='raid-timeline-preview-range';range.style.setProperty('--actor',palette[String(actor)]||'#c9a7ea');range.style.left=queue.version===3?'2%':(2+96*(1-clamp(at/end)))+'%';range.style.width=(96*clamp(at/end))+'%';range.dataset.duration=at.toFixed(2);range.title=text;range.setAttribute('aria-label','Длительность: '+text);track.append(range);
   if(queue.version===3){const hint=field.closest('.battle,.raid-screen')?.querySelector('.queue-forecast'),incoming=queue.entries.filter(e=>e.actor!==String(actor)&&(e.targets||[]).includes(String(actor))),f=skill?.queue_forecast;
-   const remaining=f?.remaining??(incoming.length?Math.min(...incoming.map(e=>e.at))-at:null),kind=remaining===null?'none':Math.abs(remaining)<.001?'together':remaining>0?'before':'after';
+   const remaining=f?.remaining??(incoming.length?Math.min(...incoming.map(e=>e.at))-at:null),kind=remaining===null?'none':Math.abs(remaining)<=.500000001?'together':remaining>0?'before':'after';
    if(hint){hint.className='queue-forecast '+kind;hint.textContent=text+'. '+(remaining===null?'Нет объявленного входящего каста.':kind==='before'?'Успеешь · останется '+remaining.toFixed(2)+'.':kind==='together'?'Одновременно с атакой врага.':'Враг ударит раньше на '+(-remaining).toFixed(2)+'.');}
   }
  }
@@ -43,6 +44,6 @@
    button.addEventListener('pointerenter',()=>preview(field,actor,fighter,skill));button.addEventListener('focus',()=>preview(field,actor,fighter,skill));
   });
  }
- function clearPreview(field){field?.querySelector('.raid-timeline-preview')?.remove();}
+ function clearPreview(field){field?.querySelectorAll('.raid-timeline-preview,.raid-timeline-preview-range').forEach(n=>n.remove());}
  return {model,mount,mountSolo,attach,eventGroups,preview,clearPreview,castTime,bind};
 });
