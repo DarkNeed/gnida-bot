@@ -31,6 +31,16 @@ TRAITS={'audit':'Выработка везде +5%.','undead':'Не нуждае
  'guard':'Защищает от похищений, если здоров и не отсутствует. Побеги из-за плохих условий не предотвращает.',
  'diplomat':'Снижает риск происшествия на одну ступень; поисковая группа получает +10 п.п.',
  'veteran':'При подходящей работе медленнее устаёт.','artisan':'В мастерской дополнительно +10% выработки.'}
+TRAIT_DETAILS={
+ 'audit':('Бухгалтер конца света','Апокалипсис отменяется: акт о списании мира ещё не подписан.'),
+ 'undead':('Посмертная занятость','В трудовой книжке смерть записана как перевод в ночную смену.'),
+ 'guard':('Охранник последнего шанса','Кража персонала запрещена. За добровольный побег охрана ответственности не несёт.'),
+ 'diplomat':('Бархатные переговоры','После переговоров все одеты, но почему-то согласились на сверхурочные.'),
+ 'veteran':('Ветеран последней смены','Свет в конце тоннеля видел. Попросил выключить: мешает работать.'),
+ 'artisan':('Патологоанатом механизмов','Механизм умер от переработки. Мастер записал: естественный износ.'),
+}
+WORKPLACES={'brothel':'Бордель','field':'Хлопковое поле','tavern':'Таверна',
+ 'mine':'Шахта','workshop':'Мастерская','custom':'Своё предприятие'}
 
 
 def appearance(d):
@@ -67,14 +77,36 @@ def efficiency(d,kind):
     return .75*(1+bonus/100)*(1 if d['fatigue']<70 else .7)*d['health']/100
 
 
+def passport(d):
+    """Read-only explanations use actual NPC formulas, not human worker bonuses.
+
+    No derived efficiency or rarity contribution is exposed before appraisal.
+    Older saved workers receive this presentation without a migration/reroll.
+    """
+    name,flavor=TRAIT_DETAILS[d['trait']]
+    effect=TRAITS[d['trait']]
+    if d['trait']=='veteran':effect='На подходящей работе: усталость +1 вместо +2 каждые 3 часа работы.'
+    if d['trait']=='guard':effect='Предотвращает похищения при здоровье от 60 и усталости ниже 80, пока не пропал и не в экспедиции. Побеги из-за плохих условий не предотвращает.'
+    if d['trait']=='diplomat':effect='При здоровье от 60 и усталости ниже 80 снижает риск происшествия на одну ступень, пока не отсутствует. Присутствующий дипломат даёт поисковой группе +10 п.п. к успеху.'
+    preferred=PROFESSIONS[d['profession']]['work']
+    known=bool(d['appraised'])
+    return dict(trait_name=name,trait_flavor=flavor,trait_effect=effect,
+        preferred_work=dict(id=preferred,name=WORKPLACES[preferred],bonus=30),
+        profession_bonus=2*(d['profession_level']-1),base_efficiency=.75,
+        rarity_bonus=dict(income=RARITIES[d['rarity']]['bonus'],power=RARITIES[d['rarity']]['bonus']*.25) if known else None,
+        workplaces=[dict(id=kind,name=title,preferred=kind==preferred,
+            multiplier=round(efficiency(d,kind),4) if known else None) for kind,title in WORKPLACES.items()])
+
+
 def public(row):
     d=deepcopy(row['data']);definition=PROFESSIONS[d['profession']]
     gender,key=appearance(d)
+    passport_data=passport(d)
     d.update(gender=gender,appearance=key,sprite_url=SPRITE_ROOT+key+'.png',thumbnail_url=SPRITE_ROOT+key+'-small.png',
         id=row['id'],status=row['status'],site=row['site'],revision=row['revision'],
         profession_name=FEMALE_PROFESSIONS[d['profession']] if gender=='female' else definition['name'],
-        icon=definition['icon'],description=definition['text'],trait_text=TRAITS[d['trait']],upkeep=definition['upkeep'],
-        power=power(d),cost=row['price'])
+        icon=definition['icon'],description=definition['text'],trait_text=passport_data['trait_effect'],upkeep=definition['upkeep'],
+        power=power(d),cost=row['price'],passport=passport_data)
     if d['appraised']:d['quality']=RARITIES[d['rarity']]
     else:
         d.pop('rarity');d['quality']=dict(name='Не оценён',color='#9baabd')

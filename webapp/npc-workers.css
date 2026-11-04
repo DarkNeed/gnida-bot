@@ -14,6 +14,8 @@
 .npc-protection-settings summary{cursor:pointer;width:fit-content;color:#91a6c1}
 .npc-protection-settings details p{max-width:650px;color:#a8b8ce}
 .npc-portrait{width:140px;min-height:240px;justify-content:flex-end;padding:12px 4px 28px;box-sizing:border-box}
+.npc-passport{font-size:13px;line-height:1.65;overflow-wrap:anywhere}.npc-passport h3{margin:14px 0 8px}.npc-passport .holdings-trait-flavor{color:#c6b4dd}.npc-current-state{color:#b5c7df}.npc-work-rates{display:grid;gap:6px;margin:12px 0}.npc-work-rates>div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #30415b}.npc-work-rates b{flex-shrink:0;color:#e4d8f4;font-size:12px}.holdings-dialog .npc-dashboard small{line-height:1.45}
+@media(max-width:390px){.npc-work-rates>div{flex-wrap:wrap;gap:3px}}
 .npc-portrait:before{display:none}
 .npc-portrait img{display:block;width:100%;height:240px;object-fit:contain}
 .npc-portrait i{bottom:9px;color:#b8c7dc}
