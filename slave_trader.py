@@ -225,6 +225,7 @@ class SlaveTraderMixin:
                         self._add_francs_locked(chat,r['seller_id'],net)
                         # The ownership trigger cancelled this listing; mark this exact transaction sold.
                         self.connection.execute("UPDATE slave_trader_listings SET status='sold',buyer_id=?,sold_at=? WHERE id=?",(actor,now(),listing))
+                        self._queue_slave_buyout_notice_locked(chat,r['seller_id'],r['worker_id'],actor,r['price'],'sale')
                         result=dict(notice=f'Работник куплен за {r["price"]} ₣. Продавцу — {net} ₣; комиссия — {fee} ₣.')
                 else:
                     order=body.get('order');cfg=ORDERS.get(order) if isinstance(order,str) else None

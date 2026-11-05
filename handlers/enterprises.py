@@ -6,7 +6,7 @@ import json
 import logging
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
@@ -16,6 +16,7 @@ from arena_links import arena_link
 from slave_recovery import (RECOVERY_CODE_LENGTH, RECOVERY_MAX_ATTEMPTS,
                             RECOVERY_SYMBOLS, RECOVERY_TZ, timestamp)
 from datetime import datetime
+from slavery_notices import RETRY_SECONDS, BLOCKED_RETRY_SECONDS
 
 
 def button(text, data):return InlineKeyboardButton(text=text[:60],callback_data=data)
@@ -267,6 +268,28 @@ def create_enterprise_router(db):
     return router
 
 
+def private_retry_delay(error):
+    if isinstance(error,(TelegramForbiddenError,TelegramBadRequest)):return BLOCKED_RETRY_SECONDS
+    return max(RETRY_SECONDS,int(getattr(error,'retry_after',0)))
+
+
+async def publish_slave_buyouts(db,bot,username=None):
+    for row in await db.slave_buyout_notifications():
+        details=json.loads(row['details'])
+        worker=f'<a href="tg://user?id={row["worker"]}">{esc(details["worker_name"])}</a>'
+        if row['kind']=='sale':
+            buyer=f'<a href="tg://user?id={row["buyer"]}">{esc(details["buyer_name"])}</a>'
+            text=f'💰 <b>Раб выкуплен у тебя</b>\n{buyer} купил {worker}.\nЦена: {row["amount"]} ₣. Работник перешёл покупателю.'
+        else:text=f'🔓 <b>Раб выкупился</b>\n{worker} заплатил {row["amount"]} ₣ и больше тебе не принадлежит.'
+        text+='\nЧат: '+esc(details['chat_title'])
+        markup=keyboard([[InlineKeyboardButton(text='Мои владения',url=arena_link(username,f'holdings_{row["chat"]}'))]]) if username else None
+        try:await asyncio.wait_for(bot.send_message(row['recipient'],text,parse_mode='HTML',reply_markup=markup),10)
+        except (TelegramAPIError,asyncio.TimeoutError) as error:
+            await db.slave_buyout_notification_result(row['id'],delay=private_retry_delay(error))
+            continue
+        await db.slave_buyout_notification_result(row['id'],delivered=True)
+
+
 async def sweep_recovery_events(db,bot,*,create=True,username=None):
     for row in await db.recovery_expire():
         if row['message_id']:
@@ -278,15 +301,19 @@ async def sweep_recovery_events(db,bot,*,create=True,username=None):
                 # Removed/unchanged messages do not keep a permanent retry loop.
                 await db.recovery_notified(row['id'])
             except TelegramAPIError:logging.warning('Could not update recovery event %s',row['id'])
+    await publish_slave_buyouts(db,bot,username)
     if not create:return
     for row in await db.workforce_notifications():
-        text=('⚠️ В хозяйстве плохие условия. Есть 24 часа на исправление: проверь кошелёк для содержания, дай NPC отдохнуть, назначь управляющего. '
-              if row['kind']=='warning' else f'🚨 {esc(row["name"])} пропал. Есть 8 часов: мини-игра, поисковая группа, награда помощнику или выкуп при похищении. ')
-        text+=f'<a href="tg://user?id={row["owner"]}">Владелец</a>, открой обзор владений в личном меню бота.'
+        text=('⚠️ <b>В хозяйстве плохие условия.</b> Есть 24 часа на исправление: проверь кошелёк для содержания, дай NPC отдохнуть, назначь управляющего.'
+              if row['kind']=='warning' else f'🚨 {esc(row["name"])} пропал. Есть 8 часов: мини-игра, поисковая группа, награда помощнику или выкуп при похищении.')
+        text+='\nЧат: '+esc(row.get('chat_title') or row['chat'])
+        if row['kind']=='warning':text+='\nПричины: '+esc('; '.join(json.loads(row['reason'])))
+        text+='\nОткрой обзор владений в личном меню бота.'
         try:
             markup=keyboard([[InlineKeyboardButton(text='Условия и розыск',url=arena_link(username,f'holdings_{row["chat"]}'))]]) if username else None
-            await bot.send_message(row['chat'],text,reply_markup=markup,parse_mode='HTML')
-        except (TelegramAPIError,asyncio.TimeoutError):continue
+            await asyncio.wait_for(bot.send_message(row['owner'],text,reply_markup=markup,parse_mode='HTML'),10)
+        except (TelegramAPIError,asyncio.TimeoutError) as error:
+            await db.workforce_delivery_failed(row,delay=private_retry_delay(error));continue
         await db.workforce_notified(row)
     for row in await db.enterprise_due_recoveries():
         try:

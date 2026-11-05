@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from npc_worker_rules import DAY,HOUR,PROFESSIONS
 from slave_recovery import code_feedback, RECOVERY_SYMBOLS
+from slavery_notices import SlaveryNoticesMixin
 
 
 def now():
@@ -16,8 +17,9 @@ def now():
     return utc_timestamp()
 
 
-class WorkforceMixin:
+class WorkforceMixin(SlaveryNoticesMixin):
     def _init_workforce(self):
+        self._init_slavery_notices()
         self.connection.executescript('''
             CREATE TABLE IF NOT EXISTS workforce_events(
                 id TEXT PRIMARY KEY,chat INTEGER NOT NULL,owner INTEGER NOT NULL,
@@ -247,9 +249,17 @@ class WorkforceMixin:
                 for e in self.connection.execute("SELECT * FROM workforce_events WHERE status='cancelled' AND json_extract(data,'$.bounty')>0 AND COALESCE(json_extract(data,'$.bounty_paid'),0)=0 LIMIT 100").fetchall():
                     self._workforce_pay_bounty_locked(e,e['owner'])
                 self._workforce_roll_locked()
-                warnings=[dict(kind='warning',**dict(r)) for r in self.connection.execute("SELECT * FROM workforce_warnings WHERE status='warning' AND seen IS NULL LIMIT 10")]
-                events=[dict(r,kind='incident') for r in self.connection.execute("SELECT * FROM workforce_events WHERE status='announcing' LIMIT 10")]
-                return warnings+events
+                warnings=[dict(kind='warning',**dict(r)) for r in self.connection.execute('''SELECT w.*,c.title AS chat_title FROM workforce_warnings w LEFT JOIN chats c ON c.chat_id=w.chat
+                    WHERE w.status='warning' AND w.seen IS NULL AND COALESCE((SELECT next_at FROM workforce_delivery_attempts
+                    WHERE delivery_key='warning:'||w.chat||':'||w.owner||':'||w.created),0)<=? ORDER BY w.created LIMIT 20''',(now(),))]
+                events=[dict(r,kind='incident') for r in self.connection.execute('''SELECT w.*,c.title AS chat_title FROM workforce_events w LEFT JOIN chats c ON c.chat_id=w.chat
+                    WHERE w.status='announcing' AND COALESCE((SELECT next_at FROM workforce_delivery_attempts
+                    WHERE delivery_key='incident:'||w.id),0)<=? ORDER BY w.created LIMIT 20''',(now(),))]
+                result=[]
+                for row in warnings+events:
+                    if self._workforce_claim_locked(row):result.append(row)
+                    if len(result)>=20:break
+                return result
 
     async def workforce_notified(self, row):
         async with self._lock:

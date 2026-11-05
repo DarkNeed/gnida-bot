@@ -3113,41 +3113,42 @@ class Database(LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMi
 
     async def buyout_slave(self, chat_id: int, owner_id: int, slave_id: int) -> str:
         async with self._lock:
-            self._require_feature_locked(chat_id, 'slavery')
-            owned = self.connection.execute(
-                """SELECT 1 FROM ownership
-                   WHERE chat_id=? AND owner_id=? AND slave_id=?""",
-                (chat_id, owner_id, slave_id),
-            ).fetchone()
-            if owned is None:
-                return "not_owned"
-            if self._npc_reserved_locked(chat_id,slave_id):
-                return 'npc_buyout'
-            cost=self._finance_buyout_cost_locked(chat_id,slave_id,owner_id)
-            balance = self.connection.execute(
-                "SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?",
-                (chat_id, slave_id),
-            ).fetchone()
-            if not balance or int(balance["balance"]) < cost:
-                return "insufficient"
-            now = utc_timestamp()
-            self.connection.execute(
-                """UPDATE franc_balances SET balance=balance-?, updated_at=?
-                   WHERE chat_id=? AND user_id=?""",
-                (cost, now, chat_id, slave_id),
-            )
-            self._settle_materials_locked(chat_id, owner_id)
-            self.connection.execute(
-                "DELETE FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?",
-                (chat_id, owner_id, slave_id),
-            )
-            self.connection.execute(
-                """DELETE FROM business_workers
-                   WHERE chat_id=? AND owner_id=? AND worker_id=?""",
-                (chat_id, owner_id, slave_id),
-            )
-            self.connection.commit()
-            return "released"
+            with self.connection:
+                self._require_feature_locked(chat_id, 'slavery')
+                owned = self.connection.execute(
+                    """SELECT 1 FROM ownership
+                       WHERE chat_id=? AND owner_id=? AND slave_id=?""",
+                    (chat_id, owner_id, slave_id),
+                ).fetchone()
+                if owned is None:
+                    return "not_owned"
+                if self._npc_reserved_locked(chat_id,slave_id):
+                    return 'npc_buyout'
+                cost=self._finance_buyout_cost_locked(chat_id,slave_id,owner_id)
+                balance = self.connection.execute(
+                    "SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?",
+                    (chat_id, slave_id),
+                ).fetchone()
+                if not balance or int(balance["balance"]) < cost:
+                    return "insufficient"
+                now = utc_timestamp()
+                self.connection.execute(
+                    """UPDATE franc_balances SET balance=balance-?, updated_at=?
+                       WHERE chat_id=? AND user_id=?""",
+                    (cost, now, chat_id, slave_id),
+                )
+                self._settle_materials_locked(chat_id, owner_id)
+                self.connection.execute(
+                    "DELETE FROM ownership WHERE chat_id=? AND owner_id=? AND slave_id=?",
+                    (chat_id, owner_id, slave_id),
+                )
+                self.connection.execute(
+                    """DELETE FROM business_workers
+                       WHERE chat_id=? AND owner_id=? AND worker_id=?""",
+                    (chat_id, owner_id, slave_id),
+                )
+                self._queue_slave_buyout_notice_locked(chat_id,owner_id,slave_id,slave_id,cost)
+                return "released"
 
     async def add_basement_member(
         self, chat_id: int, user_id: int, added_by: int
