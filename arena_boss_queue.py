@@ -69,6 +69,12 @@ def _prepare(data, keys, skills, rng):
 
 
 def _land(data, released, guards, skills, rng):
+    from arena_combined_damage import incoming_group
+    with incoming_group(data, released, skills):
+        return _land_group(data, released, guards, skills, rng)
+
+
+def _land_group(data, released, guards, skills, rng):
     from arena_raid_engine import _finish_boss_round
     if not released:
         return

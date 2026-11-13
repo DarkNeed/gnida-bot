@@ -248,6 +248,12 @@ def _release(data, key, skills):
 
 
 def _land(data, released, guards, skills, rng):
+    from arena_combined_damage import incoming_group
+    with incoming_group(data, released, skills):
+        return _land_group(data, released, guards, skills, rng)
+
+
+def _land_group(data, released, guards, skills, rng):
     from arena_raid_engine import alive_players, native_attack
     for r in released:
         key, original, i = r['source'], r['fighter'], r['intent']

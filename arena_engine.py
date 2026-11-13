@@ -48,6 +48,7 @@ from arena_mastery import (build_skills as build_mastery_skills, skill_allowed a
     modifiers as mastery_modifiers, after_action as mastery_after_action)
 from arena_relics import build_catalog as build_relic_catalog, modifiers as relic_modifiers, incoming as relic_incoming, after_action as relic_after_action, periodic_damage
 import arena_equipment as gear
+from arena_combined_damage import direct_damage as simultaneous_damage
 
 BASE_RESOURCE = 100
 BASE_RESOURCE_REGEN = 0.08
@@ -1564,7 +1565,7 @@ def resolve_skill(
                 else:
                     c['potential']=max(1,math.floor(reference_damage*c['weight']*multiplier+.5))
             potential=sum(c['potential'] for c in pattern_contacts)
-            remaining=gear.incoming(target,final_incoming(target,rpg_incoming(target,potential,rpg_branch(target)),actor,raid_context),gear_action_id) if potential else 0
+            remaining=gear.incoming(target,final_incoming(target,simultaneous_damage(target,rpg_incoming(target,potential,rpg_branch(target))),actor,raid_context),gear_action_id) if potential else 0
             redirected=potential-remaining
             for c in pattern_contacts:
                 held=min(redirected,c['potential']);redirected-=held
@@ -1589,7 +1590,7 @@ def resolve_skill(
                 budget = [round(value * (1.5 if i < len(timing_criticals)
                           and timing_criticals[i] is True else 1)) for i, value in enumerate(budget)]
             potential=sum(budget[i] for i,p in enumerate(strike_results) if p['hit'])
-            redirected=potential-gear.incoming(target,final_incoming(target,potential,actor,raid_context),gear_action_id)
+            redirected=potential-gear.incoming(target,final_incoming(target,simultaneous_damage(target,potential),actor,raid_context),gear_action_id)
             for i, part in enumerate(strike_results):
                 if part["hit"]:
                     held=min(redirected,budget[i]);redirected-=held
@@ -1600,6 +1601,7 @@ def resolve_skill(
             damage = sum(part["damage"] for part in strike_results)
         else:
             damage = rpg_incoming(target,damage,rpg_branch(target))
+            damage = simultaneous_damage(target,damage)
             damage=final_incoming(target,damage,actor,raid_context)
             damage=gear.incoming(target,damage,gear_action_id)
             target["hp"] = max(0, target["hp"] - damage)
@@ -1785,6 +1787,11 @@ def resolve_skill(
     pet_notes = pet_after_action(
         actor, target, skill, hit, min(before[other]["hp"], damage), actual_cost,
         pet_context, effects_text, skills or BUILTIN_SKILLS)
+    # A companion's automatic follow-up belongs to this defended cast. It must
+    # not become an invisible guaranteed hit after a clean authoritative guard.
+    qte_avoided = bool(qte and 'pattern_dodge' in qte and not hit and
+                       qte.get('dodge') and all(qte['dodge']))
+    rpg_context['qte_avoided'] = qte_avoided
     rpg_notes,reaction_damage = rpg_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),before[side_key]['hp'],rng,effective_stat,rpg_context,allies,raid_context)
     mastery_before['ally_healed'] = any(p['hp'] > mastery_allies[i]['hp'] for i,p in enumerate(allies or []))
     mastery_notes=mastery_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),mastery_before,obeyed,allies)
@@ -1792,7 +1799,7 @@ def resolve_skill(
     if horizon_note: rpg_notes.append(horizon_note)
     follower_before=target['hp']
     final_notes=final_after_action(actor,target,skill,hit,min(before[other]['hp'],damage),
-                                  final_before,rng,effective_stat,allies,skills or BUILTIN_SKILLS)
+                                  final_before,rng,effective_stat,allies,skills or BUILTIN_SKILLS,qte_avoided=qte_avoided)
     follower_damage=max(0,follower_before-target['hp'])
     if not skill.damage_type and any(e['kind']=='cleanse_one' or
             e.get('target')=='self' and e['kind'] in ('incoming_damage_multiplier','physical_defense_pct','magic_defense_pct') for e in skill.effects):
@@ -1830,6 +1837,8 @@ def resolve_skill(
         if blocked:text += f" · заблокировано {blocked}"
     if hit and critical:
         text += " · критический удар"
+    if damage and target.get('_simultaneous_incoming', 1) < 1:
+        text += f" · совместная атака: урон −{round((1-target['_simultaneous_incoming'])*100)}%"
     if obeyed:
         text += " · предписание исполнено"
     if bleed_damage:

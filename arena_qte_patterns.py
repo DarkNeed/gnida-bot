@@ -961,14 +961,30 @@ def touches(h, old, now, t, dt):
 
 
 def defense_step(s, control):
+    if defense_begin(s):
+        old = defense_move(s, control)
+        defense_contacts(s, old)
+
+
+def defense_begin(s):
+    """Prepare hazards before moving; combined patterns share this boundary."""
     dt = 1 / HZ
-    previous = s["time"]
     s["time"] += dt
     if s["time"] <= s["preparation"] + 1e-8:
-        return
+        return False
     for e in s["events"]:
         if not e["ready"] and s["time"] >= e["at"]:
             prepare(s, e)
+    return True
+
+
+def defense_speed(s):
+    from arena_nazarick_patterns import time_stopped
+    return 0 if time_stopped(s) else s['d']['moveSpeed']
+
+
+def defense_move(s, control, speed=None):
+    dt = 1 / HZ
     old = dict(s["player"])
     p = s["player"]
     for mark in s.get('relocations', []):
@@ -981,10 +997,7 @@ def defense_step(s, control):
     else:
         dx, dy = control.get("x", 0), control.get("y", 0)
     length = math.hypot(dx, dy)
-    speed = s['d']['moveSpeed']
-    if s['p']['skill'].get('base_id','').startswith('nz_'):
-        from arena_nazarick_patterns import time_stopped
-        if time_stopped(s):speed=0
+    speed = defense_speed(s) if speed is None else speed
     travel = min(length, speed * dt) if "target" in control else speed * dt * min(length, 1)
     if length:
         p["x"] += dx / length * travel
@@ -999,6 +1012,12 @@ def defense_step(s, control):
     p["y"] = clamp(p["y"], 12, H - 12)
     p["vx"] = (p["x"] - old["x"]) / dt
     p["vy"] = (p["y"] - old["y"]) / dt
+    return old
+
+
+def defense_contacts(s, old):
+    dt, previous = 1 / HZ, s['time'] - 1 / HZ
+    p = s['player']
     if s['p'].get('chaplain', 0) >= 2:
         s.setdefault('history', []).append(dict(t=s['time'], x=p['x'], y=p['y']))
         s['history'] = s['history'][-720:]

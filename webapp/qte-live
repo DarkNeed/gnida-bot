@@ -16,6 +16,7 @@
       const find=q=>cover.querySelector(q),canvas=find('canvas'),ctx=canvas.getContext('2d'),previous=document.activeElement,feedback=damageFeedback('defense');
       canvas.height=s.block?400:320;canvas.setAttribute('aria-label',s.block?'Удерживай левую кнопку мыши на поле или используй WASD: щит следует за направлением':'WASD или джойстик уклонения');
       find('h2').textContent=challenge.members.map(m=>m.name).join(' + ');find('.qte-help').textContent=s.block?'Держи ЛКМ на поле или WASD навстречу угрозам. Отпусти для восстановления стойкости.':'Уводи маркер от всех угроз. Убийство слабого врага до каста убирает его помехи.';
+      if(challenge.incoming_factor<1)find('.qte-help').textContent+=' Совместный прямой урон −'+Math.round((1-challenge.incoming_factor)*100)+'%.';
       document.body.append(cover);const releaseTimeline=window.RaidTimeline?.attach(find('section'));
       const unlock=QTETouch.lockViewport(cover),abort=new AbortController(),on=(e,n,f)=>e.addEventListener(n,f,{signal:abort.signal});
       const keys=new Set(),proof={ticks:Math.ceil(s.duration*120-1e-7),inputs:[]};let tick=0,last=0,accumulator=0,encoded='',angle=0,done=false,raf,watch,aim=null,canvasPointer=null;

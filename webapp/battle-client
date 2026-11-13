@@ -414,6 +414,14 @@ function battleScreen(data){
 function mountBattleTimeline(state){
   const field=app.querySelector?.('.battle .field'),queue=state?.action_queue;
   if(!field||!queue)return;
+  const next=(queue.entries||[]).filter(e=>e.actor!==near&&e.skill&&state.sides[e.actor]?.controller_id===0).sort((a,b)=>a.at-b.at)[0];
+  if(next&&!state.finished){
+    const enemy=state.sides[next.actor],skill=enemy.skill_details?.find(s=>s.skill_id===next.skill);
+    const intent=document.createElement('div');intent.className='battle-next-intent';intent.setAttribute('role','status');
+    intent.textContent=enemy.name+' готовит: '+(skill?.name||next.skill)+' · '+(next.at>.01?'через '+Number(next.at).toFixed(2)+' с по шкале':'сейчас');
+    if(skill?.description)intent.title=skill.description;
+    field.before(intent);
+  }
   const names=Object.fromEntries(['a','b'].map(key=>[key,state.sides[key]?.name||key]));
   window.RaidTimeline?.mountSolo(field,queue,names);
 }
@@ -1375,7 +1383,8 @@ function raidScreen(data){
     if(data.data?.chaplain?.notification){const note=document.createElement('div');note.className='chaplain-system';note.setAttribute('role','status');note.textContent='SYSTEM › '+data.data.chaplain.notification;document.querySelector('.chaplain-regulation')?.prepend(note);}
   }
   if(data.status==='active'){
-    document.querySelector?.('.raid-intent')?.remove();
+    // Keep the textual announcement: intent lines cannot replace skill names,
+    // special conditions and targets, especially in one-on-one fights.
     const timelineField=document.querySelector?.('.raid-field');
     window.RaidIntentLines?.mount(timelineField,data,source=>raidAction('intercept',{round:data.data.round,source}));
     const ownForTimeline=data.data?.players?.[String(data.actor_id)]?.fighter;

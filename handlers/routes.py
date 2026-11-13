@@ -399,6 +399,10 @@ GNIDA_VIDEO_PATH = MEDIA_DIR / "Gnida.mp4"
 MEOW_AUDIO_PATH = MEDIA_DIR / "Meow-voice.ogg"
 SAFEBOORU_API_URL = "https://safebooru.org/index.php"
 SAFEBOORU_TAGS = "murder_drones rating:safe"
+# A non-Telegram scope: inline games have no accessible chat ID. Never use a
+# real group's economy/slavery state or require membership of that group.
+PRIVATE_GAMES_SCOPE = -9_000_000_000_000_001
+
 INLINE_GAME_OPTIONS = {
     "random": ("Случайный вызов", "🎲"),
     "rps": ("Камень, ножницы, бумага", "🪨"),
@@ -5765,14 +5769,13 @@ def create_router(
 
     @router.inline_query()
     async def inline_challenge_query(inline_query: InlineQuery) -> None:
-        if kargassia_chat_id is not None:
-            await database.upsert_user(
-                kargassia_chat_id,
-                inline_query.from_user.id,
-                inline_query.from_user.username,
-                display_name(inline_query.from_user),
-                touch=False,
-            )
+        await database.upsert_user(
+            PRIVATE_GAMES_SCOPE,
+            inline_query.from_user.id,
+            inline_query.from_user.username,
+            display_name(inline_query.from_user),
+            touch=False,
+        )
         creator_name = display_name(inline_query.from_user)
         results: list[InlineQueryResultArticle] = []
         for game_type in inline_game_types(inline_query.query):
@@ -5784,7 +5787,7 @@ def create_router(
                 InlineQueryResultArticle(
                     id=f"{inline_query.from_user.id}:{game_type}",
                     title=title,
-                    description="Отправить вызов в текущий чат",
+                    description="Дружеская игра в любом чате или личной переписке",
                     input_message_content=InputTextMessageContent(
                         message_text=(
                             f"{icon} {creator_name} предлагает сыграть в {game_label}.\n"
@@ -5824,72 +5827,19 @@ def create_router(
         if callback.from_user.id == challenger_id:
             await callback.answer("Нельзя принять собственный вызов.", show_alert=True)
             return
-        if kargassia_chat_id is None:
-            await callback.answer(
-                "Не задан KARGASSIA_CHAT_ID.", show_alert=True
-            )
-            return
-        challenger_present, opponent_present = await asyncio.gather(
-            is_chat_participant(bot, kargassia_chat_id, challenger_id),
-            is_chat_participant(bot, kargassia_chat_id, callback.from_user.id),
-        )
-        if not challenger_present or not opponent_present:
-            await callback.answer(
-                "Оба игрока должны состоять в Каргассии.", show_alert=True
-            )
-            return
-        try:
-            challenger_member = await bot.get_chat_member(
-                kargassia_chat_id, challenger_id
-            )
-            challenger_user = challenger_member.user
-        except (TelegramBadRequest, TelegramForbiddenError):
-            await callback.answer(
-                "Не удалось проверить создателя вызова.", show_alert=True
-            )
+        challenger = await database.get_user(PRIVATE_GAMES_SCOPE, challenger_id)
+        if challenger is None:
+            await callback.answer("Создателю нужно отправить новый вызов через inline-меню бота.", show_alert=True)
             return
         opponent = callback.from_user
-        await asyncio.gather(
-            database.upsert_user(
-                kargassia_chat_id,
-                challenger_user.id,
-                challenger_user.username,
-                display_name(challenger_user),
-                touch=False,
-            ),
-            database.upsert_user(
-                kargassia_chat_id,
-                opponent.id,
-                opponent.username,
-                display_name(opponent),
-                touch=False,
-            ),
+        if opponent.is_bot:
+            await callback.answer("Нужен живой соперник.", show_alert=True)
+            return
+        await database.upsert_user(
+            PRIVATE_GAMES_SCOPE, opponent.id, opponent.username, display_name(opponent), touch=False,
         )
-        if sleepy_attack_is_blocked(challenger_user, opponent.username):
-            await callback.answer(SLEEPY_PROTECTION_TEXT, show_alert=True)
-            return
-        if user_is_immune(opponent):
-            await callback.answer(IMMUNITY_TEXT, show_alert=True)
-            return
         await recover_blocking_challenges(
-            kargassia_chat_id, (challenger_id, opponent.id), bot
-        )
-        block_reason = await slavery_challenge_block_reason(
-            database, kargassia_chat_id, challenger_id, opponent.id
-        )
-        if block_reason:
-            await callback.answer(
-                block_reason,
-                show_alert=True,
-            )
-            return
-        owner = await database.get_owner(kargassia_chat_id, challenger_id)
-        forced = bool(
-            owner
-            and int(owner["owner_id"]) == opponent.id
-            and await database.can_force_owner(
-                kargassia_chat_id, challenger_id, opponent.id
-            )
+            PRIVATE_GAMES_SCOPE, (challenger_id, opponent.id), bot
         )
         game_type = (
             random.choice(("rps", "blackjack", "checkers"))
@@ -5897,10 +5847,10 @@ def create_router(
             else requested_game
         )
         challenge_id = await database.create_challenge(
-            kargassia_chat_id,
+            PRIVATE_GAMES_SCOPE,
             challenger_id,
             opponent.id,
-            forced=forced,
+            friendly=True,
             game_type=game_type,
         )
         if challenge_id is None:
@@ -5936,10 +5886,7 @@ def create_router(
     async def cancel_own_challenge(message: Message, bot: Bot) -> None:
         if not message.from_user or message.chat.type not in {*GROUP_TYPES, "private"}:
             return
-        chat_id = kargassia_chat_id if message.chat.type == "private" else message.chat.id
-        if chat_id is None:
-            await message.answer("Отправь команду в чат, где был вызов.")
-            return
+        chat_id = PRIVATE_GAMES_SCOPE if message.chat.type == "private" else message.chat.id
         recovered = await recover_blocking_challenges(chat_id, (message.from_user.id,), bot)
         cancelled = 0
         for challenge in await database.blocking_challenges(chat_id, (message.from_user.id,)):
@@ -6183,7 +6130,7 @@ def create_router(
         ):
             await callback.answer("Этот вызов уже завершён.", show_alert=True)
             return
-        if await target_is_immune(
+        if not challenge["friendly"] and await target_is_immune(
             database, int(challenge["chat_id"]), int(challenge["opponent_id"])
         ):
             if await database.finish_challenge(challenge_id, "immune"):
@@ -6269,7 +6216,7 @@ def create_router(
         ):
             await callback.answer("Этот вызов уже завершён.", show_alert=True)
             return
-        if await target_is_immune(
+        if not challenge["friendly"] and await target_is_immune(
             database, int(challenge["chat_id"]), int(challenge["opponent_id"])
         ):
             if await database.finish_challenge(challenge_id, "immune"):
@@ -6405,7 +6352,7 @@ def create_router(
         ):
             await callback.answer("Эта партия уже завершена.", show_alert=True)
             return
-        if await target_is_immune(
+        if not challenge["friendly"] and await target_is_immune(
             database, int(challenge["chat_id"]), int(challenge["opponent_id"])
         ):
             if await database.finish_challenge(challenge_id, "immune"):

@@ -474,20 +474,34 @@
   }
   function defenseStep(s,dt,input={}){
     if(s.ended)return;let remaining=Math.min(Math.max(0,dt),s.duration-s.time);
-    while(remaining>1e-8){const step=Math.min(remaining,1/120);remaining-=step;const previous=s.time;s.time+=step;
-      if(s.time<=s.preparation+1e-8)continue;
+    while(remaining>1e-8){const step=Math.min(remaining,1/120);remaining-=step;
+      if(!defenseBegin(s,step))continue;
+      const old=defenseMove(s,step,input);defenseContacts(s,step,old);if(s.ended)break;
+    }
+    if(s.time>=s.duration-1e-7){s.time=s.duration;s.ended=true;}
+  }
+  function defenseBegin(s,step=1/120){
+      s.time+=step;if(s.time<=s.preparation+1e-8)return false;
       for(const e of s.events)if(!e.ready&&s.time>=e.at)prepare(s,e);
+      return true;
+  }
+  function defenseSpeed(s){return NZ?.timeStopped(s)?0:s.d.moveSpeed;}
+  function defenseMove(s,step,input={},speed=defenseSpeed(s)){
       let old={...s.player};
       for(const mark of s.relocations||[])if(!mark.done&&s.time>=mark.at){s.player.x=mark.x;s.player.y=mark.y;old={...s.player};mark.done=true;}
       let dx=input.x||0,dy=input.y||0;
       if(input.target){dx=input.target.x-old.x;dy=input.target.y-old.y;}
-      const speed=NZ?.timeStopped(s)?0:s.d.moveSpeed,length=Math.hypot(dx,dy),travel=input.target?Math.min(length,speed*step):speed*step*Math.min(1,length);
+      const length=Math.hypot(dx,dy),travel=input.target?Math.min(length,speed*step):speed*step*Math.min(1,length);
       if(length){s.player.x+=dx/length*travel;s.player.y+=dy/length*travel;}
       for(const h of s.hazards)if(h.type==='well'&&s.time>=h.start&&s.time<h.end){
         const len=Math.hypot(h.x-s.player.x,h.y-s.player.y);if(len>1&&len<170){s.player.x+=(h.x-s.player.x)/len*h.pull*step;s.player.y+=(h.y-s.player.y)/len*h.pull*step;}
       }
       s.player.x=clamp(s.player.x,12,W-12);s.player.y=clamp(s.player.y,12,H-12);
       s.player.vx=(s.player.x-old.x)/step;s.player.vy=(s.player.y-old.y)/step;
+      return old;
+  }
+  function defenseContacts(s,step,old){
+      const previous=s.time-step;
       if(s.p.chaplain>=2){(s.history??=[]).push({t:s.time,x:s.player.x,y:s.player.y});if(s.history.length>720)s.history.shift();}
       for(const h of s.hazards){if(h.homing)NZ?.advanceHoming(h,s.player,s.time,step);if(h.disabled||h.end<previous||h.start>s.time||s.hitIds.includes(h.damageId))continue;
         if(h.moveOnly&&Math.hypot(s.player.x-old.x,s.player.y-old.y)<.001)continue;
@@ -495,12 +509,10 @@
           s.hitIds.push(h.damageId);if(!s.received.includes(h.strike))s.received.push(h.strike);
           const damage=Math.min(s.hp,h.rawDamage);s.hp-=damage;s.damage+=damage;
           s.contacts.push({id:h.damageId,time:s.time,damage,raw:h.rawDamage,weight:h.weight,tier:h.tier,strike:h.strike,x:s.player.x,y:s.player.y,...(h.status?{status:h.status}:{})});
-          if(s.hp<=0&&s.endOnDeath){s.ended=true;remaining=0;break;}
+          if(s.hp<=0&&s.endOnDeath){s.ended=true;break;}
         }}
       s.hazards=s.hazards.filter(h=>h.end>=s.time);
-    }
-    if(s.time>=s.duration-1e-7){s.time=s.duration;s.ended=true;}
   }
   function defenseResult(s){return {hits:s.contacts.length,total:s.projectileCount,dodged:s.projectileCount-s.contacts.length,damage:s.damage,hp:s.hp,mask:Array.from({length:s.p.strikes},(_,i)=>!s.received.includes(i))};}
-  return {W,H,FAMILIES,DAMAGE_TIERS,impact,attackWeights,damageValue,hash,rng,clamp,family,profile,difficulty,defenseDifficulty,guildBlockThreats,attack,attackStep,attackFrame,attackResult,hit,defense,defenseStep,defenseResult,geometry,distance,segmentDistance,touches};
+  return {W,H,FAMILIES,DAMAGE_TIERS,impact,attackWeights,damageValue,hash,rng,clamp,family,profile,difficulty,defenseDifficulty,guildBlockThreats,attack,attackStep,attackFrame,attackResult,hit,defense,defenseStep,defenseBegin,defenseMove,defenseSpeed,defenseContacts,defenseResult,geometry,distance,segmentDistance,touches};
 });

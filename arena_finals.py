@@ -223,7 +223,7 @@ def received(target, actor, skill, hit, dodged, damage):
         m['counter_until']=target.get('own_turns',0)+2
 
 
-def after_action(actor,target,skill,hit,damage,before,rng,stat,allies=None,skills=None):
+def after_action(actor,target,skill,hit,damage,before,rng,stat,allies=None,skills=None,*,qte_avoided=False):
     key=branch(actor)
     if not key:return []
     m=actor.setdefault('final_state',{})
@@ -312,14 +312,18 @@ def after_action(actor,target,skill,hit,damage,before,rng,stat,allies=None,skill
                 notes.append('чучело прикрывает хозяина')
             elif native and 'final_joint' not in skill.tags and target['hp']>0 and actor['hp']>0:
                 chance=max(5,min(95,95-stat(target,'evasion')))
-                if rng.random()*100<chance:
+                if qte_avoided:
+                    notes.append('Атака чучела отражена мини-игрой защиты')
+                elif rng.random()*100<chance:
                     weakened=len(negative_kinds(target))>=2
                     slow=any(e['kind']=='speed_pct' and e['value']<0 for e in target['effects'])
                     armor=stat(target,'physical_defense')*(.5 if weakened else 1)
                     guard=1
                     for effect in target['effects']:
                         if effect['kind']=='incoming_damage_multiplier':guard*=max(.1,effect.get('value',1))
-                    bite=min(target['hp'],max(1,round(6*(1+stat(actor,'magic_attack')/20)*100/(100+4*armor)*(1.4 if slow else 1)*guard)))
+                    bite=max(1,round(6*(1+stat(actor,'magic_attack')/20)*100/(100+4*armor)*(1.4 if slow else 1)*guard))
+                    from arena_combined_damage import direct_damage
+                    bite=min(target['hp'],direct_damage(target,bite))
                     target['hp']-=bite;notes.append(f'Чучело хищника: −{bite} HP')
                 else:notes.append('Чучело хищника: промах')
     if key=='pinky_dihui' and hit and 'final_counter' in skill.tags:m['counter_until']=0

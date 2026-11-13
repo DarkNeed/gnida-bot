@@ -22,14 +22,18 @@ def combine(members, actor, hp):
     result = dict(version=4, kind='defense', id=secrets.token_hex(16), actor=actor,
                   name=' + '.join(m['name'] for m in members), members=deepcopy(members),
                   strikes=sum(m['strikes'] for m in members), target_hp=hp,
-                  defense_mode=modes.pop())
+                  defense_mode=modes.pop(), shared_motion=2)
+    from arena_combined_damage import damage_factor
+    count = sum(bool(m.get('profile', {}).get('damage_type') and m.get('damage_base', 0) > 0) for m in members)
+    result['incoming_factor'] = damage_factor(count)
     result['duration'] = duration(result)
     return result
 
 
 def replay(stage, proof, elapsed):
     from arena_qte_rules import number, replay as native_replay
-    from arena_qte_patterns import defense, profile, defense_step
+    from arena_qte_patterns import (defense, profile, defense_step, defense_begin,
+                                    defense_move, defense_speed, defense_contacts)
     from arena_qte_block import create as block_create, step as block_step
     if not isinstance(proof, dict):
         raise ValueError('Нет записи совместной защиты.')
@@ -77,6 +81,23 @@ def replay(stage, proof, elapsed):
             control, index = events[index], index + 1
         if block:
             block_step(carrier, control)
+        elif stage.get('shared_motion') == 2:
+            active = []
+            for i, s in enumerate(states):
+                if tick >= totals[i]:
+                    continue
+                s['player'] = dict(point)
+                if defense_begin(s):
+                    active.append(s)
+            if active:
+                motion = dict(active[0], player=dict(point),
+                    hazards=[h for s in active for h in s['hazards']],
+                    relocations=[r for s in active for r in s.get('relocations', [])])
+                old = defense_move(motion, control, min(defense_speed(s) for s in active))
+                point = dict(motion['player'])
+                for s in active:
+                    s['player'] = dict(point)
+                    defense_contacts(s, old)
         else:
             moved = None
             for i, (m, s) in enumerate(zip(members, states)):

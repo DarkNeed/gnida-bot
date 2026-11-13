@@ -628,6 +628,8 @@ class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
             opponent = User(
                 id=20, is_bot=False, first_name="Второй", username="second"
             )
+            from handlers.routes import PRIVATE_GAMES_SCOPE
+            await database.upsert_user(PRIVATE_GAMES_SCOPE,10,'first','Первый',touch=False)
 
             async def chat_member(_chat_id, user_id):
                 user = challenger if user_id == challenger.id else opponent
@@ -654,6 +656,9 @@ class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(challenge["challenger_id"], 10)
                 self.assertEqual(challenge["opponent_id"], 20)
                 self.assertEqual(challenge["inline_message_id"], "inline-message-1")
+                self.assertEqual(challenge["chat_id"], PRIVATE_GAMES_SCOPE)
+                self.assertTrue(challenge["friendly"])
+                bot.get_chat_member.assert_not_awaited()
                 self.assertEqual(
                     bot.edit_message_text.await_args.kwargs["inline_message_id"],
                     "inline-message-1",
@@ -671,7 +676,7 @@ class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
                 await database.close()
 
     async def test_inline_query_builds_four_personal_game_cards(self):
-        router = create_router(SimpleNamespace(), kargassia_chat_id=None)
+        router = create_router(SimpleNamespace(upsert_user=AsyncMock()), kargassia_chat_id=None)
         handler = next(
             item.callback
             for item in router.inline_query.handlers

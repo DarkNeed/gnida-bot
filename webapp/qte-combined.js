@@ -5,13 +5,36 @@
  function create(stage){
   const block=stage.defense_mode==='block',states=stage.members.map(m=>{const options={hp:1000000,damageBase:m.damage_base,referenceDamage:m.damage_base,criticalBase:m.critical_base,criticalStrikes:m.critical_strikes,endOnDeath:false,enabledStrikes:m.enabled_strikes,preparation:m.defense_preparation??1};return block?B.create(m.profile,m.stats,m.seed,options):E.defense(E.profile(m.profile),m.stats,m.seed,options);});
   let carrier=null;if(block){let lead=0;stage.members.forEach((m,i)=>{if((m.stats.enemyAttack||0)>(stage.members[lead].stats.enemyAttack||0))lead=i;});carrier=B.create(stage.members[lead].profile,stage.members[lead].stats,stage.members[lead].seed,{hp:1000000,endOnDeath:false});carrier.events=states.flatMap((s,i)=>s.events.map(e=>({...e,id:i+'/'+e.id}))).sort((a,b)=>a.at-b.at);carrier.duration=stage.duration;}
-  return {stage,states,block,carrier,player:{x:360,y:160,r:6,vx:0,vy:0},time:0,duration:stage.duration,ended:false,contacts:[],damage:0,hp:stage.target_hp,initialHp:stage.target_hp,seen:states.map(()=>0)};
+  return {stage,states,block,carrier,player:{x:360,y:160,r:6,vx:0,vy:0},time:0,duration:stage.duration,ended:false,contacts:[],damage:0,hp:stage.target_hp,initialHp:stage.target_hp,seen:states.map(()=>0),rawDamage:states.map(()=>0),exactDamage:states.map(()=>0),scaledDamage:states.map(()=>0)};
  }
  function step(s,input={}){
   if(s.ended)return;s.time+=1/120;let moved=null;
   if(s.block){const c=s.carrier;B.step(c,1/120,input);for(let i=0;i<s.states.length;i++){const state=s.states[i];state.time=Math.min(s.time,state.duration);for(const k of SHIELD)state[k]=c[k];state.events.forEach(e=>{e.resolved=c.events.find(v=>v.id===i+'/'+e.id)?.resolved||false;});}}
+  else if(s.stage.shared_motion===2){
+   const active=[];for(const state of s.states){if(state.ended)continue;state.player={...s.player};if(E.defenseBegin(state))active.push(state);}
+   if(active.length){const motion={...active[0],player:{...s.player},hazards:active.flatMap(v=>v.hazards),relocations:active.flatMap(v=>v.relocations||[])};
+    const old=E.defenseMove(motion,1/120,input.target?{target:{x:input.target[0],y:input.target[1]}}:input,Math.min(...active.map(E.defenseSpeed)));
+    s.player={...motion.player};for(const state of active){state.player={...s.player};E.defenseContacts(state,1/120,old);}
+   }
+   for(const state of s.states)if(state.time>=state.duration-1e-7){state.time=state.duration;state.ended=true;}
+  }
   else{const base={...s.player};s.states.forEach(state=>{if(state.ended)return;state.player={...base};E.defenseStep(state,1/120,input.target?{target:{x:input.target[0],y:input.target[1]}}:input);if(!moved&&state.time>state.preparation+1e-8)moved={...state.player};});if(moved)s.player=moved;}
-  s.states.forEach((state,i)=>{const m=s.stage.members[i],contacts=s.block?s.carrier.contacts.filter(c=>c.id.startsWith(i+'/')):state.contacts;for(const c of contacts.slice(s.seen[i])){const event=s.block?s.carrier.events.find(e=>e.id===c.id):null,weight=s.block?(event.kind==='feint'?0:event.weight*(1-c.reduction)):c.weight;const damage=Math.max(0,Math.round(m.damage_base*weight*(m.critical_strikes?.[c.strike]&&!m.critical_base?1.5:1)));s.contacts.push({...c,weight,source:m.encounter_enemy,damage});s.damage+=damage;}s.seen[i]=contacts.length;});
+  s.states.forEach((state,i)=>{
+   const m=s.stage.members[i],contacts=s.block?s.carrier.contacts.filter(c=>c.id.startsWith(i+'/')):state.contacts;
+   for(const c of contacts.slice(s.seen[i])){
+    const event=s.block?s.carrier.events.find(e=>e.id===c.id):null;
+    const weight=s.block?(event.kind==='feint'?0:event.weight*(1-c.reduction)):c.weight;
+    const critical=m.critical_strikes?.[c.strike]&&!m.critical_base?1.5:1;
+    // Match the server: dodge contacts have a one-HP floor, while block
+    // fractions accumulate before rounding. Never present a tiny hit as zero.
+    s.exactDamage[i]+=m.damage_base*weight*critical;
+    const raw=s.block?Math.max(0,Math.floor(s.exactDamage[i]+.5)-s.rawDamage[i]):E.damageValue(m.damage_base,weight*critical);
+    s.rawDamage[i]+=raw;
+    const scaled=Math.floor(s.rawDamage[i]*(s.stage.incoming_factor??1)+.5),damage=scaled-s.scaledDamage[i];
+    s.scaledDamage[i]=scaled;s.contacts.push({...c,weight,source:m.encounter_enemy,damage});s.damage+=damage;
+   }
+   s.seen[i]=contacts.length;
+  });
   s.hp=Math.max(0,s.initialHp-s.damage);s.ended=s.time>=s.duration-1e-8;
  }
  function layerContext(ctx){let skipStroke=false;return new Proxy(ctx,{get(target,key){

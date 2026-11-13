@@ -321,14 +321,19 @@ def rpg_after_action(actor,target,skill,hit,damage,before_hp,rng,effective_stat,
             gain=min(actor['stats']['max_hp']-actor['hp'],round(damage*.30));actor['hp']+=gain
             if gain: notes.append(f'Похищение жизни: +{gain} HP')
         if m.get('summon',0)>0 and not m.pop('summon_fresh',False) and target['hp']>0:
-            guard=1
-            for shield in target['effects']:
-                if shield['kind']=='incoming_damage_multiplier':guard*=max(.1,shield.get('value',1))
-            dealt=max(1,round(m.get('summon_power',6)*(1+effective_stat(actor,'magic_attack')/20)*100/(100+effective_stat(target,'magic_defense')*4)*guard))
-            dealt=incoming(target,dealt,branch(target))
-            dealt=min(target['hp'],dealt)
-            old_hp=target['hp'];target['hp']=max(0,target['hp']-dealt);rpg_received_damage(target,dealt,old_hp,context.get('action_id'),raid_context)
-            m['summon']-=1;m['souls']=min(3,m.get('souls',0)+1);notes.append(f'{"Палач" if m.get("death_servants") else "Скелет"}: −{dealt} HP, души {m["souls"]}/3')
+            if context.get('qte_avoided'):
+                m['summon']-=1
+                notes.append('Атака призыва отражена мини-игрой защиты')
+            else:
+                guard=1
+                for shield in target['effects']:
+                    if shield['kind']=='incoming_damage_multiplier':guard*=max(.1,shield.get('value',1))
+                dealt=max(1,round(m.get('summon_power',6)*(1+effective_stat(actor,'magic_attack')/20)*100/(100+effective_stat(target,'magic_defense')*4)*guard))
+                dealt=incoming(target,dealt,branch(target))
+                from arena_combined_damage import direct_damage
+                dealt=min(target['hp'],direct_damage(target,dealt))
+                old_hp=target['hp'];target['hp']=max(0,target['hp']-dealt);rpg_received_damage(target,dealt,old_hp,context.get('action_id'),raid_context)
+                m['summon']-=1;m['souls']=min(3,m.get('souls',0)+1);notes.append(f'{"Палач" if m.get("death_servants") else "Скелет"}: −{dealt} HP, души {m["souls"]}/3')
     m.pop('rally',None);m.pop('rally_ceiling',None)
     if 'rpg_transform' in skill.tags: m['weapon_open']=not m.get('weapon_open',False);notes.append('оружие раскрыто' if m['weapon_open'] else 'оружие сложено')
     if 'rpg_visceral' in skill.tags or actor.get('own_turns',0)>=m.get('visceral_until',0): m['visceral_ready']=False

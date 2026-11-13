@@ -248,6 +248,10 @@ def stages(data, key, skills):
         target = fighters[event['target']]
         variant = effective_skill(pair(fighters[key], target), 'a', event['skill'], skills)
         stage = challenge('attack', fighters[key], target, variant, actor)
+        from arena_combined_damage import target_counts, damage_factor
+        factor = damage_factor(target_counts(_damage_group(data), skills).get(event['target'], 0))
+        stage['damage_base'] = int(stage['damage_base'] * factor + .5)
+        stage['incoming_factor'] = factor
         stage['unified_source'] = key
         out.append(stage)
     members = []
@@ -277,6 +281,22 @@ def record_result(data, stage, result):
 
 
 def _settle(data, skills, rng):
+    from arena_combined_damage import incoming_group
+    with incoming_group(data, _damage_group(data), skills):
+        return _settle_group(data, skills, rng)
+
+
+def _damage_group(data):
+    pending = data['_queue_wait']
+    casts = list(pending['released'])
+    sources = {cast['source'] for cast in casts}
+    for key, event in pending['attacks'].items():
+        if key not in sources:
+            casts.append(dict(source=key, intent=dict(skill=event['skill'], targets=[event['target']])))
+    return casts
+
+
+def _settle_group(data, skills, rng):
     from arena_engine import resolve_skill, _tick, use_healing_potion
     q, fighters, pending = clock(data), roster(data), data['_queue_wait']
     completed = list(q['group'])
