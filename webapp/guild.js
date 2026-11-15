@@ -25,7 +25,8 @@
   async function open(context){
     previous?.abort();const abort=new AbortController();previous=abort;
     const app=context.app,init=context.initData??window.Telegram?.WebApp?.initData??'';
-    let chat=context.chat??null,view,run=null,chats=[],tab='board',filter='all',rankFilter='recommended',busy=false,runId=context.runId||'',timer;
+    let chat=context.chat??null,view,run=null,chats=[],tab=context.gearShop?'shop':'board',filter='all',rankFilter='recommended',busy=false,runId=context.runId||'',timer;
+    let shopMode=context.gearShop?'gear':'supplies',gearView=null,gearRank='',gearSlot='all',gearRarity='all',gearSelected='',gearPending=null,gearPage=0,gearLoadedAt=0;
     const avatarCache=new Map();
     const toast=m=>context.toast?.(m);
     async function api(path,body){
@@ -62,7 +63,23 @@
       const h=view.hunter,total=h.wins+h.losses;
       shell(navigation()+'<section class="guild-certificate"><div>'+sigil+badge(h.rank_name)+'<p class="guild-kicker">УДОСТОВЕРЕНИЕ ОХОТНИКА</p><h2>Твоё имя ещё запомнят.</h2><p>Лучший достигнутый ранг: '+h.peak_rank_name+'</p></div><div class="guild-statgrid">'+[['Успешных заказов',h.wins],['Неудач',h.losses],['Подземелий',h.dungeons],['Успешность',total?Math.round(100*h.wins/total)+'%':'—']].map(([n,v])=>'<article><strong>'+v+'</strong><span>'+n+'</span></article>').join('')+'</div></section><div class="guild-panels"><section class="guild-panel"><h3>Путь к следующему рангу</h3><div class="guild-meter"><i style="width:'+h.reputation+'%"></i></div><p>'+h.reputation+'/100 репутации · '+h.rank_wins+'/3 зачётных побед · '+(h.clearance?'✓ Особый заказ пройден':'Нужна победа в особом заказе или подземелье')+'</p><p>За свой ранг: +28. На ранг выше: +40. Более лёгкие задания не повышают репутацию. После 100 очков, трёх зачётных побед и особого заказа — повышение.</p></section><section class="guild-panel"><h3>Право на ошибку</h3><p>Провал: −12 репутации. Понижение на один ранг возможно только при нуле репутации и трёх неудачах подряд. Купленные предметы не отбираются.</p><p>Закрытие приложения не считается поражением. На поход — 48 часов, на сбор — 30 минут. Во время боя обычный таймер раунда: две минуты.</p></section></div><section class="guild-section"><h2>Последние заказы</h2>'+view.history.map(r=>'<div class="guild-history"><span>'+esc(r.name)+'</span><span>'+esc(states[r.status])+'</span>'+button('Итоги','run:'+r.id,'guild-quiet')+'</div>').join('')+(view.history.length?'':'<p>Здесь появятся завершённые походы.</p>')+'</section>');
     }
-    function shop(){shell(navigation()+'<div class="guild-section-title"><div><p class="guild-kicker">ЛАВКА · РАНГ '+view.hunter.rank_name+'</p><h2>Вернуться — тоже мастерство.</h2></div><strong>'+view.francs+' ₣</strong></div><p class="guild-hint">Припасы хранятся на аккаунте и используются только в походах гильдии, вне боя. Один припас на участника между комнатами. Франки списываются из выбранного чата.</p><div class="guild-shop-grid">'+view.shop.map(s=>'<article class="guild-panel"><div class="guild-order-head">'+badge(s.rank,true)+'<small>В рюкзаке: '+(view.bag[s.id]||0)+'</small></div><h3>'+esc(s.name)+'</h3><p>'+esc(s.description)+'</p>'+button(s.locked?'Откроется на ранге '+s.rank:'Купить · '+s.price+' ₣','buy:'+s.id,s.locked?'':'primary',s.locked||busy||view.francs<s.price)+'</article>').join('')+'</div>');}
+    function gearShop(){
+      const g=gearView;if(!g)return '<div class="guild-panel">'+button('Загрузить снаряжение','gearload','primary')+'</div>';
+      const slots={weapon:'Оружие',armor:'Доспех',accessory:'Аксессуар',relic:'Реликвия'},item=g.offers.find(i=>i.id===gearSelected);
+      if(item){
+        const why=item.purchase_warning||(g.level<item.min_level?'Купить можно сейчас, но для надевания нужен уровень '+item.min_level+'.':'');
+        const disabled=busy||!!item.purchase_warning||g.balance<item.price;
+        const compare=Object.entries(g.stat_names).map(([key,name])=>{const delta=Math.round(((item.comparison[key]||0)-(g.stats[key]||0))*100)/100;
+          return '<tr><td>'+esc(name)+'</td><td class="'+(delta>0?'positive':delta<0?'negative':'')+'">'+(delta>=0?'+':'')+delta+'</td></tr>';}).join('');
+        return '<section class="guild-panel guild-gear-detail">'+button('← Снаряжение','gearback','guild-quiet')+'<p class="guild-kicker">'+esc(item.rarity_name)+' · '+esc(slots[item.slot])+' · РАНГ '+item.rank+'</p><h2>'+esc(item.name)+'</h2><p>Уровень '+item.min_level+'+ · '+(item.daily?'Суточная витрина':'Постоянный ассортимент')+' · +0</p><div class="guild-gear-stats">'+Object.entries(item.stats).map(([k,v])=>'<span>'+esc(g.stat_names[k]||k)+' <b>+'+v+'</b></span>').join('')+'</div>'+(item.effect_text?'<p>'+esc(item.effect_text)+'</p>':'')+'<h3>Если надеть · персонаж №'+g.character_slot+'</h3><table class="guild-gear-compare"><tbody>'+compare+'</tbody></table><p>'+esc(why)+'</p><strong>'+item.price+' ₣</strong><p class="guild-hint">Цена учитывает характеристики и сочетания свойств'+(item.valuation?' · оценка ×'+item.valuation.factor:'')+'. Покупается именно показанная вещь. Свойства не перебрасываются; улучшение и замена свойств требуют материалов.</p>'+
+          (gearPending?'<div class="guild-gear-confirm"><p>Списать '+item.price+' ₣ из кошелька выбранного чата?</p>'+button('Подтвердить покупку','gearconfirm','primary',disabled)+button('Отмена','gearcancel','guild-quiet')+'</div>':button('Купить · '+item.price+' ₣','gearask','primary',disabled))+'</section>';
+      }
+      const options=(list,value)=>list.map(([k,n])=>'<option value="'+k+'"'+(k===value?' selected':'')+'>'+esc(n)+'</option>').join('');
+      const list=g.offers.filter(i=>(gearSlot==='all'||i.slot===gearSlot)&&(gearRarity==='all'||i.rarity===gearRarity));
+      const pages=Math.max(1,Math.ceil(list.length/12));gearPage=Math.min(gearPage,pages-1);
+      return '<p class="guild-hint">Ранг охотника '+g.hunter_rank+'. Снаряжение своего ранга и ниже, без допуска +1. Необычное и редкое — постоянно. Эпическое — одна покупка в сутки на аккаунт, витрина обновляется в 00:00 МСК. Легендарное и Назарик не продаются.</p><div class="guild-gear-filters"><label>Ранг<select id="guild-gear-rank">'+options(view.ranks.map(r=>[r,'Ранг '+r]),g.rank)+'</select></label><label>Слот<select id="guild-gear-slot">'+options([['all','Все слоты'],...Object.entries(slots)],gearSlot)+'</select></label><label>Редкость<select id="guild-gear-rarity">'+options([['all','Все редкости'],['uncommon','Необычная'],['rare','Редкая'],['epic','Эпическая']],gearRarity)+'</select></label></div><p class="guild-hint">'+list.length+' вещей · страница '+(gearPage+1)+' / '+pages+'</p><div class="guild-shop-grid">'+list.slice(gearPage*12,gearPage*12+12).map(i=>'<article class="guild-panel"><div class="guild-order-head">'+badge(i.rank,true)+'<small>'+esc(i.rarity_name)+'</small></div><small>'+esc(slots[i.slot])+' · '+(i.daily?'Витрина дня':'Постоянно')+'</small><h3>'+esc(i.name)+'</h3><p>'+Object.entries(i.stats).map(([k,v])=>esc(g.stat_names[k]||k)+' +'+v).join(' · ')+'</p>'+button('Осмотреть · '+i.price+' ₣','gearselect:'+i.id,i.purchase_warning?'guild-quiet':'primary')+'</article>').join('')+'</div><div class="guild-filters">'+button('←','gearpage:'+Math.max(0,gearPage-1),'guild-quiet',gearPage===0)+button('→','gearpage:'+Math.min(pages-1,gearPage+1),'guild-quiet',gearPage===pages-1)+'</div>';
+    }
+    function shop(){shell(navigation()+'<div class="guild-section-title"><div><p class="guild-kicker">СНАБЖЕНИЕ · РАНГ '+view.hunter.rank_name+'</p><h2>Вернуться — тоже мастерство.</h2></div><strong>'+(shopMode==='gear'&&gearView?gearView.balance:view.francs)+' ₣</strong></div><div class="guild-filters">'+button('Припасы','shopmode:supplies',shopMode==='supplies'?'active':'')+button('Снаряжение','shopmode:gear',shopMode==='gear'?'active':'')+'</div>'+(shopMode==='gear'?gearShop():'<p class="guild-hint">Припасы хранятся на аккаунте и используются только в походах гильдии, вне боя. Один припас на участника между комнатами. Франки списываются из выбранного чата.</p><div class="guild-shop-grid">'+view.shop.map(s=>'<article class="guild-panel"><div class="guild-order-head">'+badge(s.rank,true)+'<small>В рюкзаке: '+(view.bag[s.id]||0)+'</small></div><h3>'+esc(s.name)+'</h3><p>'+esc(s.description)+'</p>'+button(s.locked?'Откроется на ранге '+s.rank:'Купить · '+s.price+' ₣','buy:'+s.id,s.locked?'':'primary',s.locked||busy||view.francs<s.price)+'</article>').join('')+'</div>'));}
     function bestiary(){shell(navigation()+'<div class="guild-section-title"><div><p class="guild-kicker">ПОЛЕВОЙ СПРАВОЧНИК</p><h2>Знай свою добычу.</h2></div><small>'+view.monsters.length+' видов</small></div><div class="guild-bestiary">'+view.monsters.map(m=>'<article class="guild-panel">'+badge(m.rank,true)+'<img src="'+monsterArt(m)+'" alt="'+esc(m.name)+'" loading="lazy" decoding="async"><h3>'+esc(m.name)+'</h3><p>'+esc(m.role)+'</p><small>Основа: '+m.hp+' HP · атака '+m.attack+' · защита '+m.armor+' · уклонение '+m.evasion+'%</small></article>').join('')+'</div><p class="guild-hint">В особых заказах цель усилена: HP ×1,45. На двух/трёх охотников HP ×1,6/×2,2. Уровень и атака не зависят от уровня отряда. Шаман лечит союзников; стая выбирает раненых; огонь подавляет восстановление тролля.</p>');}
     function leaderboard(){shell(navigation()+'<div class="guild-section-title"><div><p class="guild-kicker">ЗАЛ СЛАВЫ · ОБЩИЙ ДЛЯ ВСЕХ ЧАТОВ</p><h2>Они возвращались.</h2></div></div><div class="guild-ranking">'+view.leaderboard.map((h,i)=>'<article><b class="guild-place">'+String(i+1).padStart(2,'0')+'</b>'+badge(h.rank_name,true)+'<div><strong>'+esc(h.name||h.actor_id)+'</strong><small>'+h.reputation+' репутации · '+h.wins+' заказов · '+h.dungeons+' подземелий</small></div><span>'+((h.wins+h.losses)?Math.round(h.wins/(h.wins+h.losses)*100)+'%':'—')+'<small>успех</small></span></article>').join('')+'</div><p class="guild-hint">Сортировка: текущий ранг → репутация → выполненные заказы. Лёгкие заказы не заменяют высокие ранги. SS, SSS и легендарные лицензии пока не введены.</p>');}
     function render(){if(run){renderRun();return;}if(tab==='hunter')hunter();else if(tab==='shop')shop();else if(tab==='bestiary')bestiary();else if(tab==='top')leaderboard();else board();}
@@ -114,6 +131,7 @@
       else if(r.status==='active'){
         const biome=view.biomes[c.biome],current=r.nodes.find(n=>n.id===r.position);
         body+='<section class="guild-map-panel" data-biome="'+esc(c.biome)+'"><div class="guild-map-heading"><div><p class="guild-kicker">'+esc(biome.name)+'</p><h3>'+esc(biome.subtitle)+'</h3></div><span>Мешок: '+r.finds+' ₣ / участник</span></div>'+map(r)+'</section><div class="guild-panels"><section class="guild-panel guild-room">';
+        if(r.room_scenery?.url)body+='<div class="guild-room-scenery" data-scenery="'+esc(r.room_scenery.key)+'" role="img" aria-label="'+esc(r.room_scenery.name)+'"></div>';
         if(r.battle)body+='<p class="guild-kicker">'+esc(rooms[current?.kind]||'Бой')+'</p><h2>Оружие наготове.</h2><p>Впереди противники. Бой проходит на обычной арене с выбранной защитой и мини-играми.</p>'+button(member?'Войти в бой →':'Наблюдать бой →','battle','primary');
         else if(r.pending)body+='<p class="guild-kicker">'+(r.pending.kind==='event'?'СОБЫТИЕ':'ВОССТАНОВЛЕНИЕ')+'</p><h2>'+esc(r.pending.name)+'</h2><p>'+esc(r.pending.text)+'</p><div class="guild-choices">'+r.pending.choices.map(ch=>button('<b>'+esc(ch.name)+'</b><small>'+esc(ch.hint)+'</small>','choice:'+ch.id,'',busy||!member||!!r.votes[view.actor_id])).join('')+'</div>';
         else body+='<p class="guild-kicker">КОМНАТА ЗАВЕРШЕНА</p><h2>Выбери следующий шаг.</h2><p>Светлые узлы доступны для перехода. Каждый живой участник голосует. При равенстве учитывается голос лидера; через 40 секунд решают поданные голоса.</p>';
@@ -124,20 +142,33 @@
       if(drops.length)body+='<section class="guild-section"><p class="guild-kicker">ТВОЯ ЛИЧНАЯ ДОБЫЧА</p><h2>Вернулся не с пустыми руками.</h2><div class="guild-shop-grid">'+drops.flatMap(d=>d.items).map(i=>'<article class="guild-panel"><small>'+esc(i.rarity_name)+' · ранг '+i.rank+' · Lv. '+i.min_level+'+</small><h3>'+esc(i.name)+'</h3><p>'+esc(i.effect_text||'Характеристики и дополнительные свойства')+'</p></article>').join('')+'</div><p>Материалы: '+drops.filter(d=>d.materials>0).map(d=>d.materials+' оск. '+d.rank).join(' + ')+'. Добыча уже сохранена в общем инвентаре.</p>'+button('Осмотреть и сравнить','equipment','primary')+'</section>';
       body+='<section class="guild-section"><h3>Дневник похода</h3><ol class="guild-journal">'+r.history.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ol></section>';shell(body);hydrateAvatars();
     }
-    async function loadBoard(){view=await api('/api/guild/board?chat='+chat);if(abort.signal.aborted)return;render();}
+    async function loadGear(){gearView=await api('/api/guild/equipment?chat='+chat+(gearRank?'&rank='+gearRank:''));gearRank=gearView.rank;gearLoadedAt=Date.now();}
+    async function loadBoard(){view=await api('/api/guild/board?chat='+chat);if(abort.signal.aborted)return;if(shopMode==='gear')await loadGear();else gearView=null;render();}
     async function loadRun(id){run=await api('/api/guild/runs/'+encodeURIComponent(id));chat=run.chat_id;if(!view||view.chat_id!==chat)view=await api('/api/guild/board?chat='+chat);renderRun();}
     app.addEventListener('click',async event=>{
       const el=event.target.closest('[data-guild]');if(!el||busy)return;
       const [cmd,...args]=el.dataset.guild.split(':'),arg=args.join(':');
       if(cmd==='tab'){run=null;tab=arg;render();return;}
       if(cmd==='filter'){filter=arg;render();return;}
+      if(cmd==='gearselect'){gearSelected=arg;gearPending=null;render();return;}
+      if(cmd==='gearback'){gearSelected='';gearPending=null;render();return;}
+      if(cmd==='gearpage'){gearPage=Number(arg);render();return;}
+      if(cmd==='gearcancel'){gearPending=null;render();return;}
+      if(cmd==='gearask'){gearPending={offer:gearSelected,nonce:crypto.randomUUID(),price:gearView.offers.find(i=>i.id===gearSelected)?.price};render();return;}
       if(cmd==='arena'){abort.abort();context.onArena?.(chat);return;}
       if(cmd==='battle'){abort.abort();await context.onRaid(run.battle);return;}
       if(cmd==='retreat'&&!confirm('Отступить всем отрядом? Сохранится половина найденных франков. Награды заказа не будет, репутация снизится.'))return;
       busy=true;el.disabled=true;
       try{
         if(cmd==='back'){run=null;await loadBoard();}
-        else if(cmd==='equipment'){abort.abort();await context.onEquipment?.(chat,run?.id);return;}
+        else if(cmd==='shopmode'){shopMode=arg;gearSelected='';gearPending=null;if(arg==='gear')await loadGear();render();}
+        else if(cmd==='gearload'){await loadGear();render();}
+        else if(cmd==='gearconfirm'){
+          if(!gearPending)throw Error('Выбери снаряжение.');
+          const result=await api('/api/guild/equipment',{chat,...gearPending,confirm:true,rank:gearRank});
+          gearView=result.shop;gearLoadedAt=Date.now();view.francs=gearView.balance;gearPending=null;gearSelected='';toast(result.notice);
+        }
+        else if(cmd==='equipment'){abort.abort();await context.onEquipment?.(chat,run?.id,tab==='shop'&&shopMode==='gear');return;}
         else if(cmd==='reload')await loadBoard();
         else if(cmd==='accept'){run=await api('/api/guild/runs',{chat,contract:arg,nonce:crypto.randomUUID()});renderRun();}
         else if(cmd==='run')await loadRun(arg);
@@ -149,10 +180,20 @@
           const extra=action==='vote'?{choice:arg}:action==='supply'?{item:arg,target:Number(document.getElementById('guild-target')?.value||view.actor_id)}:{};
           run=await api('/api/guild/runs/'+run.id,{action,revision:run.revision,...extra});renderRun();
         }
-      }catch(error){toast(error.message);try{if(run)await loadRun(run.id);else await loadBoard();}catch{} }
+      }catch(error){
+        if(cmd==='gearconfirm'&&/Цена изменилась|Предложение устарело/.test(error.message)){gearPending=null;gearSelected='';}
+        toast(error.message);try{if(run)await loadRun(run.id);else await loadBoard();}catch{}
+      }
       finally{busy=false;if(!abort.signal.aborted&&view)render();}
     },{signal:abort.signal});
-    app.addEventListener('change',async e=>{if(e.target.id==='guild-rank'&&!busy){rankFilter=e.target.value;render();}else if(e.target.id==='guild-chat'&&!busy){chat=Number(e.target.value);run=null;try{await loadBoard();}catch(error){toast(error.message);}}},{signal:abort.signal});
+    app.addEventListener('change',async e=>{
+      if(e.target.id.startsWith('guild-gear-')&&!busy){
+        const field=e.target.id.slice(11);gearPage=0;gearSelected='';gearPending=null;
+        if(field==='rank'){gearRank=e.target.value;busy=true;try{await loadGear();}catch(error){toast(error.message);}finally{busy=false;}}
+        if(field==='slot')gearSlot=e.target.value;if(field==='rarity')gearRarity=e.target.value;render();return;
+      }
+      if(e.target.id==='guild-rank'&&!busy){rankFilter=e.target.value;render();}else if(e.target.id==='guild-chat'&&!busy){chat=Number(e.target.value);run=null;gearRank='';try{await loadBoard();}catch(error){toast(error.message);}}
+    },{signal:abort.signal});
     abort.signal.addEventListener('abort',()=>{clearInterval(timer);for(const entry of avatarCache.values())if(entry.url)URL.revokeObjectURL(entry.url);avatarCache.clear();});
     try{
       chats=(await api('/api/guild/chats')).chats;
@@ -162,6 +203,9 @@
         else await loadBoard();
       }
       timer=setInterval(async()=>{
+        if(!abort.signal.aborted&&!busy&&!run&&tab==='shop'&&shopMode==='gear'&&gearView&&gearView.server_time+(Date.now()-gearLoadedAt)/1000>=gearView.refresh_at){
+          busy=true;try{await loadGear();gearSelected='';gearPending=null;render();}catch(error){toast(error.message);}finally{busy=false;}return;
+        }
         if(busy||document.hidden||abort.signal.aborted||!run||!['lobby','active'].includes(run.status))return;
         try{const fresh=await api('/api/guild/runs/'+run.id);const rewardChanged=fresh.members.some((p,i)=>p.reward_preview?.day!==run.members[i]?.reward_preview?.day||p.reward_preview?.full!==run.members[i]?.reward_preview?.full);if(fresh.revision!==run.revision||rewardChanged||run.status==='lobby'&&Math.ceil(Math.max(0,(fresh.invite?.available_at||0)-fresh.server_time)/60)!==Math.ceil(Math.max(0,(run.invite?.available_at||0)-run.server_time)/60)){run=fresh;if(!['lobby','active'].includes(run.status))view=await api('/api/guild/board?chat='+chat);renderRun();}}
         catch(error){if(!abort.signal.aborted)toast(error.message);}

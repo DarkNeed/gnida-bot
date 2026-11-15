@@ -21,6 +21,7 @@ from arena_kit import (KIT_LEVEL, KIT_STATS, KIT_SKILLS, set_kit_intent,
                        resolve_kit_action, kit_prepare_action, kit_finish_action,
                        kit_react, kit_defend)
 from arena_whaler import WHALER_SKILLS, WHALER_LEVEL
+from arena_mimic import build_skills as build_mimic_skills
 from arena_chaplain import CHAPLAIN_LEVEL, CHAPLAIN_SKILLS
 from arena_encounters import MOB_SKILLS
 from arena_nazarick import SKILLS as NAZARICK_SKILLS
@@ -30,6 +31,10 @@ RAID_ROUND_SECONDS = 120
 RAID_MAX_ROUNDS = 100
 BOSS_NAME = "Железный сборщик"
 BOSSES = {
+    'mimic': dict(name='Мимик — Голодное отражение',sprite='/static/assets/mimic.png',
+        phase_sprites={'1':'/static/assets/mimic.png','2':'/static/assets/mimic.png','3':'/static/assets/mimic_final.png'},
+        skills=('mimic_claw','mimic_shards','mimic_gaze','mimic_feed','mimic_stitch','mimic_echo_0','mimic_echo_1','mimic_echo_2'),
+        recommended_level=20,min_level=1,phase_count=3,difficulty='Твои сильные навыки — его оружие',loot_skill='plagiarism'),
     'nazarick': dict(name='Назарик — Путь к королю-колдуну', sprite='/static/assets/nazarick/shalltear1.png',
                      skills=tuple(NAZARICK_SKILLS), recommended_level=20, min_level=1,
                      fixed_level=25, phase_count=2, difficulty='Пять боссов · десять фаз'),
@@ -111,6 +116,7 @@ from arena_nazarick_dungeon_rules import build_skills as build_nzd_skills
 BOSS_SKILLS.update(build_nzd_skills(Skill))
 from arena_guild_rules import SKILLS as GUILD_SKILLS
 BOSS_SKILLS.update(GUILD_SKILLS)
+BOSS_SKILLS.update(build_mimic_skills(Skill))
 
 
 def raid_boss_sprite(boss_id, phase=1):
@@ -174,6 +180,9 @@ def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True
 
 
 def set_intent(data):
+    if data.get('boss_id')=='mimic':
+        from arena_mimic import set_intent as mimic_intent
+        return mimic_intent(data)
     if data.get('boss_id') == 'nazarick':
         from arena_nazarick import set_intent as nazarick_intent
         return nazarick_intent(data)
@@ -263,7 +272,7 @@ def set_intent(data):
     data["intent"] = intent
 
 
-AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz", "kit", "whaler", "chaplain", "nazarick")
+AVAILABLE_BOSSES = ("lei_heng", "doofenshmirtz", "kit", "whaler", "chaplain", "nazarick", "mimic")
 
 
 def raid_boss_level(levels):
@@ -370,6 +379,9 @@ def create_raid_state(participants, sources, classes, skills, boss_id="iron", *,
     if boss_id == 'chaplain':
         from arena_chaplain import initialize
         initialize(data)
+    if boss_id == 'mimic':
+        from arena_mimic import initialize
+        initialize(data)
     if boss_id == 'nazarick':
         from arena_nazarick import initialize
         initialize(data)
@@ -438,6 +450,9 @@ def defend(fighter,opponent=None,raid_context=None):
 
 
 def finish_if_needed(data):
+    if data.get('boss_id')=='mimic' and not data.get('finished'):
+        from arena_mimic import phase
+        phase(data)
     if data.get('boss_id') == 'nazarick':
         if not alive_players(data):
             from arena_nazarick import offer_blessing

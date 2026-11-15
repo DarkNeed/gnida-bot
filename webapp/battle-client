@@ -4,6 +4,8 @@ const tg=window.Telegram?.WebApp;
 const app=document.getElementById("app");
 const audio=window.ArenaAudio||{scene(){},effect(){},actionStart(){},impact(){},refresh(){}};
 let current=null, menu=null, busy=false, lastSeq=0, polling=false, token="", chat=null, page="personal", profileId=null, near="a";
+let merchantTab='supplies',merchantSelected='',merchantPending=null;
+const merchantFilters={slot:'all',rank:'all',rarity:'all'};
 const demo=new URLSearchParams(location.search).get("demo")==="1" && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 // This entry point exists only on the loopback review server. Live routes and
 // battle settings never enable the candidate queue.
@@ -115,7 +117,7 @@ const sprite=c=>{
   if(/^\/rp\/images\/[0-9a-f]{64}\.png$/.test(data.sprite_url||''))return data.sprite_url;
   if(/^\/rp\/images\/[0-9a-f]{64}\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(/^\/static\/assets\/nazarick(?:-dungeon-v2)?\/[a-z0-9_-]+\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
-  if(/^\/static\/assets\/guild\/[a-z]+-v1\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
+  if(/^\/static\/assets\/guild\/[a-z_]+-v[1-9][0-9]*\.png$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(/^\/static\/assets\/(?:(?:archclasses|rpg|casino)\/)?[a-z_]+\.png$/.test(data.class_avatar_url||""))return data.class_avatar_url;
   if(/^\/static\/assets\/encounters\/(?:goblin|brute|shaman)\.svg$/.test(data.class_avatar_url||''))return data.class_avatar_url;
   if(["warrior","mage","priest","hunter"].includes(id))return "/static/assets/rpg/"+id+".png";
@@ -753,6 +755,28 @@ function arenaLeaderboardBody(data){
     (data.entries.map(row=>'<div class="card"><b>#'+row.place+' · '+esc(row.name)+'</b><p>'+row.rating+' очков · '+row.wins+' побед / '+row.losses+' поражений / '+row.draws+' ничьих</p>'+(row.title?'<span class="pill">'+esc(row.title)+'</span>':'')+'</div>').join('')||'<div class="note">Пока никто не завершил пять учтённых боёв.</div>')+
     '<div class="stack">'+nav.join('')+'</div><p class="muted">Страница '+(data.page+1)+'/'+data.pages+'</p><div class="note">Вызов: <b>/рейт @участник</b> или ответом <b>/рейт</b>. Обычные бои и ставки рейтинг не меняют. Старт — 1000; победа над сильным соперником ценнее. Пять учтённых боёв для места в топе. Одна встреча пары за 24 часа и до 10 учтённых боёв в сутки (МСК), общие для всех персонажей. Сдача — поражение; три пропуска подряд — поражение. За соперника без действий победитель не получает очков. Каждый месяц новый сезон; титулы тройки лидеров сохраняются в архиве, не дают боевых бонусов или предметов.</div>';
 }
+function merchantGear(data,selling=false){
+  if(!selling)return '<div class="card"><h2>Снаряжение — в гильдии</h2><p>Покупка доступна в лавке по рангу охотника. Продажа остаётся здесь.</p>'+button('В лавку гильдии','guildgear','primary')+'</div>';
+  const g=data.merchant?.gear;if(!g)return '<p class="muted">Обнови торговца для загрузки экипировки.</p>';
+  const slots={weapon:'Оружие',armor:'Доспех',accessory:'Аксессуар',relic:'Реликвия'},rows=selling?g.items:g.offers;
+  const item=rows.find(i=>i.id===merchantSelected);
+  if(item){
+    const comparison=selling?'':'<h3>Если надеть · слот персонажа №'+g.character_slot+'</h3><table class="gear-compare"><tbody>'+Object.entries(g.stat_names).map(([k,n])=>{
+      const delta=Math.round(((item.comparison[k]||0)-(g.stats[k]||0))*100)/100;
+      return '<tr><td>'+esc(n)+'</td><td>'+(delta>=0?'+':'')+delta+'</td></tr>';
+    }).join('')+'</tbody></table>';
+    const disabled=selling?(item.favorite||item.used_by.length>0||g.busy):!!item.purchase_warning||(data.balance||0)<item.price;
+    const why=selling?(item.favorite?'Сначала убери вещь из избранного.':item.used_by.length?'Сначала сними вещь со всех персонажей.':g.busy?'Дождись завершения боя.':''):item.purchase_warning;
+    const requirements={summoner:'Особый эффект требует действующего призыва.',bleeding:'Нужно накладывать кровотечение другим навыком.',dot:'Нужно самостоятельно накладывать кровотечение или горение.',mercy:'Особый эффект усиливает только лечебные навыки.'};
+    const pending=merchantPending?.item===item.id;
+    return '<section class="card merchant-detail">'+button('← К списку','merchantback','small')+'<h2>'+esc(item.name)+'</h2>'+rarityBadge(item.rarity)+'<p>Ранг '+item.rank+' · '+esc(slots[item.slot])+' · Lv. '+item.min_level+'+</p><div class="gear-properties">'+Object.entries(item.stats).map(([k,v])=>'<span>'+esc(g.stat_names[k]||k)+' <b>+'+v+'</b></span>').join('')+'</div>'+(item.effect_text?'<p>'+esc(item.effect_text)+'</p><p class="muted">'+esc(requirements[item.effect]||'Эффект работает у любого класса при соблюдении условий.')+'</p>':'')+comparison+'<p>'+esc(why||'')+'</p><p><b>'+(selling?'Ты получишь '+item.sell_price:'Цена '+item.price)+' ₣</b></p>'+
+      (pending?'<div class="note">'+(selling?'Предмет исчезнет. Улучшения и материалы не возвращаются.':'Будет списано '+item.price+' ₣ из кошелька этого чата. Ты получишь именно показанные свойства, без нового броска.')+button(selling?'Подтвердить продажу':'Подтвердить покупку','merchantconfirm','primary',disabled)+button('Отмена','merchantcancel','small')+'</div>':button(selling?'Продать за '+item.sell_price+' ₣':'Купить за '+item.price+' ₣','merchantask:'+item.id,'primary',disabled))+'</section>';
+  }
+  const filters='<div class="merchant-filters">'+[['slot','Все слоты',Object.entries(slots)],['rank','Все ранги','FEDCBAS'.split('').map(k=>[k,k])],['rarity','Все редкости',[['uncommon','Необычная'],['rare','Редкая'],['epic','Эпическая'],...(selling?[['common','Обычная'],['legendary','Легендарная']]:[])]]].map(([key,label,options])=>'<select data-merchant-filter="'+key+'" aria-label="'+label+'"><option value="all">'+label+'</option>'+options.map(([k,n])=>'<option value="'+k+'"'+(merchantFilters[key]===k?' selected':'')+'>'+esc(n)+'</option>').join('')+'</select>').join('')+'</div>';
+  const filtered=rows.filter(i=>Object.entries(merchantFilters).every(([k,v])=>v==='all'||i[k]===v));
+  return '<section class="card"><h2>'+(selling?'Продать снаряжение':'Снаряжение')+'</h2><p class="muted">'+(selling?'Скупка — 20% базовой цены. Надетое и избранное защищены.':'Ранг охотника: '+g.hunter_rank+'. Две вещи за визит, одна эпическая в сутки на аккаунт. Все вещи +0; свойства известны заранее.')+'</p>'+filters+'<div class="merchant-gear-grid">'+filtered.map(i=>button('<small>'+i.rank+' · '+esc(slots[i.slot])+'</small><b>'+esc(i.name)+'</b>'+rarityBadge(i.rarity)+'<span>'+(selling?i.sell_price:i.price)+' ₣</span>','merchantitem:'+i.id,'merchant-gear-card')).join('')+'</div>'+(filtered.length?'':'<p>Подходящих вещей нет.</p>')+'</section>';
+}
+app.addEventListener('change',e=>{const key=e.target.dataset?.merchantFilter;if(key&&Object.hasOwn(merchantFilters,key)){merchantFilters[key]=e.target.value;merchantSelected='';menuScreen(menu);}});
 function menuScreen(data){
   window.ArenaQTEWatch?.close();
   globalThis.HoldingsApp?.stop();
@@ -791,8 +815,10 @@ function menuScreen(data){
       body+='</div>';
     }
     body+='<div class="card"><h2>Странствующий торговец</h2><p>Баланс: '+(data.balance||0)+' ₣</p><p class="muted">'+(m.visit_id?'Уходит: '+esc(new Date(m.ends*1000).toLocaleString('ru-RU')):'Сейчас торговца нет. Следующее появление: '+esc(m.next_starts?new Date(m.next_starts*1000).toLocaleString('ru-RU'):'скоро'))+'</p>'+button('Обновить товары','refresh','small')+'</div>';
-    body+=(m.offers||[]).map(item=>'<div class="card"><h2>'+esc(item.name)+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+'<p class="muted">'+esc(item.purchase_warning||('Можно купить ещё '+item.remaining+' за этот визит.'))+'</p>'+button('Купить — '+item.price+' ₣','buy:'+item.id,'primary',!!item.purchase_warning||!item.remaining||(data.balance||0)<item.price)+'</div>').join('');
-    body+='<div class="card"><h2>Скупка лишнего</h2><p>Торговец покупает неиспользованные трактаты, свитки классов, зелья и конфеты за 50% базовой цены. Скупка доступна постоянно в инвентаре. Билеты и платные услуги не продаются.</p>'+button('Продать из инвентаря','tab:inventory')+'</div>';
+    body+='<div class="tabs merchant-tabs">'+[['supplies','Расходники'],['study','Обучение'],['sell','Скупка']].map(([key,title])=>button(title,'merchanttab:'+key,merchantTab===key?'selected':'')).join('')+'</div><p class="muted">Покупка экипировки переехала в гильдию.</p>'+button('Снаряжение · лавка гильдии','guildgear','small');
+    if(['supplies','study'].includes(merchantTab))body+=(m.offers||[]).filter(i=>merchantTab==='supplies'?['potion','candy'].includes(i.kind):['skill','passive','class'].includes(i.kind)).map(item=>'<div class="card"><h2>'+esc(item.name)+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+'<p class="muted">'+esc(item.purchase_warning||('Можно купить ещё '+item.remaining+' за этот визит.'))+'</p>'+button('Купить — '+item.price+' ₣','buy:'+item.id,'primary',!!item.purchase_warning||!item.remaining||(data.balance||0)<item.price)+'</div>').join('');
+    if(merchantTab==='gear')body+=merchantGear(data);
+    if(merchantTab==='sell')body+='<div class="card"><h2>Скупка лишнего</h2><p>Трактаты, свитки классов, зелья и конфеты — 50% базовой цены. Снаряжение — 20%. Скупка работает и в отсутствие торговца. Билеты не продаются.</p>'+button('Продать обычные предметы','tab:inventory')+'</div>'+merchantGear(data,true);
     body+='<div class="note">Два визита в день по два часа, с 10:00 до 22:00 МСК. Время прихода и ассортимент едины для всех чатов. Лимиты покупок общие для аккаунта и всех его персонажей. Оплата франками выбранного чата; покупки попадают в общий инвентарь.</div>';
   }else if(page==="inventory"){
     const targets=[data.personal].filter(Boolean);
@@ -875,11 +901,11 @@ async function openRP(selectedChat=null){
     try{raidScreen(await api('/api/raid/'+id));}catch(error){toast(error.message);await openRP(selectedChat);}
   }});
 }
-async function openGuild(selectedChat=null,runId='',boardOnly=false){
+async function openGuild(selectedChat=null,runId='',boardOnly=false,gearShop=false){
   window.ArenaQTEWatch?.close();closeEffect();closeStats();closeRaidDetails();
   current=null;raidCurrent=null;mirrorRun=null;token='';page='guild';audio.scene('menu');
-  await window.GuildApp.open({app,chat:selectedChat,runId,boardOnly,toast,initData:tg?.initData||'',
-    onEquipment:async (id,runId)=>openEquipment(id,()=>openGuild(id,runId||'')),
+  await window.GuildApp.open({app,chat:selectedChat,runId,boardOnly,gearShop,toast,initData:tg?.initData||'',
+    onEquipment:async (id,runId,backToGear)=>openEquipment(id,()=>openGuild(id,runId||'',false,!!backToGear)),
     onRaid:async id=>{try{raidScreen(await api('/api/raid/'+id));}catch(error){toast(error.message);await openGuild(selectedChat,runId);}},
     onArena:async id=>{if(id){chat=id;page='personal';await openMenu();}}});
 }
@@ -961,6 +987,7 @@ app.addEventListener("click",async event=>{
   if(cmd==='equipment'){await openEquipment();return;}
   if(cmd==='kingdom'){await openKingdom(chat);return;}
   if(cmd==='guild'){await openGuild(chat);return;}
+  if(cmd==='guildgear'){await openGuild(chat,'',false,true);return;}
   if(cmd==="menu"||cmd==="refresh"){closeEffect();statusViews=null;closeStats();if(demo){if(cmd==='menu')page='personal';startDemoMenu();return;}await openMenu();return;}
   if(cmd==='charactersbuy'){page='charactersPurchase';menuScreen(menu);return;}
   if(cmd==='characterinvoice'){await buyCharacters();return;}
@@ -1000,6 +1027,16 @@ app.addEventListener("click",async event=>{
     const f=menu?.forge;if(!f)return;const s=forgeSelection(f);
     if(s.bad||s.count!==3){toast('Выбери ровно три имеющихся трактата.');return;}
     forgePreview('rewrite',{items:s.items},'<p>Отдать:</p><ul>'+s.items.map(i=>'<li>'+esc(s.rows.find(r=>r.id===i.id).name)+' × '+i.quantity+'</li>').join('')+'</ul><p>Списать: '+s.price+' ₣. Получить: один случайный трактат того же типа.</p>'+forgeOdds(s.odds)+forgeChoices(f,forgePool,s.odds));return;
+  }
+  if(cmd==='merchanttab'){merchantTab=arg;merchantSelected='';merchantPending=null;menuScreen(menu);return;}
+  if(cmd==='merchantitem'){merchantSelected=arg;merchantPending=null;menuScreen(menu);return;}
+  if(cmd==='merchantback'){merchantSelected='';merchantPending=null;menuScreen(menu);return;}
+  if(cmd==='merchantcancel'){merchantPending=null;menuScreen(menu);return;}
+  if(cmd==='merchantask'){merchantPending={item:arg,nonce:forgeNonce()};menuScreen(menu);return;}
+  if(cmd==='merchantconfirm'){
+    const p=merchantPending,g=menu.merchant?.gear;if(!p||!g)return;
+    const payload=merchantTab==='sell'?{item:p.item,gear_revision:g.revision,price:g.items.find(i=>i.id===p.item)?.sell_price}:{offer:p.item};
+    if(await menuAction(merchantTab==='sell'?'sell_gear':'buy_gear',{...payload,nonce:p.nonce,confirm:true})){merchantSelected='';merchantPending=null;menuScreen(menu);}return;
   }
   if(cmd==="tab"){page=arg;menuScreen(menu);return;}
   if(cmd==='rankpage'){
@@ -1176,6 +1213,7 @@ async function boot(){
   try{
     if(start==='kingdom'||/^kingdom_-?\d+$/.test(start)){await openKingdom(start==='kingdom'?null:Number(start.slice(8)));return;}
     if(/^equipment_-?\d+$/.test(start)){await openEquipment(Number(start.slice(10)));return;}
+    if(/^guildshop_-?\d+$/.test(start)){await openGuild(Number(start.slice(10)),'',false,true);return;}
     if(start==='guild'||/^guild_-?\d+$/.test(start)||start.startsWith('guildrun_')){await openGuild(/^guild_-?\d+$/.test(start)?Number(start.slice(6)):null,start.startsWith('guildrun_')?start.slice(9):'');return;}
     if(start==='guildboard'||/^guildboard_-?\d+$/.test(start)){await openGuild(start==='guildboard'?null:Number(start.slice(11)),'',true);return;}
     if(start.startsWith('nzrun_')){await openNazarick(null,start.slice(6));return;}
@@ -1221,6 +1259,11 @@ function chaplainPanel(data,own){
   const marked=m.banned?.[String(data.actor_id)],skill=own?.fighter.skill_details.find(s=>s.skill_id===marked);
   const rolling=data.data.intent.kind==='chaplain_rewind';
   return '<div class="card chaplain-regulation'+(rolling?' sealed':'')+'"><b>◷ '+(rolling?'Объявлен откат раунда':'Регламент времени')+'</b><p>'+(rolling?'Вместо атаки Капеллан перепишет предыдущий раунд. Закрепление сохранит выбранный результат.':'Обычный откат — отдельное действие раз в 5–7 раундов. Закрепление действует три раунда. Фазовое восстановление возвращает только HP босса.')+'</p>'+(skill?'<p class="chaplain-marked">Помечен «'+esc(skill.name)+'»: дополнительная цена 10% максимального HP, не смертельно.</p>':'')+(m.ui_scramble?'<p class="muted">Названия повреждены. Удерживай навык, чтобы прочитать карточку без применения.</p>':'')+(anchors.length?'<small>'+anchors.join('<br>')+'</small>':'')+'</div>';
+}
+function mimicPanel(data){
+  const m=data.data?.mimic_view;if(!m)return '';
+  const attacks=[0,1,2].map(slot=>{const a=m.attacks.find(v=>v.slot===slot);return '<div class="mimic-slot'+(a?.locked?' locked':'')+'"><small>ОТПЕЧАТОК '+(slot+1)+(a?.locked?' · ЗАКРЕПЛЁН':'')+'</small><b>'+esc(a?.name||'Пусто')+'</b><span>'+(a?esc(a.source)+' · '+a.cost+' энергии · увидел '+a.seen+'/3'+(a.prepared?' · готовых копий: '+a.charges:''):'Покажешь приём — он окажется здесь.')+'</span></div>';}).join('');
+  return '<section class="mimic-panel"><header><span class="eyebrow">ПАМЯТЬ ХИЩНИКА · ФАЗА '+m.phase+'/3 · СОПРОТИВЛЕНИЕ '+(m.resistance||0)+'%</span><b>'+esc(m.title)+'</b></header><div class="mimic-slots">'+attacks+'</div><p class="mimic-warning">'+esc(m.stitch_rule||'')+' Сшиваний: '+(m.stitched_count||0)+'.</p><details><summary>Твоё тоже моё · '+m.passives.length+'/'+(m.phase+1)+' пассивок</summary>'+(m.passives.length?m.passives.map(p=>'<p><b>'+esc(p.name)+'</b> · '+esc(p.source)+' · ещё '+p.remaining+' действия мимика</p>').join(''):'<p>Сработавшая пассивка может стать его следующей добычей.</p>')+'</details><p class="mimic-warning">'+esc(m.phase<3?m.warning:m.notice)+'</p></section>';
 }
 function chaplainSkills(data,f){
   const m=data.data.chaplain,order=m?.ui_order?.[String(data.actor_id)]||[];
@@ -1271,6 +1314,10 @@ function raidPhaseSprite(data){
 function raidSoundtrack(data){
   if(data.status!=='active')return data.status==='lobby'?'menu':'';
   if(data.data?.nazarick_view)return data.data.nazarick_view.music;
+  if(data.boss_id==='mimic'){
+    const phase=Number(data.data?.phase||1);
+    return phase>=3?'mimic_original':phase>=2?'mimic_stitched':'mimic';
+  }
   if(data.boss_id==='chaplain'){
     const phase=Number(data.data?.phase||1);
     return phase>=4?'chaplain_root':phase>=3?'chaplain_override':phase>=2?'chaplain_fault':'chaplain';
@@ -1281,13 +1328,14 @@ function raidSoundtrack(data){
   }
   return data.boss_id==='doofenshmirtz'?'doofenshmirtz':data.boss_id==='lei_heng'?'lei_heng':'raid';
 }
-function raidPortrait(f,key,player=null,index=0,spriteTarget=null){
+function raidPortrait(f,key,player=null,index=0,spriteTarget=null,compactEnemy=false){
   const disabled=player?.withdrawn||f.hp<=0;
   const effects=statusButtons(f,'raid:'+key,'raid-effect');
   const own=key===String(raidCurrent.actor_id),boss=key==='boss'||!!raidCurrent.data?.enemies?.[key];
   const art=spriteTarget?'<button type="button" class="raid-art encounter-target" data-raid="target:'+esc(key)+'" aria-label="Выбрать цель: '+esc(f.name)+'" aria-pressed="'+(key===encounterTarget)+'"'+(disabled?' disabled':'')+'>':'<div class="raid-art">';
   const floatingStaff=key==='boss'&&raidCurrent.data?.nazarick_view?.floating_staff?'<img class="nz-floating-staff" src="/static/assets/nazarick/staff_floating.png" alt="" aria-hidden="true">':'';
-  return '<article id="raid-fighter-'+esc(key)+'" class="raid-fighter '+(boss?'raid-enemy':'raid-ally slot-'+index)+(own?' raid-own':'')+(disabled?' defeated':'')+(player?.deported_round===raidCurrent.data.round?' raid-deported':'')+'">'+art+fighterImage(chaplainArt(f,key),'raid-sprite')+floatingStaff+'<div class="raid-ground"></div>'+(spriteTarget?'</button>':'</div>')+'<div class="raid-effects">'+effects+'</div><div class="raid-hud"><div class="row"><strong title="'+esc(f.name)+'">'+esc(f.name)+'</strong>'+raidButton('ⓘ','inspect:'+key,'stat-button')+'</div><div class="muted">'+esc(f.class_name)+' · Lv.'+f.level+'</div>'+raidBar(f.hp,f.stats.max_hp,'HP')+(boss&&raidCurrent.boss_id!=='doofenshmirtz'?'':raidBar(f.resource,f.stats.resource_max,f.resource_name,'mana'))+(player?'<div class="raid-ready">'+(player.withdrawn?'Покинул рейд':f.hp<=0?'Боец повержен':player.deported_round===raidCurrent.data.round?'Вернётся в следующем раунде':player.ready?'✓ Готов':own?'Твой боец':'Выбирает навык')+'</div>':'')+'</div></article>';
+  const hud=compactEnemy?'<div class="raid-hud encounter-compact-hud" aria-label="'+esc(f.name)+'"><div class="encounter-hp-meter"><span class="encounter-hp-value">'+f.hp+' / '+f.stats.max_hp+'</span><div class="bar"><i style="width:'+Math.max(0,Math.min(100,100*f.hp/f.stats.max_hp))+'%"></i></div></div><button type="button" data-raid="inspect:'+esc(key)+'" class="stat-button" aria-label="Подробности: '+esc(f.name)+'" title="'+esc(f.name)+'">ⓘ</button></div>':'<div class="raid-hud"><div class="row"><strong title="'+esc(f.name)+'">'+esc(f.name)+'</strong>'+raidButton('ⓘ','inspect:'+key,'stat-button')+'</div><div class="muted">'+esc(f.class_name)+' · Lv.'+f.level+'</div>'+raidBar(f.hp,f.stats.max_hp,'HP')+(boss&&raidCurrent.boss_id!=='doofenshmirtz'?'':raidBar(f.resource,f.stats.resource_max,f.resource_name,'mana'))+(player?'<div class="raid-ready">'+(player.withdrawn?'Покинул рейд':f.hp<=0?'Боец повержен':player.deported_round===raidCurrent.data.round?'Вернётся в следующем раунде':player.ready?'✓ Готов':own?'Твой боец':'Выбирает навык')+'</div>':'')+'</div>';
+  return '<article id="raid-fighter-'+esc(key)+'" class="raid-fighter '+(boss?'raid-enemy':'raid-ally slot-'+index)+(compactEnemy?' raid-compact-enemy':'')+(own?' raid-own':'')+(disabled?' defeated':'')+(player?.deported_round===raidCurrent.data.round?' raid-deported':'')+'">'+art+fighterImage(chaplainArt(f,key),'raid-sprite')+floatingStaff+'<div class="raid-ground"></div>'+(spriteTarget?'</button>':'</div>')+'<div class="raid-effects">'+effects+'</div>'+hud+'</article>';
 }
 function encounterCanTarget(data=raidCurrent){
   const own=data?.data?.players?.[String(data.actor_id)];
@@ -1295,7 +1343,8 @@ function encounterCanTarget(data=raidCurrent){
 }
 function encounterPortrait(f,key,index){
   const size=['lich','demon_mage'].includes(f.nz_sprite)?' nz-small-summon':['knight','demon_guard'].includes(f.nz_sprite)?' nz-large-summon':'';
-  return raidPortrait(f,key,null,index,encounterCanTarget()).replace('raid-enemy','raid-enemy encounter-enemy enemy-'+index+size+(key===encounterTarget?' encounter-selected':''));
+  const bossHud=key==='boss'||!!f.nzd_guardian||!!raidCurrent.nazarick_run_id||!!raidCurrent.data?.nazarick_view||raidCurrent.guild_boss_encounter===true;
+  return raidPortrait(f,key,null,index,encounterCanTarget(),!bossHud).replace('<article ','<article data-guild-monster="'+esc(f.guild_monster||'')+'" ').replace('raid-enemy','raid-enemy encounter-enemy enemy-'+index+size+(key===encounterTarget?' encounter-selected':''));
 }
 function selectEncounterTarget(key){
   if(!encounterCanTarget()||!raidCurrent.data.enemies[key]||raidCurrent.data.enemies[key].hp<=0)return;
@@ -1339,9 +1388,11 @@ function raidScreen(data){
     body='<div class="raid-intent"><span class="eyebrow">'+raidPhaseLabel(data)+'</span><h3>'+esc(d.intent.text)+'</h3>'+(targets?'<p class="muted">Цель: '+targets+'</p>':'')+prediction+'</div><div class="raid-field'+(data.boss_id==='doofenshmirtz'?' doof-field':data.boss_id==='kit'?' kit-field':'')+'" data-boss="'+esc(data.boss_id)+'" data-phase="'+esc(d.phase)+'" aria-label="Поле боя: отряд слева внизу, босс справа вверху">'+raidPortrait(d.boss,'boss')+raidSupport(data)+raidDialogue(data)+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
     if(data.kind==='encounter'){
       const intents=raidPlaying?'<p>Разыгрывается раунд</p>':Object.entries(d.enemy_intents||{}).filter(([key])=>d.enemies[key].hp>0).map(([key,i])=>'<p><b>'+esc(d.enemies[key].name)+'</b>: '+esc(i.text)+(i.targets.length?' → '+i.targets.map(k=>esc(d.players[k]?.fighter.name)).join(', '):'')+'</p>').join('');
-      body='<div class="raid-intent"><span class="eyebrow">'+raidPhaseLabel(data)+'</span><h3>Намерения противников</h3>'+intents+'<small>'+(data.guild_run_id?'Гильдия охотников · награда после завершения заказа':data.enterprise_defense?'Защита предприятий · три орка A-ранга':'Мастер: '+esc(data.master_name)+' · награды отключены')+'</small></div><div class="raid-field encounter-field'+(data.guild_run_id?' guild-field':data.enterprise_defense?' enterprise-defense-field':'')+'" data-biome="'+esc(data.guild_biome||'mines')+'" aria-label="Отряд слева внизу, противники справа вверху">'+Object.entries(d.enemies).map(([key,f],i)=>encounterPortrait(f,key,i)).join('')+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
+      const spaciousGroup=data.guild_run_id&&Object.keys(d.enemies).length>1&&Object.keys(d.players).length>1&&Math.max(Object.keys(d.enemies).length,Object.keys(d.players).length)>=3;
+      body='<div class="raid-intent"><span class="eyebrow">'+raidPhaseLabel(data)+'</span><h3>Намерения противников</h3>'+intents+'<small>'+(data.guild_run_id?'Гильдия охотников · награда после завершения заказа':data.enterprise_defense?'Защита предприятий · три орка A-ранга':'Мастер: '+esc(data.master_name)+' · награды отключены')+'</small></div><div class="raid-field encounter-field'+(data.guild_run_id?' guild-field':data.enterprise_defense?' enterprise-defense-field':'')+(spaciousGroup?' guild-party-field':'')+'" data-biome="'+esc(data.guild_biome||'mines')+'" data-scenery="'+esc(data.guild_scenery?.key||'biome')+'" aria-label="Отряд слева внизу, противники справа вверху">'+Object.entries(d.enemies).map(([key,f],i)=>encounterPortrait(f,key,i)).join('')+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';
     }
     body+=chaplainPanel(data,own);
+    body+=mimicPanel(data);
     if(d.nazarick_view){
       const n=d.nazarick_view,intents=Object.entries(d.enemy_intents||{}).filter(([key])=>d.enemies[key]?.hp>0).map(([key,i])=>'<p><b>'+esc(d.enemies[key].name)+'</b>: '+esc(i.text)+'</p>').join('');
       body='<div class="raid-intent"><span class="eyebrow">'+esc(raidPhaseLabel(data))+'</span><h3>'+esc(n.title)+'</h3>'+intents+'<small>'+esc(n.hint)+'</small>'+(n.guardian==='albedo'?'<p>Давление на стойку: '+n.pressure+' / '+n.pressure_max+(n.exposed?' · СТОЙКА РАЗРУШЕНА':'')+'</p>':'')+'</div><div class="raid-field encounter-field nazarick-field" data-guardian="'+esc(n.guardian)+'" data-phase="'+n.phase+'">'+Object.entries(d.enemies).filter(([,f])=>f.hp>0).map(([key,f],i)=>encounterPortrait(f,key,i)).join('')+raidDialogue(data)+Object.entries(d.players).map(([key,p],i)=>raidPortrait(p.fighter,key,p,i)).join('')+'</div>';

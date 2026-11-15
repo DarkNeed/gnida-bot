@@ -297,3 +297,37 @@ test('actual raid scenes select every Chaplain phase and keep other bosses uncha
   assert.equal(scope.raidSoundtrack({status:'finished',boss_id:'chaplain'}),'');
   assert.equal(scope.raidSoundtrack({status:'active',boss_id:'kit',data:{phase:3}}),'kit_abyss');
 });
+
+const mimicThemes=['mimic','mimic_stitched','mimic_original'];
+test('Mimic has three distinct evolving mirror scores with bounded voices and one scheduler',async()=>{
+  const signatures=new Set();
+  for(const theme of mimicThemes){
+    const h=harness();h.audio.scene(theme);await h.click({});
+    assert.match(h.sceneLabel.textContent,/Мимик/);assert.equal(h.intervals.size,1);
+    signatures.add(JSON.stringify(h.sources.map(s=>[s.type,s.frequency.value,s.stopped-s.started])));
+    let peak=0;
+    for(let i=1;i<=800;i++){
+      h.contexts[0].currentTime=i/10;for(const fn of h.intervals.values())fn();
+      for(const s of h.sources)if(!s.ended&&s.stopped<=i/10){s.ended=true;s.onended?.();}
+      peak=Math.max(peak,h.sources.filter(s=>!s.ended).length);assert.equal(h.intervals.size,1);
+    }
+    assert.ok(peak<120,theme+' active voices: '+peak);
+    assert.ok(h.sources.every(s=>Number.isFinite(s.started)&&s.stopped>s.started&&s.stopped-s.started<7));
+    assert.ok(h.sources.filter(s=>s.type).every(s=>s.frequency.value>=20&&s.frequency.value<6000));
+    const count=h.sources.length;for(let i=0;i<80;i++)h.audio.scene(theme);assert.equal(h.sources.length,count);
+    h.document.hidden=true;h.handlers.visibilitychange();assert.equal(h.intervals.size,0);
+    for(const options of [{silent:true},{saved:JSON.stringify({muted:true})},{saved:JSON.stringify({music:0})}]){
+      const muted=harness(options);muted.audio.scene(theme);await muted.click({});assert.equal(muted.intervals.size,0);
+    }
+  }
+  assert.equal(signatures.size,3);
+});
+
+test('actual Mimic raid picks its phase score and stops on completion',()=>{
+  const source=fs.readFileSync(require('node:path').join(__dirname,'../webapp/battle-client'),'utf8');
+  const start=source.indexOf('function raidSoundtrack'),end=source.indexOf('function raidPortrait',start),scope={};
+  vm.createContext(scope);vm.runInContext(source.slice(start,end),scope);
+  for(let phase=1;phase<=3;phase++)assert.equal(scope.raidSoundtrack({status:'active',boss_id:'mimic',data:{phase}}),mimicThemes[phase-1]);
+  assert.equal(scope.raidSoundtrack({status:'lobby',boss_id:'mimic'}),'menu');
+  assert.equal(scope.raidSoundtrack({status:'finished',boss_id:'mimic'}),'');
+});

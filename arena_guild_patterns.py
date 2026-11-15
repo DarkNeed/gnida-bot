@@ -2,12 +2,17 @@
 import math
 
 FAMILIES = dict(stab='slash',net='paint',fang='beast',hex='mana',smash='impact',bone='death',soul='death',claw='beast',fire='fire',ice='ice',lightning='lightning',acid='paint',sticky='paint',poison_bite='beast',pounce='beast',cleaver='slash',troll_quake='impact',spectral_blade='slash',rune_cross='lightning',stone_rain='impact',venom_rain='paint',dragon_dive='beast',tail='slash',wings='fire',ice_tomb='ice',soul_prison='death',grave_crown='death',crypt_blades='slash',ancient_sun='fire',ash_orbit='fire')
+from arena_chest_mimic_patterns import FAMILIES as CHEST_FAMILIES
+FAMILIES.update(CHEST_FAMILIES)
 
 
 def prepare(s, e, add):
     key = s['p']['skill'].get('base_id', '')[6:]
     if key not in FAMILIES or s['p']['skill'].get('monster_pattern') not in (2,3):
         return False
+    if key in CHEST_FAMILIES:
+        from arena_chest_mimic_patterns import prepare as chest_prepare
+        return chest_prepare(s,e,add)
     d, p, i = s['d'], s['p'], e['index']
     fair = p['skill'].get('monster_pattern') == 3
     x, y = s['player']['x'], s['player']['y']
@@ -97,6 +102,9 @@ def prepare(s, e, add):
 def block_threats(p, seed, params):
     key=p['skill'].get('base_id','')[6:]
     if key not in FAMILIES or p['skill'].get('monster_pattern') not in (2,3):return None
+    if key in CHEST_FAMILIES:
+        from arena_chest_mimic_patterns import block_threats as chest_block
+        return chest_block(p,seed,params)
     from arena_qte_patterns import random_values
     random=random_values(seed ^ p['seed']); offset=math.floor(next(random)*8)*math.pi/4
     tier=max(0,min(4,p['skill'].get('npc_tier',0)))

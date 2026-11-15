@@ -52,8 +52,34 @@
   };
   const GUILD_FAMILIES={guild_stab:'slash',guild_net:'paint',guild_fang:'beast',guild_hex:'mana',guild_smash:'impact',guild_bone:'death',guild_soul:'death',guild_claw:'beast',guild_fire:'fire',guild_ice:'ice',guild_lightning:'lightning'};
   const GUILD_MOVES={stab:'slash',net:'paint',fang:'beast',hex:'mana',smash:'impact',bone:'death',soul:'death',claw:'beast',fire:'fire',ice:'ice',lightning:'lightning',acid:'paint',sticky:'paint',poison_bite:'beast',pounce:'beast',cleaver:'slash',troll_quake:'impact',spectral_blade:'slash',rune_cross:'lightning',stone_rain:'impact',venom_rain:'paint',dragon_dive:'beast',tail:'slash',wings:'fire',ice_tomb:'ice',soul_prison:'death',grave_crown:'death',crypt_blades:'slash',ancient_sun:'fire',ash_orbit:'fire'};
+  Object.assign(GUILD_MOVES,{chest_bite:'grapple',chest_tongue:'thrust',chest_coins:'coins',chest_devour:'grapple',chest_ravenous_bite:'grapple',chest_ravenous_coins:'coins'});
+  function chestPrepare(s,e,add){
+    const key=(s.p.skill.base_id||'').slice(12);
+    if(!['bite','tongue','coins','devour','ravenous_bite','ravenous_coins'].includes(key))return false;
+    const i=e.index,x=clamp(s.player.x,24,696),y=clamp(s.player.y,24,296),color='#daaab1',high=(s.p.skill.npc_tier||0)>=3;
+    const jaws=(delay=0)=>{for(const sign of [-1,1]){const h=i%2===0?{type:'line',ax:x-85,ay:y+sign*54,bx:x+85,by:y+sign*54,r:8,chestMoveY:-sign*180,chestMoveX:0}:{type:'line',ax:x+sign*54,ay:y-70,bx:x+sign*54,by:y+70,r:8,chestMoveX:-sign*180,chestMoveY:0};add({...h,color,motif:'chest_teeth',tier:'normal',weight:.24},delay,.30);}};
+    const coins=(delay=0,n=5)=>{const bx=clamp(x+(i%2===0?250:-250),18,702),by=40+e.jitter*240,angle=Math.atan2(y-by,x-bx);for(let j=0;j<n;j++){const theta=angle+(j-(n-1)/2)*.22;add({type:'bullet',x:bx,y:by,vx:Math.cos(theta)*300,vy:Math.sin(theta)*300,r:6,color:'#d8c7a1',motif:'chest_coin',tier:'minor',weight:.10,returnAt:j%2===0?.98:0},delay,j%2===0?1.96:1.8);}};
+    if(['bite','ravenous_bite'].includes(key)){jaws();if(key==='ravenous_bite')coins(.48,3);}
+    else if(key==='tongue'){const bx=i%2?18:702,by=40+e.jitter*240,a=Math.atan2(y-by,x-bx),length=Math.hypot(x-bx,y-by)+42;add({type:'line',ax:bx,ay:by,bx:bx+Math.cos(a)*length,by:by+Math.sin(a)*length,r:10,color:'#d07991',motif:'chest_tongue',tier:'heavy',weight:.50},0,.24);}
+    else if(['coins','ravenous_coins'].includes(key)){coins(0,high?7:5);if(key==='ravenous_coins')jaws(.48);}
+    else{const bx=i%2?42:678,by=clamp(y,55,265);add({type:'well',x:bx,y:by,r:34,pull:75,color,motif:'chest_mouth',tier:'heavy',weight:.45},0,.85);const a=Math.atan2(y-by,x-bx);for(const j of [-1,0,1]){const theta=a+j*.32;add({type:'bullet',x:bx,y:by,vx:Math.cos(theta)*260,vy:Math.sin(theta)*260,r:7,color:'#b9a28b',motif:'chest_splinter',tier:'minor',weight:.12},.28,1.65);}}
+    return true;
+  }
+  function chestBlockThreats(p,seed,params){
+    const key=(p.skill.base_id||'').slice(12);if(!['bite','tongue','coins','devour','ravenous_bite','ravenous_coins'].includes(key))return null;
+    const offset=Math.floor(rng(seed^p.seed)()*8)*Math.PI/4,tier=clamp(p.skill.npc_tier||0,0,4),count=4+(tier>=3?1:0),result=[];
+    for(let i=0;i<count;i++){const a=offset+i*Math.PI/2,at=2+i*5.7/Math.max(1,count-1);let specs;
+      if(['bite','ravenous_bite'].includes(key)){specs=[[0,a,'slash','chest_teeth',.30],[.40,a+Math.PI,'slash','chest_teeth',.30]];if(key==='ravenous_bite')specs.push([.82,a+Math.PI/2,'bolt','chest_coin',.10]);}
+      else if(key==='tongue')specs=[[0,a,'slash','chest_tongue',.50]];
+      else if(['coins','ravenous_coins'].includes(key)){specs=[[0,a,'bolt','chest_coin',.10],[.30,a+Math.PI/4,'bolt','chest_coin',.10],[.75,a+Math.PI,'bolt','chest_coin',.20]];if(key==='ravenous_coins')specs.push([1.08,a+Math.PI/2,'slash','chest_teeth',.24]);}
+      else specs=[[0,a,'wave','chest_mouth',.50],[.52,a+Math.PI/4,'bolt','chest_splinter',.12]];
+      for(const [delay,angle,kind,motif,weight] of specs)result.push({id:'block:'+result.length,at:at+delay,warning:Math.max(.62,params.warning),angle:Math.atan2(Math.sin(angle),Math.cos(angle)),kind,motif,tier:weight===.50?'heavy':weight>=.24?'normal':'minor',weight,strike:0,resolved:false});
+    }
+    result.forEach((h,i)=>h.strike=Math.min(p.strikes-1,Math.floor(i*p.strikes/result.length)));return result;
+  }
   function guildPrepare(s,e,add){
     const key=(s.p.skill.base_id||'').slice(6);if(!GUILD_MOVES[key]||![2,3].includes(s.p.skill.monster_pattern))return false;
+    if(key.startsWith('chest_'))return chestPrepare(s,e,add);
     const fair=s.p.skill.monster_pattern===3;
     const d=s.d,p=s.p,i=e.index,{x,y}=s.player,tx=clamp(x+(s.player.vx||0)*d.lead,20,700),ty=clamp(y+(s.player.vy||0)*d.lead,20,300),angle=e.angle;
     const color=['soul','bone','soul_prison','grave_crown'].includes(key)?'#83c6ae':['ice','ice_tomb'].includes(key)?'#b6ddfa':['fire','wings','ancient_sun','ash_orbit'].includes(key)?'#e78654':['hex','lightning','rune_cross','spectral_blade','crypt_blades'].includes(key)?'#ba9ddf':['acid','sticky','venom_rain','net','poison_bite'].includes(key)?'#a9bc75':'#d3b69c';
@@ -87,6 +113,7 @@
   }
   function guildBlockThreats(p,seed,params){
     const key=(p.skill.base_id||'').slice(6);if(!(p.skill.base_id||'').startsWith('guild_')||!GUILD_MOVES[key]||![2,3].includes(p.skill.monster_pattern))return null;
+    if(key.startsWith('chest_'))return chestBlockThreats(p,seed,params);
     const random=rng(seed^p.seed),offset=Math.floor(random()*8)*Math.PI/4,tier=clamp(p.skill.npc_tier||0,0,4),cycles=4+Math.floor(tier/2),result=[],mode=[...key].reduce((v,c)=>v+c.charCodeAt(0),0)%3;
     for(let i=0;i<cycles;i++){
       const a=offset+p.polarity*i*(mode===0?Math.PI/2:Math.PI/4),at=2+i*6.1/Math.max(1,cycles-1),specs=[[at,a,'bolt',.3],[at+.35,a+(mode!==1?Math.PI/2:0),'slash',.3]];
@@ -96,6 +123,7 @@
     result.forEach((e,i)=>e.strike=Math.min(p.strikes-1,Math.floor(i*p.strikes/result.length)));return result;
   }
   function family(skill){
+    if(['mimic_claw','mimic_shards','mimic_gaze'].includes(skill.base_id))return {mimic_claw:'slash',mimic_shards:'stars',mimic_gaze:'mirror'}[skill.base_id];
     const guardianFamily=NZ?.guardianFamily?.(skill);if(guardianFamily)return guardianFamily;
     const guild=GUILD_MOVES[(skill.base_id||'').slice(6)];if((skill.base_id||'').startsWith('guild_')&&guild)return guild;
     if(GUILD_FAMILIES[skill.base_id])return GUILD_FAMILIES[skill.base_id];
@@ -154,7 +182,8 @@
     const entry=chaplain?[skill.name,'#e3c68c',['Стрелки возвращаются; позднее снаряды замирают и продолжают полёт.','Следи за контурами системных окон и отметкой возврата позиции.','Свет бьёт по отмеченным областям; золотые вспышки опаснее мелких.'][Number(skill.base_id.split('_').at(-1))],FAMILIES[kind][3]]:clock?[...clock,FAMILIES[kind][3]]:FAMILIES[kind];
     const basic=skill.base_id==='bum_punch'&&skill.name==='Удар бомжа';
     const nazarick=NZ?.identity({skill});
-    return {id,seed,kind,title:nazarick?skill.name:basic?'Простой удар':entry[0],color:nazarick?NZ.colors[nazarick.who]:entry[1],hint:nazarick?(skill.description||'Следи за контурами предупреждений. Тяжёлые снаряды опаснее мелких.'):basic?'Три коротких замаха без ударных волн. Выйди из небольшого отмеченного круга.':entry[2],style:entry[3],skill,basic,
+    const chest=(skill.base_id||'').startsWith('guild_chest_');
+    return {id,seed,kind,title:nazarick||chest?skill.name:basic?'Простой удар':entry[0],color:chest?'#daaab1':nazarick?NZ.colors[nazarick.who]:entry[1],hint:chest?(skill.description||'Уходи от зубов и языка; монеты могут вернуться обратно.'):nazarick?(skill.description||'Следи за контурами предупреждений. Тяжёлые снаряды опаснее мелких.'):basic?'Три коротких замаха без ударных волн. Выйди из небольшого отмеченного круга.':entry[2],style:entry[3],skill,basic,
       strikes:clamp(skill.strikes||1,1,6),kit:(skill.base_id||'').startsWith('kit_'),
       moon:skill.base_id==='arch_hunter_moon',hunterShot:skill.base_id==='hunter_shot',casinoJackpot:(skill.name||'').startsWith('777'),chaplain,phase:r()*TAU,polarity:r()<.5?-1:1,
       speed:.94+r()*.18,spread:.78+r()*.34,interval:.8+r()*.4,drift:r()>.6,
@@ -436,9 +465,11 @@
   }
   function geometry(h,t){
     let age=Math.max(0,t-h.start);
+    if(h.type==='line'&&('chestMoveX' in h||'chestMoveY' in h)){const dx=(h.chestMoveX||0)*age,dy=(h.chestMoveY||0)*age;return {...h,ax:h.ax+dx,ay:h.ay+dy,bx:h.bx+dx,by:h.by+dy};}
     if(h.freezeFor&&age>h.freezeAt)age=h.freezeAt+Math.max(0,age-h.freezeAt-h.freezeFor);
     if(h.type==='line'&&h.clockTurn){const a=h.clockTurn*age,cs=Math.cos(a),sn=Math.sin(a),dx=h.bx-h.ax,dy=h.by-h.ay;return {...h,bx:h.ax+dx*cs-dy*sn,by:h.ay+dx*sn+dy*cs};}
     if(h.type==='bullet'){
+      if(h.returnAt){const travel=age<=h.returnAt?age:2*h.returnAt-age,sign=age<=h.returnAt?1:-1;return {...h,x:h.x+h.vx*travel,y:h.y+h.vy*travel,vx:h.vx*sign,vy:h.vy*sign};}
       if(h.orbit){const a=h.orbitAngle+h.orbitSpeed*age,r=h.orbitRadius+h.spiral*age;return{...h,x:h.cx+Math.cos(a)*r,y:h.cy+Math.sin(a)*r,vx:Math.cos(a)*h.spiral-Math.sin(a)*r*h.orbitSpeed,vy:Math.sin(a)*h.spiral+Math.cos(a)*r*h.orbitSpeed};}
       if(h.px!==undefined)return {...h,x:h.px,y:h.py};
       if(h.turn){const a=h.turn*age,cs=Math.cos(a),sn=Math.sin(a);

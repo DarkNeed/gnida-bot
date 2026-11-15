@@ -361,7 +361,7 @@ class GuildContentTests(unittest.TestCase):
         self.assertIn('+15%',EVENTS['shrine']['choices'][0]['hint'])
         self.assertIn('50/50',EVENTS['cocoon']['choices'][0]['hint'])
 
-    def test_enemy_formation_starts_center_and_steps_diagonally_right(self):
+    def test_enemy_formation_starts_right_and_steps_diagonally_left(self):
         import re
         css=(Path(__file__).resolve().parents[1]/'webapp/style.css').read_text(encoding='utf-8')
         positions=[]
@@ -369,8 +369,10 @@ class GuildContentTests(unittest.TestCase):
             match=re.search(r'(?m)^\.encounter-field \.enemy-'+str(index)+r'\{right:(\d+)%?;top:(\d+)%?\}',css)
             self.assertIsNotNone(match)
             positions.append(tuple(map(int,match.groups())))
-        self.assertEqual(positions[0],(40,2))
-        self.assertTrue(all(a[0]>b[0] and a[1]<b[1] for a,b in zip(positions,positions[1:])))
+        self.assertEqual(positions,[(8,2),(30,7),(52,12)])
+        self.assertTrue(all(a[0]<b[0] and a[1]<b[1] for a,b in zip(positions,positions[1:])))
+        for index,right in enumerate((8,30,52)):
+            self.assertRegex(css,r'\.enterprise-defense-field \.enemy-'+str(index)+r'\{right:'+str(right)+r'%?;top:'+str(index*5)+r'%?\}')
         self.assertIn('.encounter-field.nazarick-field .enemy-0{right:6%;top:1%;width:37%}',css)
 
     def test_content_fixed_rank_maps_and_assets(self):

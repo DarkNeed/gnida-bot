@@ -18,7 +18,7 @@ class ArtRenderTests(unittest.TestCase):
         self.assertGreater(result['profiles'], 250)
         self.assertGreater(result['draws'], 15000)
         self.assertGreaterEqual(result['motifs'], 25)
-        self.assertEqual(result['classes'] + result['existingCasino'], 14)
+        self.assertGreaterEqual(result['classes'] + result['existingCasino'], 15)
 
     def test_live_loads_art_before_views_and_versions_it(self):
         from arena_assets import render_arena_index

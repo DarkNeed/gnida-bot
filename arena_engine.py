@@ -508,6 +508,11 @@ BUILTIN_SKILLS['last_amendment'] = Skill(
                 'Не воскрешает; не возвращает энергию, перезарядки и потраченные одноразовые навыки. '
                 'Не продаётся у торговца и не создаётся в кузнице.',
 )
+BUILTIN_SKILLS['plagiarism'] = Skill(
+    'plagiarism','Плагиат','raid',20,None,0,100,45,4,rarity='epic',tags=('raid_loot',),
+    description='Запоминает последнее совместимое действие противника и позволяет один раз повторить его. '
+                'Цена не ниже 45 энергии, перезарядка не ниже 4 действий. Для повтора нужен новый отпечаток. '
+                'Не копирует целые классы, смену фаз, откаты времени и вмешательство в интерфейс.')
 VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _finger_classes.items()})
 # Old names remain valid input; stable IDs keep inventory and saved builds intact.
 VISIBLE_CLASS_ALIASES.update(
@@ -1022,6 +1027,9 @@ def _initialize_turn_counts(state: dict) -> None:
 def effective_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Skill:
     skill = (skills or BUILTIN_SKILLS)[skill_id]
     actor = state['sides'][side_key]
+    if skill_id=='plagiarism' or actor.get('is_mimic') and skill_id in actor.get('_mimic_skills',{}):
+        from arena_mimic import variant
+        return variant(skill,actor)
     target = state['sides']['b' if side_key == 'a' else 'a']
     from arena_npc_ai import basic_skill
     skill = basic_skill(skill, actor)
@@ -1061,7 +1069,7 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
     )):
         raise ValueError("Навык недоступен этому архиклассу или уровню.")
     skill = effective_skill(state, side_key, skill_id, catalog)
-    if not side.get('rp_sandbox') and not mastery_allowed(skill, side):
+    if not side.get('rp_sandbox') and skill_id!='plagiarism' and not side.get('is_mimic') and not mastery_allowed(skill, side):
         raise ValueError("Навык доступен только на пути мастерства своего класса.")
     restriction = skill_restriction(side, skill, completed_turns(state, side_key))
     if restriction:
@@ -1074,6 +1082,11 @@ def validate_skill(state: dict, side_key: str, skill_id: str, skills=None) -> Sk
 
 
 def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
+    if skill.skill_id == 'plagiarism':
+        from arena_mimic import restriction as mimic_restriction
+        reason = mimic_restriction(side, skill.skill_id)
+        if reason:
+            return reason
     if side.get('rp_sandbox'):
         from arena_rp import rp_restriction
         reason = rp_restriction(side, skill)
@@ -1343,6 +1356,8 @@ def resolve_skill(
     other = "b" if side_key == "a" else "a"
     target = state["sides"][other]
     final_before=final_context(actor,target)
+    from arena_mimic import snapshot as mimic_snapshot
+    mimic_before = mimic_snapshot(actor,target,raid_context)
     from arena_casino import roll_action as casino_roll
     skill,casino_context=casino_roll(actor,skill,rng,(qte or {}).get('pattern_attack',{}).get('casino'))
     mastery_before=mastery_context(actor,target)
@@ -1885,6 +1900,9 @@ def resolve_skill(
         event["hit_results"] = strike_results
     if pattern_contacts is not None:
         event['qte_projectiles']=pattern_contacts
+    if mimic_before is not None or 'plagiarism' in target.get('loadout',[]) or skill_id=='plagiarism':
+        from arena_mimic import observe
+        observe(raid_context,mimic_before,actor,target,skill,event,skill_id)
     state["log"].append(event)
     state["log"] = state["log"][-60:]
     if advance_turn:

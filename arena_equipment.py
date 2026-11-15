@@ -11,6 +11,50 @@ STATS = dict(max_hp='HP', physical_attack='Физ. атака', magic_attack='М
 AFFIXES = tuple(STATS)
 CHANCES = ((55,35,10,0,0), (55,35,10,0,0), (15,45,35,5,0), (15,45,35,5,0),
            (0,20,55,23,2), (0,20,55,23,2), (0,0,55,40,5))
+PRICES = ((150,500,1200,2800,4000),(250,800,1800,4000,5500),
+          (400,1200,2800,6000,8000),(700,1800,4000,8500,11000),
+          (1100,2800,6000,11000,14000),(1700,4000,8000,14000,17000),
+          (2500,5500,10000,16000,20000))
+
+
+PRICE_WEIGHTS = dict(max_hp=1/6,physical_attack=1,magic_attack=1,
+                     physical_defense=.95,magic_defense=.95,speed=1.20,evasion=1.25)
+EFFECT_PRICE = dict(bleeding=1.02,summoner=.98,stone=1.05,immortal=1.10,troll=1.04,
+                    empty=.96,dot=1,cycle=.98,mercy=1.02,execution=1.03,opener=.98,leech=1.07)
+
+
+def item_valuation(item):
+    """Class/account-independent quote. Evaluate +0 so upgrades cannot be cashed out.
+
+    HP is normalized to six HP per stat point. Mobility costs a little more;
+    split physical/magic offense on an offensive base is less specialized.
+    These weights affect prices only, never combat stats or drop probabilities.
+    """
+    tier=RANKS.index(item['rank']);quality=RARITIES.index(item['rarity'])
+    base=PRICES[tier][quality];definition=CATALOG[item['key']]
+    stats=item_stats(dict(item,upgrade=0));main=definition['main']
+    budget=(1.5+tier*.7)*(1+quality*.12)+min(2,quality)*(1+tier*.4)*.7
+    worth=0
+    for stat,value in stats.items():
+        weight=PRICE_WEIGHTS[stat]
+        if (main=='physical_attack' and stat=='magic_attack') or (main=='magic_attack' and stat=='physical_attack'):
+            weight*=.55
+        worth+=value*weight
+    synergy=0
+    if 'speed' in stats and 'evasion' in stats:synergy+=.04
+    if any(k in stats for k in ('physical_attack','magic_attack')) and 'speed' in stats:synergy+=.05
+    if 'max_hp' in stats and any(k in stats for k in ('physical_defense','magic_defense')):synergy+=.04
+    factor=1+(worth/max(.1,budget)-1)*1.4+synergy
+    if quality>=3:factor*=EFFECT_PRICE[definition['effect']]
+    factor=max(.75,min(1.25,factor))
+    step=10 if base<1000 else 50
+    price=min(20000,max(step,int(base*factor/step+.5)*step))
+    return dict(price=price,reference=base,factor=round(factor,3),
+                basis='Характеристики +0, сочетания свойств и особый эффект. Цена одинакова для всех классов.')
+
+
+def item_price(item):
+    return item_valuation(item)['price']
 EFFECTS = {
     'bleeding': 'Прямой урон по кровоточащей цели +20%. Сам кровотечение не накладывает.',
     'summoner': 'При действующем призыве магический урон +15%. Первое завершение призыва за бой возвращает 15 энергии.',
@@ -82,11 +126,13 @@ def item_stats(item):
 
 
 def public_item(item):
-    value=deepcopy(item); definition=CATALOG[item['key']]
+    value=deepcopy(item); definition=CATALOG[item['key']];valuation=item_valuation(item)
     value.update(definition, stats=item_stats(item), min_level=LEVELS[RANKS.index(item['rank'])],
                  rarity_name=LABELS[item['rarity']], effect_text=EFFECTS[definition['effect']] if item['rarity'] in ('epic','legendary') else '',
                  salvage=(2,3,5,8,12)[RARITIES.index(item['rarity'])],
-                 upgrade_cost=2+item.get('upgrade',0)*2, reroll_cost=5)
+                 upgrade_cost=2+item.get('upgrade',0)*2, reroll_cost=5,
+                 base_price=valuation['price'],sell_price=valuation['price']//5,
+                 valuation=valuation)
     return value
 
 

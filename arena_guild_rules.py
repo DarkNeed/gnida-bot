@@ -49,6 +49,8 @@ SKILLS = {s.skill_id: s for s in (
     attack('ancient_sun', 'Падение последнего солнца', 'mage', 35, 99),
     attack('ash_orbit', 'Хоровод пепельных звёзд', 'mage', 33, 98),
 )}
+from arena_chest_mimic import SKILLS as CHEST_SKILLS, CHEST_EVENT
+SKILLS.update(CHEST_SKILLS)
 
 # Each creature has a coherent kit; no knives for spiders, curses for slimes or
 # borrowed dragon breath for undead. Legacy IDs remain resolvable in saved runs.
@@ -103,7 +105,8 @@ SUPPLIES = {
 
 
 def art(monster):
-    return '/static/assets/guild/' + monster + '-v1.png'
+    version='2' if monster=='chest_mimic' else '1'
+    return '/static/assets/guild/' + monster + '-v'+version+'.png'
 
 
 # Flavour is separate from objectives and numbers: the guild's sense of humour
@@ -150,6 +153,7 @@ def contract_by_code(code):
     return key
 
 EVENTS = {
+    'chest': CHEST_EVENT,
     'shrine': dict(name='Святилище без имени', text='В чаше шевелится свет. Надпись обещает исцеление — и долг. Мелким шрифтом: «Душа возврату и обмену не подлежит». Даже у богов нашёлся юрист.', choices=[
         dict(id='blessing', name='Принять свет', hint='+40% HP живым. До конца похода входящий урон +15%.'),
         dict(id='break', name='Разбить чашу', hint='Дополнительный бой. За победу — больше находок.'),
@@ -166,6 +170,7 @@ EVENTS = {
 
 
 def make_map(contract, seed):
+    from arena_guild_scenery import assign_background
     rng = random.Random(seed)
     if contract['kind'] != 'dungeon':
         return [dict(id='boss', layer=0, lane=1, kind='boss', links=[], cleared=False)]
@@ -179,13 +184,17 @@ def make_map(contract, seed):
             if layer==3:kind='treasure' if lane==0 else 'elite'
             node=dict(id=key, layer=layer, lane=1 if len(names)==1 else lane*2, kind=kind,
                 links=list(layers[layer+1]) if layer<5 else [], cleared=layer==0)
-            if kind=='event':node['event']=rng.choice(tuple(EVENTS))
+            if kind=='event':node['event']=rng.choice(tuple(k for k in EVENTS if k!='chest'))
             node['roll']=rng.random()
+            assign_background(contract,node)
             nodes.append(node)
     return nodes
 
 
 def mob_templates(contract, node, party_size):
+    if node.get('ambush')=='chest_mimic':
+        from arena_chest_mimic import template
+        return [template(contract['rank'],party_size)]
     ids=contract['monsters']
     if node.get('ambush')=='spider':chosen=['spider','spider']
     elif node.get('ambush'):chosen=[ids[-1]]

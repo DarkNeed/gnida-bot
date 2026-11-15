@@ -165,6 +165,7 @@ rouletteAvailabilityKey(snapshot('Новый стол через 1 с.'))!==roul
         self.assertIn('Лимиты покупок общие для аккаунта', body)
         self.assertIn('Оплата франками выбранного чата', body)
         self.assertIn('data-do="buy:7">', body)
+        body = self.run_client("page='merchant';merchantTab='study';menuScreen(input);",self.menu_data())
         self.assertIn('data-do="buy:8" disabled', body)
         self.assertIn("Баланс: 100", body)
         self.assertIn("Редкий", body)

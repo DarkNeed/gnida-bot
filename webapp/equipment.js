@@ -85,7 +85,9 @@
     '<h3>Если надеть</h3><table class="gear-compare"><thead><tr><th>Характеристика</th><th>Сейчас</th><th>Разница</th></tr></thead><tbody>'+comparison+'</tbody></table>'+
     '<div class="gear-detail-actions">'+button(i.equipped?'Снять':'Надеть',i.equipped?'unequip:'+i.id:'equip:'+i.id,no||!i.equipped&&view.level<i.min_level,'primary')+
     button(i.favorite?'★ В избранном':'☆ В избранное','favorite:'+i.id,busy)+button(i.upgrade>=5?'Улучшено до +5':'Улучшить до +'+(i.upgrade+1)+' · '+i.upgrade_cost+' оск. '+i.rank,'upgrade:'+i.id,no||i.upgrade>=5||mat<i.upgrade_cost)+
-    button('Разобрать · +'+i.salvage+' оск. '+i.rank,'ask:'+i.id,no||i.favorite||i.used_by.length>0,'danger')+'</div>'+
+    button('Разобрать · +'+i.salvage+' оск. '+i.rank,'ask:'+i.id,no||i.favorite||i.used_by.length>0,'danger')+
+    button('Продать · '+i.sell_price+' ₣','sellask:'+i.id,no||i.favorite||i.used_by.length>0,'danger')+'</div>'+
+    (confirm==='sell:'+i.id?'<div class="gear-confirm"><b>Продать за '+i.sell_price+' ₣?</b><p>20% базовой цены. Предмет исчезнет; улучшения не увеличивают стоимость.</p>'+button('Да, продать','sell:'+i.id,no,'danger')+button('Оставить','cancel')+'</div>':'')+
     (confirm===i.id?'<div class="gear-confirm"><b>Разобрать без возврата?</b><p>Вещь исчезнет. Ты получишь материалы её ранга.</p>'+button('Да, разобрать','salvage:'+i.id,no,'danger')+button('Оставить','cancel')+'</div>':'')+
     (i.affixes.length&&!i.rerolled?'<details class="gear-reroll"><summary>Заменить одно свойство · 5 оск. '+i.rank+'</summary><p>Один раз для этой вещи. Выбери свойство и новый вариант.</p><label>Заменить<select id="gear-affix">'+i.affixes.map((k,x)=>'<option value="'+x+'">'+esc(view.stat_names[k])+'</option>').join('')+'</select></label><label>На<select id="gear-choice">'+i.reroll_options.map(k=>'<option value="'+k+'">'+esc(view.stat_names[k])+'</option>').join('')+'</select></label>'+button('Подтвердить замену','reroll:'+i.id,no||mat<5)+'</details>':'')+'</div></section>';
   }
@@ -114,16 +116,19 @@
    if(cmd==='filter'){selected='';filter=arg;inventoryScroll=0;render();focusRight();return;}
    if(cmd==='tab'){tab=arg;render();return;}
    if(cmd==='ask'){confirm=arg;render();return;}
+   if(cmd==='sellask'){confirm='sell:'+arg;render();return;}
    if(cmd==='cancel'){confirm='';render();return;}
    const body={chat:context.chat,action:cmd,item:arg,revision:view.revision,character_slot:view.character_slot,nonce:crypto.randomUUID()};
+   if(cmd==='sell'){body.confirm=true;body.price=view.items.find(i=>i.id===arg)?.sell_price;}
    if(cmd==='reroll'){body.index=Number(app.querySelector('#gear-affix').value);body.choice=app.querySelector('#gear-choice').value;}
    if(['craft','buy'].includes(cmd)){body.key=arg;body.rank=app.querySelector('#gear-craft-rank').value;}
    busy=true;message='';
    try{
     view=await api(body);confirm='';
     if(['craft','buy'].includes(cmd)){selected=view.items[0]?.id||'';tab='inventory';}
-    if(cmd==='salvage')selected='';
+    if(cmd==='salvage'||cmd==='sell')selected='';
     message=({equip:'Предмет надет. Характеристики обновлены.',unequip:'Предмет снят. Характеристики обновлены.',salvage:'Вещь разобрана. Материалы получены.',upgrade:'Улучшение выполнено.',reroll:'Свойство заменено.',craft:'Эпический предмет создан.',buy:'Необычный предмет создан.'})[cmd]||'Сохранено.';
+    if(cmd==='sell')message='Продажа выполнена: 20% базовой цены. Действующие правила погашения долга сохраняются.';
    }catch(error){message=error.message;try{view=await api();}catch{} }
    finally{busy=false;render();}
   },{signal:abort.signal});

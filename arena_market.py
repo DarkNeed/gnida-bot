@@ -729,6 +729,7 @@ class ArenaMarketMixin(CasinoUnlockMixin, ForgeMixin):
             ends=visit["ends"] if visit else None,
             next_starts=next_visit["starts"] if next_visit else None,
             offers=offers,
+            gear=self._gear_market_locked(chat,actor,visit),
         )
 
     def _arena_merchant_notifications_locked(self, chat):

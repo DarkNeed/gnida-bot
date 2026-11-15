@@ -215,12 +215,14 @@ def _release_group(data, skills, rng):
     attacks = {}
     for event in q['group']:
         key, sid = event['actor'], event['skill']
-        if key not in humans(data) or sid not in skills or not skills[sid].hostile:
+        if key not in humans(data) or sid not in skills:
             continue
         f, target = fighters[key], fighters[event['target']]
+        if not effective_skill(pair(f,target),'a',sid,skills).hostile:continue
         if f['hp'] > 0 and target['hp'] > 0 and not any(e['kind'] == 'stun' for e in f['effects']):
             attacks[key] = event
-    targets = {k for r in released if r['intent'].get('skill') in skills and skills[r['intent']['skill']].hostile
+    targets = {k for r in released if r['intent'].get('targets') and r['intent'].get('skill') in skills and
+               effective_skill(pair(r['fighter'],fighters[r['intent']['targets'][0]]),'a',r['intent']['skill'],skills).hostile
                for k in r['intent']['targets'] if k in humans(data)}
     # In PvP both human casts may land at the same timestamp.
     if 'sides' in data:
@@ -259,9 +261,10 @@ def stages(data, key, skills):
         if key not in released['intent']['targets']:
             continue
         source, sid = released['fighter'], released['intent'].get('skill')
-        if sid not in skills or not skills[sid].hostile:
+        if sid not in skills:
             continue
         skill = effective_skill(pair(source, fighters[key]), 'a', sid, skills)
+        if not skill.hostile:continue
         stage = challenge('defense', source, fighters[key], skill, actor)
         stage.update(encounter_enemy=released['source'], name=source.get('name', '')+' · '+skill.name)
         members.append(stage)

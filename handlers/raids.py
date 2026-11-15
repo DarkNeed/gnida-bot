@@ -14,10 +14,11 @@ from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from arena_links import arena_link
 from arena_web import require_member
 from arena_raid_engine import BOSSES
+from arena_engine import BUILTIN_SKILLS
 from handlers.routes import text_or_caption_regexp
 
 RAID_RE = re.compile(
-    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng|фуфелшмерц|фуфел|doofenshmirtz|doof|китобой|whaler|кит|kit|маэль|капеллан|каппеллан|chaplain|назарик|nazarick|аинз|айнз|ainz))?\s*$",
+    r"^\s*/(?:рейд|raid)(?:@\w+)?(?:\s+(?P<boss>лей\s*хенг|lei[ _]?heng|фуфелшмерц|фуфел|doofenshmirtz|doof|китобой|whaler|кит|kit|маэль|капеллан|каппеллан|chaplain|назарик|nazarick|аинз|айнз|ainz|мимик|mimic))?\s*$",
     re.I,
 )
 ENCOUNTER_RE = re.compile(r'^\s*/(?:встреча|encounter)(?:@\w+)?(?:\s+(?P<roster>[^\n]+))?\s*$', re.I)
@@ -25,6 +26,7 @@ ENCOUNTER_RE = re.compile(r'^\s*/(?:встреча|encounter)(?:@\w+)?(?:\s+(?P<
 
 def raid_boss_id(match):
     name = match.group("boss").casefold() if match and match.group("boss") else ""
+    if name in ('мимик','mimic'):return 'mimic'
     if name in ('назарик','nazarick','аинз','айнз','ainz'):
         return 'nazarick'
     if name in ('капеллан', 'каппеллан', 'chaplain'):
@@ -144,7 +146,7 @@ class RaidPublisher:
             return (
                 text
                 + (
-                    f"\n📜 {('Последняя поправка · легендарный трактат' if row.get('boss_id') == 'chaplain' else 'Солнечное затмение · легендарный трактат' if row.get('boss_id') == 'kit' else 'Депортатор-инатор · 80 энергии, один раз за бой' if row.get('boss_id') == 'doofenshmirtz' else 'Трактат поступи тигробоя')}: шанс 70%, гарантия на пятой подходящей победе после четырёх неудач."
+                    f"\n📜 {BUILTIN_SKILLS[boss['loot_skill']].name}: шанс 70%, гарантия на пятой подходящей победе после четырёх неудач."
                     if boss.get("loot_skill")
                     else ""
                 )

@@ -46,6 +46,9 @@ def _prepare(data, keys, skills, rng):
         transition(data)
     if finish_if_needed(data) or data.get('_chaplain_transitioned') or data.get('_chaplain_rewound'):
         return []
+    if data.get('boss_id')=='mimic':
+        from arena_mimic import release
+        return release(data,data['intent'],skills) if 'boss' in keys else []
     released = []
     for key in keys:
         enemy, intent = _enemies(data).get(key), _intents(data).get(key)
@@ -76,6 +79,10 @@ def _land(data, released, guards, skills, rng):
 
 def _land_group(data, released, guards, skills, rng):
     from arena_raid_engine import _finish_boss_round
+    if data.get('boss_id')=='mimic':
+        from arena_mimic import resolve_group
+        resolve_group(data,released,guards,skills,rng)
+        return
     if not released:
         return
     for key, p in data['players'].items():

@@ -89,6 +89,23 @@ def register_guild(app,db,bot,actor_key,require_member,read_member,publisher=Non
     app.router.add_get('/api/guild/runs/{id}/avatars/{user:\\d+}',avatar)
     app.router.add_post('/api/guild/buy',buy)
 
+    async def gear_shop(request):
+        from arena_equipment import RANKS
+        actor=request[actor_key]
+        if request.method=='GET':
+            chat=int(request.query.get('chat','0'));await authorize(chat,actor)
+            return web.json_response(await db.gear_guild_view(chat,actor,request.query.get('rank')))
+        body=await request.json()
+        if not isinstance(body,dict):raise ValueError('Некорректная покупка.')
+        rank=body.get('rank')
+        if rank is not None and (not isinstance(rank,str) or rank not in RANKS):raise ValueError('Неизвестный ранг снаряжения.')
+        chat=body.get('chat');await authorize(chat,actor,True)
+        notice=await db.gear_guild_buy(chat,actor,body.get('offer'),body.get('nonce'),body.get('confirm'),expected_price=body.get('price'))
+        return web.json_response(dict(notice=notice,shop=await db.gear_guild_view(chat,actor,body.get('rank'))))
+
+    app.router.add_get('/api/guild/equipment',gear_shop)
+    app.router.add_post('/api/guild/equipment',gear_shop)
+
     async def equipment(request):
         actor=request[actor_key]
         if request.method=='GET':

@@ -76,6 +76,9 @@ async def raid_view(db, row, actor):
             side.update(class_avatar_url=choice_avatar('ragamuffin'),class_name=side['kingdom_npc'])
         if boss and boss_info.get("ally_sprite"):
             side["resource_name"] = "Заряд инатора"
+        if boss and row.get('boss_id')=='mimic':
+            side.update(sprite_url=raid_boss_sprite('mimic',data.get('phase',1)),sprite_flip=False,
+                pixel_art=False,class_rarity='legendary',class_name='Голодное отражение',resource_name='Энергия отражения')
         side["skill_details"] = []
         target = (
             data["boss"]
@@ -89,7 +92,7 @@ async def raid_view(db, row, actor):
         if side.get('guild_sprite'):
             from arena_guild_rules import MONSTERS
             side.update(class_avatar_url=side['guild_sprite'],sprite_url=side['guild_sprite'],pixel_art=False,
-                class_name=MONSTERS[side['guild_monster']]['role'])
+                class_name='Хищник сокровищницы' if side['guild_monster']=='chest_mimic' else MONSTERS[side['guild_monster']]['role'])
         if side.get('nzd_guardian'):
             from arena_nazarick_dungeon_rules import GUARDIANS,sprite
             who=side['nzd_guardian']
@@ -200,12 +203,20 @@ async def raid_view(db, row, actor):
             data['nazarick'].pop('initial_players', None)
         else:
             await decorate(data['boss'], 0, True)
+        if row.get('boss_id')=='mimic':
+            from arena_mimic import presentation
+            data['mimic_view']=presentation(data)
+            # Public UI gets named memory slots, not the reusable server payload.
+            data.pop('mimic',None)
+            data['boss'].pop('_mimic_skills',None)
+            data.get('intent',{}).pop('copies',None)
         if data.get('nazarick_run_id') and data.get('nazarick_view'):
             from arena_nazarick_dungeon_rules import ROOMS
             data['nazarick_view'].update(stage=ROOMS[data['nazarick_room']]['floor'],stage_count=10)
         for key, player in data["players"].items():
             player.pop('qte_result',None)
             await decorate(player["fighter"], player["fighter_id"],character_slot=player.get('character_slot',1))
+            player['fighter'].pop('plagiarism_memory',None)
             player["ready"] = player["selected"] is not None
             if data.get('unified_version') == 3:
                 from arena_unified_queue import ready, choice
@@ -230,8 +241,17 @@ async def raid_view(db, row, actor):
     config = json.loads(row['encounter_json']) if row.get('encounter_json') else None
     master = await db.get_user(row['chat_id'], row['creator_id']) if config else None
     guild_biome=''
+    guild_boss_encounter=False
+    from arena_guild_scenery import background_view
+    guild_scenery=background_view(data.get('guild_scenery')) if data and data.get('guild_run_id') else None
     if data and data.get('guild_run_id'):
-        async with db._lock:guild_biome=db._guild_row_locked(data['guild_run_id'])['data']['contract']['biome']
+        async with db._lock:
+            guild_data=db._guild_row_locked(data['guild_run_id'])['data']
+            guild_biome=guild_data['contract']['biome']
+            node=next((n for n in guild_data['nodes'] if n['id']==data.get('guild_node')),None)
+            # Legacy encounter enemies use is_boss for combat rules, not visual
+            # identity. Distinguish a final boss room from an ordinary hunt.
+            guild_boss_encounter=bool(data.get('guild_boss_room',node and node['kind']=='boss' and guild_data['contract']['kind']!='hunt'))
     return dict(
         token=row["token"],
         chat_id=row["chat_id"],
@@ -245,6 +265,8 @@ async def raid_view(db, row, actor):
         kingdom_id=data.get('kingdom_id') if data else None,
         guild_run_id=data.get('guild_run_id') if data else None,
         guild_biome=guild_biome,
+        guild_scenery=guild_scenery,
+        guild_boss_encounter=guild_boss_encounter,
         encounter_roster=([dict(id=mob, name=MOBS[mob]['name']) if isinstance(mob, str) else dict(id=mob['id'], name=mob['name']) for mob in config['roster']] if config else []),
         rewards_enabled=not bool(config),
         actor_id=actor,
@@ -268,7 +290,11 @@ async def raid_view(db, row, actor):
                          'Закрепление тратит действие, действует три раунда и сохраняет выбранный результат. '
                          'Восстановление на 30% HP возвращает только здоровье босса, не состояние игроков. '
                          'Помеченный навык отнимает ещё 10% максимального HP, но не убивает. Предел — 100 реальных раундов.'
-                         if row.get('boss_id')=='chaplain' else ''),
+                         if row.get('boss_id')=='chaplain' else
+                         'Три слота памяти, 2/3/4 украденные пассивки на три действия. Повтор приёма усиливает его копию. '
+                         'На 70% HP появляются сшитые атаки, на 35% закрепляется самый опасный текущий отпечаток. '
+                         'Копии оплачивают энергию и перезарядки; подготовленная ульта имеет одну активацию.'
+                         if row.get('boss_id')=='mimic' else ''),
         difficulty=boss_info.get('difficulty', ''),
         phase_count=boss_info.get('phase_count', 2),
         boss_sprites=dict(boss_info.get('phase_sprites', {})),

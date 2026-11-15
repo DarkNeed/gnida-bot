@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Сундук-мимик · проверка</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b1220;color:#e4eaf5;font:14px/1.45 system-ui;height:100dvh;display:flex;flex-direction:column}header{padding:12px 16px;border-bottom:1px solid #3e4d66;display:flex;gap:9px;align-items:center;flex-wrap:wrap}header b{font-size:16px;color:#edcc96}button,select,a{background:#1e2c44;border:1px solid #465779;border-radius:7px;color:#e4eaf5;padding:7px 11px;cursor:pointer;font:inherit;text-decoration:none}button:hover,a:hover{background:#304260}label{display:flex;gap:6px;align-items:center}small{color:#9dafc9;flex-basis:100%}iframe{display:block;border:0;width:100%;min-height:0;flex:1;margin:0 auto;background:#0b1220}details{padding:0 16px 8px}summary{color:#c9b2db;cursor:pointer}.labs{display:flex;gap:6px;flex-wrap:wrap;padding-top:8px}.labs button{font-size:12px}#width{margin-left:auto}@media(max-width:500px){header{padding:8px;font-size:12px;gap:6px}button,select{padding:6px 8px}header b{font-size:14px}#width{margin-left:0}small{font-size:10px}details{padding:0 8px 5px}}
+</style>
+<header><b>СУНДУК-МИМИК</b><label>Ранг <select id="rank"><option>F</option><option>E</option><option>D</option><option selected>C</option><option>B</option><option>A</option><option>S</option></select></label><label>Защита <select id="defense"><option value="dodge">Уклонение</option><option value="block">Блок</option></select></label><label><input id="party" type="checkbox">С напарником</label><label><input id="sturdy" type="checkbox">600 HP для теста</label>
+<button data-mode="mimic">Событие · мимик</button><button data-mode="treasure">Событие · добыча</button><button data-mode="battle">Бой · начало</button><button data-mode="battle" data-phase="2">Бой · ненасытность</button><button id="width">390px / ПК</button>
+<small>Временная локальная база. Только здесь исход сундука задан кнопкой; в игре он сохранён сервером с шансом 50%. Лис автоматически голосует вместе с тобой и выбирает обычную атаку. Никаких сообщений в Telegram.</small></header>
+<details><summary>Фоны подземелий · проверить в настоящем бою</summary><div class="labs"><button data-scenery-demo="treasure:C">Каменный зал · мимик</button><button data-scenery-demo="battle:C">Катакомбы · склеп</button><button data-scenery-demo="battle:F">Пещера · копи</button><button data-scenery-demo="battle:D">Лес · без замены</button><button data-scenery-demo="battle:A">Кальдера · без замены</button></div></details>
+<details><summary>Проверить каждый приём отдельно · уклонение и блок</summary><div class="labs" id="labs"></div></details>
+<iframe name="chest" title="Сундук-мимик — событие и бой" src="/chest-mimic-demo?mode=mimic"></iframe>
+<script id="skills" type="application/json">__CHEST_SKILLS__</script>
+<script>
+const frame=document.querySelector('iframe'),$=id=>document.getElementById(id);
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{const p=new URLSearchParams({mode:b.dataset.mode,phase:b.dataset.phase||'1',rank:$('rank').value,defense:$('defense').value,party:$('party').checked?'1':'0',sturdy:$('sturdy').checked?'1':'0'});frame.src='/chest-mimic-demo?'+p;});
+$('width').onclick=()=>frame.style.width=frame.style.width==='390px'?'100%':'390px';
+document.querySelectorAll('[data-scenery-demo]').forEach(b=>b.onclick=()=>{const [room,rank]=b.dataset.sceneryDemo.split(':');frame.src='/chest-mimic-demo?'+new URLSearchParams({mode:'battle',room,rank,defense:$('defense').value,party:$('party').checked?'1':'0',sturdy:$('sturdy').checked?'1':'0'});});
+for(const s of JSON.parse($('skills').textContent))for(const mode of ['defense','block']){const b=document.createElement('button');b.textContent=s.name+' · '+(mode==='block'?'блок':'уклонение');b.onclick=()=>frame.src=(mode==='block'?'/qte-lab/block/':'/qte-lab/unique/?mode=defense&')+(mode==='block'?'?':'')+'skill='+encodeURIComponent(s.id);$('labs').append(b);}
+</script></html>

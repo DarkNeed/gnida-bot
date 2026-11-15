@@ -15,12 +15,17 @@
     chaplain: {bpm:108, roots:[38,34,41,36,38,43,37,33], style:'chaplain', revision:1},
     chaplain_fault: {bpm:116, roots:[38,34,41,36,38,43,37,33], style:'chaplain', revision:2},
     chaplain_override: {bpm:132, roots:[38,37,34,33,38,43,41,37], style:'chaplain', revision:3},
-    chaplain_root: {bpm:148, roots:[38,34,37,33,38,43,41,33], style:'chaplain', revision:4}
+    chaplain_root: {bpm:148, roots:[38,34,37,33,38,43,41,33], style:'chaplain', revision:4},
+    mimic: {bpm:122, roots:[36,35,32,33,36,39,35,31], style:'mimic', phase:1},
+    mimic_stitched: {bpm:140, roots:[36,35,32,33,36,39,35,31], style:'mimic', phase:2},
+    mimic_original: {bpm:158, roots:[36,35,32,30,36,39,35,31], style:'mimic', phase:3}
   };
   const THEME_LABELS = {menu:'Меню',battle:'Бой',raid:'Рейд',lei_heng:'Лей Хенг',doofenshmirtz:'Фуфелшмерц',
     kit_menace:'Кит · II фаза · Надвигающаяся угроза',kit_abyss:'Кит · III фаза · Бездна смотрит в ответ',
     chaplain:'Капеллан · I · Регламент',chaplain_fault:'Капеллан · II · Несохранённый результат',
-    chaplain_override:'Капеллан · III · Ручное вмешательство',chaplain_root:'Капеллан · IV · Полный доступ'};
+    chaplain_override:'Капеллан · III · Ручное вмешательство',chaplain_root:'Капеллан · IV · Полный доступ',
+    mimic:'Мимик · I · Чужая мелодия',mimic_stitched:'Мимик · II · Двойной отпечаток',
+    mimic_original:'Мимик · III · Оригинал не нужен'};
   let prefs = {muted: false, music: 22, effects: 50};
   for(const who of ['shalltear','demiurge','albedo','pandora','ainz'])for(const phase of [1,2]){
     const roots=who==='shalltear'?[45,41,38,40]:who==='demiurge'?[38,39,34,37]:who==='albedo'?[33,29,36,31]:[38,34,41,36];
@@ -145,7 +150,7 @@
   function createRoom(theme) {
     if(!theme.style || !ctx.createDelay) return;
     // Feed-forward echoes only: no feedback loop can survive mute/pagehide.
-    const echoes=theme.style==='abyss'?[[.37,.24],[.73,.13]]:theme.style==='chaplain'?[[.29,.16],[.61,.085]]:[[.17,.14],[.31,.08]];
+    const echoes=theme.style==='abyss'?[[.37,.24],[.73,.13]]:theme.style==='mimic'?[[60/theme.bpm*.75,.19],[60/theme.bpm*1.5,.10]]:theme.style==='chaplain'?[[.29,.16],[.61,.085]]:[[.17,.14],[.31,.08]];
     for(const [seconds,level] of echoes) {
       const delay=ctx.createDelay(1),filter=ctx.createBiquadFilter(),wet=ctx.createGain();
       delay.delayTime.value=seconds;filter.type='lowpass';filter.frequency.value=theme.style==='abyss'?950:1500;
@@ -162,6 +167,53 @@
   function clockBell(note,at,volume,bus){
     for(const [offset,length,level] of [[0,2.5,.5],[12,1.8,.24],[19.1,1.2,.12],[28.2,.7,.06]])
       tone(note+offset,at,length,volume*level,bus,'sine');
+  }
+  function mirrorGlass(note,at,duration,volume,bus,reverse=false){
+    // Slightly inharmonic glass: the answering voice swells into its note.
+    for(const [offset,level,length] of [[0,.60,1],[12.03,.22,.8],[19.12,.12,.6],[27.8,.06,.4]])
+      tone(note+offset,at,duration*length,volume*level,bus,'sine',null,0,reverse,reverse?duration*.28:.004);
+  }
+  function mimicPhrase(theme,root,within,bar,beat,tick,at){
+    const phase=theme.phase,bus=musicBus,section=Math.floor(bar/4)%4,part=Math.floor(within/2);
+    // The same eight-note subject is stolen, played backward, then overlaid.
+    // Four arrangements over 32 bars avoid a single endlessly repeated arpeggio.
+    const subject=[0,1,7,3,6,7,1,-1],retrograde=[-1,1,7,6,3,7,1,0];
+    const mirror=bar%4>=2,melody=mirror?retrograde:subject;
+    const sparse=section===2&&bar%4<2;
+    if(within===0){
+      tone(root-12,at,beat*3.8,.095,bus,'sine',null,0,true,.05);
+      for(const interval of [0,7,13])tone(root+12+interval,at,beat*3.5,.024,bus,'triangle',null,interval===13?-5:4,true,.22);
+      if(bar%2===0||phase===3)abyssChoir(root+12,at,beat*3.6,phase===3?.068:.030,bus);
+      if(phase>=2&&!sparse)brass(root+12,at,beat*1.6,phase===3?.075:.045,bus);
+      if(bar%4===0){noise(at,beat*1.8,.027,bus,3200,.15);mirrorGlass(root+43,at,beat*2,.055,bus,true);}
+    }
+    if(within%2===0&&(!sparse||within%4===0)){
+      const riff=[0,0,7,1,0,6,7,-1][part];
+      tone(root+riff,at,tick*1.4,phase===3?.085:.063,bus,'sawtooth',null,-5);
+      tone(root+riff,at,tick*1.5,.050,bus,'sine');
+    }
+    if(within%4===0){
+      const index=(part+(section===3?2:0))%8;
+      mirrorGlass(root+24+melody[index],at,beat*1.2,.085,bus,mirror);
+      if(phase===3&&!sparse)brass(root+24+subject[(index+4)%8],at,beat*.7,.042,bus);
+    }
+    if(phase>=2&&within%4===3){
+      // An audible canon, not another audio player or a second scheduler.
+      mirrorGlass(root+36+retrograde[(part+bar)%8],at,beat*.85,phase===3?.065:.050,bus,true);
+      if(phase===3)tone(root+12+subject[part],at,tick*1.6,.035,bus,'triangle');
+    }
+    if([0,6,8,14].includes(within)||phase===3&&within===11){
+      drum(at,bus,true);tone(root-5,at,.18,.055,bus,'triangle',root-12);
+      noise(at,.095,.032,bus,460);
+    }
+    if(within===4||within===12){
+      noise(at,.16,phase>=2?.095:.072,bus,1050);noise(at,.045,.028,bus,4200);
+      tone(45,at,.11,.035,bus,'triangle',29);
+    }
+    if(!sparse&&within%2===1)noise(at,.028,phase===3?.029:.018,bus,6500);
+    if(bar%4===3&&within>=12&&phase>=2){
+      noise(at,.035,.032,bus,1700);tone(root+24-(within-12)*2,at,tick*.7,.030,bus,'triangle');
+    }
   }
   function chaplainPhrase(theme,root,within,bar,beat,tick,at){
     const phase=theme.revision,bus=musicBus,section=Math.floor(bar/8)%4;
@@ -287,7 +339,9 @@
     if(next < ctx.currentTime) next = ctx.currentTime+.02;
     while(next < ctx.currentTime+.18) {
       const length=theme.beats===3?12:16,bar=Math.floor(step/length),root=theme.roots[bar%theme.roots.length],within=step%length;
-      if(theme.style==='nazarick') {
+      if(theme.style==='mimic') {
+        mimicPhrase(theme,root,within,bar,beat,tick,next);
+      } else if(theme.style==='nazarick') {
         nazarickPhrase(theme,root,within,bar,beat,tick,next);
       } else if(theme.style==='chaplain') {
         chaplainPhrase(theme,root,within,bar,beat,tick,next);

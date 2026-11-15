@@ -163,6 +163,9 @@ def set_intents(data, skills=None):
     for index, (key, fighter) in enumerate(alive_enemies(data).items()):
         mob = fighter['mob_id']
         guild_mob=fighter.get('guild_monster')
+        if guild_mob=='chest_mimic':
+            from arena_chest_mimic import prepare
+            prepare(fighter)
         if guild_mob=='shaman' and data['round']%3==0:
             intents[key]=dict(kind='heal',skill=None,targets=[],text='Настой шамана: исцелит раненого союзника на 25% HP')
             continue
@@ -176,6 +179,9 @@ def set_intents(data, skills=None):
                 targets=[min(players,key=lambda k:data['players'][k]['fighter']['hp']/data['players'][k]['fighter']['stats']['max_hp'])]
             opponent = data['players'][targets[0]]['fighter'] if targets else fighter
             ids = fighter['loadout']
+            if guild_mob=='chest_mimic':
+                from arena_chest_mimic import PHASE_ONE, PHASE_TWO
+                ids=PHASE_TWO if fighter.get('chest_phase')==2 else PHASE_ONE
             usable = []
             for sid in ids:
                 try:
@@ -193,6 +199,10 @@ def set_intents(data, skills=None):
             kind, text = 'attack', effective_skill(pair_state(fighter,opponent),'a',selected,catalog).name
             if guild_mob in ('dragon','ancient','wyvern') and selected=='guild_fire':
                 targets=list(players);text+=' · дыхание по всему отряду'
+            if guild_mob=='chest_mimic':
+                from arena_chest_mimic import MASS_ATTACKS
+                if selected in MASS_ATTACKS:targets=list(players);text+=' · по всему отряду'
+                if fighter.get('chest_phase')==2:text+=' · ненасытность'
             intents[key] = dict(kind=kind, skill=selected, targets=targets, text=text)
             if fighter['rp_ai'] == 'sequence' and usable:
                 intents[key]['next_ai_index'] = position + 1

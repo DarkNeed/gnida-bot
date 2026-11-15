@@ -31,7 +31,8 @@ process.stdin.on('end',()=>{
    E.attackStep(attack,1/120);if(i%30===0)render('QTEView',attack);
   }
  }
- assert.equal(classes.size,14); // Gambler keeps its existing bespoke casino art.
+ assert(classes.size>=14); // Boss themes are additional, not character classes.
+ assert(classes.has('chest_mimic'),'Chest mimic lost its dedicated presentation');
  assert(motifs.size>=25,`Only ${motifs.size} visual motifs`);
  for(const cls of Object.keys(window.QTEArt.themes).filter(c=>c!=='gambler'))assert([...handled].some(k=>k.startsWith(cls+':')),'Unstyled '+cls);
  const find=id=>E.profile(catalog.find(s=>s.base_id===id));
@@ -39,7 +40,7 @@ process.stdin.on('end',()=>{
  assert.equal(window.QTEArt.appearance(find('hunter_shot')).motif,'silver_bullet');
  assert.equal(window.QTEArt.appearance(find('first_line')).motif,'paper');
  assert.equal(window.QTEArt.appearance(find('red_etude')).motif,'paint');
- for(const sk of catalog.filter(s=>s.class_id==='raid'))assert.equal(window.QTEArt.appearance(E.profile(sk)),null,'Boss art overwritten');
+ for(const sk of catalog.filter(s=>s.class_id==='raid'&&!s.base_id.startsWith('mimic_')))assert.equal(window.QTEArt.appearance(E.profile(sk)),null,'Boss art overwritten');
  // Flipping art on/off must not change deterministic outcomes.
  for(const id of['warning_shot','hunter_shot','red_etude','whole_family','mana_shot']){
   const p=find(id),first=E.defense(p,stats,24,{hp:10000,endOnDeath:false}),second=E.defense(p,stats,24,{hp:10000,endOnDeath:false});

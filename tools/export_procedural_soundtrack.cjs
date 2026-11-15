@@ -1,7 +1,8 @@
 // Offline render of the actual game synthesizer. Does not modify game source.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {chromium}=require('playwright');
-const root=path.resolve(__dirname,'..'),out=path.join(root,'output','soundtrack-20261104');
+const root=path.resolve(__dirname,'..'),out=path.resolve(root,process.env.SOUNDTRACK_OUT||'output/soundtrack-20261104');
+const selected=(process.env.SOUNDTRACK_THEMES||'').split(',').filter(Boolean);
 (async()=>{
  fs.mkdirSync(out,{recursive:true});
  let code=fs.readFileSync(path.join(root,'webapp','arena-audio'),'utf8');
@@ -10,7 +11,7 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'output','soundtrack-
  code=code.replace('while(next < ctx.currentTime+.18)','while(next < (window.__renderLimit ?? ctx.currentTime+.18))');
  const expose=`
  window.__soundtrack={themes:Object.entries(THEMES).map(([id,t])=>({id,name:THEME_LABELS[id]||id,bpm:t.bpm})),async render(id){
- const theme=THEMES[id],bars=theme.style==='chaplain'?32:16,rate=24000;
+ const theme=THEMES[id],bars=['chaplain','mimic'].includes(theme.style)?32:16,rate=24000;
  const length=bars*(theme.beats||4)*60/theme.bpm,seconds=length+7;
  const offline=new OfflineAudioContext(1,Math.ceil(seconds*rate),rate),Original=window.AudioContext;
  ctx=null;voices.clear();roomNodes=[];prefs={muted:false,music:100,effects:0};
@@ -33,16 +34,16 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'output','soundtrack-
   const page=await browser.newPage();await page.setContent('<!doctype html><title>Offline soundtrack export</title>');
   await page.addScriptTag({content:code});
   const themes=await page.evaluate(()=>window.__soundtrack.themes);
-  for(const theme of themes){
+  for(const theme of themes.filter(t=>!selected.length||selected.includes(t.id))){
    const r=await page.evaluate(id=>window.__soundtrack.render(id),theme.id);
    assert(r.peak>.001&&Number.isFinite(r.peak));
    fs.writeFileSync(path.join(out,theme.id+'.wav'),Buffer.from(r.base64,'base64'));
    manifest.push({...theme,seconds:r.seconds,peak:r.peak});console.log(theme.id+' '+r.seconds.toFixed(1)+'s');
   }
   fs.writeFileSync(path.join(out,'tracks.json'),JSON.stringify(manifest,null,2));
-  fs.writeFileSync(path.join(out,'README.txt'),'GnidaBot procedural soundtrack, exported 2026-11-04.\n'+
+  fs.writeFileSync(path.join(out,'README.txt'),'GnidaBot procedural soundtrack.\n'+
    'Actual game Web Audio synthesis; no imported anime recordings. Not a legal clearance certificate.\n'+
-   'Finite listening renders of looping themes: 16 bars each, Chaplain 32 bars, plus fading tail.\n'+
+   'Finite listening renders of looping themes: 16 bars each, Chaplain and Mimic 32 bars, plus fading tail.\n'+
    'WAV PCM16 mono, 24000 Hz. Contains music only, not SFX or media/Meow assets.\n'+
    'Source: webapp/arena-audio. Track titles: tracks.json.\n');
   console.log('PASS '+manifest.length+' non-silent music renders');

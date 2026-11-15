@@ -52,6 +52,8 @@ def random_values(seed):
 
 def family(s):
     ident, n = s.get("base_id", ""), s.get("name", "").lower()
+    if ident in {'mimic_claw','mimic_shards','mimic_gaze'}:
+        return {'mimic_claw':'slash','mimic_shards':'stars','mimic_gaze':'mirror'}[ident]
     from arena_guild_patterns import FAMILIES as guild_families
     if ident.startswith('guild_') and ident[6:] in guild_families:return guild_families[ident[6:]]
     guild={'guild_stab':'slash','guild_net':'paint','guild_fang':'beast','guild_hex':'mana','guild_smash':'impact','guild_bone':'death','guild_soul':'death','guild_claw':'beast','guild_fire':'fire','guild_ice':'ice','guild_lightning':'lightning'}
@@ -858,6 +860,9 @@ def prepare(s, e):
 
 def geometry(h, t):
     age = max(0, t - h["start"])
+    if h['type']=='line' and ('chestMoveX' in h or 'chestMoveY' in h):
+        dx=h.get('chestMoveX',0)*age;dy=h.get('chestMoveY',0)*age
+        return dict(h,ax=h['ax']+dx,ay=h['ay']+dy,bx=h['bx']+dx,by=h['by']+dy)
     if h.get('freezeFor') and age > h['freezeAt']:
         age = h['freezeAt'] + max(0, age-h['freezeAt']-h['freezeFor'])
     if h['type'] == 'line' and h.get('clockTurn'):
@@ -866,6 +871,10 @@ def geometry(h, t):
         dx, dy = h['bx']-h['ax'], h['by']-h['ay']
         return dict(h, bx=h['ax']+dx*cs-dy*sn, by=h['ay']+dx*sn+dy*cs)
     if h["type"] == "bullet":
+        if h.get('returnAt'):
+            travel=age if age<=h['returnAt'] else 2*h['returnAt']-age
+            sign=1 if age<=h['returnAt'] else -1
+            return dict(h,x=h['x']+h['vx']*travel,y=h['y']+h['vy']*travel,vx=h['vx']*sign,vy=h['vy']*sign)
         if h.get('orbit'):
             a=h['orbitAngle']+h['orbitSpeed']*age;r=h['orbitRadius']+h['spiral']*age
             return dict(h,x=h['cx']+math.cos(a)*r,y=h['cy']+math.sin(a)*r,

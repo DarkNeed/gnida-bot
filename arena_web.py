@@ -959,6 +959,12 @@ def create_arena_app(
             notice = await db.arena_buy_item(chat, actor, int_field(body, "offer"))
         elif action == 'sell_item':
             notice = await db.arena_sell_item(chat, actor, int_field(body, 'item'), int_field(body, 'quantity'), body.get('nonce'), body.get('confirm'))
+        elif action == 'buy_gear':
+            notice = await db.gear_merchant_buy(chat,actor,body.get('offer'),body.get('nonce'),body.get('confirm'))
+        elif action == 'sell_gear':
+            await db.gear_action(chat,actor,dict(action='sell',item=body.get('item'),nonce=body.get('nonce'),
+                revision=body.get('gear_revision'),character_slot=expected_slot,confirm=body.get('confirm'),price=body.get('price')))
+            notice = 'Экипировка продана за 20% базовой цены. Материалы улучшения не возвращаются.'
         elif action == "use_item":
             personal = body.get("personal", True)
             confirm = body.get("confirm", False)

@@ -192,14 +192,20 @@ class GuildMixin:
     def _guild_battle_locked(self,row,node):
         from arena_encounters import create_encounter,set_intents
         from arena_guild_rules import art
+        from arena_guild_scenery import assign_background
         d=row['data'];classes,skills=self._fighter_catalog_locked()
         templates=mob_templates(d['contract'],node,len(row['members']))
         members=[dict(actor_id=u,fighter_id=u,personal=True,slave_owner=u) for u in row['members']]
         combat=create_encounter(members,d['sources'],classes,skills,templates,row['leader'])
-        combat.update(players=deepcopy(d['players']),rp_mode=False,guild_run_id=row['id'],guild_node=node['id'])
+        combat.update(players=deepcopy(d['players']),rp_mode=False,guild_run_id=row['id'],guild_node=node['id'],
+                      guild_scenery=assign_background(d['contract'],node),
+                      guild_boss_room=node['kind']=='boss' and d['contract']['kind']!='hunt')
         for p in combat['players'].values():p.update(selected=None,selected_target=None)
         for enemy,template in zip(combat['enemies'].values(),templates):
             enemy.update(guild_monster=template['guild_monster'],guild_sprite=art(template['guild_monster']))
+            if template['guild_monster']=='chest_mimic':
+                enemy['chest_phase']=1
+                enemy['passive_details'].append(dict(name='Ненасытная мебель',rarity='rare',effects=[dict(kind='chest_hunger',value=.35,description='При 35% HP укусы сочетаются с монетами. Без исцеления, кражи вещей или копирования навыков.')]))
             if template['guild_monster']=='troll':
                 enemy['passive_details'].append(dict(name='Плоть болот',rarity='rare',effects=[dict(kind='guild_regen',value=.04,description='Восстанавливает 4% HP перед действием. Горение подавляет восстановление.')]))
         set_intents(combat,skills)
@@ -219,10 +225,13 @@ class GuildMixin:
     def _guild_enter_locked(self,row,node_id):
         d=row['data'];node=next((n for n in d['nodes'] if n['id']==node_id),None)
         if not node or node['cleared']:raise ValueError('Комната уже пройдена или не существует.')
+        from arena_guild_scenery import assign_background
+        assign_background(d['contract'],node)
         d.update(position=node_id,pending=None,votes={},vote_deadline=0)
         if node['kind'] in ('battle','elite','boss'):self._guild_battle_locked(row,node)
         elif node['kind']=='event':d['pending']=dict(kind='event',event=node['event'])
         elif node['kind']=='rest':d['pending']=dict(kind='rest')
+        elif node['kind']=='treasure':d['pending']=dict(kind='event',event='chest')
         else:
             amount=15+RANKS.index(d['contract']['rank'])*12
             d['finds']+=amount;node['cleared']=True
@@ -240,7 +249,18 @@ class GuildMixin:
                     f['resource']=min(f['stats']['resource_max'],f['resource']+round(f['stats']['resource_max']*.5));f['cooldowns']={}
                 message='Медитация: +50% энергии, перезарядки завершены.'
             else:raise ValueError('Недоступный вариант привала.')
-        elif choice=='leave':message='Отряд прошёл мимо.'
+        elif choice=='leave':
+            message='Отряд прошёл мимо.'
+            if event=='chest':node['loot_claimed']=False
+        elif event=='chest' and choice=='open':
+            if node.get('chest_opened'):raise ValueError('Этот сундук уже открыт.')
+            node.update(chest_opened=True,loot_claimed=True)
+            if node['roll']<.5:
+                node['ambush']='chest_mimic';d['pending']=None
+                self._guild_battle_locked(row,node)
+                d['history'].append('Сундук оказался голодным. Начался бой с мимиком! Добыча — после победы, без внезапного бесплатного урона.');return
+            amount=15+RANKS.index(d['contract']['rank'])*12
+            d['finds']+=amount;message=f'Сундук оказался сундуком. В походном мешке +{amount} ₣ каждому.'
         elif event=='shrine' and choice=='blessing':
             for f in living:
                 f['hp']=min(f['stats']['max_hp'],f['hp']+round(f['stats']['max_hp']*.4))
@@ -352,16 +372,16 @@ class GuildMixin:
                 if full:
                     self.connection.execute('INSERT INTO guild_bag VALUES(?,?,1) ON CONFLICT(actor_id,item) DO UPDATE SET quantity=quantity+1',(actor,supply))
                     loot=SUPPLIES[supply]['name']
-                bonus_nodes=[n for n in d['nodes'] if n.get('cleared') and n['kind'] in ('treasure','elite')] if c['kind']=='dungeon' else []
+                bonus_nodes=[n for n in d['nodes'] if n.get('cleared') and n.get('loot_claimed') is not False and (n['kind'] in ('treasure','elite') or n.get('chest_opened'))] if c['kind']=='dungeon' else []
                 boss_materials=3 if c['kind']=='dungeon' else 1
-                normal_materials=boss_materials+len(bonus_nodes)
+                normal_materials=boss_materials+sum(2 if n.get('ambush')=='chest_mimic' else 1 for n in bonus_nodes)
                 material_budget=normal_materials if full else max(1,normal_materials//2)
                 grant=min(boss_materials,material_budget);material_budget-=grant
                 equipment_loot.append(self._gear_loot_locked('guild:'+row['id']+':boss',actor,c,
                     guaranteed=c['kind']=='dungeon',chance=.45 if c['kind']=='elite' else .15,
                     materials=grant))
                 for node in bonus_nodes:
-                    grant=min(1,material_budget);material_budget-=grant
+                    grant=min(2 if node.get('ambush')=='chest_mimic' else 1,material_budget);material_budget-=grant
                     equipment_loot.append(self._gear_loot_locked('guild:'+row['id']+':'+node['id'],actor,c,chance=.25,materials=grant))
                 if full and c['kind']!='hunt':
                     from arena_engine import BUILTIN_SKILLS
@@ -397,7 +417,11 @@ class GuildMixin:
         node=next(n for n in d['nodes'] if n['id']==battle['guild_node'])
         if battle['won']:
             node['cleared']=True
-            d['finds']+=35 if node.get('bonus') else 8+RANKS.index(d['contract']['rank'])*5
+            if node.get('ambush')=='chest_mimic':
+                amount=35+RANKS.index(d['contract']['rank'])*20
+                d['finds']+=amount
+                d['history'].append(f'Мимик повержен: содержимое сундука и трофеи, +{amount} ₣ каждому при успешном возвращении. Дополнительный материал и обычный шанс снаряжения сокровищницы — при завершении данжа.')
+            else:d['finds']+=35 if node.get('bonus') else 8+RANKS.index(d['contract']['rank'])*5
             d['history'].append('Комната зачищена. Здоровье, энергия и перезарядки перенесены дальше.')
             if node['kind']=='boss':self._guild_settle_locked(row,True,'Заказ выполнен. Отряд вернулся в гильдию.')
             else:self._guild_save_locked(row)
@@ -440,6 +464,7 @@ class GuildMixin:
                 return self._guild_public_locked(self._guild_row_locked(ident),actor)
 
     def _guild_public_locked(self,row,actor):
+        from arena_guild_scenery import background_view
         d=row['data'];current=next((n for n in d['nodes'] if n['id']==d['position']),None)
         nodes=[]
         for n in d['nodes']:
@@ -469,6 +494,7 @@ class GuildMixin:
             invite=dict(posted=bool(invite and invite['message_id']),available_at=last_posted+INVITE_COOLDOWN if last_posted else 0),
             expires=row['expires'],server_time=int(time.time()),contract=d['contract'],members=members,nodes=nodes,
             position=d['position'],pending=pending,battle=d['battle'],finds=d['finds'],votes=d['votes'],vote_deadline=d['vote_deadline'],
+            room_scenery=background_view(current.get('scenery')) if current else background_view(None),
             history=d['history'][-20:],results=d.get('results',{}),reason=d.get('reason',''),
             supplies_used=d['supplies_used'],bag={r['item']:r['quantity'] for r in self.connection.execute('SELECT * FROM guild_bag WHERE actor_id=?',(actor,))})
 

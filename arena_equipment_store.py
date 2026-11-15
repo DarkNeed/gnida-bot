@@ -6,9 +6,10 @@ import secrets
 import time
 from arena_equipment import (CATALOG,RANKS,RARITIES,LEVELS,SLOTS,STATS,AFFIXES,CHANCES,EFFECTS,
                              public_item,apply_stats)
+from arena_gear_market import GearMerchantMixin
 
 
-class EquipmentMixin:
+class EquipmentMixin(GearMerchantMixin):
     def _connect_equipment(self):
         self.connection.executescript('''
             CREATE TABLE IF NOT EXISTS gear_accounts(actor INTEGER PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0);
@@ -21,6 +22,8 @@ class EquipmentMixin:
                 PRIMARY KEY(actor,nonce));
             CREATE TABLE IF NOT EXISTS gear_loot(source TEXT NOT NULL, actor INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(source,actor));
         ''')
+
+        self._connect_gear_market()
 
     def _gear_revision_locked(self,actor):
         self.connection.execute('INSERT OR IGNORE INTO gear_accounts VALUES(?,0)',(actor,))
@@ -130,6 +133,7 @@ class EquipmentMixin:
         mark=json.dumps({k:v for k,v in body.items() if k not in ('nonce','revision')},sort_keys=True)
         async with self._lock:
             with self.connection:
+                if not self.connection.in_transaction:self.connection.execute('BEGIN IMMEDIATE')
                 self._require_feature_locked(chat,'arena')
                 old=self.connection.execute('SELECT fingerprint FROM gear_requests WHERE actor=? AND nonce=?',(actor,nonce)).fetchone()
                 if old:
@@ -155,10 +159,16 @@ class EquipmentMixin:
                     elif action=='unequip':self.connection.execute('DELETE FROM gear_loadouts WHERE actor=? AND character_slot=? AND item=?',(actor,slot,ident))
                     elif action=='favorite':
                         item['favorite']=not item['favorite'];self._gear_save_locked(actor,item)
-                    elif action=='salvage':
+                    elif action in ('salvage','sell'):
                         if item['favorite']:raise ValueError('Сначала убери вещь из избранного.')
                         if self.connection.execute('SELECT 1 FROM gear_loadouts WHERE actor=? AND item=?',(actor,ident)).fetchone():raise ValueError('Вещь надета на одном из персонажей.')
-                        self._gear_material_locked(actor,item['rank'],public_item(item)['salvage'])
+                        if action=='sell':
+                            if body.get('confirm') is not True:raise ValueError('Подтверди продажу вещи.')
+                            price=public_item(item)['sell_price']
+                            if type(body.get('price')) is not int or body['price']!=price:
+                                raise ValueError('Цена изменилась. Обнови предложение продажи.')
+                            self._add_francs_locked(chat,actor,price)
+                        else:self._gear_material_locked(actor,item['rank'],public_item(item)['salvage'])
                         self.connection.execute('DELETE FROM gear_items WHERE actor=? AND id=?',(actor,ident))
                     elif action=='upgrade':
                         if item['upgrade']>=5:raise ValueError('Уже достигнуто +5.')

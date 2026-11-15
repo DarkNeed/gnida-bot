@@ -63,12 +63,22 @@ def challenge(kind, attacker, target, skill, actor):
         description=skill.description,
         npc_tier=(max(0,min(4,int(attacker.get('npc_tier', 0)))) if attacker.get('controller_id') == 0 and not attacker.get('nzd_guardian') else 0),
     )
+    if attacker.get('is_mimic') or 'plagiarism' in attacker.get('loadout',[]):
+        from arena_mimic import pattern
+        # Native resolution retains the source ID, while the frozen wrapper is
+        # the key of its compiled record. Do not invent a generic QTE for copies.
+        copied=pattern(attacker,skill.skill_id)
+        if copied:
+            descriptor=copied
+            descriptor['strikes']=n
+        elif attacker.get('is_mimic'):
+            descriptor['mimic']=True
     if skill.skill_id=='nz_pandora_p2_1' and attacker.get('nz_copy'):
         descriptor['copy_skill']=deepcopy(attacker['nz_copy'])
         descriptor['name']+=' — '+attacker['nz_copy']['name']
     if skill.skill_id.startswith('guild_'):
         descriptor['monster_pattern']=3
-    elif descriptor['npc_tier']:
+    elif descriptor.get('npc_tier'):
         descriptor['npc_pattern']=2
     # Kit's announced reflection/coins consist of two different native actions.
     # One pattern, two groups: do not apply the same collisions to both actions.
@@ -130,7 +140,7 @@ def challenge(kind, attacker, target, skill, actor):
     if kind == 'attack':
         from arena_casino_chance import mode
         casino_mode = mode(descriptor)
-        if casino_mode:
+        if casino_mode and not descriptor.get('mimic_outcome'):
             result.update(casino_mode=casino_mode, _casino_chance_seed=secrets.token_hex(32))
             if attacker.get('rp_sandbox'):result['casino_retry_exempt']=True
     return result

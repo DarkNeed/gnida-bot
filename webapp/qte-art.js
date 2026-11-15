@@ -22,6 +22,8 @@
   };
   function appearance(p){
     const sk=p.skill||{},cls=sk.class_id,base=THEMES[cls];
+    if((sk.base_id||'').startsWith('guild_chest_'))return {cls:'chest_mimic',motif:sk.base_id.includes('coins')?'chest_coin':sk.base_id.endsWith('tongue')?'chest_tongue':sk.base_id.endsWith('devour')?'chest_mouth':'chest_teeth',color:'#daaab1',label:'НЕНАСЫТНАЯ СОКРОВИЩНИЦА'};
+    if(sk.mimic)return {cls,motif:({slash:'claw',stars:'crystal',mirror:'crystal',gun:'bullet',mana:'orb',void:'orb'})[p.kind]||'crystal',color:'#f061a2',label:'ГОЛОДНОЕ ОТРАЖЕНИЕ'};
     // Bespoke boss/casino presentations remain in their own renderers. A borrowed
     // boss ability keeps its native appearance even in an RP character's loadout.
     if(!base||p.chaplain||p.kit||p.kind?.startsWith('casino_')||window.NazarickQTE?.identity(p))return null;
@@ -88,6 +90,16 @@
     c.save();c.translate(x,y);c.rotate(angle);c.scale(Math.max(1,r)/12,Math.max(1,r)/12);
     c.setLineDash([]);c.lineJoin='round';c.lineCap='round';c.shadowBlur=0;
     switch(motif){
+      case 'chest_coin':
+        c.save();c.scale(.55+.35*Math.abs(Math.sin(time*11)),1);disc(c,0,0,10,'#c8b480');circle(c,0,0,8,'#fff0b9',1.3);stroke(c,[[0,-5],[0,5]],'#6a583c',2);stroke(c,[[-3,-3],[3,-3],[-3,3],[3,3]],'#f3dda1',1);c.restore();break;
+      case 'chest_teeth':
+        polygon(c,[[-10,-8],[9,-8],[9,-4],[-10,-4]],'#773f51');polygon(c,[[-9,-4],[-3,5],[0,-4]],'#f1e7cb');polygon(c,[[0,-4],[6,7],[9,-4]],'#e3d5b5');break;
+      case 'chest_tongue':
+        stroke(c,[[-10,0],[-2,-3],[7,-2],[10,1]],'#a85270',8);stroke(c,[[-9,-1],[-1,-4],[6,-3]],'#e7a8b9',1.3);break;
+      case 'chest_mouth':
+        c.fillStyle='#1b0c18';c.beginPath();c.ellipse(0,0,11,8,0,0,TAU);c.fill();circle(c,0,0,10,'#b78089',1);for(let j=-1;j<=1;j++){polygon(c,[[j*6-3,-6],[j*6+2,-6],[j*6,0]],'#ede0c4');polygon(c,[[j*6-3,6],[j*6+2,6],[j*6,2]],'#ede0c4');}break;
+      case 'chest_splinter':
+        polygon(c,[[-10,-3],[2,-5],[11,0],[-3,4]],'#9d7758');stroke(c,[[-7,-1],[6,0]],'#dac2a1',1);break;
       case 'bullet':case 'silver_bullet':{
         const silver=motif==='silver_bullet',brass=silver?'#bdcbe0':'#c59b51',shine=silver?'#f5f2ed':'#f0d38b';
         polygon(c,[[-10,-5],[3,-5],[11,0],[3,5],[-10,5]],brass);
@@ -180,6 +192,7 @@
     c.restore();
   }
   function forHazard(a,h){
+    if(a.cls==='chest_mimic'&&h.motif)return h.motif;
     if(a.cls==='mage'&&a.motif==='soul')return h.motif==='bone'?'bone':h.motif==='skull'?'skull':'soul';
     if(h.motif==='star'&&a.cls==='hunter'&&a.motif==='silver_bullet')return 'silver_bullet';
     return a.motif;
@@ -196,6 +209,15 @@
     if(warning){
       stroke(c,[[0,-r],[length,-r]],a.color,1);stroke(c,[[0,r],[length,r]],a.color,1);
       c.globalAlpha*=.16;c.fillStyle=a.color;c.fillRect(0,-r,length,r*2);
+      if(a.motif==='chest_teeth'){
+        c.globalAlpha/= .16;
+        for(let x=14;x<length;x+=30)glyph(c,'chest_teeth',x,0,Math.min(10,r),0,a.color,s.time);
+        // The inward arrow explains the jaw's coming movement, not a hitbox.
+        const vx=(h.chestMoveX||0)*Math.cos(angle)+(h.chestMoveY||0)*Math.sin(angle),vy=-(h.chestMoveX||0)*Math.sin(angle)+(h.chestMoveY||0)*Math.cos(angle),len=Math.hypot(vx,vy)||1;
+        const dx=vx/len*22,dy=vy/len*22;
+        stroke(c,[[length/2,0],[length/2+dx,dy]],a.color,1.5);
+        const tip=Math.atan2(dy,dx);stroke(c,[[length/2+dx-7*Math.cos(tip-.5),dy-7*Math.sin(tip-.5)],[length/2+dx,dy],[length/2+dx-7*Math.cos(tip+.5),dy-7*Math.sin(tip+.5)]],a.color,1.5);
+      }
     }else{
       // Every pixel in the authoritative collision strip remains visibly filled.
       c.globalAlpha*=.40;c.fillStyle=a.color;c.fillRect(0,-r,length,r*2);c.globalAlpha/= .40;
@@ -205,6 +227,10 @@
         stroke(c,[[0,-r*.85],[length*.8,-r*.65]],a.color,2);stroke(c,[[0,0],[length,0]],a.color,1);
         if(m==='bloodblade')stroke(c,[[length*.08,r*.35],[length*.7,r*.3]],'#bb4c66',Math.max(2,r*.3));
         if(m==='saw')for(let x=12;x<length;x+=22)polygon(c,[[x,r*.35],[x+13,r*.35],[x+3,r*.85]],'#ccd8df');
+      }else if(m==='chest_teeth'){
+        for(let x=0;x<length;x+=30){polygon(c,[[x,-r*.9],[x+23,-r*.9],[x+12,r*.85]],'#eee0c5');stroke(c,[[x,-r],[x+23,-r]],'#8f4f61',2);}
+      }else if(m==='chest_tongue'){
+        stroke(c,[[0,0],[length,0]],'#9f4764',Math.max(3,r*1.5));stroke(c,[[0,-r*.3],[length,-r*.3]],'#e6a1b2',Math.max(1,r*.17));disc(c,length-r,0,r*.75,'#c66e87');
       }else if(['claw','paw','paint_claw'].includes(m)){
         for(let j=-1;j<=1;j++){
           c.strokeStyle=j===0?'#ffe0db':a.color;c.lineWidth=Math.max(1,r*.25);c.beginPath();c.moveTo(0,j*r*.6);c.quadraticCurveTo(length*.5,j*r*.6-r*.2,length,j*r*.6);c.stroke();
@@ -243,6 +269,7 @@
   }
   function hazard(c,s,h,g,flags){
     const a=appearance(s.p);if(!a||h.uniform||h.visualOnly)return false;
+    if(a.cls==='chest_mimic'&&h.motif)a.motif=h.motif;
     if((s.p.skill.base_id||'').startsWith('guild_')&&h.color)a.color=h.color;
     const {warning}=flags,t=s.time;c.save();c.strokeStyle=a.color;c.fillStyle=a.color;c.shadowBlur=0;
     if(h.type==='bullet'){
@@ -270,6 +297,7 @@
       c.save();c.globalAlpha*=warning?.07:.18;disc(c,g.x,g.y,g.r,a.color);c.restore();c.setLineDash([]);
       if(h.type==='well'){
         disc(c,g.x,g.y,g.r*.72,'#080713');
+        if(a.cls==='chest_mimic'){glyph(c,'chest_mouth',g.x,g.y,g.r*.85,0,a.color,t);}
         for(let j=0;j<3;j++){c.save();c.translate(g.x,g.y);c.rotate(t*.8+j*TAU/3);c.strokeStyle=a.color;c.lineWidth=1.5;c.beginPath();c.ellipse(0,0,g.r*.94,g.r*.35,0,0,TAU);c.stroke();c.restore();}
       }else if(!warning){
         if(a.motif==='paint'){
@@ -305,6 +333,7 @@
   }
   function block(c,s,e,v){
     const a=appearance(s.p);if(!a)return false;
+    if(a.cls==='chest_mimic'&&e.motif)a.motif=e.motif;
     const cx=360,cy=200,r=162-v*113,angle=e.angle,t=s.time;
     c.save();c.setLineDash([]);c.strokeStyle=a.color;c.fillStyle=a.color;
     if(e.kind==='wave'){
