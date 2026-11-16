@@ -15,6 +15,7 @@ from database import Database
 from handlers.admin_message_blocks import create_admin_message_block_router
 from handlers.franc_events import create_franc_event_router
 from handlers.routes import create_router
+from handlers.message_activity import MessageActivityMiddleware, create_message_activity_router
 from handlers.arena import ArenaPublisher, create_arena_router
 from arena_web import create_arena_app
 from arena_links import arena_link
@@ -73,6 +74,9 @@ async def main() -> None:
     publisher = ArenaPublisher(database, bot, username)
     guild_publisher=GuildPublisher(database,bot,username)
     dispatcher = Dispatcher()
+    # Root middleware counts messages even when another feature handles them.
+    # Deliberately not registered on edited_message or channel_post.
+    dispatcher.message.outer_middleware(MessageActivityMiddleware(database))
     dispatcher.include_router(create_admin_menu_router(database))
     dispatcher.include_router(create_character_grant_router(database, username))
     dispatcher.include_router(create_pet_grant_router(database, username))
@@ -82,6 +86,7 @@ async def main() -> None:
         create_admin_message_block_router(database, kargassia_chat_id=kargassia_chat_id)
     )
     dispatcher.include_router(create_pet_router(database, username, pets_payments_enabled))
+    dispatcher.include_router(create_message_activity_router(database))
     dispatcher.include_router(create_franc_event_router(database))
     dispatcher.include_router(create_finance_router(database))
     dispatcher.include_router(create_enterprise_router(database))

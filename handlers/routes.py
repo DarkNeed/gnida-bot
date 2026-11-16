@@ -397,6 +397,31 @@ GNIDA_DIRECT_MEOW_RE = re.compile(
 MEDIA_DIR = Path(__file__).resolve().parents[1] / "media"
 GNIDA_VIDEO_PATH = MEDIA_DIR / "Gnida.mp4"
 MEOW_AUDIO_PATH = MEDIA_DIR / "Meow-voice.ogg"
+BRYANSK_NORTH_RE = re.compile(r"^\s*брянск\s+север[!?.\s]*$", re.IGNORECASE)
+BOT_REACTION_PREFIX = (
+    r"(?<![\w-])(?:гнида[\s\-–—]*бот|бот)(?!\w)"
+    r"\s*[,!:–—-]?\s*(?:ты\s+)?(?:(?:очень|такой|просто|совсем|самый)\s+)?"
+)
+BOT_CRITICISM_RE = re.compile(
+    BOT_REACTION_PREFIX
+    + r"(?:плохой|плох|тупой|туп|глупый|глуп|тупица|дурак|бесполезный|бесполезен|отстой|говно)(?!\w)",
+    re.IGNORECASE,
+)
+BOT_PRAISE_RE = re.compile(
+    BOT_REACTION_PREFIX
+    + r"(?:хороший|хорош|лучший|классный|умный|молодец|красавчик|отличный)(?!\w)",
+    re.IGNORECASE,
+)
+BOT_CRITICISM_REPLIES = (
+    "Пошёл нахуй",
+    "Нет, пошёл нахуй",
+    "Проветрись. То есть пошёл нахуй",
+)
+BRYANSK_NORTH_STICKER_PATH = MEDIA_DIR / "bryansk-north.webp"
+BOT_PRAISE_STICKER_PATHS = (
+    MEDIA_DIR / "bot-praise-1.webp",
+    MEDIA_DIR / "bot-praise-2.webp",
+)
 SAFEBOORU_API_URL = "https://safebooru.org/index.php"
 SAFEBOORU_TAGS = "murder_drones rating:safe"
 # A non-Telegram scope: inline games have no accessible chat ID. Never use a
@@ -6559,6 +6584,19 @@ def create_router(
             f"Спизжено {count} артов, одна порнуха на уме",
         )
         await message.answer(random.choice(responses))
+
+    @router.message(text_or_caption_regexp(BRYANSK_NORTH_RE))
+    async def bryansk_north_sticker(message: Message) -> None:
+        await message.answer_sticker(FSInputFile(BRYANSK_NORTH_STICKER_PATH))
+
+    # These specific reactions must precede the broad random "гнида" joke.
+    @router.message(text_or_caption_regexp(BOT_CRITICISM_RE, mode="search"))
+    async def bot_criticism_reply(message: Message) -> None:
+        await message.answer(random.choice(BOT_CRITICISM_REPLIES), parse_mode=None)
+
+    @router.message(text_or_caption_regexp(BOT_PRAISE_RE, mode="search"))
+    async def bot_praise_sticker(message: Message) -> None:
+        await message.answer_sticker(FSInputFile(random.choice(BOT_PRAISE_STICKER_PATHS)))
 
     @router.message(text_or_caption_regexp(GNIDA_RE, mode="search"))
     async def random_gnida(message: Message) -> None:
