@@ -1,56 +1,49 @@
 """Keep the Mini App stylesheet and client on the same content revision."""
 
 import hashlib
+from functools import lru_cache
 from pathlib import Path
 
 
 def render_arena_index(root: Path) -> str:
+    root = root.resolve()
+    # Stat rather than read megabytes of JS/CSS on every app opening. Include
+    # index.html and absent optional files so local edits/deployments invalidate
+    # the cache without a restart. Atomic replacements also change inode/ctime.
+    signature = []
+    for name in ("index.html", *REQUIRED_ASSETS, *OPTIONAL_ASSETS):
+        try:
+            info = (root / name).stat()
+        except FileNotFoundError:
+            if name == "index.html" or name in REQUIRED_ASSETS:
+                raise
+            signature.append(None)
+        else:
+            signature.append((info.st_mtime_ns, info.st_ctime_ns, info.st_size, info.st_ino))
+    return _render_arena_index(root, tuple(signature))
+
+
+REQUIRED_ASSETS = ("style.css", "battle-client", "arena-audio")
+OPTIONAL_ASSETS = (
+    "holdings.css", "holdings-client", "npc-workers.js", "npc-workers.css",
+    "qte-live", "qte-combined.js", "raid-intents.js", "raid-timeline.js",
+    "raid-intents.css", "nazarick-qte.js", "ainz-qte.js", "ainz-qte-art.js",
+    "nazarick-dungeon-qte.js", "nazarick-dungeon.js", "nazarick-dungeon.css",
+    "qte-watch", "qte-live.css", "qte-lab/engine", "qte-input", "qte-input.css",
+    "qte-unique/engine", "qte-view", "qte-art.js", "guild.js", "guild.css",
+    "kingdom.js", "kingdom-map.js", "kingdom-army.js", "kingdom-diplomacy.js",
+    "kingdom-diplomacy.css", "kingdom-budget.js", "kingdom-budget.css", "kingdom.css",
+    "equipment.js", "equipment.css", "qte-casino-view", "qte-casino-chance",
+    "qte-casino-chance.css", "qte-block/engine", "qte-block-view", "rp-client", "rp.css",
+)
+
+
+@lru_cache(maxsize=8)
+def _render_arena_index(root: Path, signature: tuple) -> str:
     revision = hashlib.sha256()
-    for name in ("style.css", "battle-client", "arena-audio"):
+    for name in REQUIRED_ASSETS:
         revision.update((root / name).read_bytes())
-    for name in ("holdings.css", "holdings-client", "npc-workers.js", "npc-workers.css"):
-        if (root / name).exists():
-            revision.update((root / name).read_bytes())
-    for name in (
-        "qte-live",
-        "qte-combined.js",
-        "raid-intents.js",
-        "raid-timeline.js",
-        "raid-intents.css",
-        "nazarick-qte.js",
-        "ainz-qte.js",
-        "ainz-qte-art.js",
-        "nazarick-dungeon-qte.js",
-        "nazarick-dungeon.js",
-        "nazarick-dungeon.css",
-        "qte-watch",
-        "qte-live.css",
-        "qte-lab/engine",
-        "qte-input",
-        "qte-input.css",
-        "qte-unique/engine",
-        "qte-view",
-        "qte-art.js",
-        "guild.js",
-        "guild.css",
-        "kingdom.js",
-        "kingdom-map.js",
-        "kingdom-army.js",
-        "kingdom-diplomacy.js",
-        "kingdom-diplomacy.css",
-        "kingdom-budget.js",
-        "kingdom-budget.css",
-        "kingdom.css",
-        "equipment.js",
-        "equipment.css",
-        "qte-casino-view",
-        "qte-casino-chance",
-        "qte-casino-chance.css",
-        "qte-block/engine",
-        "qte-block-view",
-        "rp-client",
-        "rp.css",
-    ):
+    for name in OPTIONAL_ASSETS:
         if (root / name).exists():
             revision.update((root / name).read_bytes())
     version = revision.hexdigest()[:16]

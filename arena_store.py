@@ -48,6 +48,7 @@ from arena_guild import GuildMixin
 from arena_equipment_store import EquipmentMixin
 from arena_kingdom import KingdomMixin
 from arena_nazarick_dungeon import NazarickDungeonMixin
+from arena_content_cache import custom_class, custom_skill
 
 OWNER_RECORD_XP = 2
 ARENA_PREPARATION_SECONDS = 3 * 60 * 60
@@ -385,25 +386,16 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
         for row in self.connection.execute(
             "SELECT class_id, definition_json FROM custom_fighter_classes WHERE hidden=0"
         ):
-            try:
-                classes[str(row["class_id"])] = fighter_class_from_dict(
-                    str(row["class_id"]), json.loads(row["definition_json"])
-                )
-            except (TypeError, ValueError, json.JSONDecodeError, KeyError):
-                continue
+            class_id = str(row["class_id"])
+            value = custom_class(class_id, row["definition_json"])
+            if value is not None:
+                classes[class_id] = value
         for row in self.connection.execute(
             "SELECT skill_id, definition_json FROM custom_fighter_skills"
         ):
-            try:
-                skill = skill_from_dict(
-                    str(row["skill_id"]), json.loads(row["definition_json"])
-                )
-                if not json.loads(row['definition_json']).get('merchant_available', False):
-                    continue
-                if skill.class_id in classes:
-                    skills[skill.skill_id] = skill
-            except (TypeError, ValueError, json.JSONDecodeError, KeyError):
-                continue
+            skill = custom_skill(str(row["skill_id"]), row["definition_json"])
+            if skill is not None and skill.class_id in classes:
+                skills[skill.skill_id] = skill
         return classes, skills
 
     def _granted_content_locked(

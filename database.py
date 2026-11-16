@@ -2399,11 +2399,11 @@ class Database(MessageActivityMixin, LeaderboardsMixin, TransferBatchMixin, Depo
     async def settle_businesses_for_user(self, user_id: int) -> None:
         async with self._lock:
             rows = self.connection.execute(
-                """SELECT DISTINCT b.chat_id, b.owner_id
-                   FROM businesses b
-                   LEFT JOIN business_workers w
-                       ON w.chat_id=b.chat_id AND w.owner_id=b.owner_id
-                   WHERE b.owner_id=? OR w.worker_id=?""",
+                """SELECT chat_id, owner_id FROM businesses WHERE owner_id=?
+                   UNION
+                   SELECT b.chat_id, b.owner_id FROM business_workers w
+                   JOIN businesses b ON b.chat_id=w.chat_id AND b.owner_id=w.owner_id
+                   WHERE w.worker_id=?""",
                 (user_id, user_id),
             ).fetchall()
             now = utc_timestamp()

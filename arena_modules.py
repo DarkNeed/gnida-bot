@@ -46,11 +46,29 @@ class ClassModulesMixin:
             self._require_feature_locked(chat,'arena')
 
     def _arena_class_enabled_locked(self, chat, cls):
-        return cls in self._fighter_catalog_locked()[0]
+        from arena_engine import FIGHTER_CLASSES
+        if cls in FIGHTER_CLASSES:
+            return True
+        from arena_content_cache import custom_class
+        row = self.connection.execute(
+            'SELECT definition_json FROM custom_fighter_classes WHERE class_id=? AND hidden=0', (cls,)
+        ).fetchone()
+        return row is not None and custom_class(cls, row['definition_json']) is not None
 
     def _arena_content_enabled_locked(self, chat, kind, content, catalog=None):
-        classes,skills=self._fighter_catalog_locked()
-        return content in classes if kind=='class' else content in skills if kind=='skill' else True
+        if kind not in {'class', 'skill'}:
+            return True
+        from arena_engine import FIGHTER_CLASSES, BUILTIN_SKILLS
+        if content in (FIGHTER_CLASSES if kind == 'class' else BUILTIN_SKILLS):
+            return True
+        if kind == 'class':
+            return self._arena_class_enabled_locked(chat, content)
+        from arena_content_cache import custom_skill
+        row = self.connection.execute(
+            'SELECT definition_json FROM custom_fighter_skills WHERE skill_id=?', (content,)
+        ).fetchone()
+        skill = custom_skill(content, row['definition_json']) if row is not None else None
+        return skill is not None and self._arena_class_enabled_locked(chat, skill.class_id)
 
     async def arena_modules(self, chat):
         async with self._lock:

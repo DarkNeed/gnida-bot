@@ -97,7 +97,9 @@ class EnterpriseMixin(EnterpriseProtectionMixin, NpcWorkersMixin, SlaveFinanceMi
             AND b.owner_id=business_workers.owner_id) WHERE business_id IS NULL''')
         self.connection.executescript('''
             CREATE INDEX IF NOT EXISTS idx_business_owner ON businesses(chat_id,owner_id);
+            CREATE INDEX IF NOT EXISTS idx_business_owner_global ON businesses(owner_id,chat_id);
             CREATE INDEX IF NOT EXISTS idx_business_site_workers ON business_workers(business_id);
+            CREATE INDEX IF NOT EXISTS idx_business_worker_global ON business_workers(worker_id,chat_id,owner_id);
             CREATE TABLE IF NOT EXISTS enterprise_income_daily(
                 business_id INTEGER NOT NULL,income_day TEXT NOT NULL,gross_income INTEGER NOT NULL DEFAULT 0,
                 net_income INTEGER NOT NULL DEFAULT 0,tax_paid INTEGER NOT NULL DEFAULT 0,
