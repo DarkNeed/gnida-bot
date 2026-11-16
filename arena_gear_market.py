@@ -83,7 +83,7 @@ class GearMerchantMixin:
         gear=self._gear_view_locked(chat,actor)
         return dict(offers=[],items=gear['items'],stats=gear['stats'],stat_names=gear['stat_names'],
             revision=gear['revision'],character_slot=gear['character_slot'],level=gear['level'],
-            hunter_rank=gear['hunter_rank'],busy=gear['busy'],moved_to_guild=True)
+            hunter_rank=gear['hunter_rank'],busy=gear['busy'],moved_to_guild=True,sell_percent=gear['sell_percent'])
 
     async def gear_merchant_buy(self,*args,**kwargs):
         raise ValueError('Покупка снаряжения перенесена в гильдию: Лавка → Снаряжение.')

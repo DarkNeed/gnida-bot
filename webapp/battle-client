@@ -495,7 +495,18 @@ function setupScreen(data){
   if(data.own_side==="a")box.innerHTML+=button("Отменить вызов","cancel","danger");
   box.innerHTML+='<div class="muted">'+"Бой начнётся сразу после принятия вызова."+' Никаких подтверждений навыков в бою.</div>';
 }
+function isResourceRegenEvent(event){
+  // Passive turn income is a log/HUD update, not another attack or cast.
+  if(event.skill||event.skill_id||event.damage_type||event.chaplain_event||event.nazarick_event||
+     ['damage','self_damage','bleed_damage','burn_damage','reaction_damage','follower_damage'].some(k=>Number(event[k])>0))return false;
+  if(event.action_kind==='resource_regen')return true;
+  // Older saved fights predate the explicit marker. Do not match mixed poison
+  // ticks, restoration skills, or attacks that merely refund some energy.
+  return !event.action_kind&&/^Энергия: \+\d+\.$/.test(String(event.text||'').trim())&&
+    (event.actor==null||event.actor===event.target);
+}
 async function animateEvent(event){
+  if(isResourceRegenEvent(event))return;
   const panel=document.getElementById("panel"); if(!panel)return;
   const userTurn=current.state.sides[event.side]?.controller_id===current.actor_id;
   document.getElementById("turn").textContent=userTurn?"Твой ход":"Ход: "+current.state.sides[event.side].name;
@@ -755,6 +766,7 @@ function arenaLeaderboardBody(data){
     (data.entries.map(row=>'<div class="card"><b>#'+row.place+' · '+esc(row.name)+'</b><p>'+row.rating+' очков · '+row.wins+' побед / '+row.losses+' поражений / '+row.draws+' ничьих</p>'+(row.title?'<span class="pill">'+esc(row.title)+'</span>':'')+'</div>').join('')||'<div class="note">Пока никто не завершил пять учтённых боёв.</div>')+
     '<div class="stack">'+nav.join('')+'</div><p class="muted">Страница '+(data.page+1)+'/'+data.pages+'</p><div class="note">Вызов: <b>/рейт @участник</b> или ответом <b>/рейт</b>. Обычные бои и ставки рейтинг не меняют. Старт — 1000; победа над сильным соперником ценнее. Пять учтённых боёв для места в топе. Одна встреча пары за 24 часа и до 10 учтённых боёв в сутки (МСК), общие для всех персонажей. Сдача — поражение; три пропуска подряд — поражение. За соперника без действий победитель не получает очков. Каждый месяц новый сезон; титулы тройки лидеров сохраняются в архиве, не дают боевых бонусов или предметов.</div>';
 }
+function gearSaleNote(gear){return Number.isInteger(gear?.sell_percent)?gear.sell_percent+'% оценочной стоимости +0':'по цене в карточке';}
 function merchantGear(data,selling=false){
   if(!selling)return '<div class="card"><h2>Снаряжение — в гильдии</h2><p>Покупка доступна в лавке по рангу охотника. Продажа остаётся здесь.</p>'+button('В лавку гильдии','guildgear','primary')+'</div>';
   const g=data.merchant?.gear;if(!g)return '<p class="muted">Обнови торговца для загрузки экипировки.</p>';
@@ -774,7 +786,7 @@ function merchantGear(data,selling=false){
   }
   const filters='<div class="merchant-filters">'+[['slot','Все слоты',Object.entries(slots)],['rank','Все ранги','FEDCBAS'.split('').map(k=>[k,k])],['rarity','Все редкости',[['uncommon','Необычная'],['rare','Редкая'],['epic','Эпическая'],...(selling?[['common','Обычная'],['legendary','Легендарная']]:[])]]].map(([key,label,options])=>'<select data-merchant-filter="'+key+'" aria-label="'+label+'"><option value="all">'+label+'</option>'+options.map(([k,n])=>'<option value="'+k+'"'+(merchantFilters[key]===k?' selected':'')+'>'+esc(n)+'</option>').join('')+'</select>').join('')+'</div>';
   const filtered=rows.filter(i=>Object.entries(merchantFilters).every(([k,v])=>v==='all'||i[k]===v));
-  return '<section class="card"><h2>'+(selling?'Продать снаряжение':'Снаряжение')+'</h2><p class="muted">'+(selling?'Скупка — 20% базовой цены. Надетое и избранное защищены.':'Ранг охотника: '+g.hunter_rank+'. Две вещи за визит, одна эпическая в сутки на аккаунт. Все вещи +0; свойства известны заранее.')+'</p>'+filters+'<div class="merchant-gear-grid">'+filtered.map(i=>button('<small>'+i.rank+' · '+esc(slots[i.slot])+'</small><b>'+esc(i.name)+'</b>'+rarityBadge(i.rarity)+'<span>'+(selling?i.sell_price:i.price)+' ₣</span>','merchantitem:'+i.id,'merchant-gear-card')).join('')+'</div>'+(filtered.length?'':'<p>Подходящих вещей нет.</p>')+'</section>';
+  return '<section class="card"><h2>'+(selling?'Продать снаряжение':'Снаряжение')+'</h2><p class="muted">'+(selling?'Скупка — '+gearSaleNote(g)+'. Надетое и избранное защищены.':'Ранг охотника: '+g.hunter_rank+'. Две вещи за визит, одна эпическая в сутки на аккаунт. Все вещи +0; свойства известны заранее.')+'</p>'+filters+'<div class="merchant-gear-grid">'+filtered.map(i=>button('<small>'+i.rank+' · '+esc(slots[i.slot])+'</small><b>'+esc(i.name)+'</b>'+rarityBadge(i.rarity)+'<span>'+(selling?i.sell_price:i.price)+' ₣</span>','merchantitem:'+i.id,'merchant-gear-card')).join('')+'</div>'+(filtered.length?'':'<p>Подходящих вещей нет.</p>')+'</section>';
 }
 app.addEventListener('change',e=>{const key=e.target.dataset?.merchantFilter;if(key&&Object.hasOwn(merchantFilters,key)){merchantFilters[key]=e.target.value;merchantSelected='';menuScreen(menu);}});
 function menuScreen(data){
@@ -818,7 +830,7 @@ function menuScreen(data){
     body+='<div class="tabs merchant-tabs">'+[['supplies','Расходники'],['study','Обучение'],['sell','Скупка']].map(([key,title])=>button(title,'merchanttab:'+key,merchantTab===key?'selected':'')).join('')+'</div><p class="muted">Покупка экипировки переехала в гильдию.</p>'+button('Снаряжение · лавка гильдии','guildgear','small');
     if(['supplies','study'].includes(merchantTab))body+=(m.offers||[]).filter(i=>merchantTab==='supplies'?['potion','candy'].includes(i.kind):['skill','passive','class'].includes(i.kind)).map(item=>'<div class="card"><h2>'+esc(item.name)+'</h2>'+rarityBadge(item.rarity)+itemInfo(item)+'<p class="muted">'+esc(item.purchase_warning||('Можно купить ещё '+item.remaining+' за этот визит.'))+'</p>'+button('Купить — '+item.price+' ₣','buy:'+item.id,'primary',!!item.purchase_warning||!item.remaining||(data.balance||0)<item.price)+'</div>').join('');
     if(merchantTab==='gear')body+=merchantGear(data);
-    if(merchantTab==='sell')body+='<div class="card"><h2>Скупка лишнего</h2><p>Трактаты, свитки классов, зелья и конфеты — 50% базовой цены. Снаряжение — 20%. Скупка работает и в отсутствие торговца. Билеты не продаются.</p>'+button('Продать обычные предметы','tab:inventory')+'</div>'+merchantGear(data,true);
+    if(merchantTab==='sell')body+='<div class="card"><h2>Скупка лишнего</h2><p>Трактаты, свитки классов, зелья и конфеты — 50% базовой цены. Снаряжение — '+gearSaleNote(m.gear)+'. Скупка работает и в отсутствие торговца. Билеты не продаются.</p>'+button('Продать обычные предметы','tab:inventory')+'</div>'+merchantGear(data,true);
     body+='<div class="note">Два визита в день по два часа, с 10:00 до 22:00 МСК. Время прихода и ассортимент едины для всех чатов. Лимиты покупок общие для аккаунта и всех его персонажей. Оплата франками выбранного чата; покупки попадают в общий инвентарь.</div>';
   }else if(page==="inventory"){
     const targets=[data.personal].filter(Boolean);
@@ -1492,6 +1504,7 @@ function raidPopup(key,value){
   setTimeout(()=>popup.remove(),950);
 }
 async function raidAnimate(event,{sound=true}={}){
+  if(isResourceRegenEvent(event))return;
   if(['rewind','phase_restore','false_victory'].includes(event.chaplain_event)){
     const field=document.querySelector('.raid-field');
     if(field){const notice=document.createElement('div');notice.className='chaplain-revision';notice.setAttribute('role','status');notice.textContent=event.chaplain_event==='phase_restore'?'ВАШ РЕЗУЛЬТАТ НЕ БЫЛ СОХРАНЁН':event.chaplain_event==='false_victory'?'ПОБЕДА… НЕ УТВЕРЖДЕНА':'РЕДАКЦИЯ ОТМЕНЕНА';field.append(notice);field.classList.add('chaplain-rewinding');await sleep(reduced?650:1600);notice.remove();field.classList.remove('chaplain-rewinding');}
@@ -1553,6 +1566,8 @@ async function receiveRaid(data){
     for(const group of (window.RaidTimeline?.eventGroups(events)||events.map(e=>[e]))){
       const e=group[0],last=group[group.length-1];
       if(raidCurrent?.token!==data.token)return;
+      const animated=group.filter(event=>!isResourceRegenEvent(event));
+      if(!animated.length){snapshot=last.after;continue;}
       const frame=raidVisual(data,e.before||snapshot);
       frame.data.round=e.round;frame.data.intent={text:'Разыгрывается раунд',targets:[]};
       const announced=data.data.action_queue;
@@ -1569,7 +1584,7 @@ async function receiveRaid(data){
       const panel=document.querySelector('.raid-actions');
       if(panel){panel.style.minHeight=panel.getBoundingClientRect().height+'px';panel.setAttribute('aria-live','polite');panel.innerHTML=group.map(event=>'<div class="battlelog"><b>'+esc(raidName(data,event.actor))+'</b><br>'+esc(event.text)+'</div>').join('');}
       const sounded=new Set();
-      await Promise.all(group.map(event=>{const id=event.actor+':'+event.skill,sound=!sounded.has(id);sounded.add(id);return raidAnimate(event,{sound});}));
+      await Promise.all(animated.map(event=>{const id=event.actor+':'+event.skill,sound=!sounded.has(id);sounded.add(id);return raidAnimate(event,{sound});}));
       snapshot=last.after;
       if(group.some(event=>event.dialogue)&&!reduced)await sleep(1500);
       // A simultaneous cast group shares one visual frame, not a serial replay.

@@ -1,7 +1,7 @@
 from copy import deepcopy
 from itertools import combinations
 import unittest
-from arena_equipment import CATALOG,AFFIXES,RANKS,RARITIES,PRICES,item_price,item_stats,public_item,item_valuation
+from arena_equipment import CATALOG,AFFIXES,RANKS,RARITIES,PRICES,SELL_PERCENT,item_price,item_stats,public_item,item_valuation
 
 
 def item(**kw):
@@ -21,7 +21,8 @@ class EquipmentPriceTests(unittest.TestCase):
         self.assertGreater(item_stats(dict(i,upgrade=5))['physical_attack'],item_stats(i)['physical_attack'])
         self.assertEqual(i,before)
 
-    def test_every_combination_bounded_and_resale_is_exactly_20_percent(self):
+    def test_every_combination_bounded_and_resale_is_exactly_5_percent(self):
+        self.assertEqual(SELL_PERCENT,5)
         for key,definition in CATALOG.items():
             choices=[s for s in AFFIXES if s!=definition['main']]
             for rank in RANKS:
@@ -31,7 +32,24 @@ class EquipmentPriceTests(unittest.TestCase):
                         price=item_price(i)
                         self.assertTrue(0<price<=20000)
                         self.assertEqual(price%10 if price<1000 else price%50,0)
-                        self.assertEqual(public_item(i)['sell_price'],price//5)
+                        public=public_item(i)
+                        self.assertEqual(public['sell_price'],price//20)
+                        self.assertEqual(public['sell_percent'],5)
+                        self.assertTrue(0<public['sell_price']<=1000)
+                        self.assertLessEqual(public['sell_price'],(price//5)/4)
+                        self.assertLess(public['sell_price'],price)
+
+    def test_resale_ignores_upgrade_and_untrusted_price_fields(self):
+        base=item();quote=public_item(base)
+        forged=dict(base,upgrade=5,sell_price=999999,sell_percent=100,base_price=999999)
+        result=public_item(forged)
+        self.assertEqual(result['sell_price'],quote['sell_price'])
+        self.assertEqual(result['sell_percent'],5)
+        self.assertEqual(result['base_price'],quote['base_price'])
+
+    def test_maximum_payout_is_1000_even_for_nazarick_legendary(self):
+        payout=max(public_item(item(key=k,rarity='legendary'))['sell_price'] for k in CATALOG)
+        self.assertEqual(payout,1000)
 
     def test_different_equivalent_base_keys_not_randomly_marked_up(self):
         a=item(key='helmet',rarity='rare');b=dict(a,key='warden')

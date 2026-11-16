@@ -962,9 +962,9 @@ def create_arena_app(
         elif action == 'buy_gear':
             notice = await db.gear_merchant_buy(chat,actor,body.get('offer'),body.get('nonce'),body.get('confirm'))
         elif action == 'sell_gear':
-            await db.gear_action(chat,actor,dict(action='sell',item=body.get('item'),nonce=body.get('nonce'),
+            gear = await db.gear_action(chat,actor,dict(action='sell',item=body.get('item'),nonce=body.get('nonce'),
                 revision=body.get('gear_revision'),character_slot=expected_slot,confirm=body.get('confirm'),price=body.get('price')))
-            notice = 'Экипировка продана за 20% базовой цены. Материалы улучшения не возвращаются.'
+            notice = f"Экипировка продана за {gear['sell_percent']}% оценочной стоимости +0. Материалы улучшения не возвращаются."
         elif action == "use_item":
             personal = body.get("personal", True)
             confirm = body.get("confirm", False)

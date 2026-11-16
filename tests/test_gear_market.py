@@ -39,7 +39,7 @@ class GearMarketTests(unittest.IsolatedAsyncioTestCase):
     async def sell(self,item,actor=10,**extra):
         v=await self.db.gear_view(-100,actor)
         return await self.db.gear_action(-100,actor,dict(action='sell',item=item['id'],revision=v['revision'],
-            character_slot=v['character_slot'],nonce=secrets.token_hex(16),confirm=True,price=item_price(item)//5,**extra))
+            character_slot=v['character_slot'],nonce=secrets.token_hex(16),confirm=True,price=public_item(item)['sell_price'],**extra))
 
     def test_prices_ceiling_and_drop_odds_unchanged(self):
         self.assertEqual(max(max(r) for r in PRICES),20000)
@@ -117,13 +117,32 @@ class GearMarketTests(unittest.IsolatedAsyncioTestCase):
             await self.buy(own['offers'][0])
             with self.assertRaises(ValueError):await self.buy(higher['offers'][0])
 
-    async def test_sale_20_percent_no_upgrade_premium_and_replay_safe(self):
+    async def test_sale_5_percent_no_upgrade_premium_and_replay_safe(self):
         with self.db.connection:
             i=self.db._gear_grant_locked(10,'nz_frost','S','legendary');i['upgrade']=5;self.db._gear_save_locked(10,i)
-        self.assertEqual(public_item(i)['sell_price'],item_price(i)//5)
-        v=await self.db.gear_view(-100,10);body=dict(action='sell',item=i['id'],revision=v['revision'],character_slot=1,nonce=secrets.token_hex(16),confirm=True,price=item_price(i)//5)
+        self.assertEqual(public_item(i)['sell_price'],item_price(i)//20)
+        v=await self.db.gear_view(-100,10);body=dict(action='sell',item=i['id'],revision=v['revision'],character_slot=1,nonce=secrets.token_hex(16),confirm=True,price=item_price(i)//20)
         before=self.balance();await self.db.gear_action(-100,10,body);await self.db.gear_action(-100,10,body)
-        self.assertEqual(self.balance(),before+item_price(i)//5);self.assertFalse((await self.db.gear_view(-100,10))['items'])
+        self.assertEqual(self.balance(),before+item_price(i)//20);self.assertFalse((await self.db.gear_view(-100,10))['items'])
+
+    async def test_old_20_percent_quote_rejected_then_new_quote_can_be_confirmed(self):
+        with self.db.connection:i=self.db._gear_grant_locked(10,'fang','S','legendary')
+        v=await self.db.gear_view(-100,10);before=self.balance();other=self.balance(-200)
+        body=dict(action='sell',item=i['id'],revision=v['revision'],character_slot=1,
+                  nonce=secrets.token_hex(16),confirm=True,price=item_price(i)//5)
+        with self.assertRaisesRegex(ValueError,'Цена изменилась'):
+            await self.db.gear_action(-100,10,body)
+        current=await self.db.gear_view(-100,10)
+        self.assertEqual(current['revision'],v['revision'])
+        self.assertEqual(current['sell_percent'],5)
+        self.assertEqual(len(current['items']),1)
+        self.assertEqual(self.balance(),before)
+        self.assertEqual(self.db._gear_market_locked(-100,10)['sell_percent'],5)
+        body['price']=current['items'][0]['sell_price']
+        await self.db.gear_action(-100,10,body)
+        await self.db.gear_action(-100,10,body)
+        self.assertEqual(self.balance(),before+body['price'])
+        self.assertEqual(self.balance(-200),other)
 
     async def test_stale_buy_and_sale_quotes_do_not_move_money_or_items(self):
         item=self.stock()[0];before=self.balance()
@@ -134,7 +153,7 @@ class GearMarketTests(unittest.IsolatedAsyncioTestCase):
         v=await self.db.gear_view(-100,10)
         with self.assertRaises(ValueError):
             await self.db.gear_action(-100,10,dict(action='sell',item=i['id'],revision=v['revision'],
-                character_slot=1,nonce=secrets.token_hex(16),confirm=True,price=item_price(i)//5+1))
+                character_slot=1,nonce=secrets.token_hex(16),confirm=True,price=public_item(i)['sell_price']+1))
         self.assertEqual(self.balance(),before);self.assertEqual(len((await self.db.gear_view(-100,10))['items']),1)
 
     async def test_foreign_favorite_equipped_and_unconfirmed_sales_rejected(self):
@@ -171,6 +190,14 @@ class GearMarketTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(len((await response.json())['shop']['offers']),6)
             legacy=await client.post('/api/menu/-100',json=dict(payload,action='buy_gear'),headers=headers)
             self.assertEqual(legacy.status,400)
+            gear=await self.db.gear_view(-100,10);owned=gear['items'][0];before_sale=self.balance()
+            sale=dict(action='sell_gear',item=owned['id'],nonce=secrets.token_hex(16),
+                      gear_revision=gear['revision'],character_slot=gear['character_slot'],
+                      confirm=True,price=owned['sell_price'])
+            response=await client.post('/api/menu/-100',json=sale,headers=headers)
+            self.assertEqual(response.status,200,await response.text())
+            self.assertIn('5% оценочной стоимости +0',(await response.json())['notice'])
+            self.assertEqual(self.balance(),before_sale+owned['sell_price'])
         finally:await client.close()
 
 

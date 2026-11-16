@@ -4,7 +4,7 @@ import json
 import random
 import secrets
 import time
-from arena_equipment import (CATALOG,RANKS,RARITIES,LEVELS,SLOTS,STATS,AFFIXES,CHANCES,EFFECTS,
+from arena_equipment import (CATALOG,RANKS,RARITIES,LEVELS,SLOTS,STATS,AFFIXES,CHANCES,EFFECTS,SELL_PERCENT,
                              public_item,apply_stats)
 from arena_gear_market import GearMerchantMixin
 
@@ -114,7 +114,7 @@ class EquipmentMixin(GearMerchantMixin):
                     stat_bonuses={key:round(total.get(key,0)-base.get(key,0),2) for key in STATS},
                     materials={r['rank']:r['quantity'] for r in self.connection.execute('SELECT * FROM gear_materials WHERE actor=?',(actor,))},
                     catalog=[dict(v,description=EFFECTS[v['effect']]) for v in CATALOG.values() if v['biome']!='nazarick'],ranks=list(RANKS),min_levels=list(LEVELS),hunter_rank=RANKS[hunter['rank']],
-                    chances=[dict(zip(RARITIES,row)) for row in CHANCES])
+                    chances=[dict(zip(RARITIES,row)) for row in CHANCES],sell_percent=SELL_PERCENT)
 
     @staticmethod
     def _gear_options(item):

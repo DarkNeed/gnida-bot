@@ -175,7 +175,8 @@ def _begin(data, key):
     poison = begin_turn(fighter) if 'sides' in data or key in humans(data) else 0
     gain = restore_turn_resource(fighter)
     if poison or gain:
-        _log(data, key, key, ('Чума: −'+str(poison)+' HP. ' if poison else '') + ('Энергия: +'+str(gain)+'.' if gain else ''))
+        _log(data, key, key, ('Чума: −'+str(poison)+' HP. ' if poison else '') + ('Энергия: +'+str(gain)+'.' if gain else ''),
+             **(dict(action_kind='resource_regen', resource_regen={key: gain}) if gain and not poison else {}))
     choice(data, key)
 
 

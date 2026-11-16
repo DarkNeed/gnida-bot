@@ -2,7 +2,7 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 const stats={max_hp:100,physical_attack:10,magic_attack:5,physical_defense:4,magic_defense:3,speed:7,evasion:8,resource_max:100};
 const names={max_hp:'HP',physical_attack:'Физ. атака',magic_attack:'Маг. атака',physical_defense:'Физ. защита',magic_defense:'Маг. защита',speed:'Скорость',evasion:'Уклонение'};
-const item={id:'gear1',key:'fang',rank:'C',rarity:'epic',rarity_name:'Эпический',name:'Клык волка',slot:'weapon',min_level:10,stats:{physical_attack:2},comparison:{...stats,physical_attack:12},effect_text:'Урон по кровоточащей цели +20%.',upgrade:0,salvage:8,upgrade_cost:2,favorite:false,used_by:[],affixes:[],reroll_options:[],equipped:false};
+const item={id:'gear1',key:'fang',rank:'C',rarity:'epic',rarity_name:'Эпический',name:'Клык волка',slot:'weapon',min_level:10,stats:{physical_attack:2},comparison:{...stats,physical_attack:12},effect_text:'Урон по кровоточащей цели +20%.',upgrade:0,salvage:8,upgrade_cost:2,favorite:false,used_by:[],affixes:[],reroll_options:[],equipped:false,sell_percent:5,sell_price:425};
 const view={revision:0,character_slot:1,level:20,class_name:'Воин',hero:{name:'Герой',sprite_url:'/static/assets/rpg/warrior.png',fallback_url:'/static/assets/rpg/warrior.png',pixel_art:false},busy:false,equipped:{},items:[item],slots:{weapon:'Оружие',armor:'Доспех',accessory:'Аксессуар',relic:'Реликвия'},stat_names:names,base_stats:stats,stats:{...stats},stat_bonuses:Object.fromEntries(Object.keys(names).map(k=>[k,0])),materials:{C:20},ranks:['F','C'],hunter_rank:'C',catalog:[]};
 let listScroll=0,request;
 const app={innerHTML:'',listeners:{},addEventListener(type,fn){this.listeners[type]=fn;},querySelector(selector){
@@ -28,6 +28,9 @@ const click=action=>app.listeners.click({target:{closest:()=>({dataset:{gear:act
  assert(!app.innerHTML.includes('aria-label="Инвентарь экипировки"'));
  assert(app.innerHTML.includes('data-gear="inventory"'));
  assert(app.innerHTML.includes('gear-hero-sprite'));
+ await click('sellask:gear1');assert(app.innerHTML.includes('5% оценочной стоимости +0'));
+ assert(app.innerHTML.includes('Продать за 425 ₣?'));assert(!app.innerHTML.includes('20% базовой цены'));
+ await click('cancel');assert(!app.innerHTML.includes('Продать за 425 ₣?'));
  await click('equip:gear1');assert.equal(request.action,'equip');
  assert(app.innerHTML.includes('Характеристики обновлены.'));
  assert(app.innerHTML.includes('class="gear-bonus">+2'));

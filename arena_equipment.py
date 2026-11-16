@@ -4,6 +4,9 @@ from copy import deepcopy
 RANKS = ('F', 'E', 'D', 'C', 'B', 'A', 'S')
 LEVELS = (1, 4, 7, 10, 13, 16, 20)
 RARITIES = ('common', 'uncommon', 'rare', 'epic', 'legendary')
+# Repeat dungeon runs keep their gear drops; cashing them out is a small bonus,
+# not a substitute for using equipment or salvaging it for upgrades.
+SELL_PERCENT = 5
 LABELS = dict(zip(RARITIES, ('Обычный', 'Необычный', 'Редкий', 'Эпический', 'Легендарный')))
 SLOTS = dict(weapon='Оружие', armor='Доспех', accessory='Аксессуар', relic='Реликвия')
 STATS = dict(max_hp='HP', physical_attack='Физ. атака', magic_attack='Маг. атака',
@@ -131,7 +134,8 @@ def public_item(item):
                  rarity_name=LABELS[item['rarity']], effect_text=EFFECTS[definition['effect']] if item['rarity'] in ('epic','legendary') else '',
                  salvage=(2,3,5,8,12)[RARITIES.index(item['rarity'])],
                  upgrade_cost=2+item.get('upgrade',0)*2, reroll_cost=5,
-                 base_price=valuation['price'],sell_price=valuation['price']//5,
+                 base_price=valuation['price'],sell_price=valuation['price']*SELL_PERCENT//100,
+                 sell_percent=SELL_PERCENT,
                  valuation=valuation)
     return value
 
