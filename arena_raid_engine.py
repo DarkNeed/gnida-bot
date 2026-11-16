@@ -37,7 +37,7 @@ BOSSES = {
         recommended_level=20,min_level=1,phase_count=3,difficulty='Твои сильные навыки — его оружие',loot_skill='plagiarism'),
     'nazarick': dict(name='Назарик — Путь к королю-колдуну', sprite='/static/assets/nazarick/shalltear1.png',
                      skills=tuple(NAZARICK_SKILLS), recommended_level=20, min_level=1,
-                     fixed_level=25, phase_count=2, difficulty='Пять боссов · десять фаз'),
+                     fixed_level=25, phase_count=2, difficulty='Стражи Назарика · Аинз: шесть фаз'),
     'encounter': dict(name='РП-встреча', skills=tuple(MOB_SKILLS), phase_count=1),
     'chaplain': dict(name='Капеллан — Хранитель последней редакции',
                       sprite='/static/assets/chaplain.png', skills=tuple(CHAPLAIN_SKILLS),

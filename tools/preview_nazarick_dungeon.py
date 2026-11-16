@@ -38,7 +38,7 @@ async def application():
 
     async def start(request):
         idx=max(0,min(len(ROOMS)-1,int(request.query.get('room','0'))));party=request.query.get('party','1')=='3'
-        phase=max(1,min(2,int(request.query.get('phase','1'))));move=max(0,min(4,int(request.query.get('move','0'))))
+        phase=max(1,min(6,int(request.query.get('phase','1'))));move=max(0,min(4,int(request.query.get('move','0'))))
         mode=request.query.get('mode','menu');who=request.query.get('who')
         async with db._lock:
             with db.connection:
@@ -64,7 +64,14 @@ async def application():
                     data['round']=move+1
                     if data.get('boss_id')=='nazarick':
                         from arena_nazarick import load_stage,set_intent
-                        data['nazarick']['phase']=phase;load_stage(data);set_intent(data)
+                        phase=min(phase,6 if data['nazarick']['stage']==4 else 2)
+                        data['nazarick']['phase']=phase;load_stage(data)
+                        if data['nazarick']['stage']==4:
+                            data['boss']['hp']=round(data['boss']['stats']['max_hp']*(7-phase)/6)
+                            if mode=='pattern':
+                                data['nazarick']['ainz_preview_move']=min(move,3)
+                                if phase==6 and move==1:data['nazarick']['ritual']=dict(hp=data['boss']['hp'],threshold=120,start=data['round'])
+                        set_intent(data)
                     else:
                         from arena_encounters import set_intents
                         for f in data['enemies'].values():
@@ -95,20 +102,30 @@ async def application():
         return web.FileResponse(Path(__file__).with_name('nazarick_dungeon_review.html'),headers={'Cache-Control':'no-store'})
 
     async def catalog(request):
-        return web.json_response(dict(rooms=ROOMS,guardians=[dict(id=w,name=info[0],moves=MOVES[w],sprite=sprite(w)) for w,info in GUARDIANS.items()]))
+        from arena_ainz_phases import PHASES,MOVES as AINZ_MOVES
+        guardians=[dict(id=w,name=info[0],moves=MOVES[w],sprite=sprite(w)) for w,info in GUARDIANS.items()]
+        guardians.append(dict(id='ainz',name='Аинз · шесть фаз',moves=[[m[0] for m in moves] for moves in AINZ_MOVES],phase_names=[p['name'] for p in PHASES]))
+        return web.json_response(dict(rooms=ROOMS,guardians=guardians))
 
     async def gallery(request):
         from html import escape
         body='<header><p>НАЗАРИК · НОВЫЕ ОБРАЗЫ</p><h1>Стражи и этажи</h1><a href="/nazarick-dungeon-review">← К проверке подземелья</a></header><main class="sprites">'
         for who,info in GUARDIANS.items():
             body+='<article><img src="'+sprite(who)+'"><h2>'+escape(info[0])+'</h2><p>'+escape(info[1])+'</p></article>'
+        from arena_ainz_phases import PHASES
+        for info in PHASES:
+            body+='<article><img src="/static/assets/nazarick/'+info['sprite']+'.png"><h2>Аинз · '+escape(info['name'])+'</h2><p>'+escape(info['hint'])+'</p></article>'
         body+='<article><img src="'+sprite('sebas',2)+'"><h2>Себас · драконья форма</h2><p>Игровая интерпретация раскрытия сущности.</p></article></main><main class="backgrounds">'
         for f,title,bg,rooms in __import__('arena_nazarick_dungeon_rules').FLOORS:
             room=next(r for r in ROOMS if r['floor']==f)
             body+='<article><img src="'+background(room)+'"><h2>'+str(f)+' · '+escape(title)+'</h2></article>'
+        for index,info in enumerate(PHASES,1):
+            body+='<article><img loading="lazy" src="/static/assets/nazarick/ainz-qte-bg-'+str(index)+'-v3.png"><h2>Мини-игры · '+escape(info['name'])+'</h2></article>'
+        body+='<article><img loading="lazy" src="/static/assets/nazarick/ainz-qte-bg-ritual-v3.png"><h2>Мини-игра · Ритуал смерти</h2></article>'
         return web.Response(text='<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Назарик · новые изображения</title><style>body{margin:0;background:#0b1020;color:#e9dfc9;font:14px system-ui}header{max-width:1200px;margin:auto;padding:35px 25px}h1{font:44px Georgia}a{color:#d4be8e}main{max-width:1200px;margin:0 auto 40px;display:grid;gap:18px;padding:0 20px}.sprites{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}.sprites img{height:310px;width:100%;object-fit:contain}.backgrounds{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}.backgrounds img{width:100%;border-radius:12px}article{background:#182136;border:1px solid #313a53;padding:18px;border-radius:15px}h2{font-size:18px}p{color:#adbad0}</style>'+body+'</main></html>',content_type='text/html')
 
     app.router.add_get('/nazarick-dungeon-review',review)
+    app.router.add_get('/ainz-review',review)
     app.router.add_get('/nzd-demo',start)
     app.router.add_get('/nzd-catalog',catalog)
     app.router.add_get('/nzd-gallery',gallery)

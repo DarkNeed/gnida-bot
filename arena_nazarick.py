@@ -65,6 +65,9 @@ for who, phases in TITLES.items():
                 description=(ATTACK_HINTS.get(sid,HINTS.get(who, ('Самостоятельная атака призванного существа.',))[min(phase-1, len(HINTS.get(who, (0,)))-1)]) +
                     (' Сценарное действие: призыв/стойка работает только внутри рейда Назарика.' if utility else '')))
 
+from arena_ainz_phases import skills as ainz_skills, enabled as six_phase_ainz
+SKILLS.update(ainz_skills())
+
 
 def identity(data):
     m = data['nazarick']
@@ -77,6 +80,9 @@ def sprite(who, phase=1):
 
 
 def presentation(data):
+    if six_phase_ainz(data):
+        from arena_ainz_phases import presentation as six_view
+        return six_view(data)
     who, phase = identity(data)
     m = data['nazarick']
     return dict(stage=m['stage']+1, stage_count=5, guardian=who, phase=phase,
@@ -93,7 +99,7 @@ def presentation(data):
 
 
 def initialize(data):
-    data['nazarick'] = dict(version=1, stage=0, phase=1, stage_start=1, pressure=0,
+    data['nazarick'] = dict(version=1, ainz_version=2, stage=0, phase=1, stage_start=1, pressure=0,
         initial_players={key: deepcopy(p['fighter']) for key, p in data['players'].items()})
     data['multi_enemy'] = True
     load_stage(data)
@@ -170,7 +176,13 @@ def load_stage(data):
     data['boss'] = base
     data['enemies'] = {'boss': base}
     data['phase'] = phase
+    data['phase_count'] = 2
     data['control_lock'] = data['control_resistance'] = 0
+    if six_phase_ainz(data):
+        from arena_ainz_phases import configure
+        hp=3000+1500*(count-1)
+        base['hp']=base['stats']['max_hp']=hp
+        configure(data)
     m.update(pressure=0, pressure_max=round(hp*.16), next_summon=data['round']+2)
     for field in ('exposed_until', 'ritual', 'pending_next', 'pending_phase'):
         m.pop(field, None)
@@ -190,12 +202,20 @@ def contact_afflictions(fighter, skill_id, event, guard=None):
     """Only server-replayed hazard contacts can supply per-projectile afflictions."""
     if not event.get('hit') or event.get('damage',0)<=0:return []
     if guard:
-        statuses={c.get('status') for c in guard.get('pattern_dodge',{}).get('contacts',[])
+        contacts=guard.get('pattern_dodge',{}).get('contacts',[])
+        if guard.get('subskills'):
+            group=guard['subskills'].index(skill_id) if skill_id in guard['subskills'] else -1
+            contacts=[c for c in contacts if c.get('strike')==group]
+        statuses={c.get('status') for c in contacts
                   if c.get('weight',0)>0 and c.get('reduction',0)<1}
     else:
         parts=skill_id.split('_');who,phase,move=parts[1],parts[2],parts[3]
         statuses=({'burn'} if who in ('hellguard','pyromancer') or who=='demiurge' and phase=='p2' and move=='0'
                   else {'curse'} if who=='demiurge' else {'burn','curse'} if skill_id in ('nz_ainz_p1_0','nz_ainz_p2_0','nz_ainz_p2_2') else set())
+        if who=='ainz6':
+            from arena_ainz_phases import MOVES
+            fallback=MOVES[int(phase[1:])-1][int(move)][5]
+            statuses={fallback} if fallback else set()
     applied=[]
     specs={
         'burn':(('burn',3),2,'Ожог','Ожог: 3 HP на два действия.'),
@@ -205,6 +225,7 @@ def contact_afflictions(fighter, skill_id, event, guard=None):
         'exposed':(('damage_taken_pct',.15),2,'Уязвимость свету','Уязвимость: входящий прямой урон +15% на два действия.'),
         'sealed':(('skill_cost_flat',8),3,'Печать посоха','Печать: следующий платный навык дороже на 8 энергии; срок — три действия.'),
         'frailty':(('physical_defense_pct',-.12),2,'Хрупкость','Хрупкость: физическая и магическая защита −12% на два действия.'),
+        'bleed':(('bleed',3),3,'Порезы Солнца и Луны','Кровотечение: 3 HP при атакующем действии, три действия.'),
     }
     for status in sorted(statuses & specs.keys()):
         (kind,value),duration,name,text=specs[status]
@@ -219,6 +240,10 @@ def contact_afflictions(fighter, skill_id, event, guard=None):
 def set_intent(data):
     from arena_raid_engine import alive_players
     bind(data)
+    if six_phase_ainz(data):
+        from arena_ainz_phases import set_intent as six_intent
+        six_intent(data)
+        return
     who, phase = identity(data)
     m, boss = data['nazarick'], data['boss']
     boss['name']='Актёр Пандоры' if who=='pandora' and phase==2 else NAMES[who]
@@ -278,7 +303,17 @@ def progress(data):
     if not alive_players(data):
         offer_blessing(data)
         return True
-    if phase==1 and data['boss']['hp']<=data['boss']['stats']['max_hp']*.5:
+    if six_phase_ainz(data) and phase<6:
+        threshold=round(data['boss']['stats']['max_hp']*(6-phase)/6)
+        if data['boss']['hp']<=threshold:
+            from arena_ainz_phases import PHASES,configure
+            m['phase']=data['phase']=phase+1
+            data['boss']['hp']=threshold
+            configure(data)
+            set_intent(data)
+            log_event(data,'boss','boss',f'Фаза {phase+1}/6 — '+PHASES[phase]['name']+'. '+PHASES[phase]['quote'],nazarick_event='phase')
+            return True
+    if not six_phase_ainz(data) and phase==1 and data['boss']['hp']<=data['boss']['stats']['max_hp']*.5:
         m['phase']=data['phase']=2
         data['boss']['hp']=max(round(data['boss']['stats']['max_hp']*.5),data['boss']['hp'])
         log_event(data,'boss','boss',QUOTES[who][1],nazarick_event='phase')
@@ -314,7 +349,12 @@ def summon(data):
     from arena_raid_engine import log_event
     m=data['nazarick']
     who,_=identity(data)
-    if data['round']<m['next_summon']:
+    six=six_phase_ainz(data)
+    if six:
+        blocked=data['boss'].get('own_turns',0)<m.get('ainz_summon_ready',0) or any(
+            data['enemies'].get(key,{}).get('hp',0)>0 for key in ('boss_knight','boss_lich'))
+    else:blocked=data['round']<m['next_summon']
+    if blocked:
         log_event(data,'boss','boss','Портал восстанавливается: действие потрачено, новых существ нет.')
         return
     for kind in ('knight','lich'):
@@ -331,6 +371,9 @@ def summon(data):
                  nz_sprite=kind if who=='ainz' else 'demon_guard' if kind=='knight' else 'demon_mage')
         data['enemies'][key]=f
     m['next_summon']=data['round']+4
+    if six:
+        from arena_ainz_phases import SUMMON_COOLDOWN
+        m['ainz_summon_ready']=data['boss'].get('own_turns',0)+SUMMON_COOLDOWN
     log_event(data,'boss','boss','Портал раскрыт. Призывы начнут действовать со следующего раунда.')
 
 
@@ -362,6 +405,9 @@ def resolve(data, skills, rng=None, *, actor_keys=None, enemy_keys=None, complet
         enemy=data['enemies'].get(target)
         if selected in skills and not skills[selected].hostile and (not enemy or enemy['hp']<=0):
             target,enemy='boss',data['boss']
+        if selected=='defend' and six_phase_ainz(data):
+            from arena_ainz_tactics import before_player
+            before_player(data,selected,skills)
         if selected in (None,'defend') or not enemy or enemy['hp']<=0:
             defend(f,data['boss'],data);log_event(data,key,key,'Защита: обе защиты +35%.');continue
         for field in ('attack','pattern_attack'):
@@ -369,6 +415,12 @@ def resolve(data, skills, rng=None, *, actor_keys=None, enemy_keys=None, complet
         event = {}
         try:
             event=native_attack(f,enemy,selected,skills,rng,allies=[v['fighter'] for v in alive_players(data).values()],raid_context=data)
+            if six_phase_ainz(data) and not skills[selected].hostile:
+                from arena_ainz_tactics import before_player
+                before_player(data,selected,skills)
+            if target=='boss' and six_phase_ainz(data):
+                from arena_ainz_tactics import after_player
+                after_player(data,skills[selected],event)
             if skills[selected].damage_type:
                 copied=skills[selected]
                 # Retain a descriptor, never equipment, resources or the player's class mechanics.
@@ -424,13 +476,15 @@ def resolve(data, skills, rng=None, *, actor_keys=None, enemy_keys=None, complet
                     continue
                 if intent['kind']=='summon':summon(data)
                 elif intent['kind']=='stance':log_event(data,'boss','boss','Защитная стойка: нанесите достаточно урона, чтобы разрушить её.')
-                else:log_event(data,'boss','boss','Великий ритуал начат. Подготовьтесь к следующему раунду.')
+                else:
+                    if six_phase_ainz(data):m['ainz_ritual_count']=m.get('ainz_ritual_count',0)+1
+                    log_event(data,'boss','boss','Великий ритуал начат. Подготовьтесь к следующему раунду.')
                 continue
-            original=deepcopy(enemy);after=None;damage_total=0
+            original=deepcopy(enemy);after=None;damage_total=0;clean_defense=False
             pending_dot=bleeding_damage(original)+sum(max(0,int(e['value']))for e in original['effects'] if e['kind']=='burn')
             data['intent']=intent
             ritual_weakened=False
-            if who=='ainz' and phase==2 and intent['skill'].endswith('_1'):
+            if who=='ainz' and phase==(6 if six_phase_ainz(data) else 2) and intent['skill'].endswith('_1'):
                 ritual=m.pop('ritual',None)
                 ritual_weakened=bool(ritual and ritual['hp']-data['boss']['hp']>=ritual['threshold'])
             for key in intent['targets']:
@@ -446,6 +500,9 @@ def resolve(data, skills, rng=None, *, actor_keys=None, enemy_keys=None, complet
                     event=native_attack(attacker,f,intent['skill'],SKILLS,rng,tick_actor_bleed=False,raid_context=data)
                 finally:f.pop('_qte_guard',None)
                 afflictions=contact_afflictions(f,intent['skill'],event,guard)
+                if enemy_key=='boss' and six_phase_ainz(data):
+                    from arena_ainz_tactics import clean_guard
+                    clean_defense=clean_defense or (event.get('damage',0)==0 and clean_guard(guard,intent['skill']))
                 if afflictions:event['text']+=' '+' '.join(afflictions)
                 if after is None:after=attacker
                 damage_total+=event.get('damage',0)
@@ -454,6 +511,9 @@ def resolve(data, skills, rng=None, *, actor_keys=None, enemy_keys=None, complet
             if after:
                 after['hp']=enemy['hp'];enemy.clear();enemy.update(after)
             else:_tick(enemy)
+            if enemy_key=='boss' and six_phase_ainz(data):
+                from arena_ainz_tactics import after_boss
+                after_boss(data,intent,clean_defense,ritual_weakened)
             if who=='shalltear' and enemy_key=='boss' and damage_total:
                 healed=min(enemy['stats']['max_hp']-enemy['hp'],round(damage_total*(.35 if phase==1 else .50)))
                 enemy['hp']+=healed

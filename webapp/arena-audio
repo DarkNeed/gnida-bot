@@ -46,6 +46,11 @@
     THEMES['nz_'+who+phase]={style:'nazarick',who,phase,bpm:bpm+(phase-1)*16,roots};
     THEME_LABELS['nz_'+who+phase]=({gargantua:'Гаргантюа',cocytus:'Коцит',aura:'Аура',mare:'Маре',victim:'Виктим',sebas:'Себас',crypt:'Гробницы',yuri:'Юри',narberal:'Нарберал',lupusregina:'Люпусрегина',solution:'Солюшн',entoma:'Энтома',cz:'СиЗет'})[who]+' · '+phase+' фаза';
   }
+  const ainzSixNames=['Король-колдун','Солнце и Луна','Наследие Перорончино','Кровавый палач','Наследие Тач Ми','Владыка смерти'];
+  for(let phase=1;phase<=6;phase++){
+    THEMES['nz_ainz6_'+phase]={style:'nazarick',who:'ainz-six',phase,bpm:[106,140,116,82,128,122][phase-1],roots:[[38,34,41,36],[45,41,43,40],[43,38,46,41],[31,31,34,29],[38,45,41,36],[33,29,36,30]][phase-1]};
+    THEME_LABELS['nz_ainz6_'+phase]='Аинз · '+phase+'/6 · '+ainzSixNames[phase-1];
+  }
   let ctx, master, fx, musicBus, noiseBuffer, timer, scene = 'menu', playing = '', step = 0, next = 0;
   let generation = 0, opener = null, unavailable = false;
   let roomNodes = [];
@@ -274,7 +279,15 @@
   }
   function nazarickPhrase(theme,root,within,bar,beat,tick,at){
     const who=theme.who,phase=theme.phase,bus=musicBus,part=Math.floor(within/2),royal=[7,12,10,7,3,5,2,0];
-    if(['gargantua','crypt'].includes(who)){
+    if(who==='ainz-six'){
+      const melody=[0,7,10,7,3,12,5,2];
+      if(within===0){tone(root,at,beat*3.6,.09,bus,'sine');pipe(root+19,at,beat*3.2,.035,bus);}
+      if(phase===2){if(within%2===0)tone(root+24+melody[part%8],at,tick*.8,.06,bus,'triangle');if(within%4===0)drum(at,bus,false);if(within%4===2)clockBell(root+36,at,.025,bus);}
+      else if(phase===3){if(within%4===0){clockBell(root+36+melody[Math.floor(within/4)],at,.06,bus);drum(at,bus,false);}if(within===8)brass(root+24,at,beat*1.7,.055,bus);}
+      else if(phase===4){if(within%4===0){drum(at,bus,true);brass(root+12,at,beat*1.3,.09,bus);}if(within===10)noise(at,.25,.035,bus,700);}
+      else if(phase===5){if(within%2===0)tone(root+24+melody[part],at,tick*1.2,.05,bus,'sawtooth');if(within%4===0){drum(at,bus,true);brass(root+19,at,beat*.8,.055,bus);}}
+      else{if(within===0){abyssChoir(root+12,at,beat*3.8,.065,bus);brass(root+12,at,beat*2,.06,bus);}if(within%4===0)drum(at,bus,true);if(within%2===0)tone(root+24+royal[part],at,tick*1.6,.05,bus,'sawtooth');if(phase===6&&within===12)clockBell(root+36,at,.075,bus);}
+    }else if(['gargantua','crypt'].includes(who)){
       if(within%4===0){drum(at,bus,true);tone(root,at,beat*1.6,.10,bus,'sine');brass(root+7,at,beat*.8,.04,bus);}
       if(within===0||within===8)abyssChoir(root+12+(bar%2?1:0),at,beat*3,.055,bus);
       if(phase===2&&within%2===0)tone(root+12+[0,7,3,1][part%4],at,tick*.6,.035,bus,'sawtooth');

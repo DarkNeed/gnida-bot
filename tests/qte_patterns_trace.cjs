@@ -20,6 +20,7 @@ function safeRoute(initial,limit=28){
 }
 function record(c){
   const p=E.profile(c.profile),s=(c.kind==='attack'?E.attack:E.defense)(p,c.stats,c.seed,{damageBase:0,hp:1000000,endOnDeath:false,enabledStrikes:c.enabled_strikes,preparation:c.defense_preparation??0});
+  if(s.player&&c.initial_player)Object.assign(s.player,c.initial_player);
   if(c.kind==='attack'){
     const proof={ticks:0,clicks:[]};let missedFirst=false;
     for(let tick=0;tick<=Math.ceil(s.duration*120);tick++){

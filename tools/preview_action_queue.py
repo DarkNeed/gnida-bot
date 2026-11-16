@@ -41,6 +41,8 @@ def create_app():
     scripts = {name: ROOT / 'webapp' / source for name, source in {
         'patterns.js': 'qte-unique/engine', 'block.js': 'qte-block/engine',
         'nazarick.js': 'nazarick-qte.js', 'nazarick-dungeon.js': 'nazarick-dungeon-qte.js',
+        'ainz.js': 'ainz-qte.js',
+        'ainz-art.js': 'ainz-qte-art.js',
         'art.js': 'qte-art.js', 'casino-view.js': 'qte-casino-view',
         'view.js': 'qte-view', 'block-view.js': 'qte-block-view',
     }.items()}

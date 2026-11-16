@@ -3,10 +3,14 @@ const fs=require('node:fs'),vm=require('node:vm');
 const E=require('../webapp/qte-unique/engine'),B=require('../webapp/qte-block/engine'),N=require('../webapp/nazarick-qte.js');
 const window={QTEUnique:E,QTEBlock:B,NazarickQTE:N};
 const sandbox={window,QTEUnique:E,QTEBlock:B,Math};
+sandbox.AinzQTE=require('../webapp/ainz-qte.js');sandbox.NazarickQTE=N;
+vm.runInNewContext(fs.readFileSync('webapp/ainz-qte-art.js','utf8'),sandbox);
+window.AinzArt=sandbox.AinzArt;
 vm.runInNewContext(fs.readFileSync('webapp/qte-view','utf8'),sandbox);
 vm.runInNewContext(fs.readFileSync('webapp/qte-block-view','utf8'),sandbox);
 let draws=0;
 const ctx=new Proxy({}, {get(o,k){return o[k]??((...args)=>{for(const a of args)if(typeof a==='number'&&!Number.isFinite(a))throw Error('Non-finite '+k);});},set(o,k,v){o[k]=v;return true;}});
+ctx.globalAlpha=1;
 let raw='';process.stdin.on('data',b=>raw+=b);
 process.stdin.on('end',()=>{
  for(const desc of JSON.parse(raw)){

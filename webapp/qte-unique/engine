@@ -467,6 +467,7 @@
     let age=Math.max(0,t-h.start);
     if(h.type==='line'&&('chestMoveX' in h||'chestMoveY' in h)){const dx=(h.chestMoveX||0)*age,dy=(h.chestMoveY||0)*age;return {...h,ax:h.ax+dx,ay:h.ay+dy,bx:h.bx+dx,by:h.by+dy};}
     if(h.freezeFor&&age>h.freezeAt)age=h.freezeAt+Math.max(0,age-h.freezeAt-h.freezeFor);
+    if(h.ainzPath)return NZ.motion(h,age);
     if(h.type==='line'&&h.clockTurn){const a=h.clockTurn*age,cs=Math.cos(a),sn=Math.sin(a),dx=h.bx-h.ax,dy=h.by-h.ay;return {...h,bx:h.ax+dx*cs-dy*sn,by:h.ay+dx*sn+dy*cs};}
     if(h.type==='bullet'){
       if(h.returnAt){const travel=age<=h.returnAt?age:2*h.returnAt-age,sign=age<=h.returnAt?1:-1;return {...h,x:h.x+h.vx*travel,y:h.y+h.vy*travel,vx:h.vx*sign,vy:h.vy*sign};}

@@ -228,6 +228,23 @@ test('Kit arrangements schedule complete evolving bars with bounded active voice
 });
 
 const chaplainThemes=['chaplain','chaplain_fault','chaplain_override','chaplain_root'];
+test('Ainz six-phase scores are distinct, bounded and respect mute',async()=>{
+  const fingerprints=new Set();
+  for(let phase=1;phase<=6;phase++){
+    const key='nz_ainz6_'+phase,h=harness();h.audio.scene(key);await h.click({});
+    let peak=0;
+    for(let i=1;i<=240;i++){
+      h.contexts[0].currentTime=i/10;for(const fn of h.intervals.values())fn();
+      for(const s of h.sources)if(!s.ended&&s.stopped<=i/10){s.ended=true;s.onended?.();}
+      peak=Math.max(peak,h.sources.filter(s=>!s.ended).length);
+    }
+    assert.equal(h.intervals.size,1);assert(peak<100,key);
+    assert(h.sources.every(s=>Number.isFinite(s.started)&&s.stopped>s.started));
+    fingerprints.add(JSON.stringify(h.sources.filter(s=>s.type).slice(0,50).map(s=>[s.type,s.frequency.value,s.stopped-s.started])));
+    const muted=harness({saved:JSON.stringify({muted:true})});muted.audio.scene(key);await muted.click({});assert.equal(muted.intervals.size,0);
+  }
+  assert.equal(fingerprints.size,6);
+});
 test('Nazarick has ten distinct bounded phase scores; Pandora is a distorted royal theme',async()=>{
   const fingerprints=new Set();
   for(const who of ['shalltear','demiurge','albedo','pandora','ainz'])for(const phase of [1,2]){

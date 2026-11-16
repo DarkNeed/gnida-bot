@@ -69,6 +69,10 @@ async def raid_view(db, row, actor):
             who, phase = identity(data)
             side['name'] = side.get('name') if mob else data['boss']['name']
             side['class_avatar_url'] = sprite(who, phase) if not side.get('nz_sprite') else sprite(side['nz_sprite'])
+            from arena_ainz_phases import enabled as six_ainz,presentation as ainz_view
+            if not side.get('nz_sprite') and six_ainz(data):
+                view=ainz_view(data)
+                side.update(class_avatar_url=view['sprite'],class_name=view['phase_name'],class_rarity='legendary')
             side['sprite_flip'] = False
         if mob_info:
             side['class_avatar_url'] = mob_info['sprite']
@@ -296,7 +300,7 @@ async def raid_view(db, row, actor):
                          'Копии оплачивают энергию и перезарядки; подготовленная ульта имеет одну активацию.'
                          if row.get('boss_id')=='mimic' else ''),
         difficulty=boss_info.get('difficulty', ''),
-        phase_count=boss_info.get('phase_count', 2),
+        phase_count=data.get('phase_count',2) if nazarick and data else boss_info.get('phase_count', 2),
         boss_sprites=dict(boss_info.get('phase_sprites', {})),
         ally_sprite=boss_info.get("ally_sprite", ""),
         loot_name=(

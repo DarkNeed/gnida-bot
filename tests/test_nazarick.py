@@ -39,7 +39,12 @@ class GauntletTests(unittest.TestCase):
             self.assertFalse(finish_if_needed(d))
             choose(d)
             self.assertEqual(d['nazarick']['phase'],2)
-            self.assertEqual(d['boss']['hp'],round(d['boss']['stats']['max_hp']*.5))
+            self.assertEqual(d['boss']['hp'],round(d['boss']['stats']['max_hp']*(5/6 if stage==4 else .5)))
+            if stage==4:
+                for phase in range(3,7):
+                    d['boss']['hp']=0;choose(d)
+                    self.assertEqual(d['nazarick']['phase'],phase)
+                    self.assertFalse(d['finished'])
             d['boss']['hp']=0
             choose(d)
             self.assertEqual(d['finished'],stage==4)

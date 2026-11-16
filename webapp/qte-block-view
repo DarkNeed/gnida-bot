@@ -14,6 +14,7 @@
     arc(145,0,Math.PI*2,'#263c4b');arc(92,0,Math.PI*2,'#213945');
     window.QTEArt?.field(ctx,s,400);
     window.NazarickDungeonQTE?.field(ctx,s,400);
+    window.AinzArt?.field(ctx,s,400);
     const nz=window.NazarickQTE?.identity(s.p);
     if(nz){text(s.p.skill.name+' · ФАЗА '+nz.phase,cx,25,window.NazarickQTE.colors[nz.who],15);}
     if(nz?.who==='ainz'&&nz.phase===2&&staffArt?.complete&&staffArt.naturalWidth){ctx.save();ctx.shadowColor='#b090f4';ctx.shadowBlur=12;ctx.drawImage(staffArt,626,66+Math.sin(t*2)*6,78,116);ctx.restore();text('ПАРЯЩИЙ ПОСОХ',640,204,'#ba9ae9',10);}
@@ -71,7 +72,8 @@
         else{
           ctx.setLineDash([4,5]);line(cx+Math.cos(a)*165,cy+Math.sin(a)*165,cx+Math.cos(a)*54,cy+Math.sin(a)*54,color,2);ctx.setLineDash([]);
           ctx.save();ctx.translate(x,y);ctx.rotate(a+Math.PI);ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=3;
-          if(e.status==='burn'){
+          if(window.AinzArt?.blockGlyph(ctx,s,e,0,0,11,t)){}
+          else if(e.status==='burn'){
             ctx.shadowColor='#ff451b';ctx.shadowBlur=20;ctx.beginPath();ctx.moveTo(16,0);ctx.quadraticCurveTo(-2,-20,-26,0);ctx.quadraticCurveTo(-2,20,16,0);ctx.fill();ctx.fillStyle='#ffc15b';ctx.beginPath();ctx.arc(2,0,5,0,Math.PI*2);ctx.fill();
           }
           else if(nz.who==='demiurge'){ctx.shadowColor='#dc2549';ctx.shadowBlur=15;ctx.beginPath();for(let j=0;j<6;j++){const b=(j*2%5)*Math.PI*2/5;ctx.lineTo(Math.cos(b)*14,Math.sin(b)*14);}ctx.stroke();}

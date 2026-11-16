@@ -62,6 +62,9 @@ def family(s):
     if ident.startswith('nz_'):
         from arena_nazarick_patterns import identity
         who, phase, move = identity(dict(skill=s))
+        if who=='ainz6':
+            from arena_ainz_phases import family as ainz_family
+            return ainz_family(phase,move)
         from arena_nazarick_dungeon_patterns import FAMILIES
         if who in FAMILIES:return FAMILIES[who][move]
         if who=='pyromancer':return 'fire'
@@ -865,6 +868,9 @@ def geometry(h, t):
         return dict(h,ax=h['ax']+dx,ay=h['ay']+dy,bx=h['bx']+dx,by=h['by']+dy)
     if h.get('freezeFor') and age > h['freezeAt']:
         age = h['freezeAt'] + max(0, age-h['freezeAt']-h['freezeFor'])
+    if h.get('ainzPath'):
+        from arena_ainz_motion import geometry as ainz_geometry
+        return ainz_geometry(h,age)
     if h['type'] == 'line' and h.get('clockTurn'):
         a = h['clockTurn'] * age
         cs, sn = math.cos(a), math.sin(a)

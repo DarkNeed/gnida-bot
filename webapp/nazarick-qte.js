@@ -2,15 +2,18 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.NazarickQTE=api;})(globalThis,function(){
 'use strict';
 const ND=typeof module==='object'&&module.exports?require('./nazarick-dungeon-qte.js'):globalThis.NazarickDungeonQTE;
+const A6=typeof module==='object'&&module.exports?require('./ainz-qte.js'):globalThis.AinzQTE;
 const colors={shalltear:'#ff244c',demiurge:'#e74620',albedo:'#8145cf',pandora:'#b48bd8',ainz:'#a58aff',knight:'#8d8fb6',lich:'#75c89e',hellguard:'#ef4723',pyromancer:'#ff642b'};
 Object.assign(colors,ND?.colors||{});
+colors.ainz6='#b69bff';
 function identity(p){const a=(p.skill.base_id||'').split('_');return a.length===4&&a[0]==='nz'?{who:a[1],phase:Number(a[2].slice(1)),move:Number(a[3])}:null;}
 const STONE_COLORS=['#ff593c','#70c6ff','#b69bff','#86e478','#f4db75','#ee86da','#e4edff'];
 const STONE_STATUSES=['burn','shock','curse','venom','exposed','sealed','frailty'];
-function activeDuration(p){const n=identity(p);if(n?.who==='sebas')return 8.4;if(n?.who==='victim'&&n.phase===2&&n.move===4)return 44;if(n&&ND?.revisionSchedule(n.who,n.phase,n.move))return 6.8;if(ND?.families?.[n?.who]&&n.move===4)return 5.2;return n?.who==='ainz'&&n.phase===1&&n.move===0?18.8:n?.who==='ainz'&&n.phase===2&&n.move===0?10.4:6.8;}
-function blockDuration(p){const n=identity(p);if(n?.who==='victim'&&n.phase===2&&n.move===4)return 45;return n?.who==='ainz'&&[[1,0],[2,0]].some(([ph,m])=>n.phase===ph&&n.move===m)?1+activeDuration(p):9.5;}
-function schedule(p,count,span){const n=identity(p);if(!n)return[count,span];const revised=ND?.revisionSchedule(n.who,n.phase,n.move);if(revised)return revised;if(ND?.families?.[n.who]&&n.move===4)return[1,0];if(n.who==='ainz'&&n.phase===1&&n.move===0)return[7,15.3];if(n.who==='ainz'&&n.phase===2&&n.move===0)return[2,5.2];if(n.who==='demiurge'&&(n.phase===1&&n.move===2||n.phase===2&&n.move===1)||n.who==='ainz'&&n.phase===2&&n.move===1)return[3,4.0];if(n.who==='ainz'&&n.phase===2&&n.move===2)return[3,4.4];return[count,span];}
+function activeDuration(p){const n=identity(p);if(n?.who==='ainz6')return A6.activeDuration(n.phase,n.move);if(n?.who==='sebas')return 8.4;if(n?.who==='victim'&&n.phase===2&&n.move===4)return 44;if(n&&ND?.revisionSchedule(n.who,n.phase,n.move))return 6.8;if(ND?.families?.[n?.who]&&n.move===4)return 5.2;return n?.who==='ainz'&&n.phase===1&&n.move===0?18.8:n?.who==='ainz'&&n.phase===2&&n.move===0?10.4:6.8;}
+function blockDuration(p){const n=identity(p);if(n?.who==='ainz6')return [[1,0],[6,0]].some(([ph,m])=>n.phase===ph&&n.move===m)?1+activeDuration(p):9.5;if(n?.who==='victim'&&n.phase===2&&n.move===4)return 45;return n?.who==='ainz'&&[[1,0],[2,0]].some(([ph,m])=>n.phase===ph&&n.move===m)?1+activeDuration(p):9.5;}
+function schedule(p,count,span){const n=identity(p);if(!n)return[count,span];if(n.who==='ainz6')return A6.schedule(n.phase,n.move);const revised=ND?.revisionSchedule(n.who,n.phase,n.move);if(revised)return revised;if(ND?.families?.[n.who]&&n.move===4)return[1,0];if(n.who==='ainz'&&n.phase===1&&n.move===0)return[7,15.3];if(n.who==='ainz'&&n.phase===2&&n.move===0)return[2,5.2];if(n.who==='demiurge'&&(n.phase===1&&n.move===2||n.phase===2&&n.move===1)||n.who==='ainz'&&n.phase===2&&n.move===1)return[3,4.0];if(n.who==='ainz'&&n.phase===2&&n.move===2)return[3,4.4];return[count,span];}
 function shapes(s,e){
+ if(identity(s.p)?.who==='ainz6'){const mapped=A6.legacy(s.p);return mapped?shapes({...s,p:mapped},e):A6.shapes(s,e);}
  const dungeon=ND?.shapes(s,e);if(dungeon)return dungeon;
  const {who,phase,move}=identity(s.p),x=s.player.x,y=s.player.y,d=s.d,i=e.index,sign=i%2?1:-1,color=colors[who]||'#9ba9de',out=[];
  const add=(h,delay=0,duration=.24,extra={})=>out.push({color,...h,delay,duration,...extra});
@@ -92,7 +95,7 @@ function shapes(s,e){
  for(const h of out){if(h.motif==='fire')h.status='burn';if(['bone','skull'].includes(h.motif))h.color='#e4dfda';}
  return out;
 }
-function timeStopped(s){const id=identity(s.p),elapsed=s.time-(s.preparation||0);return id?.who==='ainz'&&id.phase===2&&id.move===0&&elapsed>=0&&elapsed<10.4&&elapsed%5.2>=.5&&elapsed%5.2<2.5;}
+function timeStopped(s){const id=identity(s.p),elapsed=s.time-(s.preparation||0);if(id?.who==='ainz6')return id.phase===6&&id.move===0&&elapsed>=0&&elapsed<10.4&&elapsed%5.2>=.5&&elapsed%5.2<2.5;return id?.who==='ainz'&&id.phase===2&&id.move===0&&elapsed>=0&&elapsed<10.4&&elapsed%5.2>=.5&&elapsed%5.2<2.5;}
 function advanceHoming(h,p,t,dt){
  if(!h.homing||t<h.start)return;
  h.lastX=h.px??h.x;h.lastY=h.py??h.y;
@@ -101,6 +104,7 @@ function advanceHoming(h,p,t,dt){
  h.px=h.lastX+h.vx*dt;h.py=h.lastY+h.vy*dt;
 }
 function blockThreats(p,seed,params,rng){
+ if(identity(p)?.who==='ainz6'){const mapped=A6.legacy(p);return mapped?blockThreats(mapped,seed,params,rng):A6.blocks(p,seed,params,rng);}
  const dungeon=identity(p)&&ND?.blocks(p,seed,params,rng);if(dungeon)return dungeon;
  const which=identity(p);if(!which)return null;const{who,phase,move}=which,r=rng((seed^p.seed)>>>0),offset=Math.floor(r()*8)*Math.PI/4,out=[];
  if(who==='ainz'&&(phase===1&&move===0||phase===2&&move===0)){
@@ -132,5 +136,5 @@ function blockThreats(p,seed,params,rng){
  out.forEach((e,i)=>Object.assign(e,{id:'block:'+i,at:e.at+delay,strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/out.length))}));return out;
 }
 function blockFlight(e,t){const elapsed=t-(e.at-e.warning);if(e.freezeStart===undefined)return Math.max(0,Math.min(1,elapsed/e.warning));const pause=e.freezeEnd-e.freezeStart,paused=Math.max(0,Math.min(pause,t-e.freezeStart));return Math.max(0,Math.min(1,(elapsed-paused)/(e.warning-pause)));}
-return{identity,colors,shapes,blockThreats,blockFlight,timeStopped,advanceHoming,activeDuration,blockDuration,schedule,STONE_COLORS,STONE_STATUSES,guardianFamily:skill=>ND?.families?.[identity({skill})?.who]?.[identity({skill})?.move]};
+return{identity,colors,shapes,motion:A6.motion,blockThreats,blockFlight,timeStopped,advanceHoming,activeDuration,blockDuration,schedule,STONE_COLORS,STONE_STATUSES,guardianFamily:skill=>identity({skill})?.who==='ainz6'?A6.families[identity({skill}).phase-1][identity({skill}).move]:ND?.families?.[identity({skill})?.who]?.[identity({skill})?.move]};
 });

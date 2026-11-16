@@ -1,0 +1,74 @@
+{
+  "sprites": [
+    {
+      "key": "mage",
+      "prompt": "Use case: stylized-concept. Production asset: single full-body transparent PNG sprite for a 2D battle. Authentic Overlord TV-anime character design, restrained flat cel shading with 2 shadow tones, clean dark contour lines, muted colors, angular anatomy; match the provided anime model sheets, NOT a detailed game render. All supplied images are design references, not edit targets. Full body and all equipment entirely inside the canvas with 6 percent padding. Character faces LEFT in three-quarter view toward an opponent. Actual transparent background, no floor, shadow, aura cloud, checkerboard, text, watermark, inset or character sheet. No photorealism, no 3D bevels, no chibi, no gacha jewel ornamentation.Ainz Ooal Gown in his exact anime mage robes: elongated bony skull with deep black eye sockets and tiny red pinpoints, broad segmented ivory shoulder structures with two round red pauldrons, black and violet voluminous gown with simple angular gold trim, lower gown closed, gold neck collar and red orb in rib cage. Composed upright commanding pose, one skeletal hand extended, other holds his golden seven-gem Staff of Ainz Ooal Gown. Match proportions and design of supplied official character sheet.",
+      "refs": [
+        "anime-model.jpg",
+        "official-film.webp"
+      ]
+    },
+    {
+      "key": "blades",
+      "prompt": "Use case: stylized-concept. Production asset: single full-body transparent PNG sprite for a 2D battle. Authentic Overlord TV-anime character design, restrained flat cel shading with 2 shadow tones, clean dark contour lines, muted colors, angular anatomy; match the provided anime model sheets, NOT a detailed game render. All supplied images are design references, not edit targets. Full body and all equipment entirely inside the canvas with 6 percent padding. Character faces LEFT in three-quarter view toward an opponent. Actual transparent background, no floor, shadow, aura cloud, checkerboard, text, watermark, inset or character sheet. No photorealism, no 3D bevels, no chibi, no gacha jewel ornamentation.Ainz wearing the white World Champion full plate armor that he wore against Shalltear: follow the white/silver angular armor in the Touch Me reference, CLOSED pointed helmet, dark narrow visor, LARGE BLUE oval gem in center of chest, dark joints, simple RED cloth cape with beige inner lining. No exposed skull, no hood, no black/purple robe, no golden wings or gold filigree, no open helmet. Do not depict Touch Me's insect body; the suit is being worn by Ainz, fully armored. Low forward guarded stance, one short gold-toned kodachi and one short silver-blue kodachi (Amaterasu and Tsukuyomi). Small understated glints, no glowing laser blades. Two hands only. The armor and red cape must stay faithful to reference.",
+      "refs": [
+        "touch-me.png",
+        "anime-model.jpg"
+      ]
+    },
+    {
+      "key": "bow",
+      "prompt": "Use case: stylized-concept. Production asset: single full-body transparent PNG sprite for a 2D battle. Authentic Overlord TV-anime character design, restrained flat cel shading with 2 shadow tones, clean dark contour lines, muted colors, angular anatomy; match the provided anime model sheets, NOT a detailed game render. All supplied images are design references, not edit targets. Full body and all equipment entirely inside the canvas with 6 percent padding. Character faces LEFT in three-quarter view toward an opponent. Actual transparent background, no floor, shadow, aura cloud, checkerboard, text, watermark, inset or character sheet. No photorealism, no 3D bevels, no chibi, no gacha jewel ornamentation.Ainz wearing the white World Champion full plate armor that he wore against Shalltear: follow the white/silver angular armor in the Touch Me reference, CLOSED pointed helmet, dark narrow visor, LARGE BLUE oval gem in center of chest, dark joints, simple RED cloth cape with beige inner lining. No exposed skull, no hood, no black/purple robe, no golden wings or gold filigree, no open helmet. Do not depict Touch Me's insect body; the suit is being worn by Ainz, fully armored. Stand sideways drawing Houyi's large golden mythic longbow toward the LEFT, one luminous pale-gold arrow nocked, bow separate from both arms. Elegant simple bow limbs without clusters of jewels or gear wheels. No sword or shield. Keep fully enclosed canonical white armor and red cape.",
+      "refs": [
+        "touch-me.png",
+        "anime-model.jpg"
+      ]
+    },
+    {
+      "key": "axe",
+      "prompt": "Use case: stylized-concept. Production asset: single full-body transparent PNG sprite for a 2D battle. Authentic Overlord TV-anime character design, restrained flat cel shading with 2 shadow tones, clean dark contour lines, muted colors, angular anatomy; match the provided anime model sheets, NOT a detailed game render. All supplied images are design references, not edit targets. Full body and all equipment entirely inside the canvas with 6 percent padding. Character faces LEFT in three-quarter view toward an opponent. Actual transparent background, no floor, shadow, aura cloud, checkerboard, text, watermark, inset or character sheet. No photorealism, no 3D bevels, no chibi, no gacha jewel ornamentation.Ainz wearing the white World Champion full plate armor that he wore against Shalltear: follow the white/silver angular armor in the Touch Me reference, CLOSED pointed helmet, dark narrow visor, LARGE BLUE oval gem in center of chest, dark joints, simple RED cloth cape with beige inner lining. No exposed skull, no hood, no black/purple robe, no golden wings or gold filigree, no open helmet. Do not depict Touch Me's insect body; the suit is being worn by Ainz, fully armored. Braced low stance holding one heavy single-edged BLOOD-RED CRYSTAL AXE in both hands. Axe head is compact broad angular red crystal near the end of a straight dark handle, a real battle axe not a scythe, not a sickle, not a curved polearm. No purple energy ornament. No sword or shield.",
+      "refs": [
+        "touch-me.png",
+        "anime-model.jpg"
+      ]
+    },
+    {
+      "key": "warrior",
+      "prompt": "Use case: stylized-concept. Production asset: single full-body transparent PNG sprite for a 2D battle. Authentic Overlord TV-anime character design, restrained flat cel shading with 2 shadow tones, clean dark contour lines, muted colors, angular anatomy; match the provided anime model sheets, NOT a detailed game render. All supplied images are design references, not edit targets. Full body and all equipment entirely inside the canvas with 6 percent padding. Character faces LEFT in three-quarter view toward an opponent. Actual transparent background, no floor, shadow, aura cloud, checkerboard, text, watermark, inset or character sheet. No photorealism, no 3D bevels, no chibi, no gacha jewel ornamentation.Ainz wearing the white World Champion full plate armor that he wore against Shalltear: follow the white/silver angular armor in the Touch Me reference, CLOSED pointed helmet, dark narrow visor, LARGE BLUE oval gem in center of chest, dark joints, simple RED cloth cape with beige inner lining. No exposed skull, no hood, no black/purple robe, no golden wings or gold filigree, no open helmet. Do not depict Touch Me's insect body; the suit is being worn by Ainz, fully armored. Dynamic controlled stance holding Takemikazuchi VIII as depicted in the ANIME: a broad single-edged curved dao-like sword with dark blade and blue-white electrical accents, NOT a narrow samurai katana. A few thin blue arcs close to blade only, no large glow cloud. No second weapon or shield.",
+      "refs": [
+        "touch-me.png",
+        "anime-model.jpg"
+      ]
+    },
+    {
+      "key": "death",
+      "prompt": "Use case: stylized-concept. Production asset: single full-body transparent PNG sprite for a 2D battle. Authentic Overlord TV-anime character design, restrained flat cel shading with 2 shadow tones, clean dark contour lines, muted colors, angular anatomy; match the provided anime model sheets, NOT a detailed game render. All supplied images are design references, not edit targets. Full body and all equipment entirely inside the canvas with 6 percent padding. Character faces LEFT in three-quarter view toward an opponent. Actual transparent background, no floor, shadow, aura cloud, checkerboard, text, watermark, inset or character sheet. No photorealism, no 3D bevels, no chibi, no gacha jewel ornamentation.Ainz Ooal Gown in exact anime mage robes: elongated skull, black sockets and tiny red eyes, ivory segmented shoulder arches with red spheres, massive black/violet gown and angular simple gold trim, red orb in ribs. Upright imposing ritual pose with both long skeletal hands raised slightly apart, open fingers. NO STAFF in hands, no weapons, no floating prop, robe covers feet. A single thin red eye-flame close to skull, no surrounding fog. Preserve flat restrained TV anime design.",
+      "refs": [
+        "anime-model.jpg",
+        "official-film.webp"
+      ]
+    }
+  ],
+  "props": [
+    {
+      "key": "blades",
+      "prompt": "Use case: stylized-concept. A single weapon-only game effect asset, transparent background, exact Overlord TV-anime flat cel shading and clean black contour outlines, only 2-3 shadow tones, not a polished 3D icon. No character, hands, body, floor, aura, text, frame or watermark. Entire weapon inside canvas with generous transparent margins. Must be instantly readable at small sizes. Amaterasu and Tsukuyomi from Overlord: two short Japanese kodachi crossing in an X, one blade pale warm gold and the other cool silver-blue, simple dark handles, small simple guards. No jewels, not scimitars, no oversized glow."
+    },
+    {
+      "key": "bow",
+      "prompt": "Use case: stylized-concept. A single weapon-only game effect asset, transparent background, exact Overlord TV-anime flat cel shading and clean black contour outlines, only 2-3 shadow tones, not a polished 3D icon. No character, hands, body, floor, aura, text, frame or watermark. Entire weapon inside canvas with generous transparent margins. Must be instantly readable at small sizes. Houyi's mythic golden bow from Overlord, tall longbow silhouette, dark golden limbs with a subtle winglike curve, taut thin gold string and one pale-gold arrow nocked pointing to the RIGHT. Simple anime shapes, not ornate jewel clusters."
+    },
+    {
+      "key": "axe",
+      "prompt": "Use case: stylized-concept. A single weapon-only game effect asset, transparent background, exact Overlord TV-anime flat cel shading and clean black contour outlines, only 2-3 shadow tones, not a polished 3D icon. No character, hands, body, floor, aura, text, frame or watermark. Entire weapon inside canvas with generous transparent margins. Must be instantly readable at small sizes. Overlord's Blood Sucking Meat Devourer: a heavy single-edged red crystal battle axe, broad jagged solid crimson axe head close to a straight dark handle, blade points RIGHT. Clearly an AXE, NOT a scythe or sickle. Red crystal simple facets, black hilt."
+    },
+    {
+      "key": "sword",
+      "prompt": "Use case: stylized-concept. A single weapon-only game effect asset, transparent background, exact Overlord TV-anime flat cel shading and clean black contour outlines, only 2-3 shadow tones, not a polished 3D icon. No character, hands, body, floor, aura, text, frame or watermark. Entire weapon inside canvas with generous transparent margins. Must be instantly readable at small sizes. Overlord anime Takemikazuchi VIII: a broad long single-edged dark dao-like blade angled to the RIGHT, simple guard and long dark grip, thin blue-white electricity close to cutting edge. Not a thin katana, not a European longsword."
+    },
+    {
+      "key": "staff",
+      "prompt": "Use case: stylized-concept. A single weapon-only game effect asset, transparent background, exact Overlord TV-anime flat cel shading and clean black contour outlines, only 2-3 shadow tones, not a polished 3D icon. No character, hands, body, floor, aura, text, frame or watermark. Entire weapon inside canvas with generous transparent margins. Must be instantly readable at small sizes. The Staff of Ainz Ooal Gown from the Overlord anime: long zigzag golden shaft topped by golden intertwined snakes supporting seven different colored gemstones, ruby red, sapphire blue, emerald green, purple, yellow, pink, white. Accurate anime silhouette, flat cel shading, upright full length, no effects cloud."
+    }
+  ]
+}

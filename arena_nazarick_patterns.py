@@ -14,6 +14,9 @@ STONE_STATUSES=('burn','shock','curse','venom','exposed','sealed','frailty')
 
 def active_duration(p):
     which=identity(p)
+    if which and which[0]=='ainz6':
+        from arena_ainz_patterns import active_duration as ainz_duration
+        return ainz_duration(which[1],which[2])
     if which and which[0]=='sebas':return 8.4
     if which and which[0]=='victim' and which[1]==2 and which[2]==4:return 44.0
     from arena_nazarick_revision_patterns import schedule as revised_schedule
@@ -24,12 +27,17 @@ def active_duration(p):
 
 
 def block_duration(p):
+    if identity(p) and identity(p)[0]=='ainz6':
+        return 1+active_duration(p) if identity(p)[1:] in ((1,0),(6,0)) else 9.5
     if identity(p)==('victim',2,4):return 45.0
     return 1+active_duration(p) if identity(p) in (('ainz',1,0),('ainz',2,0)) else 9.5
 
 
 def schedule(p,count,span):
     which=identity(p)
+    if which and which[0]=='ainz6':
+        from arena_ainz_patterns import schedule as ainz_schedule
+        return ainz_schedule(which[1],which[2])
     from arena_nazarick_revision_patterns import schedule as revised_schedule
     revised=revised_schedule(*which) if which else None
     if revised is not None:return revised
@@ -43,6 +51,12 @@ def schedule(p,count,span):
 
 
 def shapes(s, e):
+    if identity(s['p']) and identity(s['p'])[0]=='ainz6':
+        from arena_ainz_phases import legacy_profile
+        mapped=legacy_profile(s['p'])
+        if mapped:return shapes(dict(s,p=mapped),e)
+        from arena_ainz_patterns import shapes as ainz_shapes
+        return ainz_shapes(s,e)
     from arena_nazarick_dungeon_patterns import shapes as dungeon_shapes
     dungeon=dungeon_shapes(s,e)
     if dungeon is not None:return dungeon
@@ -294,6 +308,9 @@ COLORS=dict(shalltear='#ff244c',demiurge='#e74620',albedo='#8145cf',
 
 
 def time_stopped(s):
+    if identity(s['p']) and identity(s['p'])[0]=='ainz6':
+        elapsed=s['time']-s.get('preparation',0)
+        return identity(s['p'])[1:]==(6,0) and 0<=elapsed<10.4 and .5<=elapsed%5.2<2.5
     ident=identity(s['p'])
     elapsed=s['time']-s.get('preparation',0)
     return ident==('ainz',2,0) and 0<=elapsed<10.4 and .5 <= elapsed%5.2 < 2.5
@@ -322,6 +339,12 @@ def prepare(s,e,add):
 def block_threats(p,seed,params):
     which=identity(p)
     if not which:return None
+    if which[0]=='ainz6':
+        from arena_ainz_phases import legacy_profile
+        mapped=legacy_profile(p)
+        if mapped:return block_threats(mapped,seed,params)
+        from arena_ainz_patterns import blocks
+        return blocks(p,seed,params)
     from arena_nazarick_dungeon_patterns import blocks as dungeon_blocks
     from arena_qte_patterns import random_values
     def rng(seed):
