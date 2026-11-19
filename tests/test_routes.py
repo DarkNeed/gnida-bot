@@ -564,6 +564,51 @@ class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await database.close()
 
+    async def test_mute_command_accepts_week_without_number(self):
+        row = {"user_id": 20, "display_name": "Участник", "username": "member"}
+        database = SimpleNamespace(
+            upsert_user=AsyncMock(), get_user=AsyncMock(return_value=row),
+            resolve_user=AsyncMock(return_value=row), record_action=AsyncMock(),
+        )
+        router = create_router(database, kargassia_chat_id=None)
+        handler = next(
+            item.callback for item in router.message.handlers
+            if item.callback.__name__ == "moderation"
+        )
+        admin = User(id=10, is_bot=False, first_name="Админ", username="admin")
+        target = User(id=20, is_bot=False, first_name="Участник", username="member")
+        bot = SimpleNamespace(
+            get_chat_member=AsyncMock(return_value=ChatMemberOwner(
+                status="creator", user=admin, is_anonymous=False,
+            )),
+            restrict_chat_member=AsyncMock(),
+        )
+        for command, reply, reason in (
+            ("!мут неделя", SimpleNamespace(from_user=target, sender_chat=None), "не указана"),
+            ("!мут @member неделя флуд", None, "флуд"),
+        ):
+            with self.subTest(command=command):
+                bot.restrict_chat_member.reset_mock()
+                database.record_action.reset_mock()
+                message = SimpleNamespace(
+                    text=command, caption=None, chat=SimpleNamespace(id=-1001, type="supergroup"),
+                    from_user=admin, reply_to_message=reply, answer=AsyncMock(),
+                )
+                before = datetime.now(timezone.utc)
+                await handler(message, bot)
+                after = datetime.now(timezone.utc)
+
+                bot.restrict_chat_member.assert_awaited_once()
+                args, kwargs = bot.restrict_chat_member.await_args
+                self.assertEqual(args, (-1001, 20))
+                self.assertGreaterEqual(kwargs["until_date"], before + timedelta(weeks=1))
+                self.assertLessEqual(kwargs["until_date"], after + timedelta(weeks=1))
+                database.record_action.assert_awaited_once_with(
+                    -1001, 20, "mute", reason, 10, duration_seconds=604800,
+                    active_until=int(kwargs["until_date"].timestamp()),
+                )
+                self.assertIn("мут на 1 нед.", message.answer.await_args.args[0])
+
     async def test_piska_command_mutes_replied_user_for_one_day(self):
         database = SimpleNamespace(
             upsert_user=AsyncMock(),

@@ -65,15 +65,15 @@ def parse_duration(value: str) -> Duration | None:
 
 
 def parse_duration_prefix(value: str) -> tuple[Duration | None, str]:
-    """Parse a compact or two-word duration from the beginning of a string."""
+    """Parse a duration prefix, including standalone day and week aliases."""
     first, remainder = split_first(value)
     if not first:
         return None, ""
     compact = parse_duration(first)
     if compact:
         return compact, remainder
-    if first.casefold() == "сутки":
-        return parse_duration("1 сутки"), remainder
+    if first.casefold() in {"сутки", "неделя"}:
+        return parse_duration(f"1 {first}"), remainder
     if first.isdigit():
         unit, tail = split_first(remainder)
         spaced = parse_duration(f"{first} {unit}") if unit else None

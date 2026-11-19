@@ -5286,7 +5286,7 @@ def create_router(
                 else:
                     if re.match(r"^\d+(?:\s*[a-zа-яё]+)?(?:\s|$)", remainder, re.I):
                         await message.answer(
-                            "Некорректное время. Примеры: 30s, 10мин, 1h, 2дня (до 366 дней)."
+                            "Некорректное время. Примеры: 30s, 10мин, 1h, 2дня, неделя (до 366 дней)."
                         )
                         return
                     duration = parse_duration("1h")

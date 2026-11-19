@@ -18,6 +18,19 @@ class DurationTests(unittest.TestCase):
     def test_english_hour(self):
         self.assertEqual(parse_duration("1h").seconds, 3600)
 
+    def test_russian_week_duration_prefix(self):
+        for value, weeks, expected_reason in (
+            ("неделя", 1, ""),
+            ("НЕДЕЛЯ флуд в чате", 1, "флуд в чате"),
+            ("2 недели флуд", 2, "флуд"),
+            ("2недели флуд", 2, "флуд"),
+        ):
+            with self.subTest(value=value):
+                duration, reason = parse_duration_prefix(value)
+                self.assertEqual(duration.seconds, weeks * 7 * 86400)
+                self.assertEqual(reason, expected_reason)
+        self.assertEqual(parse_duration_prefix("неделями флудил"), (None, "неделями флудил"))
+
     def test_russian_compact_duration(self):
         self.assertEqual(parse_duration("2дня").seconds, 172800)
 
