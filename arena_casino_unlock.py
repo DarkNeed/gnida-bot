@@ -10,8 +10,10 @@ class CasinoUnlockMixin:
             user_id INTEGER PRIMARY KEY, invited INTEGER NOT NULL DEFAULT 0,
             unlocked INTEGER NOT NULL DEFAULT 0, trial_json TEXT NOT NULL DEFAULT '{}',
             revision INTEGER NOT NULL DEFAULT 0, retry_at INTEGER NOT NULL DEFAULT 0)''')
+        # Before tiered payouts every winning receipt was x5. Recognize both
+        # those legacy jackpots and new ones, but never a regular x3 win.
         self.connection.execute('''INSERT OR IGNORE INTO arena_casino_unlocks(user_id,invited)
-            SELECT DISTINCT user_id,1 FROM franc_deposits WHERE won=1''')
+            SELECT DISTINCT user_id,1 FROM franc_deposits WHERE won=1 AND payout=5*stake''')
 
     def _casino_row_locked(self,user):
         self.connection.execute('INSERT OR IGNORE INTO arena_casino_unlocks(user_id) VALUES(?)',(user,))

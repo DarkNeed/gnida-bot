@@ -6,19 +6,17 @@ necessarily a profitable cycle. The Monte Carlo RNG is reproducible test data,
 not the production SystemRandom generator and not a prediction of future bets.
 """
 import argparse
-import ast
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, replace
 from fractions import Fraction
-import inspect
 import json
 from math import sqrt
 from pathlib import Path
 import random
 import sys
-import textwrap
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from franc_deposit import DepositMixin, DEPOSIT_COOLDOWN, DEPOSIT_COOLDOWN_TIERS, deposit_cooldown
+from franc_deposit import DEPOSIT_COOLDOWN, DEPOSIT_COOLDOWN_TIERS, deposit_cooldown, deposit_multiplier
 
 
 @dataclass(frozen=True)
@@ -29,23 +27,24 @@ class Rules:
     stake_cap: int | None = None
     attempts: int = 200
     tiered_cooldown: bool = False
+    additional_payouts: tuple[tuple[int, int], ...] = ()
+
+    def winning_payouts(self):
+        """Pairs of outcome count and multiplier, largest tier first."""
+        top = self.wins - sum(count for count, _ in self.additional_payouts)
+        return ((top, self.multiplier), *self.additional_payouts)
+
+    def return_per_stake(self):
+        return Fraction(sum(count*mult for count,mult in self.winning_payouts()),self.outcomes)
 
 
 def live_rules():
-    """Read the real integer win threshold/payout rather than assume an old value."""
-    tree=ast.parse(textwrap.dedent(inspect.getsource(DepositMixin.deposit_francs)))
-    assignments={n.targets[0].id:n.value for n in ast.walk(tree) if isinstance(n,ast.Assign)
-                 and len(n.targets)==1 and isinstance(n.targets[0],ast.Name)}
-    won,payout=assignments['won'],assignments['payout']
-    if not (isinstance(won,ast.Compare) and isinstance(won.ops[0],ast.Lt)
-            and isinstance(won.left,ast.Call) and isinstance(won.left.func,ast.Attribute)
-            and won.left.func.attr=='randrange' and isinstance(payout,ast.IfExp)
-            and isinstance(payout.body,ast.BinOp) and isinstance(payout.body.op,ast.Mult)):
-        raise RuntimeError('Deposit rules changed: update the offline model before running it.')
-    threshold=won.comparators[0]
-    wins=DepositMixin.deposit_francs.__globals__[threshold.id] if isinstance(threshold,ast.Name) else ast.literal_eval(threshold)
-    tiered=isinstance(assignments.get('seconds'),ast.Call) and isinstance(assignments['seconds'].func,ast.Name) and assignments['seconds'].func.id=='deposit_cooldown'
-    return Rules(wins,ast.literal_eval(won.left.args[0]),ast.literal_eval(payout.body.right),tiered_cooldown=tiered)
+    """Enumerate the production payout tiers, without touching a wallet."""
+    outcomes=100
+    counts=Counter(deposit_multiplier(roll) for roll in range(outcomes))
+    wins=outcomes-counts.pop(0,0)
+    tiers=tuple((counts[mult],mult) for mult in sorted(counts,reverse=True))
+    return Rules(wins,outcomes,tiers[0][1],tiered_cooldown=True,additional_payouts=tiers[1:])
 
 
 STRATEGIES=('flat_100','half','all','doubling_1','recovery_1','recovery_100')
@@ -80,20 +79,22 @@ def loss_path(start,strategy,rules):
 
 def exact_cycle(start,strategy,rules):
     p=Fraction(rules.wins,rules.outcomes);q=1-p;reach=Fraction(1)
+    tiers=[(Fraction(count,rules.outcomes),mult) for count,mult in rules.winning_payouts()]
     gain=turnover=blocked_seconds=profit_probability=win_probability=Fraction(0)
     path,residual,reason=loss_path(start,strategy,rules)
     losses=0
     for stake in path:
-        net=stake*(rules.multiplier-1)-losses
-        probability=reach*p
-        gain+=probability*net
-        if net>0:profit_probability+=probability
-        win_probability+=probability
+        for chance,mult in tiers:
+            net=stake*(mult-1)-losses
+            probability=reach*chance
+            gain+=probability*net
+            if net>0:profit_probability+=probability
+        win_probability+=reach*p
         turnover+=reach*stake
         blocked_seconds+=reach*cooldown(stake,rules.tiered_cooldown)
         losses+=stake;reach*=q
     gain+=reach*(residual-start)
-    assert gain==(p*rules.multiplier-1)*turnover
+    assert gain==(rules.return_per_stake()-1)*turnover
     return dict(bank=start,strategy=strategy,profit_probability_pct=float(100*profit_probability),
                 any_win_probability_pct=float(100*win_probability),failure_probability_pct=float(100*reach),
                 loss_if_entire_loss_path=start-residual,residual_bank=residual,loss_path_length=len(path),
@@ -103,14 +104,16 @@ def exact_cycle(start,strategy,rules):
 
 def simulate(start,strategy,rules,trials,seed):
     rng=random.Random(seed);positive=failed=wins=0;total=total2=bets=0
+    payouts=[mult for count,mult in rules.winning_payouts() for _ in range(count)] + [0]*(rules.outcomes-rules.wins)
     for _ in range(trials):
         bank=start;losses=0;won=False
         for streak in range(rules.attempts):
             stake=stake_for(strategy,bank,losses,streak,rules.multiplier)
             if stake<1 or stake>bank or rules.stake_cap is not None and stake>rules.stake_cap:break
             bank-=stake;bets+=1
-            if rng.randrange(rules.outcomes)<rules.wins:
-                bank+=stake*rules.multiplier;won=True;break
+            multiplier=payouts[rng.randrange(rules.outcomes)]
+            if multiplier:
+                bank+=stake*multiplier;won=True;break
             losses+=stake
         gain=bank-start;positive+=gain>0;wins+=won;failed+=not won
         total+=gain;total2+=gain*gain
@@ -128,7 +131,7 @@ def run(trials=100000,seed=20261025):
         'current':live,
         'previous_20pct':Rules(20,100,5),
         'previous_20pct_with_cooldowns':Rules(20,100,5,tiered_cooldown=True),
-        'current_with_constant_cooldown':Rules(live.wins,live.outcomes,live.multiplier),
+        'current_with_constant_cooldown':replace(live,tiered_cooldown=False),
     }
     cases=[]
     for bank in (1000,10000):
@@ -139,10 +142,12 @@ def run(trials=100000,seed=20261025):
                 simulation=simulate(bank,strategy,rules,trials,seed) if name in ('current','previous_20pct') else None
                 cases.append(dict(configuration=name,exact=exact,simulation=simulation))
     return dict(live_rules=dict(wins=live.wins,outcomes=live.outcomes,multiplier=live.multiplier,
+                               winning_payouts=live.winning_payouts(),return_per_stake=float(live.return_per_stake()),
                                minimum_cooldown=DEPOSIT_COOLDOWN,cooldown_tiers=DEPOSIT_COOLDOWN_TIERS,
                                tiered_cooldown=live.tiered_cooldown),
                 assumptions=['Independent rolls; no enterprise income, gifts or other external credits.',
                              'Cycle ends on first winning roll, insufficient funds or a published cap.',
+                             'Recovery bets are sized for the largest payout; a smaller win may still end the cycle in loss.',
                              '200 attempts is the model horizon, not a production daily limit; no gameplay stake cap is enabled.',
                              'No real player exploit sequence was supplied; recovery is a tested hypothesis.'],
                 cases=cases,total_simulated_cycles=2*2*len(STRATEGIES)*trials)

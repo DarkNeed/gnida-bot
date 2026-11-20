@@ -1,4 +1,4 @@
-"""Fictional franc wager: 16% gross x5, stake-based account-wide cooldown."""
+"""Fictional franc wager: 6% gross x5, 10% gross x3, 84% loss."""
 
 import random
 import re
@@ -6,6 +6,7 @@ import re
 DEPOSIT_RE = re.compile(r'^\s*[!/]?депнуть(?:@\w+)?(?:\s|$)', re.IGNORECASE)
 AMOUNT_RE = re.compile(r'([0-9]{1,19})(?:(?:\s+(?:франк|франка|франков))|\s*₣)?', re.IGNORECASE)
 DEPOSIT_COOLDOWN = 60
+DEPOSIT_JACKPOT_PERCENT = 6
 DEPOSIT_WIN_PERCENT = 16
 DEPOSIT_COOLDOWN_TIERS = ((50,600),(200,300),(500,120))
 DEPOSIT_ERROR_INTERVAL = 30
@@ -23,11 +24,20 @@ LOSS_PHRASES = (
     '🗑 {user} отправил {stake} ₣ в фонд поддержки лохов. Фонд благодарит единственного спонсора.',
 )
 WIN_PHRASES = (
-    '🎰 {user}, казино подавилось твоей ставкой. ×5: выплата {payout} ₣. Бухгалтеру уже несут валерьянку.',
+    '🎰 {user}, казино подавилось твоей ставкой. Выплата {payout} ₣. Бухгалтеру уже несут валерьянку.',
     '🪄 {user}, из {stake} ₣ получилось {payout} ₣. Даже финансовая пирамида на секунду перестала быть пирамидой.',
     '💀 {user}, ты вынес {payout} ₣. У казино умерла прибыль, но оно ещё надеется на остальных мамонтов.',
-    '🤑 {user}, ×5 — получай {payout} ₣. Сегодня посмешище не ты, а наш отдел риск-менеджмента.',
+    '🤑 {user}, получай {payout} ₣. Сегодня посмешище не ты, а наш отдел риск-менеджмента.',
 )
+
+
+def deposit_multiplier(roll):
+    """Resolve one uniform roll from 0 through 99; the payout includes the stake."""
+    if roll < DEPOSIT_JACKPOT_PERCENT:
+        return 5
+    if roll < DEPOSIT_WIN_PERCENT:
+        return 3
+    return 0
 
 
 def parse_deposit(text):
@@ -162,12 +172,12 @@ class DepositMixin:
                 if balance>MAX_FRANC_BALANCE-4*stake:
                     raise ValueError('Возможный выигрыш превысит лимит кошелька. Уменьши ставку.')
                 seconds=deposit_cooldown(stake)
-                won=rng.randrange(100)<DEPOSIT_WIN_PERCENT
-                if won:
+                multiplier=deposit_multiplier(rng.randrange(100))
+                won=multiplier>0
+                if multiplier==5:
                     self.connection.execute('''INSERT INTO arena_casino_unlocks(user_id,invited) VALUES(?,1)
                         ON CONFLICT(user_id) DO UPDATE SET invited=1''',(user,))
-                payout=stake*5 if won else 0
-                after=balance-stake+payout
+                payout=stake*multiplier
                 phrase=rng.choice(WIN_PHRASES if won else LOSS_PHRASES)
                 self.connection.execute('UPDATE franc_balances SET balance=balance-?,updated_at=? WHERE chat_id=? AND user_id=?',(stake,utc_timestamp(),chat,user))
                 if payout:

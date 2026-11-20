@@ -10,6 +10,7 @@ class DepositAuditTests(unittest.TestCase):
     def test_model_reads_current_production_rule(self):
         rules=live_rules()
         self.assertEqual((rules.wins,rules.outcomes,rules.multiplier),(16,100,5))
+        self.assertEqual(rules.winning_payouts(),((6,5),(10,3)))
         self.assertTrue(rules.tiered_cooldown)
 
     def test_all_bounded_strategies_had_zero_expected_profit_under_legacy_rules(self):
@@ -31,7 +32,14 @@ class DepositAuditTests(unittest.TestCase):
         for strategy in STRATEGIES:
             r=exact_cycle(1000,strategy,live_rules())
             self.assertLess(r['mean_profit'],0)
-            self.assertAlmostEqual(r['mean_profit'],-.2*r['mean_turnover'])
+            self.assertAlmostEqual(r['mean_profit'],-.4*r['mean_turnover'])
+
+    def test_only_large_payout_turns_some_recovery_cycles_profitable(self):
+        r=exact_cycle(1000,'recovery_1',live_rules())
+        self.assertGreater(r['any_win_probability_pct'],r['profit_probability_pct'])
+        single=exact_cycle(1000,'flat_100',Rules(16,100,5,attempts=1,additional_payouts=((10,3),)))
+        self.assertEqual(single['profit_probability_pct'],16)
+        self.assertEqual(single['mean_profit'],-40)
 
     def test_frequent_small_profit_is_not_a_guarantee(self):
         r=exact_cycle(1000,'recovery_1',Rules(20,100,5))

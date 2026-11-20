@@ -3702,7 +3702,7 @@ def create_router(
         phrase=html.escape(result['phrase']).format(user=mention(sender.id,display_name(sender)),
             stake=result['stake'],payout=result['payout'])
         await message.answer(context+phrase+f"\n\nСтавка: <b>{result['stake']} ₣</b>.\n"+
-            (f"Выплата: <b>{result['payout']} ₣</b> · чистый выигрыш: <b>+{result['payout']-result['stake']} ₣</b>." if result['won'] else f"Проиграно: <b>{result['stake']} ₣</b>.")+
+            (f"Выплата ×{result['payout']//result['stake']}: <b>{result['payout']} ₣</b> · чистый выигрыш: <b>+{result['payout']-result['stake']} ₣</b>." if result['won'] else f"Проиграно: <b>{result['stake']} ₣</b>.")+
             f"\nБаланс после ставки: <b>{result['balance_after']} ₣</b>.",parse_mode='HTML')
 
     @router.message(text_or_caption_regexp(FRANCS_RE))

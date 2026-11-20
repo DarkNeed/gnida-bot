@@ -1,6 +1,7 @@
 import asyncio
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock,patch
@@ -71,7 +72,7 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
             message_id=mid,answer=AsyncMock())
 
     async def test_win_is_gross_x5_not_net_x5(self):
-        result=await self.bet(roll=15)
+        result=await self.bet(roll=5)
         self.assertEqual((result['won'],result['payout'],result['balance_after']),(1,500,1400))
         self.assertEqual(await self.db.franc_balance(-200,10),1000)
 
@@ -82,13 +83,42 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
             self.clock+=300
         self.assertEqual(await self.db.franc_balance(-100,10),800)
 
-    async def test_exact_sixteen_out_of_one_hundred_rolls(self):
-        wins=0
+    async def test_exact_payout_distribution_across_all_one_hundred_rolls(self):
+        outcomes=Counter()
         for roll in range(100):
-            wins+=(await self.bet(roll=roll,stake=1,mid=roll+1))['won']
+            rng=Fixed(roll)
+            result=await self.bet(stake=1,mid=roll+1,rng=rng)
+            self.assertEqual(rng.calls,1)
+            self.assertEqual(result['won'],int(result['payout']>0))
+            self.assertEqual(result['payout'],5 if roll<6 else 3 if roll<16 else 0)
+            outcomes[result['payout']]+=1
             self.clock+=600
-        self.assertEqual(wins,16)
-        self.assertEqual(await self.db.franc_balance(-100,10),980)
+        self.assertEqual(outcomes,{5:6,3:10,0:84})
+        self.assertEqual(await self.db.franc_balance(-100,10),960)
+
+    async def test_x3_chat_receipt_and_replay_do_not_claim_x5_or_invite(self):
+        with patch('franc_deposit.random.SystemRandom',return_value=Fixed(6)):
+            msg=self.message()
+            await self.handler(msg,self.bot)
+        answer=msg.answer.call_args.args[0]
+        self.assertIn('Выплата ×3: <b>300 ₣</b>',answer)
+        self.assertIn('чистый выигрыш: <b>+200 ₣</b>',answer)
+        self.assertNotIn('×5',answer)
+        self.assertEqual(await self.db.franc_balance(-100,10),1200)
+        await self.db.close();await self.db.connect()
+        rng=Fixed(0)
+        result=await self.bet(rng=rng)
+        self.assertEqual((result['won'],result['payout'],result['balance_after']),(1,300,1200))
+        self.assertEqual(rng.calls,0)
+        self.assertIsNone(self.db.connection.execute('SELECT invited FROM arena_casino_unlocks WHERE user_id=10').fetchone())
+
+    async def test_jackpot_invites_immediately_and_can_be_restored_from_receipt(self):
+        await self.bet(roll=0)
+        self.assertEqual(self.db.connection.execute('SELECT invited FROM arena_casino_unlocks WHERE user_id=10').fetchone()[0],1)
+        with self.db.connection:
+            self.db.connection.execute('DELETE FROM arena_casino_unlocks WHERE user_id=10')
+        await self.db.close();await self.db.connect()
+        self.assertEqual(self.db.connection.execute('SELECT invited FROM arena_casino_unlocks WHERE user_id=10').fetchone()[0],1)
 
     async def test_duplicate_update_and_restart_do_not_reroll(self):
         r=await self.bet(roll=0)
