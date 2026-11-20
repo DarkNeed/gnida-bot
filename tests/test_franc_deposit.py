@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock,patch
 
 from aiogram.types import User
 from database import Database,MAX_FRANC_BALANCE
-from franc_deposit import DEPOSIT_RE,parse_deposit,WIN_PHRASES,LOSS_PHRASES,deposit_cooldown
+from franc_deposit import DEPOSIT_RE,parse_deposit,WIN_PHRASES,LOSS_PHRASES,X3_PHRASES,X5_PHRASES,deposit_cooldown
 from handlers.routes import create_router
 
 
@@ -33,7 +33,7 @@ class DepositParserTests(unittest.TestCase):
             with self.assertRaises(ValueError,msg=text):parse_deposit(text)
 
     def test_phrase_templates(self):
-        for s in WIN_PHRASES+LOSS_PHRASES:
+        for s in WIN_PHRASES+LOSS_PHRASES+X3_PHRASES+X5_PHRASES:
             self.assertIn('Игрок',s.format(user='Игрок',stake=100,payout=500))
 
     def test_cooldown_boundaries_without_gameplay_stake_cap(self):
@@ -75,6 +75,18 @@ class DepositTests(unittest.IsolatedAsyncioTestCase):
         result=await self.bet(roll=5)
         self.assertEqual((result['won'],result['payout'],result['balance_after']),(1,500,1400))
         self.assertEqual(await self.db.franc_balance(-200,10),1000)
+
+    async def test_each_outcome_uses_its_own_phrase_pool(self):
+        for mid, (roll, phrases) in enumerate(((16, LOSS_PHRASES),
+                                               (6, WIN_PHRASES+X3_PHRASES),
+                                               (5, WIN_PHRASES+X5_PHRASES)), 1):
+            with self.subTest(roll=roll):
+                rng=Fixed(roll)
+                with patch.object(rng, 'choice', side_effect=lambda pool: pool[-1]) as choice:
+                    result=await self.bet(mid=mid,rng=rng)
+                choice.assert_called_once_with(phrases)
+                self.assertEqual(result['phrase'],phrases[-1])
+                self.clock+=300
 
     async def test_loss_only_loses_stake(self):
         for roll in (16,99):
