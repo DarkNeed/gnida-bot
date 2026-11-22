@@ -94,6 +94,25 @@ class FamilyTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(FamilyError):
             await self.db.family_offer(-100,3,4)
 
+    async def test_empty_origin_preserves_tree_and_keeps_anchors_separate_from_parentage(self):
+        await self.edit("origin",1)
+        await self.edit("link",1,2)
+        changed = await self.edit("origin",0)
+        self.assertEqual((changed["added"], changed["removed"]), ([], []))
+        await self.edit("link",0,3)
+        await self.marry(1,3)  # Sharing a virtual root does not make them siblings.
+        view = await self.db.family_view(-100,1,True)
+        self.assertEqual(view["origin"],0)
+        self.assertEqual(view["branches"],[1,3])
+        self.assertEqual(view["members"],[0,1,2,3])
+        self.assertEqual(view["parents"],[[1,2]])
+        self.assertNotIn(0,[person["id"] for person in view["people"]])
+        self.assertFalse(await self.db.family_avatar_allowed(-100,0))
+        detached = await self.edit("unlink",0,1)
+        self.assertEqual([person["id"] for person in detached["removed"]],[1,2])
+        await self.edit("unlink",0,3)
+        self.assertEqual((await self.db.family_view(-100,1,True))["members"],[0])
+
     async def test_signed_mini_app_roles_and_preview_before_write(self):
         async def member(chat, user):
             status = "creator" if user == 1 else "left" if user == 6 else "member"
@@ -128,5 +147,15 @@ class FamilyTest(unittest.IsolatedAsyncioTestCase):
         view = await (await client.get(path,headers=auth(2))).json()
         self.assertEqual(view["members"],[1])
         self.assertIsNone(view["editor"])
-        self.assertTrue(FAMILY_RE.match("!семья связь @person_1 @person_2"))
-        self.assertFalse(FAMILY_RE.match("!семьянин"))
+        self.assertTrue(FAMILY_RE.match("!древо связь исток @person_2"))
+        self.assertTrue(FAMILY_RE.match("/древо исток пустой"))
+        self.assertFalse(FAMILY_RE.match("!семья"))
+        self.assertFalse(FAMILY_RE.match("!древовидный"))
+        await self.edit("origin",0)
+        bot.get_chat_member.reset_mock()
+        branch = dict(op="preview",edit="link",a=0,b=2)
+        preview = await (await client.post(path,json=branch,headers=auth(1))).json()
+        self.assertEqual([person["id"] for person in preview["added"]],[2])
+        self.assertEqual([call.args for call in bot.get_chat_member.await_args_list],[(-100,1),(-100,2)])
+        response = await client.post(path,json=dict(branch,op="apply",revision=preview["revision"],proof=preview["proof"]),headers=auth(1))
+        self.assertEqual(response.status,200)

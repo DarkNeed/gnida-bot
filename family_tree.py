@@ -12,6 +12,9 @@ class FamilyError(ValueError):
     pass
 
 
+EMPTY_ORIGIN = 0  # Telegram users always have positive IDs.
+
+
 def normalized(value):
     return unicodedata.normalize("NFKC", value or "").casefold().replace("ё", "е").strip()
 
@@ -21,7 +24,8 @@ def relatives(state):
     if root is None:
         return set()
     edges = defaultdict(list)
-    for parent, child in state["parents"]:
+    branches = ((EMPTY_ORIGIN, user) for user in state.get("branches", ())) if root == EMPTY_ORIGIN else ()
+    for parent, child in [*state["parents"], *branches]:
         edges[parent].append(child)
         edges[child].append(parent)
     seen, queue = {root}, [root]
@@ -91,9 +95,11 @@ class FamilyTreeMixin:
 
     def _family_state(self, chat):
         row = self.connection.execute("SELECT revision,state FROM family_trees WHERE chat_id=?", (chat,)).fetchone()
-        return (row["revision"], json.loads(row["state"])) if row else (
-            0, dict(origin=None, parents=[], marriages=[], judges=[])
-        )
+        if row is None:
+            return 0, dict(origin=None, branches=[], parents=[], marriages=[], judges=[])
+        state = json.loads(row["state"])
+        state.setdefault("branches", [])
+        return row["revision"], state
 
     def _family_write(self, chat, revision, state, actor, description):
         self.connection.execute("""
@@ -105,7 +111,7 @@ class FamilyTreeMixin:
 
     def _family_people(self, chat, ids):
         people = {}
-        ids = sorted(set(ids))
+        ids = sorted(set(ids) - {EMPTY_ORIGIN})
         for start in range(0, len(ids), 500):
             chunk = ids[start:start + 500]
             placeholders = ",".join("?" for _ in chunk)
@@ -141,7 +147,8 @@ class FamilyTreeMixin:
             judges = state["judges"] if owner else []
             title = self.connection.execute("SELECT title FROM chats WHERE chat_id=?", (chat,)).fetchone()
             view_ids = members | set(judges) | {entry["actor"] for entry in log}
-            edit_ids = ({i for edge in state["parents"] + state["marriages"] for i in edge} | set(judges)) if owner else set()
+            edit_ids = ({i for edge in state["parents"] + state["marriages"] for i in edge}
+                        | set(judges) | set(state["branches"])) if owner else set()
             view_ids |= edit_ids
             partner = spouse(state, actor)
             if partner is not None:
@@ -151,6 +158,7 @@ class FamilyTreeMixin:
                 # Telegram chat scope is already supplied by the route.
                 row.pop("chat_id")
             return dict(revision=revision, origin=state["origin"], members=sorted(members),
+                        branches=state["branches"] if state["origin"] == EMPTY_ORIGIN else [],
                         parents=[p for p in state["parents"] if set(p) <= members],
                         marriages=[p for p in state["marriages"] if set(p) <= members],
                         editor=dict(parents=state["parents"], marriages=state["marriages"]) if owner else None,
@@ -186,16 +194,33 @@ class FamilyTreeMixin:
 
     async def family_avatar_allowed(self, chat, target):
         async with self._lock:
-            return target in relatives(self._family_state(chat)[1])
+            return target != EMPTY_ORIGIN and target in relatives(self._family_state(chat)[1])
 
     def _family_edit(self, chat, state, operation, a, b, reason):
         if operation == "origin":
             if a == state["origin"]:
                 raise FamilyError("Это уже Исток древа.")
-            if any(child == a for _, child in state["parents"]):
+            if a == EMPTY_ORIGIN:
+                old = state["origin"]
+                if old is not None and old not in state["branches"]:
+                    state["branches"].append(old)
+            elif any(child == a for _, child in state["parents"]):
                 raise FamilyError("Истоком может стать только участник без записанных родителей.")
             state["origin"] = a
-            description = "назначен Исток"
+            description = "создан пустой Исток" if a == EMPTY_ORIGIN else "назначен Исток"
+        elif operation in ("link", "unlink") and a == EMPTY_ORIGIN:
+            if state["origin"] != EMPTY_ORIGIN:
+                raise FamilyError("Сначала создай пустой Исток.")
+            if operation == "link":
+                if b in state["branches"]:
+                    raise FamilyError("Участник уже прикреплён к Истоку.")
+                state["branches"].append(b)
+                description = "ветвь прикреплена к Истоку"
+            else:
+                if b not in state["branches"]:
+                    raise FamilyError("Эта ветвь не прикреплена к Истоку.")
+                state["branches"].remove(b)
+                description = "ветвь отсоединена от Истока"
         elif operation == "link":
             if a == b or b == state["origin"] or b in upwards(parent_index(state), a)[0]:
                 raise FamilyError("Эта связь замкнёт древо или сделает Исток чьим-то ребёнком.")
@@ -226,9 +251,9 @@ class FamilyTreeMixin:
                 description = "снят судья"
         else:
             raise FamilyError("Неизвестная правка.")
-        ids = [a] if b is None else [a, b]
+        ids = [i for i in (a, b) if i not in (None, EMPTY_ORIGIN)]
         names = {p["id"]: p["name"] for p in self._family_people(chat, ids)}
-        return f"{description}: " + " → ".join(names[i] for i in ids) + (f". {reason}" if reason else "")
+        return description + (": " + " → ".join(names[i] for i in ids) if ids else "") + (f". {reason}" if reason else "")
 
     async def family_edit(self, chat, actor, operation, a, b=None, reason="", *, expected=None):
         """Caller must check ownership. Preview is read-only; apply requires that revision."""

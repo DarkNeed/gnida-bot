@@ -50,6 +50,7 @@ textarea{resize:vertical}
 .wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .wires path{fill:none;stroke:var(--line);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .wires .spouse{stroke:var(--gold);stroke-dasharray:4 3}
+.wires .branch{stroke:var(--origin);stroke-dasharray:2 5}
 .person{
   position:absolute;display:flex;align-items:center;transform:translate(-50%,-50%);text-align:left;
   gap:8px;width:162px;height:64px;padding:8px;background:var(--node);
@@ -62,6 +63,7 @@ textarea{resize:vertical}
 .map-controls{margin-top:7px}.legend{gap:11px;color:var(--dim);font-size:.83rem}
 .legend span::before{content:'';display:inline-block;width:14px;border-top:2px solid var(--line);margin-right:5px;vertical-align:middle}
 .legend .married::before{border-top:2px dashed var(--gold)}
+.legend .attached::before{border-top:2px dotted var(--origin)}
 .selected,.stack>*+*{margin-top:9px}
 .row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;padding:8px 0;border-bottom:1px solid var(--edge);overflow-wrap:anywhere}
 .row:last-child{border-bottom:0}

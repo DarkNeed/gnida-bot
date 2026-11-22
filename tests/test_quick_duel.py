@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from aiogram.exceptions import TelegramForbiddenError
+from aiogram.methods import SendMessage
 from aiogram.types import Chat, Message, User
 
 from database import Database
@@ -239,3 +241,56 @@ class DuelTests(unittest.IsolatedAsyncioTestCase):
         await command(message, bot)
         self.assertIn('✅ Принять', message.answer.await_args.kwargs['reply_markup'].inline_keyboard[0][0].text)
         bot.get_chat_member.assert_awaited_with(-100, 20)
+
+    async def test_private_duel_updates_both_messages_without_leaking_a_move(self):
+        await self.db.quick_duel_remember_private(20, 'sheriff')
+        creator = User(id=10, is_bot=False, first_name='Иван')
+        guest = User(id=20, is_bot=False, first_name='Джей', username='sheriff')
+        source, target = (Chat(id=person.id,type='private') for person in (creator,guest))
+        posted, invited = (Message(message_id=77+i,date=datetime.now(timezone.utc),chat=chat)
+                           for i,chat in enumerate((source,target)))
+        peer = SimpleNamespace(id=20,type='private',username='sheriff',first_name='Джей',last_name=None)
+        bot = SimpleNamespace(get_chat=AsyncMock(return_value=peer),send_message=AsyncMock(return_value=invited),
+                              edit_message_text=AsyncMock())
+        router = create_quick_duel_router(self.db, QuickDuelPublisher(self.db, bot))
+        command = router.message.handlers[0].callback
+        button = router.callback_query.handlers[0].callback
+        message = SimpleNamespace(chat=source,from_user=creator,sender_chat=None,text='/перестрелка @Sheriff',
+                                  caption=None,answer=AsyncMock(return_value=posted),message_id=3)
+        await command(message, bot)
+        bot.send_message.assert_awaited_once()
+        self.assertEqual(bot.send_message.await_args.args[0],20)
+        self.assertEqual(len(message.answer.await_args.kwargs['reply_markup'].inline_keyboard),1)
+        invite = bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+        cb = SimpleNamespace(data=invite,message=posted,from_user=guest,answer=AsyncMock())
+        await button(cb)
+        self.assertTrue(cb.answer.await_args.kwargs['show_alert'])
+        bot.edit_message_text.assert_not_awaited()
+        cb.message = invited
+        await button(cb)
+        self.assertEqual({(c.kwargs['chat_id'],c.kwargs['message_id']) for c in bot.edit_message_text.await_args_list},
+                         {(10,77),(20,78)})
+        with self.assertRaises(DuelError):
+            await self.db.quick_duel_create(30,5,30,20,('Другой','Джей'))
+        cb.data = bot.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard[0][1].callback_data
+        await button(cb)
+        self.assertEqual(bot.edit_message_text.await_count,2)
+        cb.message, cb.from_user = posted, creator
+        await button(cb)
+        self.assertEqual(bot.edit_message_text.await_count,4)
+        self.assertTrue(all('Итог раунда 1' in c.args[0] for c in bot.edit_message_text.await_args_list[-2:]))
+
+    async def test_unreachable_guest_does_not_block_next_private_invite(self):
+        await self.db.quick_duel_remember_private(20,'sheriff')
+        peer = SimpleNamespace(id=20,type='private',username='sheriff',first_name='Джей',last_name=None)
+        bot = SimpleNamespace(get_chat=AsyncMock(return_value=peer), edit_message_text=AsyncMock(),
+                              send_message=AsyncMock(side_effect=TelegramForbiddenError(
+                                  method=SendMessage(chat_id=20,text='x'), message='Forbidden')))
+        router = create_quick_duel_router(self.db, QuickDuelPublisher(self.db, bot))
+        message = SimpleNamespace(chat=Chat(id=10,type='private'),from_user=User(id=10,is_bot=False,first_name='Иван'),
+                                  sender_chat=None,text='/перестрелка @sheriff',caption=None,message_id=3,
+                                  answer=AsyncMock(return_value=SimpleNamespace(message_id=77)))
+        await router.message.handlers[0].callback(message, bot)
+        self.assertIn('Не удалось отправить',bot.edit_message_text.await_args.args[0])
+        retry = await self.db.quick_duel_create(10,4,10,20,('Иван','Джей'))
+        self.assertEqual(retry['status'],'pending')

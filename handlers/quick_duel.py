@@ -1,4 +1,4 @@
-"""Render and drive quick duels entirely in one Telegram message."""
+"""Render one shared duel state in a group or two private chats."""
 import asyncio
 from html import escape
 import logging
@@ -16,13 +16,16 @@ DUEL_RE = re.compile(r'^\s*[/!]перестрелка(?:@\w+)?(?=\s|$)', re.IGNO
 BUTTON_RE = re.compile(r'dshot:([0-9a-f]{16}):([0-8]):(accept|decline|cancel|shoot|aim|disrupt)')
 
 
-def duel_keyboard(duel):
+def duel_keyboard(duel, viewer=None):
     def button(label, action):
         return InlineKeyboardButton(text=label, callback_data=f"dshot:{duel['id']}:{duel['state']['round']}:{action}")
 
     if duel['status'] == 'pending':
-        rows = [[button('✅ Принять', 'accept'), button('❌ Отклонить', 'decline')],
-                [button('↩️ Отозвать вызов', 'cancel')]]
+        rows = []
+        if viewer is None or viewer == duel['guest']:
+            rows.append([button('✅ Принять', 'accept'), button('❌ Отклонить', 'decline')])
+        if viewer is None or viewer == duel['creator']:
+            rows.append([button('↩️ Отозвать вызов', 'cancel')])
     elif duel['status'] == 'active':
         rows = [[button(ACTIONS['shoot'], 'shoot'), button(ACTIONS['aim'], 'aim')],
                 [button(f"{ACTIONS['disrupt']} · {DISRUPT_CHANCE}%", 'disrupt')]]
@@ -77,14 +80,22 @@ class QuickDuelPublisher:
         return self.locks[int(ident, 16) % len(self.locks)]
 
     async def edit(self, duel):
-        if duel['message_id'] is None:
-            return
-        try:
-            await self.bot.edit_message_text(duel_text(duel), chat_id=duel['chat_id'], message_id=duel['message_id'],
-                                             parse_mode='HTML', reply_markup=duel_keyboard(duel))
-        except TelegramAPIError as error:
-            if 'message is not modified' not in str(error).casefold():
-                logging.warning('Could not redraw quick duel %s: %s', duel['id'], error)
+        private = duel['chat_id'] > 0
+        targets = [(duel['chat_id'], duel['message_id'], duel['creator'] if private else None)]
+        if private:
+            targets.append((duel['guest'], duel['guest_message_id'], duel['guest']))
+
+        async def redraw(chat, message, viewer):
+            if message is None:
+                return
+            try:
+                await self.bot.edit_message_text(duel_text(duel), chat_id=chat, message_id=message,
+                                                 parse_mode='HTML', reply_markup=duel_keyboard(duel, viewer))
+            except TelegramAPIError as error:
+                if 'message is not modified' not in str(error).casefold():
+                    logging.warning('Could not redraw quick duel %s: %s', duel['id'], error)
+
+        await asyncio.gather(*(redraw(*target) for target in targets))
 
     async def sweep(self):
         for ident in await self.database.quick_duels_due():
@@ -99,14 +110,60 @@ def create_quick_duel_router(database, publisher):
 
     @router.message(text_or_caption_regexp(DUEL_RE))
     async def quick_duel(message: Message, bot: Bot):
-        if message.chat.type not in ('group', 'supergroup'):
-            await message.answer('🤠 Вызови соперника в общем чате.')
+        if message.chat.type not in ('group', 'supergroup', 'private'):
+            await message.answer('🤠 Вызови соперника в группе или в личке бота.')
             return
         creator = message.from_user
         if not creator or creator.is_bot or message.sender_chat:
             return
         content = message_content(message)
         target = content[DUEL_RE.match(content).end():].strip()
+        if message.chat.type == 'private':
+            await database.quick_duel_remember_private(creator.id, creator.username)
+            if not re.fullmatch(r'@[a-zA-Z0-9_]{1,32}', target):
+                await message.answer('🤠 Напиши /перестрелка @ник. Бот отправит вызов игроку в личку.')
+                return
+            if (creator.username or '').casefold() == target[1:].casefold():
+                await message.answer('🤠 Выбери другого игрока.')
+                return
+            target_name = target[1:].casefold()
+            for candidate in await database.quick_duel_private_candidates(target_name):
+                if candidate == creator.id:
+                    continue
+                try:
+                    peer = await bot.get_chat(candidate)
+                except TelegramAPIError:
+                    continue
+                if (peer.id == candidate and peer.type == 'private'
+                    and (peer.username or '').casefold() == target_name):
+                    break
+            else:
+                await message.answer('Не нашёл игрока в личке. Проверь @ник и попроси его нажать «Старт» у бота.')
+                return
+            name = ' '.join(part for part in (peer.first_name, peer.last_name) if part) or target
+            try:
+                duel = await database.quick_duel_create(message.chat.id,message.message_id,creator.id,peer.id,(creator.full_name,name))
+            except DuelError as error:
+                await message.answer(str(error))
+                return
+            if duel is None:
+                return
+            async with publisher.lock(duel['id']):
+                try:
+                    sent = await message.answer(duel_text(duel), parse_mode='HTML', reply_markup=duel_keyboard(duel,creator.id))
+                except TelegramAPIError:
+                    await database.quick_duel_bind(duel['id'],None)
+                    raise
+                try:
+                    invited = await bot.send_message(peer.id,duel_text(duel), parse_mode='HTML',
+                                                     reply_markup=duel_keyboard(duel,peer.id))
+                except TelegramAPIError:
+                    await database.quick_duel_bind(duel['id'],None)
+                    await bot.edit_message_text('Не удалось отправить вызов. Попроси игрока открыть бота и нажать «Старт».',
+                                                chat_id=message.chat.id,message_id=sent.message_id,reply_markup=None)
+                    return
+                await database.quick_duel_bind(duel['id'],sent.message_id,invited.message_id)
+            return
         if target:
             if not re.fullmatch(r'@[a-zA-Z0-9_]{1,32}', target):
                 await message.answer('🤠 Напиши /перестрелка @ник или ответь командой на сообщение участника.')

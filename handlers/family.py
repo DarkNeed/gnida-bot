@@ -8,11 +8,11 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from arena_links import arena_link
 from arena_web import require_member
-from family_tree import FamilyError
+from family_tree import EMPTY_ORIGIN, FamilyError
 from family_web import family_access, family_target, MAX_ID
 from handlers.routes import message_content, text_or_caption_regexp
 
-FAMILY_RE = re.compile(r"^\s*[/!]семья(?:@\w+)?(?=\s|$)", re.I)
+FAMILY_RE = re.compile(r"^\s*[/!]древо(?:@\w+)?(?=\s|$)", re.I)
 OFFER_RE = re.compile(r"family:([0-9a-f]{24}):(accept|decline|cancel)")
 EDITS = {("исток",):"origin", ("связь",):"link", ("убрать","связь"):"unlink",
          ("судья","+"):"appoint", ("судья","-"):"revoke"}
@@ -55,7 +55,7 @@ def create_family_router(db, bot, username, enabled):
         if not user or user.is_bot or message.sender_chat:
             return
         if message.chat.type not in ("group","supergroup"):
-            await message.answer("Используй !семья в нужном общем чате.")
+            await message.answer("Используй !древо в нужном общем чате.")
             return
         if not enabled:
             await message.answer("Семейный архив недоступен: не настроен WEBAPP_URL.")
@@ -104,7 +104,7 @@ def create_family_router(db, bot, username, enabled):
                     raise FamilyError("Список дел доступен судьям.")
                 case = words[1] if len(words) > 1 else None
                 if case is not None and (not re.fullmatch(r"[1-9][0-9]{0,15}",case) or int(case) > MAX_ID):
-                    raise FamilyError("Укажи номер дела, например !семья суд 12.")
+                    raise FamilyError("Укажи номер дела, например !древо суд 12.")
                 await message.answer("⚖️ Семейный суд.", reply_markup=archive_link(chat,"court",*([case] if case else []),label="Открыть суд"))
                 return
             for prefix, edit in EDITS.items():
@@ -114,9 +114,16 @@ def create_family_router(db, bot, username, enabled):
                     raise FamilyError("Редактировать древо может владелец чата или создатель бота.")
                 arguments = parts[len(prefix):]
                 if edit in ("link","unlink"):
-                    if len(arguments) != 2:
-                        raise FamilyError("Укажи двух участников: @родитель @ребёнок.")
-                    ids = [(await pick(message, arg, historical=edit=="unlink"))[0] for arg in arguments]
+                    if arguments and arguments[0].casefold() == "исток" and len(arguments) <= 2:
+                        target, _ = await pick(message, arguments[1] if len(arguments) == 2 else None, historical=edit=="unlink")
+                        ids = [EMPTY_ORIGIN, target]
+                    elif len(arguments) == 2:
+                        ids = [(await pick(message, arg, historical=edit=="unlink"))[0] for arg in arguments]
+                    else:
+                        raise FamilyError("Укажи @родитель @ребёнок или исток @участник.")
+                elif edit == "origin" and ((len(arguments) == 1 and arguments[0].casefold() == "пустой")
+                                          or (not arguments and not message.reply_to_message)):
+                    ids = [EMPTY_ORIGIN]
                 else:
                     if len(arguments) > 1:
                         raise FamilyError("Укажи одного участника.")
@@ -124,12 +131,13 @@ def create_family_router(db, bot, username, enabled):
                 await message.answer("✏️ Проверь правку в редакторе. В чате она ещё не применена.",
                                      reply_markup=archive_link(chat,edit,*ids,label="Проверить правку"))
                 return
-            commands = ("!семья · !семья найти @ник · !семья брак @ник · !семья развод")
+            commands = ("!древо · !древо найти @ник · !древо брак @ник · !древо развод")
             if await db.family_role(chat,user.id,owner):
-                commands += "\n!семья суд [номер]"
+                commands += "\n!древо суд [номер]"
             if owner:
-                commands += ("\n!семья исток @ник · !семья судья +/− @ник\n"
-                             "!семья связь @родитель @ребёнок · !семья убрать связь @родитель @ребёнок")
+                commands += ("\n!древо исток пустой · !древо исток @ник · !древо судья +/− @ник\n"
+                             "!древо связь @родитель @ребёнок · !древо связь исток @ник\n"
+                             "!древо убрать связь @родитель @ребёнок · !древо убрать связь исток @ник")
             await message.answer(commands)
         except ValueError as error:
             await message.answer(str(error))

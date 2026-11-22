@@ -15,13 +15,16 @@
   const entry=(query.get('entry') || query.get('tgWebAppStartParam') || tg?.initDataUnsafe?.start_param || '')
     .match(/^family_(-[1-9]\d{0,15})(?:_([a-z]+)(?:_(\d{1,16}))?(?:_(\d{1,16}))?)?$/);
   const base=entry ? '/api/family/'+entry[1] : '';
-  const kinds={origin:'Назначить Исток',link:'Добавить родство',unlink:'Убрать родство',appoint:'Назначить судью',revoke:'Снять судью'};
+  const kinds={blank:'Создать пустой Исток',origin:'Назначить участника Истоком',attach:'Прикрепить ветвь к Истоку',
+    detach:'Отсоединить ветвь от Истока',link:'Добавить родство',unlink:'Убрать родство',appoint:'Назначить судью',revoke:'Снять судью'};
+  const editPayload=(kind,fields)=>kind==='blank'?{edit:'origin',a:0}:
+    kind==='attach'||kind==='detach'?{edit:kind==='attach'?'link':'unlink',a:0,b:fields.b}:{edit:kind,...fields};
   let state, people=new Map(), tab=entry?.[2]==='file'?'file':'tree', selected, scene, activeEditor='origin', chosen={}, pending, busy=false;
   let casesOffset=0, caseID=entry?.[2]==='court' ? Number(entry[3])||null : null;
   let teardown=()=>{}, center=()=>{}, camera={x:0,y:0,k:0};
   const headers=()=>({'X-Telegram-Init-Data':tg?.initData||''});
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const name=id=>people.get(id)?.name || 'Участник '+id;
+  const name=id=>id===0?'Исток':people.get(id)?.name || 'Участник '+id;
   const when=n=>new Intl.DateTimeFormat('ru',{dateStyle:'short',timeStyle:'short',timeZone:'Europe/Moscow'}).format(n*1000);
   const button=(label,action,css='')=>'<button type="button" class="'+css+'" data-action="'+action+'">'+label+'</button>';
   const status=(message,error=false)=>{
@@ -50,7 +53,7 @@
   function layout() {
     const origin=state.origin, ids=state.members, out=new Map(ids.map(id=>[id,[]])), ins=new Map(ids.map(id=>[id,[]]));
     const partners=new Map(state.marriages.flatMap(([a,b])=>[[a,b],[b,a]]));
-    for(const [p,c] of state.parents){out.get(p).push(c);ins.get(c).push(p);}
+    for(const [p,c] of [...state.parents,...(state.branches||[]).map(id=>[0,id])]){out.get(p).push(c);ins.get(c).push(p);}
     const rank=new Map(ids.map(id=>[id,id===origin?0:1]));
     const remaining=new Map(ids.map(id=>[id,ins.get(id).length]));
     const order=ids.filter(id=>!remaining.get(id)), direct=new Set([origin]);
@@ -107,7 +110,7 @@
       }
       for(const p of from){
         const [u,v]=spots.get(p),start=v+32,rail=(start+end)/2;
-        paths.push('<path d="M'+u+' '+start+' C'+u+' '+rail+' '+x+' '+rail+' '+x+' '+end+'"/>');
+        paths.push('<path'+(p===0?' class="branch"':'')+' d="M'+u+' '+start+' C'+u+' '+rail+' '+x+' '+rail+' '+x+' '+end+'"/>');
       }
     }
     for(const {from,to} of grouped.values()){
@@ -136,24 +139,26 @@
     const avatar=isRoot?'🌌':esc(name(id).trim().slice(0,2).toLocaleUpperCase('ru'));
     return '<button class="person'+(isRoot?' origin':'')+'" type="button" data-person="'+id+'" aria-pressed="'+(id===selected)+
       '" title="'+esc(name(id))+'" style="left:'+x+'px;top:'+y+'px"><span class="avatar" aria-hidden="true"'+(isRoot?'':' data-avatar="'+id+'"')+
-      '>'+avatar+'</span><span class="caption"><strong>'+esc(name(id))+'</strong><small>'+esc(isRoot?'Первородный':handle)+'</small></span></button>';
+      '>'+avatar+'</span><span class="caption"><strong>'+esc(name(id))+'</strong><small>'+esc(id===0?'Начало древа':isRoot?'Первородный':handle)+'</small></span></button>';
   }
   const picker=(field,label,value='')=>'<div class="search" data-field="'+field+'"><label><span>'+esc(label)+
     '</span><input type="search" value="'+esc(value)+'" placeholder="Имя или @ник" autocomplete="off"></label><div class="results" hidden></div></div>';
   function selectedInfo(){
     const party=scene.partners.get(selected), children=scene.out.get(selected)||[];
-    return '<strong>'+esc(name(selected))+'</strong> · родители: '+(scene.ins.get(selected)?.length||0)+' · дети: '+children.length+
+    if(selected===0)return '<strong>🌌 Исток</strong> · ветвей: '+children.length;
+    return '<strong>'+esc(name(selected))+'</strong> · родители: '+(scene.ins.get(selected)?.filter(id=>id!==0).length||0)+' · дети: '+children.length+
       (party===undefined?'':' · в браке: '+esc(name(party)));
   }
   function tree() {
-    if(!state.origin) return '<section class="panel stack"><h2>Общее древо чата</h2><p class="muted">Владелец ещё не назначил Исток.</p>'+
-      (state.owner?button('Назначить Исток','edit:origin','primary'):'')+'</section>';
+    if(state.origin==null) return '<section class="panel stack"><h2>Общее древо чата</h2><p class="muted">Владелец ещё не назначил Исток.</p>'+
+      (state.owner?button('Создать пустой Исток','edit:blank','primary')+' '+button('Назначить участника','edit:origin'):'')+'</section>';
     scene??=layout();
-    return '<section class="panel"><div class="heading"><div><h2>Общее древо чата</h2><p class="muted">Людей в древе: '+state.members.length+
+    return '<section class="panel"><div class="heading"><div><h2>Общее древо чата</h2><p class="muted">Людей в древе: '+(state.members.length-(state.origin===0?1:0))+
       '</p></div>'+picker('tree','Найти в древе')+'</div><div class="map"><div class="pan" role="group" aria-label="Карта родства">'+
       '<div class="world" style="width:'+scene.width+'px;height:'+scene.height+'px">'+graph()+state.members.slice().sort((a,b)=>
         scene.spots.get(a)[1]-scene.spots.get(b)[1]||scene.spots.get(a)[0]-scene.spots.get(b)[0]).map(card).join('')+'</div></div></div>'+
-      '<div class="map-controls"><div class="legend"><span>Родство</span><span class="married">Брак</span></div><div class="actions">'+
+      '<div class="map-controls"><div class="legend"><span>Родство</span><span class="married">Брак</span>'+
+      (state.origin===0?'<span class="attached">Ветвь Истока</span>':'')+'</div><div class="actions">'+
       '<output aria-label="Масштаб" class="muted"></output>'+button('−','zoom:out')+button('+','zoom:in')+button('Всё древо','zoom:fit')+
       button('К Истоку','zoom:root')+'</div></div><p class="selected muted" aria-live="polite">'+selectedInfo()+'</p></section>';
   }
@@ -265,14 +270,21 @@
   function editor() {
     const two=['link','unlink'].includes(activeEditor), selectedPerson=chosen.a, related=(state.editor?.parents||[]).filter(p=>p.includes(selectedPerson));
     const marriage=(state.editor?.marriages||[]).find(pair=>pair.includes(selectedPerson));
+    const branchMode=activeEditor==='attach'||activeEditor==='detach';
+    const fields=activeEditor==='blank'?'<p class="muted">Галактика без привязки к игроку. Существующее древо сохранится.</p>':
+      branchMode?picker('b','Участник в начале ветви',chosen.b?name(chosen.b):''):
+      picker('a',two?'Родитель':'Участник',chosen.a?name(chosen.a):'')+(two?picker('b','Ребёнок',chosen.b?name(chosen.b):''):'');
     return '<section class="panel stack"><h2>Редактор связей</h2><form class="stack" id="edit"><label>Действие<select id="edit-kind">'+
-      Object.entries(kinds).map(([id,label])=>'<option value="'+id+'"'+(id===activeEditor?' selected':'')+'>'+label+'</option>').join('')+
-      '</select></label><div class="fields">'+picker('a',two?'Родитель':'Участник',chosen.a?name(chosen.a):'')+
-      (two?picker('b','Ребёнок',chosen.b?name(chosen.b):''):'')+'</div><label>Заметка для журнала<textarea id="edit-reason" name="reason" rows="2" maxlength="500"></textarea></label>'+
+      Object.entries(kinds).filter(([id])=>state.origin===0||id===activeEditor||!['attach','detach'].includes(id))
+        .map(([id,label])=>'<option value="'+id+'"'+(id===activeEditor?' selected':'')+'>'+label+'</option>').join('')+
+      '</select></label><div class="'+(two?'fields':'')+'">'+fields+'</div><label>Заметка для журнала<textarea id="edit-reason" name="reason" rows="2" maxlength="500"></textarea></label>'+
       '<button class="primary">Проверить правку</button></form>'+
       (related.length?'<div class="stack"><h3>Родство выбранного участника</h3>'+related.map(([a,b])=>'<div class="row"><span>'+esc(name(a))+' → '+esc(name(b))+'</span>'+
         button('Убрать','unlink:'+a+':'+b,'danger')+'</div>').join('')+'</div>':'')+
       (marriage?'<p class="muted">💍 '+marriage.map(id=>esc(name(id))).join(' и ')+' · расторжение только через суд</p>':'')+'</section>'+
+      (state.origin===0?'<section class="panel stack"><h2>Ветви Истока</h2>'+
+        ((state.branches||[]).map(id=>'<div class="row"><strong>'+esc(name(id))+'</strong>'+button('Отсоединить','unlink:0:'+id,'danger')+'</div>').join('')
+          ||'<p class="muted">Пока нет ветвей.</p>')+button('Прикрепить ветвь','edit:attach')+'</section>':'')+
       '<section class="panel stack"><h2>Судьи</h2><p class="muted">Владелец чата и создатель бота — судьи по должности.</p>'+
       state.judges.map(id=>'<div class="row"><strong>'+esc(name(id))+'</strong>'+button('Снять','revoke:'+id,'danger')+'</div>').join('')+'</section>'+
       '<section class="panel stack"><h2>Журнал изменений</h2>'+state.log.map(row=>'<div class="row"><div>'+esc(name(row.actor))+' · '+esc(row.description)+'</div><small>'+
@@ -328,7 +340,7 @@
     if(!['edit','file'].includes(form.id))return;
     event.preventDefault();
     const reason=new FormData(form).get('reason')||'';
-    if(form.id==='edit')run(()=>preview({edit:activeEditor,...chosen,reason}));
+    if(form.id==='edit')run(()=>preview({...editPayload(activeEditor,chosen),reason}));
     else if(!busy)ask('<p>Отправить заявление в суд?</p>',async()=>{
       const result=await api('',{op:'file',reason});
       await load();render();status('Заявление зарегистрировано: дело №'+result.case+'.');
@@ -352,7 +364,7 @@
     });
     if(action==='edit'){activeEditor=a;chosen={};tab='editor';render();}
     if(action==='unlink'||action==='revoke'){
-      activeEditor=action;chosen={a:Number(a),...(c?{b:Number(c)}:{})};
+      activeEditor=action==='unlink'&&a==='0'?'detach':action;chosen={a:Number(a),...(c?{b:Number(c)}:{})};
       run(()=>preview({edit:action,...chosen}));
     }
     if((action==='approve'||action==='reject')&&!busy){
@@ -395,17 +407,18 @@
     }
   });
   (async()=>{
-    if(!entry||!tg?.initData){screen.textContent='Открой семейный архив из Telegram командой !семья.';return;}
+    if(!entry||!tg?.initData){screen.textContent='Открой семейный архив из Telegram командой !древо.';return;}
     try{
       await load();
       const [, ,view,a,b]=entry;
       if(view==='file'||view==='court')tab=view;
       if(Object.hasOwn(kinds,view)&&state.owner){
-        tab='editor';activeEditor=view;chosen={a:Number(a),...(b?{b:Number(b)}:{})};
+        tab='editor';activeEditor=a==='0'?{origin:'blank',link:'attach',unlink:'detach'}[view]||view:view;
+        chosen={a:Number(a),...(b?{b:Number(b)}:{})};
       }
       render();
       if(view==='find')select(Number(a),true);
-      if(tab==='editor'&&chosen.a)await run(()=>preview({edit:activeEditor,...chosen}));
+      if(tab==='editor'&&a!==undefined)await run(()=>preview(editPayload(activeEditor,chosen)));
     }catch(error){screen.textContent=error.message;}
   })();
 })();

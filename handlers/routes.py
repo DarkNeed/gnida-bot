@@ -3515,11 +3515,13 @@ def create_router(
     @router.message(text_or_caption_regexp(START_RE))
     async def start(message: Message) -> None:
         if message.chat.type == "private":
+            if message.from_user and not message.from_user.is_bot:
+                await database.quick_duel_remember_private(message.from_user.id, message.from_user.username)
             await message.answer(
                 "<b>Привет! Я Гнида-бот.</b> Вот что можно делать в чате:\n\n"
                 "🎮 <b>Игры:</b> ответь на сообщение «Игра кнб», «Игра блекджек» "
                 "или «Игра шашки» — без последствий. «Вызов» запускает игру "
-                "с последствиями для рабства.\n"
+                "с последствиями для рабства. <code>/перестрелка @ник</code> вызывает игрока на дуэль без ставок, в том числе в ЛС.\n"
                 "👥 <b>Рабство:</b> /рабы показывает твоих рабов, /меню — статус, "
                 "приоритет, статистику игр и гайд.\n"
                 "💰 <b>Франки:</b> зарабатывай на предприятиях, подрабатывай, "
