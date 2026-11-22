@@ -16,7 +16,7 @@
     .match(/^family_(-[1-9]\d{0,15})(?:_([a-z]+)(?:_(\d{1,16}))?(?:_(\d{1,16}))?)?$/);
   const base=entry ? '/api/family/'+entry[1] : '';
   const kinds={blank:'Создать пустой Исток',origin:'Назначить участника Истоком',attach:'Прикрепить ветвь к Истоку',
-    detach:'Отсоединить ветвь от Истока',link:'Добавить родство',unlink:'Убрать родство',appoint:'Назначить судью',revoke:'Снять судью'};
+    detach:'Отсоединить ветвь от Истока',link:'Добавить родство',marry:'Внести брак',unlink:'Убрать родство',appoint:'Назначить судью',revoke:'Снять судью'};
   const editPayload=(kind,fields)=>kind==='blank'?{edit:'origin',a:0}:
     kind==='attach'||kind==='detach'?{edit:kind==='attach'?'link':'unlink',a:0,b:fields.b}:{edit:kind,...fields};
   let state, people=new Map(), tab=entry?.[2]==='file'?'file':'tree', selected, scene, activeEditor='origin', chosen={}, pending, busy=false;
@@ -268,16 +268,20 @@
       '</section>';
   }
   function editor() {
-    const two=['link','unlink'].includes(activeEditor), selectedPerson=chosen.a, related=(state.editor?.parents||[]).filter(p=>p.includes(selectedPerson));
+    const wedding=activeEditor==='marry', two=wedding||['link','unlink'].includes(activeEditor);
+    const selectedPerson=chosen.a, related=(state.editor?.parents||[]).filter(p=>p.includes(selectedPerson));
     const marriage=(state.editor?.marriages||[]).find(pair=>pair.includes(selectedPerson));
     const branchMode=activeEditor==='attach'||activeEditor==='detach';
     const fields=activeEditor==='blank'?'<p class="muted">Галактика без привязки к игроку. Существующее древо сохранится.</p>':
       branchMode?picker('b','Участник в начале ветви',chosen.b?name(chosen.b):''):
-      picker('a',two?'Родитель':'Участник',chosen.a?name(chosen.a):'')+(two?picker('b','Ребёнок',chosen.b?name(chosen.b):''):'');
+      picker('a',wedding?'Первый супруг':two?'Родитель':'Участник',chosen.a?name(chosen.a):'')+
+      (two?picker('b',wedding?'Второй супруг':'Ребёнок',chosen.b?name(chosen.b):''):'');
     return '<section class="panel stack"><h2>Редактор связей</h2><form class="stack" id="edit"><label>Действие<select id="edit-kind">'+
       Object.entries(kinds).filter(([id])=>state.origin===0||id===activeEditor||!['attach','detach'].includes(id))
         .map(([id,label])=>'<option value="'+id+'"'+(id===activeEditor?' selected':'')+'>'+label+'</option>').join('')+
-      '</select></label><div class="'+(two?'fields':'')+'">'+fields+'</div><label>Заметка для журнала<textarea id="edit-reason" name="reason" rows="2" maxlength="500"></textarea></label>'+
+      '</select></label><div class="'+(two?'fields':'')+'">'+fields+'</div>'+
+      (wedding?'<p class="muted">Запись вносится вручную, без отправки предложения в чат. Расторгнуть брак можно только через суд.</p>':'')+
+      '<label>Заметка для журнала<textarea id="edit-reason" name="reason" rows="2" maxlength="500"></textarea></label>'+
       '<button class="primary">Проверить правку</button></form>'+
       (related.length?'<div class="stack"><h3>Родство выбранного участника</h3>'+related.map(([a,b])=>'<div class="row"><span>'+esc(name(a))+' → '+esc(name(b))+'</span>'+
         button('Убрать','unlink:'+a+':'+b,'danger')+'</div>').join('')+'</div>':'')+
@@ -311,10 +315,12 @@
     const result=await api('',{op:'preview',...payload});
     const list=(people,label)=>people.length?'<p><strong>'+label+' ('+people.length+'):</strong> '+
       people.slice(0,15).map(p=>esc(p.name)).join(', ')+(people.length>15?' и ещё '+(people.length-15):'')+'</p>':'';
-    ask('<p>'+esc(result.summary)+'</p>'+list(result.added,'Появятся в древе')+
+    ask('<p>'+esc(result.summary)+'</p>'+
+      (result.marriage_visible===false?'<p>Брак сохранится в архиве. Линия появится на карте, когда оба супруга будут в древе.</p>':'')+
+      list(result.added,'Появятся в древе')+
       list(result.removed,'Вне древа после правки'),async()=>{
         await api('',{op:'apply',revision:result.revision,proof:result.proof,...payload});
-        await load();render();status('Правка сохранена.');
+        await load();render();status(payload.edit==='marry'?'Брак внесён в архив.':'Правка сохранена.');
     });
   }
   async function run(action) {

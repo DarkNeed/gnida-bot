@@ -125,9 +125,10 @@ class RoutePatternTests(unittest.TestCase):
     def test_inline_game_search_and_handlers(self):
         self.assertEqual(inline_game_types("шашки"), ["checkers"])
         self.assertEqual(inline_game_types("блэкджек"), ["blackjack"])
+        self.assertEqual(inline_game_types("пере"), ["shootout"])
         self.assertEqual(
             inline_game_types("play"),
-            ["random", "rps", "blackjack", "checkers"],
+            ["random", "rps", "blackjack", "checkers", "shootout"],
         )
         router = create_router(SimpleNamespace(), kargassia_chat_id=-1001)
         inline_handlers = {
@@ -720,7 +721,7 @@ class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(*spawned, return_exceptions=True)
                 await database.close()
 
-    async def test_inline_query_builds_four_personal_game_cards(self):
+    async def test_inline_query_builds_five_personal_game_cards(self):
         router = create_router(SimpleNamespace(upsert_user=AsyncMock()), kargassia_chat_id=None)
         handler = next(
             item.callback
@@ -738,14 +739,16 @@ class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
             answer=AsyncMock(),
         )
 
-        await handler(query)
+        await handler(query, SimpleNamespace(token="test-token"))
 
         results = query.answer.await_args.args[0]
-        self.assertEqual(len(results), 4)
+        self.assertEqual(len(results), 5)
         self.assertEqual(
-            results[-1].reply_markup.inline_keyboard[0][0].callback_data,
+            results[-2].reply_markup.inline_keyboard[0][0].callback_data,
             "ia:10:checkers",
         )
+        self.assertEqual(results[-1].title, "Перестрелка")
+        self.assertRegex(results[-1].reply_markup.inline_keyboard[0][0].callback_data, r"^dshot-invite:10:accept:[0-9a-f]{20}$")
         self.assertEqual(query.answer.await_args.kwargs["cache_time"], 0)
         self.assertTrue(query.answer.await_args.kwargs["is_personal"])
 

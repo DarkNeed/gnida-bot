@@ -13,6 +13,7 @@ from aiogram.types import Chat, Message, User
 from database import Database
 from handlers.arena import OFFER_RE
 from handlers.quick_duel import DUEL_RE, QuickDuelPublisher, create_quick_duel_router, duel_keyboard, duel_text
+from handlers.routes import create_router
 from quick_duel import DuelError, INVITE_SECONDS, TURN_SECONDS, resolve_round
 
 
@@ -199,7 +200,7 @@ class DuelTests(unittest.IsolatedAsyncioTestCase):
         publisher = QuickDuelPublisher(self.db, bot)
         router = create_quick_duel_router(self.db, publisher)
         command = router.message.handlers[0].callback
-        button = router.callback_query.handlers[0].callback
+        button = next(h.callback for h in router.callback_query.handlers if h.callback.__name__ == 'quick_duel_button')
         creator = User(id=10, is_bot=False, first_name='Иван')
         guest = User(id=20, is_bot=False, first_name='Джей')
         chat = Chat(id=-100, type='supergroup')
@@ -211,7 +212,7 @@ class DuelTests(unittest.IsolatedAsyncioTestCase):
         await command(message, bot)
         message.answer.assert_awaited_once()
         invite = message.answer.await_args.kwargs['reply_markup']
-        callback = SimpleNamespace(data=invite.inline_keyboard[0][0].callback_data, message=posted,
+        callback = SimpleNamespace(data=invite.inline_keyboard[0][0].callback_data, message=posted, inline_message_id=None,
                                    from_user=guest, answer=AsyncMock())
         await button(callback)
         keyboard = bot.edit_message_text.await_args.kwargs['reply_markup']
@@ -254,7 +255,7 @@ class DuelTests(unittest.IsolatedAsyncioTestCase):
                               edit_message_text=AsyncMock())
         router = create_quick_duel_router(self.db, QuickDuelPublisher(self.db, bot))
         command = router.message.handlers[0].callback
-        button = router.callback_query.handlers[0].callback
+        button = next(h.callback for h in router.callback_query.handlers if h.callback.__name__ == 'quick_duel_button')
         message = SimpleNamespace(chat=source,from_user=creator,sender_chat=None,text='/перестрелка @Sheriff',
                                   caption=None,answer=AsyncMock(return_value=posted),message_id=3)
         await command(message, bot)
@@ -262,7 +263,7 @@ class DuelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.send_message.await_args.args[0],20)
         self.assertEqual(len(message.answer.await_args.kwargs['reply_markup'].inline_keyboard),1)
         invite = bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
-        cb = SimpleNamespace(data=invite,message=posted,from_user=guest,answer=AsyncMock())
+        cb = SimpleNamespace(data=invite,message=posted,inline_message_id=None,from_user=guest,answer=AsyncMock())
         await button(cb)
         self.assertTrue(cb.answer.await_args.kwargs['show_alert'])
         bot.edit_message_text.assert_not_awaited()
@@ -294,3 +295,58 @@ class DuelTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Не удалось отправить',bot.edit_message_text.await_args.args[0])
         retry = await self.db.quick_duel_create(10,4,10,20,('Иван','Джей'))
         self.assertEqual(retry['status'],'pending')
+
+    async def test_inline_query_to_duel_in_one_message_and_no_private_contact(self):
+        users = [User(id=i,is_bot=False,first_name='Игрок '+str(i)) for i in (10,20,30)]
+        source = create_router(self.db)
+        query = SimpleNamespace(query='пере',from_user=users[0],answer=AsyncMock())
+        bot = SimpleNamespace(token='test-token',edit_message_text=AsyncMock())
+        await source.inline_query.handlers[0].callback(query,bot)
+        [card] = query.answer.await_args.args[0]
+        self.assertEqual(card.title,'Перестрелка')
+        self.assertEqual(self.db.connection.execute('SELECT count(*) FROM quick_duels').fetchone()[0],0)
+        invite = card.reply_markup.inline_keyboard[0][0].callback_data
+        publisher = QuickDuelPublisher(self.db, bot)
+        router = create_quick_duel_router(self.db, publisher)
+        callbacks = {h.callback.__name__:h.callback for h in router.callback_query.handlers}
+
+        def click(data, who=1, message='inline-one'):
+            return SimpleNamespace(data=data,from_user=users[who],inline_message_id=message,message=None,answer=AsyncMock())
+
+        own = click(invite,0)
+        await callbacks['quick_duel_inline_invite'](own)
+        self.assertTrue(own.answer.await_args.kwargs['show_alert'])
+        forged = click(invite.replace(':10:',':30:'))
+        await callbacks['quick_duel_inline_invite'](forged)
+        self.assertIn('Некорректный вызов',forged.answer.await_args.args[0])
+        outsiders = [click(invite,i) for i in (1,2)]
+        await asyncio.gather(*(callbacks['quick_duel_inline_invite'](cb) for cb in outsiders))
+        self.assertEqual(sum(bool(cb.answer.await_args.kwargs.get('show_alert')) for cb in outsiders),1)
+        row = self.db.connection.execute('SELECT id,guest FROM quick_duels WHERE inline_message_id=?',('inline-one',)).fetchone()
+        winner = 1 if row['guest']==20 else 2
+        self.assertEqual(bot.edit_message_text.await_args.kwargs['inline_message_id'],'inline-one')
+        self.assertNotIn('chat_id',bot.edit_message_text.await_args.kwargs)
+        move = bot.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard[0][1].callback_data
+        for invalid in (click(move,winner,'another-message'),click(move,3-winner)):
+            await callbacks['quick_duel_button'](invalid)
+            self.assertTrue(invalid.answer.await_args.kwargs['show_alert'])
+        await callbacks['quick_duel_button'](click(move,winner))
+        bot.edit_message_text.assert_awaited_once()  # the other app user cannot see the pending move
+        await callbacks['quick_duel_button'](click(move,0))
+        self.assertIn('Итог раунда 1',bot.edit_message_text.await_args.args[0])
+        self.now += TURN_SECONDS
+        await publisher.sweep()
+        ended = await self.db.quick_duel_get(row['id'])
+        self.assertEqual(ended['status'],'finished')
+        self.assertIsNone(bot.edit_message_text.await_args.kwargs['reply_markup'])
+
+    async def test_inline_cancel_is_author_only_and_bound_to_one_post(self):
+        create = self.db.quick_duel_inline_invite
+        with self.assertRaises(DuelError):
+            await create('inline-one',10,20,'cancel',('A','B'))
+        cancelled = await create('inline-one',10,10,'cancel',('A','A'))
+        self.assertEqual(cancelled['status'],'cancelled')
+        with self.assertRaises(DuelError):
+            await create('inline-one',10,20,'accept',('A','B'))
+        next_game = await create('inline-two',10,20,'accept',('A','B'))
+        self.assertEqual(next_game['status'],'active')

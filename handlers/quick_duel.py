@@ -1,6 +1,7 @@
 """Render one shared duel state in a group or two private chats."""
 import asyncio
 from html import escape
+from hmac import compare_digest
 import logging
 import re
 
@@ -8,12 +9,14 @@ from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from handlers.routes import message_content, text_or_caption_regexp
-from quick_duel import ACTIONS, DISRUPT_CHANCE, DuelError, HIT_CHANCES, INVITE_SECONDS, MAX_ROUNDS, TURN_SECONDS
+from handlers.routes import PRIVATE_GAMES_SCOPE, display_name, message_content, text_or_caption_regexp
+from quick_duel import (ACTIONS, DISRUPT_CHANCE, DuelError, HIT_CHANCES, INLINE_INVITE_PREFIX, INVITE_SECONDS,
+                        MAX_ROUNDS, TURN_SECONDS, inline_invite_data)
 
 
 DUEL_RE = re.compile(r'^\s*[/!]перестрелка(?:@\w+)?(?=\s|$)', re.IGNORECASE)
 BUTTON_RE = re.compile(r'dshot:([0-9a-f]{16}):([0-8]):(accept|decline|cancel|shoot|aim|disrupt)')
+INLINE_RE = re.compile(rf'{INLINE_INVITE_PREFIX}:([1-9][0-9]{{0,15}}):(accept|cancel):[0-9a-f]{{20}}')
 
 
 def duel_keyboard(duel, viewer=None):
@@ -80,6 +83,15 @@ class QuickDuelPublisher:
         return self.locks[int(ident, 16) % len(self.locks)]
 
     async def edit(self, duel):
+        if duel['inline_message_id'] is not None:
+            try:
+                await self.bot.edit_message_text(duel_text(duel), inline_message_id=duel['inline_message_id'],
+                                                 parse_mode='HTML', reply_markup=duel_keyboard(duel))
+            except TelegramAPIError as error:
+                if 'message is not modified' not in str(error).casefold():
+                    logging.warning('Could not redraw inline duel %s: %s', duel['id'], error)
+                    return False
+            return True
         private = duel['chat_id'] > 0
         targets = [(duel['chat_id'], duel['message_id'], duel['creator'] if private else None)]
         if private:
@@ -202,18 +214,49 @@ def create_quick_duel_router(database, publisher):
                 raise
             await database.quick_duel_bind(duel['id'], sent.message_id)
 
+    @router.callback_query(F.data.startswith(INLINE_INVITE_PREFIX + ':'))
+    async def quick_duel_inline_invite(callback: CallbackQuery):
+        match = INLINE_RE.fullmatch(callback.data or '')
+        user, message = callback.from_user, callback.inline_message_id
+        if not match or not message or user.is_bot:
+            await callback.answer('Этот вызов нужно отправить через инлайн-меню бота.', show_alert=True)
+            return
+        creator, action = int(match[1]), match[2]
+        if not compare_digest(callback.data, inline_invite_data(creator, action, publisher.bot.token)):
+            await callback.answer('Некорректный вызов. Отправь новый через инлайн-меню.', show_alert=True)
+            return
+        author = await database.get_user(PRIVATE_GAMES_SCOPE, creator)
+        if author is None:
+            await callback.answer('Создателю нужно отправить новый инлайн-вызов.', show_alert=True)
+            return
+        try:
+            duel = await database.quick_duel_inline_invite(message, creator, user.id, action,
+                                                           (author['display_name'], display_name(user)))
+        except DuelError as error:
+            await callback.answer(str(error), show_alert=True)
+            return
+        async with publisher.lock(duel['id']):
+            # A second click must not overwrite a newer round's keyboard.
+            current = await database.quick_duel_get(duel['id'])
+            if not await publisher.edit(current):
+                await callback.answer('Не удалось обновить сообщение. Нажми ещё раз.', show_alert=True)
+                return
+        await callback.answer()
+
     @router.callback_query(F.data.startswith('dshot:'))
     async def quick_duel_button(callback: CallbackQuery):
         match = BUTTON_RE.fullmatch(callback.data or '')
         message = callback.message
-        if not match or not isinstance(message, Message):
+        inline = callback.inline_message_id
+        if not match or (not inline and not isinstance(message, Message)):
             await callback.answer('Кнопка дуэли недоступна.', show_alert=True)
             return
         ident, round_no, action = match.groups()
         async with publisher.lock(ident):
             try:
-                notice, duel = await database.quick_duel_action(ident, message.chat.id, message.message_id,
-                                                              callback.from_user.id, int(round_no), action)
+                args = (None, None) if inline else (message.chat.id, message.message_id)
+                notice, duel = await database.quick_duel_action(ident, *args, callback.from_user.id,
+                                                              int(round_no), action, inline_message=inline)
             except DuelError as error:
                 await callback.answer(str(error), show_alert=True)
                 return

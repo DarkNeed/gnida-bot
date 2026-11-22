@@ -113,6 +113,34 @@ class FamilyTest(unittest.IsolatedAsyncioTestCase):
         await self.edit("unlink",0,3)
         self.assertEqual((await self.db.family_view(-100,1,True))["members"],[0])
 
+    async def test_editor_marriage_uses_archive_and_court_without_adding_a_branch(self):
+        await self.edit("origin",1)
+        await self.edit("link",1,2)
+        for a,b in ((2,2),(1,2),(0,2)):
+            with self.assertRaises(FamilyError):
+                await self.db.family_edit(-100,1,"marry",a,b)
+        old_offer = await self.db.family_offer(-100,3,2)
+        preview = await self.db.family_edit(-100,1,"marry",3,2)
+        self.assertFalse(preview["marriage_visible"])
+        self.assertIsNone((await self.db.family_view(-100,3,False))["spouse"])
+        self.assertEqual(await self.db.family_offer_people(-100,old_offer),(3,2))
+        await self.db.family_edit(-100,1,"marry",3,2,expected=preview["revision"])
+        self.assertIsNone(await self.db.family_offer_people(-100,old_offer))
+        state = await self.db.family_view(-100,2,True)
+        self.assertEqual(state["members"],[1,2])
+        self.assertEqual(state["marriages"],[])
+        self.assertEqual(state["editor"]["marriages"],[[2,3]])
+        self.assertIn("брак внесён через редактор",state["log"][0]["description"])
+        with self.assertRaises(FamilyError):
+            await self.db.family_edit(-100,1,"marry",2,4)
+        await self.edit("origin",0)
+        await self.edit("link",0,3)
+        self.assertEqual((await self.db.family_view(-100,3,False))["marriages"],[[2,3]])
+        case, partner, _ = await self.db.family_filing(-100,3,"")
+        self.assertEqual(partner,2)
+        await self.db.family_decide(-100,1,True,case,True)
+        self.assertEqual((await self.db.family_view(-100,3,False))["marriages"],[])
+
     async def test_signed_mini_app_roles_and_preview_before_write(self):
         async def member(chat, user):
             status = "creator" if user == 1 else "left" if user == 6 else "member"
@@ -159,3 +187,15 @@ class FamilyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([call.args for call in bot.get_chat_member.await_args_list],[(-100,1),(-100,2)])
         response = await client.post(path,json=dict(branch,op="apply",revision=preview["revision"],proof=preview["proof"]),headers=auth(1))
         self.assertEqual(response.status,200)
+        wedding = dict(op="preview",edit="marry",a=3,b=2)
+        self.assertEqual((await client.post(path,json=wedding,headers=auth(2))).status,400)
+        self.assertEqual((await client.post(path,json=dict(wedding,a=0),headers=auth(1))).status,400)
+        self.assertEqual((await client.post(path,json=dict(wedding,b=6),headers=auth(1))).status,400)
+        preview = await (await client.post(path,json=wedding,headers=auth(1))).json()
+        self.assertIs(preview["marriage_visible"],False)
+        wedding.update(op="apply",revision=preview["revision"],proof=preview["proof"])
+        self.assertEqual((await client.post(path,json=dict(wedding,b=4),headers=auth(1))).status,400)
+        self.assertEqual((await client.post(path,json=wedding,headers=auth(1))).status,200)
+        view = await (await client.get(path,headers=auth(2))).json()
+        self.assertEqual(view["spouse"],3)
+        self.assertEqual(view["marriages"],[])

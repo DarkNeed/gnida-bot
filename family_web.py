@@ -13,7 +13,7 @@ from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from family_tree import EMPTY_ORIGIN, FamilyError
 
 MAX_ID = 2**52 - 1
-EDITS = {"origin", "link", "unlink", "appoint", "revoke"}
+EDITS = {"origin", "link", "unlink", "marry", "appoint", "revoke"}
 
 
 def telegram_id(value):
@@ -119,7 +119,7 @@ def register_family(app, db, bot, actor_key, require_member, root):
         edit = body["edit"]
         raw_a = body.get("a")
         a = EMPTY_ORIGIN if edit in ("origin", "link", "unlink") and type(raw_a) is int and raw_a == EMPTY_ORIGIN else telegram_id(raw_a)
-        b = telegram_id(body.get("b")) if edit in ("link", "unlink") else None
+        b = telegram_id(body.get("b")) if edit in ("link", "unlink", "marry") else None
         revision = body.get("revision") if op == "apply" else None
         if op == "apply":
             proof = body.get("proof")
@@ -128,11 +128,11 @@ def register_family(app, db, bot, actor_key, require_member, root):
                 or not hmac.compare_digest(proof, preview_proof(chat, actor, edit, a, b, reason, revision))):
                 raise FamilyError("Сначала проверь правку.")
         # Removing a departed person's old edge/appointment is still possible.
-        if edit in ("origin", "link", "appoint") and a != EMPTY_ORIGIN:
+        if edit in ("origin", "link", "marry", "appoint") and a != EMPTY_ORIGIN:
             member = await family_target(db, bot, require_member, chat, a)
             if edit == "appoint" and (member.status == "creator" or a == CUSTOM_COMMAND_OWNER_ID):
                 raise FamilyError("Этот участник уже судья по должности.")
-        if edit == "link":
+        if edit in ("link", "marry"):
             await family_target(db, bot, require_member, chat, b)
         result = await db.family_edit(chat, actor, edit, a, b, reason, expected=revision)
         if op == "preview":

@@ -79,6 +79,7 @@ from database import (
 )
 from menu_context import choose_chat_view, selected_chat, verified_selected_chat, verified_constructor_chat, manages_chat
 from franc_deposit import DEPOSIT_RE, parse_deposit
+from quick_duel import INLINE_DUEL_TYPE, inline_invite_data
 from parsing import (
     command_payload,
     format_duration,
@@ -433,11 +434,14 @@ INLINE_GAME_OPTIONS = {
     "rps": ("Камень, ножницы, бумага", "🪨"),
     "blackjack": ("Мини-блэкджек", "🎰"),
     "checkers": ("Шашки", "⚫"),
+    INLINE_DUEL_TYPE: ("Перестрелка", "🤠"),
 }
 
 
 def inline_game_types(query: str) -> list[str]:
     normalized = query.casefold().strip()
+    if normalized.startswith(("пер", "дуэл", "shootout")):
+        return [INLINE_DUEL_TYPE]
     if "кнб" in normalized or "камень" in normalized:
         return ["rps"]
     if "блек" in normalized or "блэк" in normalized:
@@ -446,7 +450,7 @@ def inline_game_types(query: str) -> list[str]:
         return ["checkers"]
     if "случ" in normalized or "рандом" in normalized:
         return ["random"]
-    return ["random", "rps", "blackjack", "checkers"]
+    return list(INLINE_GAME_OPTIONS)
 
 
 def next_daily_group_message(
@@ -5795,7 +5799,7 @@ def create_router(
             )
 
     @router.inline_query()
-    async def inline_challenge_query(inline_query: InlineQuery) -> None:
+    async def inline_challenge_query(inline_query: InlineQuery, bot: Bot) -> None:
         await database.upsert_user(
             PRIVATE_GAMES_SCOPE,
             inline_query.from_user.id,
@@ -5807,6 +5811,22 @@ def create_router(
         results: list[InlineQueryResultArticle] = []
         for game_type in inline_game_types(inline_query.query):
             title, icon = INLINE_GAME_OPTIONS[game_type]
+            if game_type == INLINE_DUEL_TYPE:
+                author = inline_query.from_user.id
+                results.append(InlineQueryResultArticle(
+                    id=f"{author}:{game_type}", title=title,
+                    description="Дуэль на 1 HP без ставок прямо в этой переписке",
+                    input_message_content=InputTextMessageContent(
+                        message_text=f"{icon} {creator_name} вызывает на перестрелку!\n"
+                                     "❤️ По 1 HP, без ставок. Соперник, нажми «Принять вызов».",
+                        parse_mode=None,
+                    ),
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(text="✅ Принять вызов", callback_data=inline_invite_data(author, "accept", bot.token)),
+                        InlineKeyboardButton(text="↩️ Отозвать", callback_data=inline_invite_data(author, "cancel", bot.token)),
+                    ]]),
+                ))
+                continue
             game_label = (
                 "случайную мини-игру" if game_type == "random" else title
             )
@@ -5848,7 +5868,7 @@ def create_router(
         except (TypeError, ValueError):
             await callback.answer("Некорректный вызов.", show_alert=True)
             return
-        if requested_game not in INLINE_GAME_OPTIONS:
+        if requested_game not in INLINE_GAME_OPTIONS or requested_game == INLINE_DUEL_TYPE:
             await callback.answer("Неизвестная игра.", show_alert=True)
             return
         if callback.from_user.id == challenger_id:

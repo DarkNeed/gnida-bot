@@ -238,6 +238,15 @@ class FamilyTreeMixin:
                 raise FamilyError("Такой связи больше нет.")
             state["parents"].remove([a, b])
             description = "удалена родственная связь"
+        elif operation == "marry":
+            if not a or not b or a == b:
+                raise FamilyError("Выбери двух разных участников.")
+            if spouse(state, a) or spouse(state, b):
+                raise FamilyError("Один из участников уже состоит в браке.")
+            if close_relatives(state, a, b):
+                raise FamilyError("Близкие родственники не могут заключить брак.")
+            state["marriages"].append(sorted((a, b)))
+            description = "брак внесён через редактор"
         elif operation in ("appoint", "revoke"):
             if operation == "appoint":
                 if a in state["judges"]:
@@ -253,7 +262,8 @@ class FamilyTreeMixin:
             raise FamilyError("Неизвестная правка.")
         ids = [i for i in (a, b) if i not in (None, EMPTY_ORIGIN)]
         names = {p["id"]: p["name"] for p in self._family_people(chat, ids)}
-        return description + (": " + " → ".join(names[i] for i in ids) if ids else "") + (f". {reason}" if reason else "")
+        separator = " и " if operation == "marry" else " → "
+        return description + (": " + separator.join(names[i] for i in ids) if ids else "") + (f". {reason}" if reason else "")
 
     async def family_edit(self, chat, actor, operation, a, b=None, reason="", *, expected=None):
         """Caller must check ownership. Preview is read-only; apply requires that revision."""
@@ -269,9 +279,17 @@ class FamilyTreeMixin:
                 after = relatives(state)
                 if expected is not None:
                     self._family_write(chat, revision, state, actor, summary)
-                return dict(revision=revision, summary=summary,
-                            added=self._family_people(chat, after - before),
-                            removed=self._family_people(chat, before - after))
+                    if operation == "marry":
+                        self.connection.execute(
+                            "DELETE FROM family_offers WHERE chat_id=? AND (sender IN (?,?) OR recipient IN (?,?))",
+                            (chat, a, b, a, b),
+                        )
+                result = dict(revision=revision, summary=summary,
+                              added=self._family_people(chat, after - before),
+                              removed=self._family_people(chat, before - after))
+                if operation == "marry":
+                    result["marriage_visible"] = a in after and b in after
+                return result
 
     async def family_offer(self, chat, sender, recipient):
         now = int(time.time())

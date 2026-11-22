@@ -1,4 +1,5 @@
 """Persistent, no-stakes chat duels. No connection to the RPG or wallets."""
+import hmac
 import json
 import random
 import secrets
@@ -10,6 +11,14 @@ MAX_ROUNDS = 8
 HIT_CHANCES = (25, 55, 85)
 DISRUPT_CHANCE = 50
 ACTIONS = {"shoot": "🔫 Выстрелить", "aim": "🎯 Прицелиться", "disrupt": "💨 Сбить прицел"}
+INLINE_DUEL_TYPE = "shootout"
+INLINE_INVITE_PREFIX = "dshot-invite"
+
+
+def inline_invite_data(creator, action, bot_token):
+    message = f"{INLINE_INVITE_PREFIX}:{creator}:{action}"
+    signature = hmac.digest(bot_token.encode(), message.encode(), "sha256").hex()[:20]
+    return f"{message}:{signature}"
 
 
 class DuelError(ValueError):
@@ -68,7 +77,8 @@ class QuickDuelMixin:
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS quick_duels (
                 id TEXT PRIMARY KEY, chat_id INTEGER NOT NULL, source_id INTEGER NOT NULL,
-                message_id INTEGER, guest_message_id INTEGER, creator INTEGER NOT NULL, guest INTEGER NOT NULL,
+                message_id INTEGER, guest_message_id INTEGER, inline_message_id TEXT,
+                creator INTEGER NOT NULL, guest INTEGER NOT NULL,
                 status TEXT NOT NULL, deadline INTEGER NOT NULL, state_json TEXT NOT NULL,
                 UNIQUE(chat_id,source_id));
             CREATE INDEX IF NOT EXISTS quick_duels_deadline ON quick_duels(deadline)
@@ -86,6 +96,9 @@ class QuickDuelMixin:
             CREATE INDEX IF NOT EXISTS quick_duel_contacts_by_name ON quick_duel_contacts(username);
         """)
         self._ensure_column('quick_duels', 'guest_message_id', 'INTEGER')
+        self._ensure_column('quick_duels', 'inline_message_id', 'TEXT')
+        self.connection.execute("""CREATE UNIQUE INDEX IF NOT EXISTS quick_duels_inline_id
+            ON quick_duels(inline_message_id) WHERE inline_message_id IS NOT NULL""")
 
     async def quick_duel_remember_private(self, user, username):
         async with self._lock:
@@ -110,6 +123,10 @@ class QuickDuelMixin:
         duel['state'] = json.loads(duel.pop('state_json'))
         return duel
 
+    async def quick_duel_get(self, ident):
+        async with self._lock:
+            return self._quick_duel_locked(ident)
+
     def _quick_duel_save_locked(self, duel):
         self.connection.execute('UPDATE quick_duels SET status=?,deadline=?,state_json=? WHERE id=?',
             (duel['status'], duel['deadline'], json.dumps(duel['state'], ensure_ascii=False), duel['id']))
@@ -122,8 +139,50 @@ class QuickDuelMixin:
 
     @staticmethod
     def _quick_duel_busy_message(chat):
-        place = "в личке" if chat > 0 else "в этом чате"
+        place = "в инлайн-режиме" if chat == 0 else "в личке" if chat > 0 else "в этом чате"
         return f"Кто-то из вас уже участвует в перестрелке {place}."
+
+    @staticmethod
+    def _quick_duel_state(names, round_no):
+        return dict(round=round_no, fighters=[dict(name=name,hp=1,aim=0,cooldown=False) for name in names],
+                    choices=[None, None], last=None, winner=None, reason=None)
+
+    async def quick_duel_inline_invite(self, message, creator, actor, action, names):
+        """Bind one inline reply to the first accepted opponent, or revoke it."""
+        from database import utc_timestamp
+        if not message or creator <= 0 or actor <= 0 or action not in ("accept", "cancel"):
+            raise DuelError("Некорректный инлайн-вызов.")
+        if action == "accept" and creator == actor:
+            raise DuelError("Нельзя принять собственный вызов.")
+        if action == "cancel" and creator != actor:
+            raise DuelError("Отозвать вызов может только его автор.")
+        async with self._lock:
+            with self.connection:
+                self.connection.execute("BEGIN IMMEDIATE")
+                row = self.connection.execute("SELECT id FROM quick_duels WHERE inline_message_id=?", (message,)).fetchone()
+                now = utc_timestamp()
+                if row:
+                    duel = self._quick_duel_locked(row['id'])
+                    if creator != duel['creator'] or actor not in (creator, duel['guest']):
+                        raise DuelError("Соперник уже определён.")
+                    if action == "cancel" and duel['status'] != "cancelled":
+                        raise DuelError("Вызов уже принят: бой нельзя отозвать.")
+                    self._quick_duel_expire_locked(duel, now)
+                    return duel
+                active = action == "accept"
+                if active and self._quick_duel_busy_locked(0, (creator, actor), now):
+                    raise DuelError(self._quick_duel_busy_message(0))
+                ident = secrets.token_hex(8)
+                source = self.connection.execute(
+                    "SELECT COALESCE(MAX(source_id),0)+1 FROM quick_duels WHERE chat_id=0"
+                ).fetchone()[0]
+                state = self._quick_duel_state(names, 1 if active else 0)
+                self.connection.execute("""INSERT INTO quick_duels
+                    (id,chat_id,source_id,inline_message_id,creator,guest,status,deadline,state_json)
+                    VALUES(?,0,?,?,?,?,?,?,?)""",
+                    (ident, source, message, creator, actor if active else 0, 'active' if active else 'cancelled',
+                     now + TURN_SECONDS, json.dumps(state, ensure_ascii=False)))
+                return self._quick_duel_locked(ident)
 
     async def quick_duel_create(self, chat, source, creator, guest, names):
         from database import utc_timestamp
@@ -144,8 +203,7 @@ class QuickDuelMixin:
                     AND guest=? AND status='pending' AND deadline>?""", (guest, creator, now)).fetchone():
                     raise DuelError("Этот игрок уже вызвал тебя в личке.")
                 ident = secrets.token_hex(8)
-                state = dict(round=0, fighters=[dict(name=name, hp=1, aim=0, cooldown=False) for name in names],
-                             choices=[None, None], last=None, winner=None, reason=None)
+                state = self._quick_duel_state(names, 0)
                 self.connection.execute("""INSERT INTO quick_duels
                     (id,chat_id,source_id,creator,guest,status,deadline,state_json) VALUES(?,?,?,?,?,'pending',?,?)""",
                     (ident, chat, source, creator, guest, now + INVITE_SECONDS, json.dumps(state, ensure_ascii=False)))
@@ -186,13 +244,17 @@ class QuickDuelMixin:
                 duel = self._quick_duel_locked(ident)
                 return duel if self._quick_duel_expire_locked(duel, utc_timestamp()) else None
 
-    async def quick_duel_action(self, ident, chat, message, user, round_no, action, *, rng=None):
+    async def quick_duel_action(self, ident, chat, message, user, round_no, action, *, inline_message=None, rng=None):
         from database import utc_timestamp
         async with self._lock:
             with self.connection:
                 duel = self._quick_duel_locked(ident)
                 players = (duel['creator'], duel['guest'])
-                if duel['chat_id']>0:
+                if duel['inline_message_id'] is not None:
+                    correct_message = inline_message == duel['inline_message_id']
+                elif inline_message is not None:
+                    correct_message = False
+                elif duel['chat_id']>0:
                     side_message = {duel['creator']:duel['message_id'], duel['guest']:duel['guest_message_id']}.get(user)
                     correct_message = side_message is not None and (chat, message) == (user, side_message)
                 else:

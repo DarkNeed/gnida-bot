@@ -17,7 +17,7 @@ class PrivateGamesTests(unittest.IsolatedAsyncioTestCase):
         await self.db.connect()
         self.router=create_router(self.db,kargassia_chat_id=None)
         self.users=[User(id=k,is_bot=False,first_name=f'Игрок {k}') for k in (10,20,30)]
-        self.bot=SimpleNamespace(get_chat_member=AsyncMock(side_effect=AssertionError('No group membership required')),
+        self.bot=SimpleNamespace(token='test-token',get_chat_member=AsyncMock(side_effect=AssertionError('No group membership required')),
             edit_message_text=AsyncMock(),send_message=AsyncMock())
         self.before=set(asyncio.all_tasks())
 
@@ -36,7 +36,7 @@ class PrivateGamesTests(unittest.IsolatedAsyncioTestCase):
 
     async def offer(self):
         query=SimpleNamespace(query='play',from_user=self.users[0],answer=AsyncMock())
-        await self.handler('inline_challenge_query','inline_query')(query)
+        await self.handler('inline_challenge_query','inline_query')(query,self.bot)
         return query.answer.await_args.args[0]
 
     async def start(self,game):
