@@ -46,15 +46,34 @@
     const before=state?.revision;
     state=await api(args.size?'?'+args:'');
     people=new Map(state.people.map(p=>[p.id,p]));
-    if(!state.members.includes(selected)) selected=state.origin;
+    const ids=[...state.members,...(state.detached||[]).flat()];
+    if(!ids.includes(selected)) selected=state.origin??ids[0];
     if(before!==undefined && before!==state.revision) camera.k=0;
     scene=null;
   }
   function layout() {
-    const origin=state.origin, ids=state.members, out=new Map(ids.map(id=>[id,[]])), ins=new Map(ids.map(id=>[id,[]]));
+    const detached=state.detached||[], ids=[...state.members,...detached.flat()];
+    const out=new Map(ids.map(id=>[id,[]])), ins=new Map(ids.map(id=>[id,[]]));
     const partners=new Map(state.marriages.flatMap(([a,b])=>[[a,b],[b,a]]));
     for(const [p,c] of [...state.parents,...(state.branches||[]).map(id=>[0,id])]){out.get(p).push(c);ins.get(c).push(p);}
-    const rank=new Map(ids.map(id=>[id,id===origin?0:1]));
+    const main=state.members.length?layoutPart(state.members,state.origin,out,ins,partners):null;
+    const parts=detached.map(ids=>layoutPart(ids,null,out,ins,partners));
+    const width=Math.max(main?.width||300,...parts.map(part=>part.width),parts.length>1?600:300);
+    const spots=new Map();
+    const place=(part,x,y)=>{for(const [id,[u,v]] of part.spots)spots.set(id,[x+u,y+v]);};
+    if(main)place(main,(width-main.width)/2,0);
+    const start=main?main.height+38:9;
+    let x=0,y=start+43,rowHeight=0;
+    for(const part of parts){
+      if(x && x+part.width>width){x=0;y+=rowHeight+24;rowHeight=0;}
+      place(part,x,y);
+      x+=part.width;rowHeight=Math.max(rowHeight,part.height);
+    }
+    const height=parts.length?y+rowHeight+12:main.height;
+    return {spots,width,height,partners,ins,out,detachedStart:parts.length?start:null};
+  }
+  function layoutPart(ids,origin,out,ins,partners) {
+    const rank=new Map(ids.map(id=>[id,origin===null||id===origin?0:1]));
     const remaining=new Map(ids.map(id=>[id,ins.get(id).length]));
     const order=ids.filter(id=>!remaining.get(id)), direct=new Set([origin]);
     for(const p of order) for(const c of out.get(p)){
@@ -67,10 +86,16 @@
     for(const p of order.slice().reverse())if(!direct.has(p) && out.get(p).length){
       rank.set(p,Math.max(rank.get(p),Math.min(...out.get(p).map(c=>rank.get(c)))-1));
     }
+    // A spouse linked through marriage alone belongs next to their partner.
+    for(const id of ids)if(id!==origin&&!ins.get(id).length){
+      const partner=partners.get(id);
+      if(rank.has(partner))rank.set(id,Math.max(rank.get(id),rank.get(partner)));
+    }
     for(const p of order)for(const c of out.get(p))rank.set(c,Math.max(rank.get(c),rank.get(p)+1));
     const rows=[];
     for(const id of ids)(rows[rank.get(id)]??=[]).push(id);
-    const width=Math.max(510,...rows.map(row=>row.length*187+28)), height=rows.length*114+10, spots=new Map();
+    const width=Math.max(origin===null?215:510,...rows.filter(Boolean).map(row=>row.length*187+28));
+    const height=rows.length*114+10, spots=new Map();
     rows.forEach((row,y)=>{
       const slot=new Set(row);
       function weight(id){
@@ -86,7 +111,7 @@
       }
       placed.forEach((id,i)=>spots.set(id,[width*(i+.5)/placed.length,49+y*114]));
     });
-    return {spots,width,height,partners,ins,out};
+    return {spots,width,height};
   }
   function graph() {
     const {spots,width,height,partners,ins}=scene, paths=[], rings=[], grouped=new Map();
@@ -95,10 +120,10 @@
       if(y!==v){
         const end=v+(v>y?-32:32), start=y+(v>y?32:-32);
         paths.push('<path class="spouse" d="M'+x+' '+start+' C'+x+' '+((start+end)/2)+' '+u+' '+((start+end)/2)+' '+u+' '+end+'"/>');
-        continue;
+      }else{
+        paths.push('<path class="spouse" d="M'+x+' '+y+' H'+u+'"/>');
       }
-      paths.push('<path class="spouse" d="M'+x+' '+y+' H'+u+'"/>');
-      rings.push('<span class="ring" aria-hidden="true" style="left:'+mid+'px;top:'+y+'px">💍</span>');
+      rings.push('<span class="ring" aria-hidden="true" style="left:'+mid+'px;top:'+((y+v)/2)+'px">💍</span>');
     }
     for(const [id,from] of ins){
       const [x,y]=spots.get(id),end=y-32;
@@ -121,16 +146,29 @@
     }
     return '<svg class="wires" viewBox="0 0 '+width+' '+height+'" aria-hidden="true">'+paths.join('')+'</svg>'+rings.join('');
   }
-  const avatars=new Map();
+  const avatars=new Map(), avatarTTL=300000;
+  let avatarVersion=0;
+  function resetAvatars(){
+    avatarVersion++;
+    for(const {promise} of avatars.values())promise.then(url=>{if(url)URL.revokeObjectURL(url);});
+    avatars.clear();
+  }
   function avatarJob(node) {
-    const id=Number(node.dataset.avatar);
-    if(!avatars.has(id)){
-      const promise=fetch(base+'/avatar/'+id,{headers:headers()}).then(r=>r.ok?r.blob():null)
-        .then(blob=>blob?URL.createObjectURL(blob):null).catch(()=>null);
-      avatars.set(id,promise);
+    const id=Number(node.dataset.avatar), version=avatarVersion, now=Date.now();
+    const previous=avatars.get(id);
+    if(!previous||now-previous.at>=avatarTTL){
+      previous?.promise.then(url=>{if(url)URL.revokeObjectURL(url);});
+      const promise=fetch(base+'/avatar/'+id+(version?'?refresh=1':''),{headers:headers(),cache:'no-store'})
+        .then(r=>r.ok?r.blob():r.status===404?null:undefined)
+        .then(blob=>blob?URL.createObjectURL(blob):blob).catch(()=>undefined);
+      avatars.set(id,{at:now,promise});
     }
-    return avatars.get(id).then(url=>{
-      if(url && node.isConnected){const img=new Image();img.alt='';img.src=url;node.replaceChildren(img);}
+    node.dataset.loadedPhoto=version;
+    node.dataset.photoAt=now;
+    return avatars.get(id).promise.then(url=>{
+      if(!node.isConnected||version!==avatarVersion)return;
+      if(url){const img=new Image();img.alt='';img.src=url;node.replaceChildren(img);}
+      else if(url===null)node.textContent=node.dataset.initials;
     });
   }
   function card(id) {
@@ -138,8 +176,9 @@
     const handle=user?.username?'@'+user.username:'';
     const avatar=isRoot?'🌌':esc(name(id).trim().slice(0,2).toLocaleUpperCase('ru'));
     return '<button class="person'+(isRoot?' origin':'')+'" type="button" data-person="'+id+'" aria-pressed="'+(id===selected)+
-      '" title="'+esc(name(id))+'" style="left:'+x+'px;top:'+y+'px"><span class="avatar" aria-hidden="true"'+(isRoot?'':' data-avatar="'+id+'"')+
-      '>'+avatar+'</span><span class="caption"><strong>'+esc(name(id))+'</strong><small>'+esc(id===0?'Начало древа':isRoot?'Первородный':handle)+'</small></span></button>';
+      '" title="'+esc(name(id))+'" style="left:'+x+'px;top:'+y+'px"><span class="avatar" aria-hidden="true"'+
+      (id===0?'':' data-avatar="'+id+'" data-initials="'+avatar+'"')+'>'+avatar+
+      '</span><span class="caption"><strong>'+esc(name(id))+'</strong><small>'+esc(id===0?'Начало древа':isRoot?'🌌 Первородный':handle)+'</small></span></button>';
   }
   const picker=(field,label,value='')=>'<div class="search" data-field="'+field+'"><label><span>'+esc(label)+
     '</span><input type="search" value="'+esc(value)+'" placeholder="Имя или @ник" autocomplete="off"></label><div class="results" hidden></div></div>';
@@ -150,23 +189,28 @@
       (party===undefined?'':' · в браке: '+esc(name(party)));
   }
   function tree() {
-    if(state.origin==null) return '<section class="panel stack"><h2>Общее древо чата</h2><p class="muted">Владелец ещё не назначил Исток.</p>'+
-      (state.owner?button('Создать пустой Исток','edit:blank','primary')+' '+button('Назначить участника','edit:origin'):'')+'</section>';
+    const noOrigin=state.origin==null?'<div class="row"><p class="muted">Владелец ещё не назначил Исток.</p>'+
+      (state.owner?'<div class="actions">'+button('Создать пустой Исток','edit:blank','primary')+' '+button('Назначить участника','edit:origin')+'</div>':'')+'</div>':'';
+    if(!state.members.length&&!state.detached?.length) return '<section class="panel stack"><h2>Общее древо чата</h2>'+noOrigin+'</section>';
     scene??=layout();
-    return '<section class="panel"><div class="heading"><div><h2>Общее древо чата</h2><p class="muted">Людей в древе: '+(state.members.length-(state.origin===0?1:0))+
-      '</p></div>'+picker('tree','Найти в древе')+'</div><div class="map"><div class="pan" role="group" aria-label="Карта родства">'+
-      '<div class="world" style="width:'+scene.width+'px;height:'+scene.height+'px">'+graph()+state.members.slice().sort((a,b)=>
+    return '<section class="panel"><div class="heading"><div><h2>Общее древо чата</h2><p class="muted">Людей на карте: '+(scene.spots.size-(state.origin===0?1:0))+
+      '</p></div>'+picker('tree','Найти на карте')+'</div>'+noOrigin+'<div class="map"><div class="pan" role="group" aria-label="Карта родства">'+
+      '<div class="world" style="width:'+scene.width+'px;height:'+scene.height+'px">'+
+      (scene.detachedStart!==null?'<div class="detached-label" style="top:'+scene.detachedStart+'px">Семьи вне Истока</div>':'')+
+      graph()+[...scene.spots.keys()].sort((a,b)=>
         scene.spots.get(a)[1]-scene.spots.get(b)[1]||scene.spots.get(a)[0]-scene.spots.get(b)[0]).map(card).join('')+'</div></div></div>'+
       '<div class="map-controls"><div class="legend"><span>Родство</span><span class="married">Брак</span>'+
       (state.origin===0?'<span class="attached">Ветвь Истока</span>':'')+'</div><div class="actions">'+
       '<output aria-label="Масштаб" class="muted"></output>'+button('−','zoom:out')+button('+','zoom:in')+button('Всё древо','zoom:fit')+
-      button('К Истоку','zoom:root')+'</div></div><p class="selected muted" aria-live="polite">'+selectedInfo()+'</p></section>';
+      (state.origin==null?'':button('К Истоку','zoom:root'))+
+      (state.detached?.length?button('К отдельным семьям','zoom:detached'):'')+
+      button('Обновить аватарки','photos')+'</div></div><p class="selected muted" aria-live="polite">'+selectedInfo()+'</p></section>';
   }
   function mountMap() {
     const pan=$('.pan',screen);if(!pan)return;
     const world=$('.world',pan), indicator=$('output',screen), {width,height,spots}=scene;
     const pointers=new Map(), rect=()=>pan.getBoundingClientRect(), mid=()=>[pan.clientWidth/2,pan.clientHeight/2];
-    let dragged=false, stopped=false, running=0;
+    let dragged=false, stopped=false, running=0, pumpPhotos=()=>{};
     const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
     const fitScale=()=>Math.min(1,(pan.clientWidth-12)/width,(pan.clientHeight-12)/height);
     function draw(){
@@ -176,22 +220,34 @@
       world.style.transform='translate('+camera.x+'px,'+camera.y+'px) scale('+camera.k+')';
       pan.style.backgroundPosition=(camera.x%21)+'px '+(camera.y%21)+'px';
       indicator.value=Math.round(camera.k*100)+'%';
+      pumpPhotos();
     }
     function go(x,y,k){const [mx,my]=mid();camera={k,x:mx-x*k,y:my-y*k};draw();}
     const fit=()=>go(width/2,height/2,fitScale());
     center=id=>{const point=spots.get(id);if(point)go(...point,Math.max(.9,camera.k));};
     if(!camera.k){
       if(fitScale()>=.58) fit();
-      else {center(state.origin);camera.y=15;draw();}
+      else {
+        const target=state.origin??selected;
+        center(target);camera.y=60-spots.get(target)[1]*camera.k;draw();
+      }
     }else draw();
     function zoom(k, ox,oy,nx=ox,ny=oy){
       const next=clamp(k,Math.min(.18,fitScale()),2.1), ratio=next/camera.k;
       camera={k:next,x:nx-(ox-camera.x)*ratio,y:ny-(oy-camera.y)*ratio};draw();
     }
     const tools=e=>{
+      if(e.target.closest('[data-action="photos"]')){
+        resetAvatars();
+        for(const node of visible)queue.add(node);
+        pumpPhotos();
+        status('Аватарки обновляются по мере появления карточек на экране.');
+        return;
+      }
       const action=e.target.closest('[data-action^="zoom:"]')?.dataset.action;
       if(action==='zoom:fit')fit();
       if(action==='zoom:root')select(state.origin,true);
+      if(action==='zoom:detached')select(state.detached[0][0],true);
       if(action==='zoom:out'||action==='zoom:in')zoom(camera.k*(action==='zoom:in'?1.24:1/1.24),...mid());
     };
     screen.addEventListener('click',tools);
@@ -220,16 +276,21 @@
     });
     pan.addEventListener('click',e=>{if(dragged&&e.detail){e.preventDefault();e.stopImmediatePropagation();}},true);
     const resize=new ResizeObserver(draw);resize.observe(pan);
-    const queue=new Set();
-    function pump(){
-      while(!stopped&&running<3&&queue.size){
-        const [node]=queue;queue.delete(node);observe.unobserve(node);running++;
-        avatarJob(node).finally(()=>{running--;pump();});
+    const visible=new Set(), queue=new Set();
+    pumpPhotos=()=>{
+      while(!stopped&&camera.k>=.32&&running<3&&queue.size){
+        const [node]=queue;queue.delete(node);
+        if(node.dataset.loadedPhoto===String(avatarVersion)&&Date.now()-Number(node.dataset.photoAt)<avatarTTL)continue;
+        running++;
+        avatarJob(node).finally(()=>{running--;pumpPhotos();});
       }
-    }
+    };
     const observe=new IntersectionObserver(entries=>{
-      for(const e of entries)if(e.isIntersecting)queue.add(e.target);else queue.delete(e.target);
-      pump();
+      for(const e of entries){
+        if(e.isIntersecting){visible.add(e.target);queue.add(e.target);}
+        else{visible.delete(e.target);queue.delete(e.target);}
+      }
+      pumpPhotos();
     },{root:pan});
     for(const node of pan.querySelectorAll('[data-avatar]'))observe.observe(node);
     teardown=()=>{stopped=true;observe.disconnect();resize.disconnect();screen.removeEventListener('click',tools);};
@@ -316,9 +377,9 @@
     const list=(people,label)=>people.length?'<p><strong>'+label+' ('+people.length+'):</strong> '+
       people.slice(0,15).map(p=>esc(p.name)).join(', ')+(people.length>15?' и ещё '+(people.length-15):'')+'</p>':'';
     ask('<p>'+esc(result.summary)+'</p>'+
-      (result.marriage_visible===false?'<p>Брак сохранится в архиве. Линия появится на карте, когда оба супруга будут в древе.</p>':'')+
-      list(result.added,'Появятся в древе')+
-      list(result.removed,'Вне древа после правки'),async()=>{
+      (result.marriage_rooted===false?'<p>Брак будет виден на карте в разделе «Семьи вне Истока».</p>':'')+
+      list(result.added,'Свяжутся с Истоком')+
+      list(result.removed,'Потеряют связь с Истоком'),async()=>{
         await api('',{op:'apply',revision:result.revision,proof:result.proof,...payload});
         await load();render();status(payload.edit==='marry'?'Брак внесён в архив.':'Правка сохранена.');
     });

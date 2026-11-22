@@ -8,8 +8,8 @@ import time
 from aiohttp import web
 from aiogram.exceptions import TelegramAPIError
 
-from arena_guild_avatars import GuildAvatarCache
 from custom_commands import CUSTOM_COMMAND_OWNER_ID
+from family_avatars import FamilyAvatarCache
 from family_tree import EMPTY_ORIGIN, FamilyError
 
 MAX_ID = 2**52 - 1
@@ -38,7 +38,7 @@ async def family_target(db, bot, require_member, chat, user):
 
 
 def register_family(app, db, bot, actor_key, require_member, root):
-    photos = GuildAvatarCache(bot)
+    photos = FamilyAvatarCache(db, bot)
     readers = {}
     preview_secret = secrets.token_bytes(32)
 
@@ -93,10 +93,10 @@ def register_family(app, db, bot, actor_key, require_member, root):
         user = telegram_id(int(request.match_info["user"]))
         if not await db.family_avatar_allowed(chat, user):
             return web.Response(status=404)
-        picture = await photos.get(user)
+        picture = await photos.get(chat, user, refresh=request.query.get("refresh") == "1")
         if not picture:
             return web.Response(status=404)
-        return web.Response(body=picture[0], content_type=picture[1])
+        return web.Response(body=picture[1], content_type=picture[2])
 
     async def action(request):
         chat, actor, owner = await scope(request, fresh=True)

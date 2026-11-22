@@ -19,22 +19,29 @@ def normalized(value):
     return unicodedata.normalize("NFKC", value or "").casefold().replace("ё", "е").strip()
 
 
-def relatives(state):
+def family_map(state):
+    """Split the archive into the root's component and other recorded families."""
     root = state["origin"]
-    if root is None:
-        return set()
     edges = defaultdict(list)
     branches = ((EMPTY_ORIGIN, user) for user in state.get("branches", ())) if root == EMPTY_ORIGIN else ()
-    for parent, child in [*state["parents"], *branches]:
-        edges[parent].append(child)
-        edges[child].append(parent)
-    seen, queue = {root}, [root]
-    for person in queue:
-        for neighbor in edges[person]:
-            if neighbor not in seen:
-                seen.add(neighbor)
-                queue.append(neighbor)
-    return seen
+    for a, b in [*state["parents"], *state["marriages"], *branches]:
+        edges[a].append(b)
+        edges[b].append(a)
+    visited = set()
+
+    def component(start):
+        queue = [start]
+        visited.add(start)
+        for person in queue:
+            for neighbor in edges[person]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+        return sorted(queue)
+
+    main = set(component(root)) if root is not None else set()
+    detached = [component(person) for person in sorted(edges) if person not in visited]
+    return main, detached, visited
 
 
 def parent_index(state):
@@ -91,6 +98,10 @@ class FamilyTreeMixin:
             CREATE INDEX IF NOT EXISTS family_cases_chat ON family_cases(chat_id,id DESC);
             CREATE UNIQUE INDEX IF NOT EXISTS family_cases_pending
                 ON family_cases(chat_id,a,b) WHERE status='open';
+            CREATE TABLE IF NOT EXISTS family_avatars (
+                chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL, photo_key TEXT NOT NULL,
+                image BLOB NOT NULL, mime TEXT NOT NULL, PRIMARY KEY(chat_id,user_id)
+            );
         """)
 
     def _family_state(self, chat):
@@ -130,7 +141,7 @@ class FamilyTreeMixin:
     async def family_view(self, chat, actor, owner, case=None, offset=0, mine=False):
         async with self._lock:
             revision, state = self._family_state(chat)
-            members = relatives(state)
+            members, detached, map_ids = family_map(state)
             judge = owner or actor in state["judges"]
             where, params = ("", ()) if judge and not mine else (" AND (a=? OR b=?)", (actor, actor))
             if case is not None:
@@ -146,7 +157,7 @@ class FamilyTreeMixin:
             )] if owner else []
             judges = state["judges"] if owner else []
             title = self.connection.execute("SELECT title FROM chats WHERE chat_id=?", (chat,)).fetchone()
-            view_ids = members | set(judges) | {entry["actor"] for entry in log}
+            view_ids = map_ids | set(judges) | {entry["actor"] for entry in log}
             edit_ids = ({i for edge in state["parents"] + state["marriages"] for i in edge}
                         | set(judges) | set(state["branches"])) if owner else set()
             view_ids |= edit_ids
@@ -157,10 +168,9 @@ class FamilyTreeMixin:
                 view_ids.update(i for i in (row["a"],row["b"],row["decided_by"]) if i is not None)
                 # Telegram chat scope is already supplied by the route.
                 row.pop("chat_id")
-            return dict(revision=revision, origin=state["origin"], members=sorted(members),
+            return dict(revision=revision, origin=state["origin"], members=sorted(members), detached=detached,
                         branches=state["branches"] if state["origin"] == EMPTY_ORIGIN else [],
-                        parents=[p for p in state["parents"] if set(p) <= members],
-                        marriages=[p for p in state["marriages"] if set(p) <= members],
+                        parents=state["parents"], marriages=state["marriages"],
                         editor=dict(parents=state["parents"], marriages=state["marriages"]) if owner else None,
                         people=self._family_people(chat, view_ids), owner=owner, judge=judge, judges=judges,
                         cases=cases, more_cases=more, log=log, spouse=partner, actor=actor,
@@ -172,7 +182,7 @@ class FamilyTreeMixin:
             return []
         async with self._lock:
             _, state = self._family_state(chat)
-            members = relatives(state)
+            _, _, members = family_map(state)
             if directory:
                 # Unicode case folding, and literal substring search (no wildcard expansion).
                 found = self.connection.execute("""
@@ -194,7 +204,28 @@ class FamilyTreeMixin:
 
     async def family_avatar_allowed(self, chat, target):
         async with self._lock:
-            return target != EMPTY_ORIGIN and target in relatives(self._family_state(chat)[1])
+            _, state = self._family_state(chat)
+            return target != EMPTY_ORIGIN and (
+                target == state["origin"] or any(target in pair for pair in state["parents"] + state["marriages"])
+                or (state["origin"] == EMPTY_ORIGIN and target in state["branches"])
+            )
+
+    async def family_saved_avatar(self, chat, user):
+        async with self._lock:
+            row = self.connection.execute(
+                "SELECT photo_key,image,mime FROM family_avatars WHERE chat_id=? AND user_id=?", (chat, user)
+            ).fetchone()
+            return tuple(row) if row else None
+
+    async def family_save_avatar(self, chat, user, avatar):
+        async with self._lock:
+            with self.connection:
+                if avatar is None:
+                    self.connection.execute("DELETE FROM family_avatars WHERE chat_id=? AND user_id=?", (chat, user))
+                else:
+                    self.connection.execute("""INSERT INTO family_avatars(chat_id,user_id,photo_key,image,mime) VALUES(?,?,?,?,?)
+                        ON CONFLICT(chat_id,user_id) DO UPDATE SET photo_key=excluded.photo_key,image=excluded.image,mime=excluded.mime""",
+                        (chat, user, *avatar))
 
     def _family_edit(self, chat, state, operation, a, b, reason):
         if operation == "origin":
@@ -274,9 +305,9 @@ class FamilyTreeMixin:
                 revision, state = self._family_state(chat)
                 if expected is not None and revision != expected:
                     raise FamilyError("Древо уже изменилось. Проверь правку ещё раз.")
-                before = relatives(state)
+                before = family_map(state)[0]
                 summary = self._family_edit(chat, state, operation, a, b, reason)
-                after = relatives(state)
+                after = family_map(state)[0]
                 if expected is not None:
                     self._family_write(chat, revision, state, actor, summary)
                     if operation == "marry":
@@ -288,7 +319,7 @@ class FamilyTreeMixin:
                               added=self._family_people(chat, after - before),
                               removed=self._family_people(chat, before - after))
                 if operation == "marry":
-                    result["marriage_visible"] = a in after and b in after
+                    result["marriage_rooted"] = a in after and b in after
                 return result
 
     async def family_offer(self, chat, sender, recipient):
