@@ -28,6 +28,8 @@ from handlers.rp import create_rp_router
 from handlers.guild import create_guild_router,GuildPublisher
 from handlers.kingdom import create_kingdom_router
 from handlers.slave_finance import sweep_finance, create_finance_router
+from handlers.quick_duel import QuickDuelPublisher, create_quick_duel_router
+from handlers.family import create_family_router
 
 
 def pet_sales_enabled() -> bool:
@@ -73,6 +75,7 @@ async def main() -> None:
         raise
     publisher = ArenaPublisher(database, bot, username)
     guild_publisher=GuildPublisher(database,bot,username)
+    duel_publisher = QuickDuelPublisher(database, bot)
     dispatcher = Dispatcher()
     # Root middleware counts messages even when another feature handles them.
     # Deliberately not registered on edited_message or channel_post.
@@ -87,6 +90,8 @@ async def main() -> None:
     )
     dispatcher.include_router(create_pet_router(database, username, pets_payments_enabled))
     dispatcher.include_router(create_message_activity_router(database))
+    dispatcher.include_router(create_quick_duel_router(database, duel_publisher))
+    dispatcher.include_router(create_family_router(database, bot, username, bool(webapp_url)))
     dispatcher.include_router(create_franc_event_router(database))
     dispatcher.include_router(create_finance_router(database))
     dispatcher.include_router(create_enterprise_router(database))
@@ -109,6 +114,15 @@ async def main() -> None:
     runner = None
     arena_task = None
     enterprise_task = None
+    duel_task = None
+
+    async def duel_timeouts():
+        while True:
+            try:
+                await duel_publisher.sweep()
+            except Exception:
+                logging.exception('Quick duel sweep failed')
+            await asyncio.sleep(5)
 
     async def enterprise_events():
         last_create=float('-inf')
@@ -199,12 +213,16 @@ async def main() -> None:
             logging.info("Arena HTTP server is listening on port %s", port)
         arena_task = asyncio.create_task(arena_timeouts())
         enterprise_task = asyncio.create_task(enterprise_events())
+        duel_task = asyncio.create_task(duel_timeouts())
         await dispatcher.start_polling(
             bot,
             allowed_updates=dispatcher.resolve_used_update_types(),
             close_bot_session=False,
         )
     finally:
+        if duel_task:
+            duel_task.cancel()
+            await asyncio.gather(duel_task, return_exceptions=True)
         if enterprise_task:
             enterprise_task.cancel()
             await asyncio.gather(enterprise_task,return_exceptions=True)

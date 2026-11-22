@@ -1071,4 +1071,6 @@ def create_arena_app(
     register_kingdom(app,db,bot,ACTOR,require_member,read_member)
     from arena_nazarick_dungeon_web import register_nazarick
     register_nazarick(app,db,bot,ACTOR,require_member,read_member)
+    from family_web import register_family
+    register_family(app, db, bot, ACTOR, require_member, ROOT)
     return app

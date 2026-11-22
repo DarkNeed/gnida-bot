@@ -1223,6 +1223,7 @@ async function boot(){
   }
   const start=new URLSearchParams(location.search).get("tgWebAppStartParam")||tg?.initDataUnsafe?.start_param||"";
   try{
+    if(/^family_-[1-9]\d{0,15}(?:_[a-z]+(?:_\d{1,16}){0,2})?$/.test(start)){location.replace('/family?entry='+encodeURIComponent(start)+location.hash);return;}
     if(start==='kingdom'||/^kingdom_-?\d+$/.test(start)){await openKingdom(start==='kingdom'?null:Number(start.slice(8)));return;}
     if(/^equipment_-?\d+$/.test(start)){await openEquipment(Number(start.slice(10)));return;}
     if(/^guildshop_-?\d+$/.test(start)){await openGuild(Number(start.slice(10)),'',false,true);return;}

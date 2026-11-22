@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Семейный архив · Гнида-бот</title>
+  <link rel="stylesheet" href="/static/family.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script defer src="/static/family.js"></script>
+</head>
+<body>
+  <main id="family" class="shell">
+    <header class="top"><span class="sigil" aria-hidden="true">🌌</span><div><div id="chat-title" class="kicker">ГНИДА-БОТ / СЕМЕЙНЫЙ АРХИВ</div><h1>Семья</h1></div></header>
+    <nav id="nav" aria-label="Разделы" hidden>
+      <button type="button" data-tab="tree">Древо</button>
+      <button type="button" data-tab="file" hidden>Мой брак</button>
+      <button type="button" data-tab="court" hidden>Суд</button>
+      <button type="button" data-tab="editor" hidden>Редактор</button>
+    </nav>
+    <p id="notice" role="status" hidden></p>
+    <div id="screen" class="content"><p>Открываем семейный архив…</p></div>
+    <dialog id="verify" aria-labelledby="verify-title">
+      <h2 id="verify-title">Проверь действие</h2>
+      <div id="verify-body"></div>
+      <div class="actions">
+        <button type="button" id="cancel">Отмена</button>
+        <button type="button" class="primary" id="confirm">Подтвердить</button>
+      </div>
+    </dialog>
+  </main>
+</body>
+</html>

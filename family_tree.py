@@ -1,0 +1,338 @@
+"""Chat-scoped genealogy, opt-in weddings and judicial divorces."""
+from __future__ import annotations
+
+import json
+import secrets
+import time
+import unicodedata
+from collections import defaultdict
+
+
+class FamilyError(ValueError):
+    pass
+
+
+def normalized(value):
+    return unicodedata.normalize("NFKC", value or "").casefold().replace("ё", "е").strip()
+
+
+def relatives(state):
+    root = state["origin"]
+    if root is None:
+        return set()
+    edges = defaultdict(list)
+    for parent, child in state["parents"]:
+        edges[parent].append(child)
+        edges[child].append(parent)
+    seen, queue = {root}, [root]
+    for person in queue:
+        for neighbor in edges[person]:
+            if neighbor not in seen:
+                seen.add(neighbor)
+                queue.append(neighbor)
+    return seen
+
+
+def parent_index(state):
+    parents = defaultdict(set)
+    for parent, child in state["parents"]:
+        parents[child].add(parent)
+    return parents
+
+
+def upwards(parents, user):
+    seen, queue = set(), [user]
+    for person in queue:
+        for parent in parents[person] - seen:
+            seen.add(parent)
+            queue.append(parent)
+    return seen, parents[user]
+
+
+def close_relatives(state, a, b, parents=None):
+    parents = parent_index(state) if parents is None else parents
+    av, ap = upwards(parents, a)
+    bv, bp = upwards(parents, b)
+    return a in bv or b in av or bool(ap & bp)
+
+
+def spouse(state, user):
+    return next((b if a == user else a for a, b in state["marriages"] if user in (a, b)), None)
+
+
+class FamilyTreeMixin:
+    def _connect_family_tree(self):
+        self.connection.create_function("family_normalize", 1, normalized, deterministic=True)
+        self.connection.executescript("""
+            CREATE TABLE IF NOT EXISTS family_trees (
+                chat_id INTEGER PRIMARY KEY, revision INTEGER NOT NULL, state TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS family_log (
+                id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, actor INTEGER NOT NULL,
+                description TEXT NOT NULL, at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS family_log_chat ON family_log(chat_id, id DESC);
+            CREATE TABLE IF NOT EXISTS family_offers (
+                token TEXT PRIMARY KEY, chat_id INTEGER NOT NULL, sender INTEGER NOT NULL,
+                recipient INTEGER NOT NULL, until INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS family_offers_people ON family_offers(chat_id,sender,recipient);
+            CREATE INDEX IF NOT EXISTS family_offers_expiry ON family_offers(until);
+            CREATE TABLE IF NOT EXISTS family_cases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL,
+                a INTEGER NOT NULL, b INTEGER NOT NULL, requester INTEGER NOT NULL,
+                reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+                decided_by INTEGER, created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS family_cases_chat ON family_cases(chat_id,id DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS family_cases_pending
+                ON family_cases(chat_id,a,b) WHERE status='open';
+        """)
+
+    def _family_state(self, chat):
+        row = self.connection.execute("SELECT revision,state FROM family_trees WHERE chat_id=?", (chat,)).fetchone()
+        return (row["revision"], json.loads(row["state"])) if row else (
+            0, dict(origin=None, parents=[], marriages=[], judges=[])
+        )
+
+    def _family_write(self, chat, revision, state, actor, description):
+        self.connection.execute("""
+            INSERT INTO family_trees(chat_id, revision, state) VALUES (?,?,?)
+            ON CONFLICT(chat_id) DO UPDATE SET revision=excluded.revision,state=excluded.state
+        """, (chat, revision + 1, json.dumps(state, separators=(",", ":"))))
+        self.connection.execute("INSERT INTO family_log(chat_id,actor,description,at) VALUES (?,?,?,?)",
+                                (chat, actor, description, int(time.time())))
+
+    def _family_people(self, chat, ids):
+        people = {}
+        ids = sorted(set(ids))
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            for row in self.connection.execute(
+                f"SELECT user_id AS id,username,display_name AS name FROM users WHERE chat_id=? AND user_id IN ({placeholders})",
+                (chat, *chunk),
+            ):
+                people[row["id"]] = dict(row)
+        return [people.get(i, {"id": i, "name": f"Участник {i}", "username": None}) for i in ids]
+
+    async def family_role(self, chat, actor, owner):
+        async with self._lock:
+            _, state = self._family_state(chat)
+            return owner or actor in state["judges"]
+
+    async def family_view(self, chat, actor, owner, case=None, offset=0, mine=False):
+        async with self._lock:
+            revision, state = self._family_state(chat)
+            members = relatives(state)
+            judge = owner or actor in state["judges"]
+            where, params = ("", ()) if judge and not mine else (" AND (a=? OR b=?)", (actor, actor))
+            if case is not None:
+                where += " AND id=?"
+                params += (case,)
+            cases = [dict(r) for r in self.connection.execute(
+                "SELECT * FROM family_cases WHERE chat_id=?" + where
+                + " ORDER BY (status='open') DESC,id DESC LIMIT 21 OFFSET ?", (chat, *params, offset)
+            )] if case is not None or not offset or judge else []
+            more, cases = len(cases) > 20, cases[:20]
+            log = [dict(r) for r in self.connection.execute(
+                "SELECT actor,description,at FROM family_log WHERE chat_id=? ORDER BY id DESC LIMIT 20", (chat,)
+            )] if owner else []
+            judges = state["judges"] if owner else []
+            title = self.connection.execute("SELECT title FROM chats WHERE chat_id=?", (chat,)).fetchone()
+            view_ids = members | set(judges) | {entry["actor"] for entry in log}
+            edit_ids = ({i for edge in state["parents"] + state["marriages"] for i in edge} | set(judges)) if owner else set()
+            view_ids |= edit_ids
+            partner = spouse(state, actor)
+            if partner is not None:
+                view_ids.add(partner)
+            for row in cases:
+                view_ids.update(i for i in (row["a"],row["b"],row["decided_by"]) if i is not None)
+                # Telegram chat scope is already supplied by the route.
+                row.pop("chat_id")
+            return dict(revision=revision, origin=state["origin"], members=sorted(members),
+                        parents=[p for p in state["parents"] if set(p) <= members],
+                        marriages=[p for p in state["marriages"] if set(p) <= members],
+                        editor=dict(parents=state["parents"], marriages=state["marriages"]) if owner else None,
+                        people=self._family_people(chat, view_ids), owner=owner, judge=judge, judges=judges,
+                        cases=cases, more_cases=more, log=log, spouse=partner, actor=actor,
+                        title=title["title"] if title else "Семейный архив")
+
+    async def family_search(self, chat, query, directory):
+        query = normalized(query).removeprefix("@")
+        if len(query) < 2 or len(query) > 80:
+            return []
+        async with self._lock:
+            _, state = self._family_state(chat)
+            members = relatives(state)
+            if directory:
+                # Unicode case folding, and literal substring search (no wildcard expansion).
+                found = self.connection.execute("""
+                    SELECT user_id AS id, username, display_name AS name FROM users
+                    WHERE chat_id=? AND
+                    (instr(family_normalize(username),?)>0 OR instr(family_normalize(display_name),?)>0)
+                    ORDER BY CASE
+                        WHEN family_normalize(username)=? OR family_normalize(display_name)=? THEN 0
+                        WHEN instr(family_normalize(username),?)=1 OR instr(family_normalize(display_name),?)=1 THEN 1
+                        ELSE 2 END,
+                        last_seen DESC,user_id LIMIT 8
+                """, (chat, *([query] * 6))).fetchall()
+                return [dict(row, in_tree=row["id"] in members) for row in found]
+            def score(person):
+                keys = (normalized(person["username"]), normalized(person["name"]))
+                return 0 if query in keys else 1 if any(k.startswith(query) for k in keys) else 2 if any(query in k for k in keys) else 3
+            hits = [(score(p), p) for p in self._family_people(chat, members)]
+            return [p for score, p in sorted(hits, key=lambda pair: (pair[0], normalized(pair[1]["name"]))) if score < 3][:8]
+
+    async def family_avatar_allowed(self, chat, target):
+        async with self._lock:
+            return target in relatives(self._family_state(chat)[1])
+
+    def _family_edit(self, chat, state, operation, a, b, reason):
+        if operation == "origin":
+            if a == state["origin"]:
+                raise FamilyError("Это уже Исток древа.")
+            if any(child == a for _, child in state["parents"]):
+                raise FamilyError("Истоком может стать только участник без записанных родителей.")
+            state["origin"] = a
+            description = "назначен Исток"
+        elif operation == "link":
+            if a == b or b == state["origin"] or b in upwards(parent_index(state), a)[0]:
+                raise FamilyError("Эта связь замкнёт древо или сделает Исток чьим-то ребёнком.")
+            if [a, b] in state["parents"]:
+                raise FamilyError("Такая связь уже записана.")
+            if sum(c == b for _, c in state["parents"]) >= 2:
+                raise FamilyError("У участника уже два родителя.")
+            state["parents"].append([a, b])
+            index = parent_index(state)
+            if any(close_relatives(state, x, y, index) for x, y in state["marriages"]):
+                raise FamilyError("Эта связь сделает супругов близкими родственниками.")
+            description = "добавлена родственная связь"
+        elif operation == "unlink":
+            if [a, b] not in state["parents"]:
+                raise FamilyError("Такой связи больше нет.")
+            state["parents"].remove([a, b])
+            description = "удалена родственная связь"
+        elif operation in ("appoint", "revoke"):
+            if operation == "appoint":
+                if a in state["judges"]:
+                    raise FamilyError("Этот участник уже судья.")
+                state["judges"].append(a)
+                description = "назначен судья"
+            else:
+                if a not in state["judges"]:
+                    raise FamilyError("Этот участник не назначен судьёй.")
+                state["judges"].remove(a)
+                description = "снят судья"
+        else:
+            raise FamilyError("Неизвестная правка.")
+        ids = [a] if b is None else [a, b]
+        names = {p["id"]: p["name"] for p in self._family_people(chat, ids)}
+        return f"{description}: " + " → ".join(names[i] for i in ids) + (f". {reason}" if reason else "")
+
+    async def family_edit(self, chat, actor, operation, a, b=None, reason="", *, expected=None):
+        """Caller must check ownership. Preview is read-only; apply requires that revision."""
+        async with self._lock:
+            with self.connection:
+                if expected is not None:
+                    self.connection.execute("BEGIN IMMEDIATE")
+                revision, state = self._family_state(chat)
+                if expected is not None and revision != expected:
+                    raise FamilyError("Древо уже изменилось. Проверь правку ещё раз.")
+                before = relatives(state)
+                summary = self._family_edit(chat, state, operation, a, b, reason)
+                after = relatives(state)
+                if expected is not None:
+                    self._family_write(chat, revision, state, actor, summary)
+                return dict(revision=revision, summary=summary,
+                            added=self._family_people(chat, after - before),
+                            removed=self._family_people(chat, before - after))
+
+    async def family_offer(self, chat, sender, recipient):
+        now = int(time.time())
+        async with self._lock:
+            with self.connection:
+                self.connection.execute("BEGIN IMMEDIATE")
+                _, state = self._family_state(chat)
+                if sender == recipient or spouse(state, sender) or spouse(state, recipient):
+                    raise FamilyError("Выбери другого участника, который не состоит в браке. Ты тоже должен быть свободен.")
+                if close_relatives(state, sender, recipient):
+                    raise FamilyError("Близкие родственники не могут заключить брак.")
+                self.connection.execute("DELETE FROM family_offers WHERE until<=?", (now,))
+                if self.connection.execute(
+                    "SELECT 1 FROM family_offers WHERE chat_id=? AND (sender=? OR (sender=? AND recipient=?))",
+                    (chat, sender, recipient, sender),
+                ).fetchone():
+                    raise FamilyError("Предложение уже отправлено. Дождись ответа или отзови его.")
+                token = secrets.token_hex(12)
+                self.connection.execute("INSERT INTO family_offers VALUES (?,?,?,?,?)",
+                                        (token, chat, sender, recipient, now + 900))
+                return token
+
+    async def family_offer_people(self, chat, token):
+        async with self._lock:
+            row = self.connection.execute("SELECT sender,recipient FROM family_offers WHERE chat_id=? AND token=? AND until>?",
+                                          (chat, token, int(time.time()))).fetchone()
+            return tuple(row) if row else None
+
+    async def family_offer_action(self, chat, token, actor, action):
+        async with self._lock:
+            with self.connection:
+                self.connection.execute("BEGIN IMMEDIATE")
+                row = self.connection.execute("SELECT * FROM family_offers WHERE chat_id=? AND token=? AND until>?",
+                                              (chat, token, int(time.time()))).fetchone()
+                if not row:
+                    raise FamilyError("Предложение больше не действует.")
+                a, b = row["sender"], row["recipient"]
+                if action not in {"accept","decline","cancel"} or actor != (a if action == "cancel" else b):
+                    raise FamilyError("Эта кнопка для другого участника.")
+                if action == "accept":
+                    revision, state = self._family_state(chat)
+                    if spouse(state, a) or spouse(state, b) or close_relatives(state, a, b):
+                        raise FamilyError("Этот брак теперь невозможен.")
+                    state["marriages"].append(sorted((a,b)))
+                    people = {p["id"]: p["name"] for p in self._family_people(chat, (a,b))}
+                    self._family_write(chat, revision, state, actor, f"брак: {people[a]} и {people[b]}")
+                self.connection.execute("DELETE FROM family_offers WHERE token=?", (token,))
+
+    async def family_filing(self, chat, actor, reason):
+        async with self._lock:
+            with self.connection:
+                self.connection.execute("BEGIN IMMEDIATE")
+                _, state = self._family_state(chat)
+                other = spouse(state, actor)
+                if other is None:
+                    raise FamilyError("У тебя нет зарегистрированного брака в этом чате.")
+                a, b = sorted((actor, other))
+                row = self.connection.execute(
+                    "SELECT id FROM family_cases WHERE chat_id=? AND a=? AND b=? AND status='open'", (chat, a, b)
+                ).fetchone()
+                if row:
+                    return row["id"], other, False
+                cursor = self.connection.execute(
+                    "INSERT INTO family_cases(chat_id,a,b,requester,reason,created_at) VALUES (?,?,?,?,?,?)",
+                    (chat, a, b, actor, reason, int(time.time()))
+                )
+                return cursor.lastrowid, other, True
+
+    async def family_decide(self, chat, actor, owner, case, approve):
+        async with self._lock:
+            with self.connection:
+                self.connection.execute("BEGIN IMMEDIATE")
+                revision, state = self._family_state(chat)
+                if not owner and actor not in state["judges"]:
+                    raise FamilyError("Нет полномочий судьи.")
+                row = self.connection.execute("SELECT * FROM family_cases WHERE chat_id=? AND id=? AND status='open'",
+                                              (chat, case)).fetchone()
+                if not row:
+                    raise FamilyError("Открытое дело не найдено.")
+                pair = [row["a"], row["b"]]
+                if actor in pair:
+                    raise FamilyError("Свой развод должен рассмотреть другой судья.")
+                if approve:
+                    state["marriages"].remove(pair)
+                status = "approved" if approve else "rejected"
+                self.connection.execute("UPDATE family_cases SET status=?,decided_by=? WHERE id=?", (status, actor, case))
+                self._family_write(chat, revision, state, actor,
+                                   f"дело №{case}: " + ("брак расторгнут" if approve else "заявление отклонено"))
+                return pair

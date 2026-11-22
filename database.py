@@ -16,6 +16,8 @@ from franc_deposit import DepositMixin
 from transfer_batch import TransferBatchMixin
 from leaderboards import LeaderboardsMixin
 from message_activity import MessageActivityMixin
+from quick_duel import QuickDuelMixin
+from family_tree import FamilyTreeMixin
 from checkers import (
     BLACK,
     WHITE,
@@ -98,7 +100,7 @@ def utc_timestamp() -> int:
 BUSINESS_CONFIG.update(NEW_CONFIG)
 
 
-class Database(MessageActivityMixin, LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMixin, ArenaMixin):
+class Database(MessageActivityMixin, LeaderboardsMixin, TransferBatchMixin, DepositMixin, EnterpriseMixin, ArenaMixin, QuickDuelMixin, FamilyTreeMixin):
     """Small async-friendly SQLite repository for one aiogram process."""
 
     def __init__(self, path: str | Path) -> None:
@@ -630,6 +632,8 @@ class Database(MessageActivityMixin, LeaderboardsMixin, TransferBatchMixin, Depo
         self._connect_arena()
         self._connect_leaderboards()
         self._connect_message_activity()
+        self._connect_quick_duels()
+        self._connect_family_tree()
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {
