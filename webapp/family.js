@@ -138,11 +138,17 @@
       const ranked=row.map(id=>[id,weight(id)]).sort(([a,x],[b,y])=>x-y||a-b);
       const placed=[];
       for(const [id] of ranked)if(slot.has(id)){
-        const siblings=groupOf.get(id).ids.filter(person=>slot.delete(person));
-        placed.push(...siblings);
-        for(const person of siblings){
+        const groups=[groupOf.get(id)], queued=new Set(groups);
+        for(const group of groups)for(const person of group.ids){
+          if(!slot.delete(person))continue;
+          placed.push(person);
+          // Keep a same-row marriage as two adjacent cards even when either
+          // spouse belongs to a larger sibling group.
           const partner=partners.get(person);
-          if(slot.has(partner))for(const member of groupOf.get(partner).ids)if(slot.delete(member))placed.push(member);
+          if(!slot.delete(partner))continue;
+          placed.push(partner);
+          const partnerGroup=groupOf.get(partner);
+          if(!queued.has(partnerGroup)){queued.add(partnerGroup);groups.push(partnerGroup);}
         }
       }
       placed.forEach((id,i)=>spots.set(id,[width*(i+.5)/placed.length,49+y*114]));
