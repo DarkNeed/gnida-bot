@@ -3,9 +3,14 @@
  'use strict';
  const SHIELD=['stamina','angle','active','requested','raisedAt','lastRaise','loweredAt','perfectUntil','brokenUntil'];
  function create(stage){
-  const block=stage.defense_mode==='block',states=stage.members.map(m=>{const options={hp:1000000,damageBase:m.damage_base,referenceDamage:m.damage_base,criticalBase:m.critical_base,criticalStrikes:m.critical_strikes,endOnDeath:false,enabledStrikes:m.enabled_strikes,preparation:m.defense_preparation??1};return block?B.create(m.profile,m.stats,m.seed,options):E.defense(E.profile(m.profile),m.stats,m.seed,options);});
-  let carrier=null;if(block){let lead=0;stage.members.forEach((m,i)=>{if((m.stats.enemyAttack||0)>(stage.members[lead].stats.enemyAttack||0))lead=i;});carrier=B.create(stage.members[lead].profile,stage.members[lead].stats,stage.members[lead].seed,{hp:1000000,endOnDeath:false});carrier.events=states.flatMap((s,i)=>s.events.map(e=>({...e,id:i+'/'+e.id}))).sort((a,b)=>a.at-b.at);carrier.duration=stage.duration;}
-  return {stage,states,block,carrier,player:{x:360,y:160,r:6,vx:0,vy:0},time:0,duration:stage.duration,ended:false,contacts:[],damage:0,hp:stage.target_hp,initialHp:stage.target_hp,seen:states.map(()=>0),rawDamage:states.map(()=>0),exactDamage:states.map(()=>0),scaledDamage:states.map(()=>0)};
+  const block=stage.defense_mode==='block',states=stage.members.map(m=>{const options={hp:1000000,damageBase:m.damage_base,referenceDamage:m.damage_base,strikeDamageBases:m.strike_damage_bases,strikeCriticalBases:m.strike_critical_bases,splitDamage:!!m.subskills,criticalBase:m.critical_base,criticalStrikes:m.critical_strikes,endOnDeath:false,enabledStrikes:m.enabled_strikes,preparation:m.defense_preparation??1};return block?B.create(m.profile,m.stats,m.seed,options):E.defense(E.profile(m.profile),m.stats,m.seed,options);});
+  let carrier=null;if(block){
+   let lead=0;stage.members.forEach((m,i)=>{if((m.stats.enemyAttack||0)>(stage.members[lead].stats.enemyAttack||0))lead=i;});
+   carrier=B.create(stage.members[lead].profile,stage.members[lead].stats,stage.members[lead].seed,{hp:1000000,endOnDeath:false});
+   for(const s of states)if(s.enabledStrikes)s.events=s.events.filter(e=>s.enabledStrikes[e.strike]);
+   carrier.events=states.flatMap((s,i)=>s.events.map(e=>({...e,id:i+'/'+e.id}))).sort((a,b)=>a.at-b.at);carrier.duration=stage.duration;
+  }
+  return {stage,states,block,carrier,player:{x:360,y:160,r:6,vx:0,vy:0},time:0,duration:stage.duration,ended:false,contacts:[],damage:0,hp:stage.target_hp,initialHp:stage.target_hp,seen:states.map(()=>0),damageParts:states.map(()=>[])};
  }
  function step(s,input={}){
   if(s.ended)return;s.time+=1/120;let moved=null;
@@ -24,14 +29,15 @@
    for(const c of contacts.slice(s.seen[i])){
     const event=s.block?s.carrier.events.find(e=>e.id===c.id):null;
     const weight=s.block?(event.kind==='feint'?0:event.weight*(1-c.reduction)):c.weight;
-    const critical=m.critical_strikes?.[c.strike]&&!m.critical_base?1.5:1;
+    const base=m.strike_damage_bases?.[c.strike]??m.damage_base;
+    const critical=m.critical_strikes?.[c.strike]&&!(m.strike_critical_bases?.[c.strike]??m.critical_base)?1.5:1;
+    const slot=m.subskills?c.strike:0, part=(s.damageParts[i][slot]??={exact:0,raw:0,scaled:0});
     // Match the server: dodge contacts have a one-HP floor, while block
     // fractions accumulate before rounding. Never present a tiny hit as zero.
-    s.exactDamage[i]+=m.damage_base*weight*critical;
-    const raw=s.block?Math.max(0,Math.floor(s.exactDamage[i]+.5)-s.rawDamage[i]):E.damageValue(m.damage_base,weight*critical);
-    s.rawDamage[i]+=raw;
-    const scaled=Math.floor(s.rawDamage[i]*(s.stage.incoming_factor??1)+.5),damage=scaled-s.scaledDamage[i];
-    s.scaledDamage[i]=scaled;s.contacts.push({...c,weight,source:m.encounter_enemy,damage});s.damage+=damage;
+    part.exact+=base*weight*critical;
+    part.raw+=s.block?Math.max(0,Math.round(part.exact)-part.raw):E.damageValue(base,weight*critical);
+    const scaled=Math.round(part.raw*(s.stage.incoming_factor??1)),damage=scaled-part.scaled;
+    part.scaled=scaled;s.contacts.push({...c,weight,source:m.encounter_enemy,damage});s.damage+=damage;
    }
    s.seen[i]=contacts.length;
   });

@@ -40,11 +40,11 @@ def duration(fighter, skill):
     return max(.75, math.floor(value * 20 + .5) / 20)
 
 
-def forecast(now, duration, enemy_end):
+def forecast(now, duration, enemy_end, *, window=SIMULTANEOUS_WINDOW):
     finish = round(now + duration, 3)
     remaining = round(enemy_end - finish, 3) if enemy_end is not None else None
     return dict(end=finish, remaining=remaining,
-                outcome='none' if remaining is None else 'together' if abs(remaining) <= SIMULTANEOUS_WINDOW + 1e-9
+                outcome='none' if remaining is None else 'together' if abs(remaining) <= window + 1e-9
                 else 'before' if remaining > 0 else 'after')
 
 
@@ -57,13 +57,22 @@ def schedule(queue, actor, skill, target, duration):
     return event
 
 
-def release(queue):
+def release(queue, *, team=None):
     if not queue['pending']:
         return []
     at = min(e['end'] for e in queue['pending'])
     # Anchor to the earliest cast, not a transitive chain of near neighbours.
     # Settle at the last included completion: no attack fires before its cast ends.
-    group = [e for e in queue['pending'] if e['end'] - at <= SIMULTANEOUS_WINDOW + 1e-9]
+    ordered = sorted(queue['pending'], key=lambda e: e['end'])
+    if team is None:
+        group = [e for e in ordered if e['end'] - at <= SIMULTANEOUS_WINDOW + 1e-9]
+    else:
+        first_team = team(ordered[0]['actor'])
+        rival_at = min((e['end'] for e in ordered if team(e['actor']) != first_team), default=math.inf)
+        # Allies can share a release, but cannot pull a rival forward or
+        # skip over their earlier completion. Exact opposing ties still land together.
+        group = [e for e in ordered if e['end'] == at or
+                 (team(e['actor']) == first_team and e['end'] < rival_at and e['end']-at <= SIMULTANEOUS_WINDOW+1e-9)]
     queue['time'] = max(e['end'] for e in group)
     queue['pending'] = [e for e in queue['pending'] if e not in group]
     return group

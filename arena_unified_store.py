@@ -141,13 +141,16 @@ def complete(db, flow, stage, result):
     db.connection.execute(f'UPDATE {table} SET {column}=? WHERE token=?', (json.dumps(data, ensure_ascii=False), row['token']))
     if flow['stages']:
         # Respect attack masks/criticals when the same cast is defended in PvP.
-        for following in flow['stages']:
-            if following['kind'] != 'defense':continue
-            for member in following.get('members', []):
-                attack = pending['attack_results'].get(member['encounter_enemy'])
-                if attack:
-                    member['enabled_strikes'] = attack['attack']
-                    member['critical_strikes'] = attack.get('pattern_attack', {}).get('criticals', [])
+        if stage['kind'] == 'attack':
+            from arena_qte_live import scale_damage_forecast
+            for following in flow['stages']:
+                if following['kind'] != 'defense':continue
+                for member in following.get('members', []):
+                    if member['encounter_enemy'] != stage['unified_source']:continue
+                    member['enabled_strikes'] = result['mask']
+                    member['critical_strikes'] = result.get('criticals', [])
+                    if result.get('casino'):
+                        scale_damage_forecast(member, result['casino']['factor'])
         db._qte_save_locked(flow, True)
         return
     if scope == 'battle':

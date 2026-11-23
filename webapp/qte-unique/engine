@@ -289,7 +289,7 @@
     }
     const model=damageModel(options),preparation=clamp(options.preparation??1,0,3);
     const activeDuration=NZ?.activeDuration(p)??6.8;
-    return {kind:'defense',p,d,...model,criticalBase:!!options.criticalBase,criticalStrikes:options.criticalStrikes||[],preparation,activeDuration,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:preparation+activeDuration,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
+    return {kind:'defense',p,d,...model,strikeDamageBases:options.strikeDamageBases||[],strikeCriticalBases:options.strikeCriticalBases||[],criticalBase:!!options.criticalBase,criticalStrikes:options.criticalStrikes||[],preparation,activeDuration,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:preparation+activeDuration,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
       events:Array.from({length:count},(_,i)=>({at:preparation+.18+i*(p.kind==='casino_jackpot'?4.1:span)/Math.max(1,count-1),strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/count)),index:i,
         jitter:r(),angle:r()*TAU,ready:false})),received:[]};
   }
@@ -457,7 +457,8 @@
       const h=shapes[j];h.id='wave:'+i+':'+j;h.damageId=p.kind==='lightning'&&j<2?'wave:'+i+':bolt':h.id;
       h.disabled=!!h.visualOnly||!!s.enabledStrikes&&!s.enabledStrikes[h.strike];
       h.tier=h.tier||(['line','circle','rect'].includes(h.type)?'heavy':h.type==='ring'||h.type==='well'?'normal':'minor');
-      h.weight=h.weight??DAMAGE_TIERS[h.tier].weight;h.rawDamage=damageValue(s.damageBase,h.weight*(s.criticalStrikes[h.strike]&&!s.criticalBase?1.5:1));
+      h.weight=h.weight??DAMAGE_TIERS[h.tier].weight;
+      h.rawDamage=damageValue(s.strikeDamageBases[h.strike]??s.damageBase,h.weight*(s.criticalStrikes[h.strike]&&!(s.strikeCriticalBases[h.strike]??s.criticalBase)?1.5:1));
       s.hazards.push(h);
     }
     s.projectileCount+=new Set(shapes.filter(h=>!h.disabled).map(h=>h.damageId)).size;

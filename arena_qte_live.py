@@ -23,7 +23,24 @@ def strike_count(skill):
     )
 
 
-def challenge(kind, attacker, target, skill, actor):
+def guard_subskills(attacker, skill_id):
+    if attacker.get('rp_sandbox'):
+        return None
+    return {
+        'kit_reflection': ['kit_reflection', 'kit_ash'],
+        'kit_coins': ['kit_coins', 'kit_coins_ash'],
+        'whaler_punishment': ['whaler_punishment', 'whaler_punishment_magic'],
+        'whaler_rot': ['whaler_rot', 'whaler_rot_magic'],
+    }.get(skill_id)
+
+
+def scale_damage_forecast(stage, factor):
+    stage['damage_base'] = round(stage['damage_base'] * factor)
+    if 'strike_damage_bases' in stage:
+        stage['strike_damage_bases'] = [base * factor for base in stage['strike_damage_bases']]
+
+
+def challenge(kind, attacker, target, skill, actor, *, skills=None):
     from arena_engine import (
         effective_stat,
         combat_modifiers,
@@ -82,25 +99,16 @@ def challenge(kind, attacker, target, skill, actor):
         descriptor['npc_pattern']=2
     # Kit's announced reflection/coins consist of two different native actions.
     # One pattern, two groups: do not apply the same collisions to both actions.
-    subskills = {
-        "kit_reflection": ["kit_reflection", "kit_ash"],
-        "kit_coins": ["kit_coins", "kit_coins_ash"],
-        "whaler_punishment": ["whaler_punishment", "whaler_punishment_magic"],
-        "whaler_rot": ["whaler_rot", "whaler_rot_magic"],
-    }.get(skill.skill_id)
-    if attacker.get('rp_sandbox'):
-        # RP equips the individual attack, not a boss script that executes two
-        # different actions. Do not invent a second defensive strike group.
-        subskills = None
-    if kind == "defense" and subskills:
+    subskills = guard_subskills(attacker, skill.skill_id) if kind == 'defense' else None
+    if subskills:
         n = descriptor["strikes"] = 2
         descriptor["id"] = f"{skill.skill_id}:{skill.name}:2:{skill.damage_type}"
-    forecast = damage_preview(attacker, target, skill, details=True)
+    forecast = damage_preview(attacker, target, skill, details=True, contact=kind == 'defense', skills=skills)
     result = dict(
         version=2,
         defense_preparation=1 if kind == "defense" else 0,
         profile=descriptor,
-        subskills=subskills if kind == "defense" else None,
+        subskills=subskills,
         damage_base=forecast['damage'],
         critical_base=forecast['critical'],
         target_hp=target["hp"],
@@ -115,6 +123,15 @@ def challenge(kind, attacker, target, skill, actor):
             "slashes" if n == 6 else "rain" if skill.damage_type == "magic" else "cross"
         ),
     )
+    if kind == 'defense':
+        if subskills:
+            from arena_raid_engine import BOSS_SKILLS
+            forecasts = [forecast, *(damage_preview(attacker, target, BOSS_SKILLS[sid], details=True,
+                                                    contact=True, skills=skills) for sid in subskills[1:])]
+            result['strike_damage_bases'] = [item['damage'] for item in forecasts]
+            result['strike_critical_bases'] = [item['critical'] for item in forecasts]
+        elif forecast.get('last_strike_scale', 1) != 1:
+            result['strike_damage_bases'] = [forecast['damage']] * (n-1) + [forecast['damage'] * forecast['last_strike_scale']]
     if kind == "defense" and target.get("defense_mode") == "block":
         result.update(
             version=3,
@@ -146,7 +163,7 @@ def challenge(kind, attacker, target, skill, actor):
     return result
 
 
-def damage_preview(attacker, target, skill, *, details=False):
+def damage_preview(attacker, target, skill, *, details=False, contact=False, skills=None):
     """Read-only estimate for immediate HP feedback; the paid action is resolved later.
 
     Raid ally effects, defenses and critical rolls can change before the boss acts.
@@ -158,7 +175,8 @@ def damage_preview(attacker, target, skill, *, details=False):
 
     a, b = deepcopy(attacker), deepcopy(target)
     # Give the projection room to expose the full reference damage, not overkill.
-    b["hp"] = max(b["hp"], 1000000)
+    if not contact:
+        b["hp"] = max(b["hp"], 1000000)
     state = dict(
         sides={"a": a, "b": b},
         turn=1,
@@ -173,16 +191,22 @@ def damage_preview(attacker, target, skill, *, details=False):
         forecast = dict(attack=[True] * strike_count(skill), luck_evasion=False)
         if casino_mode:
             forecast['pattern_attack'] = dict(casino=dict(mode=casino_mode,factor=1,face=3,sector=1,color='red',reels=[7,1,2]))
+        catalog = skills if skills is not None and skill.skill_id in skills else {
+            **(skills or BUILTIN_SKILLS), skill.skill_id: skill
+        }
         event = resolve_skill(
             state,
             "a",
             skill.skill_id,
-            {**BUILTIN_SKILLS, skill.skill_id: skill},
+            catalog,
             random.Random(0),
             advance_turn=False,
             tick_actor_bleed=False,
             qte=forecast,
+            _damage_reference=contact,
         )
+        if contact and details:
+            return event
         return dict(damage=event['damage'], critical=event['critical']) if details else event['damage']
     except ValueError:
         damage = max(1, round(skill.power))
@@ -375,9 +399,9 @@ class ArenaQteMixin:
         modes = state["qte_modes"]
         if skill.hostile:
             if modes.get(str(a["controller_id"])):
-                stages.append(challenge("attack", a, b, skill, a["controller_id"]))
+                stages.append(challenge("attack", a, b, skill, a["controller_id"], skills=skills))
             if modes.get(str(b["controller_id"])):
-                stages.append(challenge("defense", a, b, skill, b["controller_id"]))
+                stages.append(challenge("defense", a, b, skill, b["controller_id"], skills=skills))
         if not stages:
             return False
         flow = dict(
@@ -466,7 +490,7 @@ class ArenaQteMixin:
                     if isinstance(result, dict) and result.get('criticals'):
                         following['critical_strikes'] = result['criticals']
                     if stage.get('casino_result'):
-                        following['damage_base'] = round(following['damage_base'] * stage['casino_result']['factor'])
+                        scale_damage_forecast(following, stage['casino_result']['factor'])
         if flow["stages"]:
             self._qte_save_locked(flow, True)
             return
@@ -717,7 +741,7 @@ class ArenaQteMixin:
                     if data["qte_modes"].get(str(actor)):
                         if used and used.hostile:
                             stages.append(
-                                challenge("attack", fighter, boss, used, actor)
+                                challenge("attack", fighter, boss, used, actor, skills=skills)
                             )
                         multi = data.get('kind') == 'encounter' or data.get('boss_id') == 'nazarick'
                         intents = data.get('enemy_intents', {}) if multi else {'boss': data['intent']}
@@ -725,7 +749,8 @@ class ArenaQteMixin:
                             incoming = (skills if data.get('kind') == 'encounter' else BOSS_SKILLS).get(intent.get('skill'))
                             if incoming and incoming.hostile and str(actor) in [str(k) for k in intent.get('targets', [])]:
                                 attacker = data['enemies'][enemy_key] if multi else boss
-                                defense = challenge('defense', attacker, fighter, incoming, actor)
+                                defense = challenge('defense', attacker, fighter, incoming, actor,
+                                                    skills=skills if data.get('kind') == 'encounter' else BOSS_SKILLS)
                                 if multi:
                                     defense['encounter_enemy'] = enemy_key
                                     defense['name'] = attacker['name'] + ' · ' + incoming.name

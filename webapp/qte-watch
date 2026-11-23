@@ -8,6 +8,7 @@
   let viewer=null;
   function createReplay(stage){
     const options={damageBase:stage.damage_base,hp:stage.target_hp,referenceDamage:stage.damage_base,
+      strikeDamageBases:stage.strike_damage_bases,strikeCriticalBases:stage.strike_critical_bases,splitDamage:!!stage.subskills,
       endOnDeath:false,criticalBase:stage.critical_base,criticalStrikes:stage.critical_strikes,enabledStrikes:stage.enabled_strikes,preparation:stage.defense_preparation??0};
     const sim=stage.version===4?(root.QTECombined||require('./qte-combined.js')).create(stage):stage.version===3?B.create(stage.profile,stage.stats,stage.seed,options):
       (stage.kind==='defense'?E.defense:E.attack)(E.profile(stage.profile),stage.stats,stage.seed,options);

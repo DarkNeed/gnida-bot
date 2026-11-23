@@ -93,9 +93,9 @@ def _land_group(data, released, guards, skills, rng):
             guard = per_source.get('boss')
             if guard:
                 r = next(r for r in released if r['source'] == 'boss')
-                from arena_qte_live import challenge
-                descriptor = challenge('defense', r['fighter'], p['fighter'], skills[r['intent']['skill']], int(key))
-                p['fighter']['_qte_guard'] = dict(guard, skill=r['intent']['skill'], subskills=descriptor.get('subskills'))
+                from arena_qte_live import guard_subskills
+                sid = r['intent']['skill']
+                p['fighter']['_qte_guard'] = dict(guard, skill=sid, subskills=guard_subskills(r['fighter'], sid))
     try:
         if released and released[0].get('reaction'):
             from arena_whaler import attack

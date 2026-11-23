@@ -56,6 +56,13 @@ def _enemy_ids(data):
     return list(data.get('enemies') or {'boss': data['boss']})
 
 
+def cast_team(data):
+    if 'sides' in data:
+        return lambda key: key
+    enemies = set(_enemy_ids(data))
+    return lambda key: 'enemy' if key in enemies else 'party'
+
+
 def _plan(data, skills):
     from arena_engine import effective_skill
     if data.get('nazarick_run_id'):
@@ -184,7 +191,7 @@ def _release_group(data, skills, rng):
     from arena_engine import effective_skill
     q, fighters = clock(data), roster(data)
     q['previous_time'] = q['time']
-    q['group'] = release(q)
+    q['group'] = release(q, team=cast_team(data))
     data['_cast_queue'] = dict(time=q['time'], round=data.get('round'), entries=[],
         signature=[data.get('nazarick', {}).get('stage'), data.get('nazarick', {}).get('phase')])
     data['_cast_queue']['guardian_phases']={key:f.get('nzd_phase') for key,f in fighters.items() if f.get('nzd_guardian')}
@@ -250,7 +257,7 @@ def stages(data, key, skills):
     if event:
         target = fighters[event['target']]
         variant = effective_skill(pair(fighters[key], target), 'a', event['skill'], skills)
-        stage = challenge('attack', fighters[key], target, variant, actor)
+        stage = challenge('attack', _forecast_caster(fighters[key], event), target, variant, actor, skills=skills)
         from arena_combined_damage import target_counts, damage_factor
         factor = damage_factor(target_counts(_damage_group(data), skills).get(event['target'], 0))
         stage['damage_base'] = int(stage['damage_base'] * factor + .5)
@@ -266,7 +273,8 @@ def stages(data, key, skills):
             continue
         skill = effective_skill(pair(source, fighters[key]), 'a', sid, skills)
         if not skill.hostile:continue
-        stage = challenge('defense', source, fighters[key], skill, actor)
+        stage = challenge('defense', _forecast_caster(source, pending['attacks'].get(released['source'])),
+                          fighters[key], skill, actor, skills=skills)
         stage.update(encounter_enemy=released['source'], name=source.get('name', '')+' · '+skill.name)
         members.append(stage)
     if members:
@@ -274,6 +282,15 @@ def stages(data, key, skills):
         incoming['unified_target'] = key
         out.append(incoming)
     return out
+
+
+def _forecast_caster(fighter, event):
+    if not event or not event.get('reserved'):
+        return fighter
+    # The engine refunds the reservation just before resolving, then pays the
+    # current skill cost once. Read-only projections need the same balance.
+    resource = min(fighter['stats']['resource_max'], fighter['resource'] + event['reserved'])
+    return dict(fighter, resource=resource)
 
 
 def record_result(data, stage, result):
@@ -489,8 +506,10 @@ def public(data, viewer):
 
 
 def forecast_skill(data, key, skill):
-    ends = [e['end'] for e in clock(data)['pending'] if key in e.get('intent', {}).get('targets', [e['target']]) and e['actor'] != key]
-    return forecast(clock(data)['time'], duration(roster(data)[key], skill), min(ends) if ends else None)
+    team = cast_team(data)
+    ends = [e['end'] for e in clock(data)['pending'] if key in e.get('intent', {}).get('targets', [e['target']])
+            and team(e['actor']) != team(key)]
+    return forecast(clock(data)['time'], duration(roster(data)[key], skill), min(ends) if ends else None, window=0)
 
 
 def intercept(data, actor, source):

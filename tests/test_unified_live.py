@@ -93,6 +93,32 @@ class CoreTests(unittest.TestCase):
         commit(data,'a','assassin_needle')
         self.assertEqual(data['sides']['a']['own_turns'],own+1)
 
+    def test_slower_npc_does_not_release_before_fast_player(self):
+        data = direct(games=True)
+        q.initialize(data, SKILLS)
+        npc = q.clock(data)['pending'][0]
+        npc['end'] = 1.10  # Enqueued first; player's cast ends at 0.85.
+        self.assertEqual(q.forecast_skill(data, 'a', SKILLS['assassin_cut'])['outcome'], 'before')
+        commit(data, 'a')
+        self.assertEqual(q.clock(data)['time'], .85)
+        self.assertEqual([e['actor'] for e in q.clock(data)['group']], ['a'])
+        self.assertEqual(q.clock(data)['pending'], [npc])
+        self.assertEqual([s['kind'] for s in q.stages(data, 'a', SKILLS)], ['attack'])
+
+    def test_attack_preview_can_use_reserved_energy_without_refunding_it(self):
+        from arena_qte_live import damage_preview
+        data = direct(games=True)
+        f, target = data['sides'].values()
+        f['resource'] = 14
+        f['stats']['physical_attack'] = 85
+        skill = SKILLS['assassin_needle']
+        expected = damage_preview(f, target, skill, skills=SKILLS)
+        self.assertGreater(expected, skill.power)
+        commit(data, 'a', skill.skill_id)
+        self.assertEqual(f['resource'], 0)
+        self.assertEqual(q.stages(data, 'a', SKILLS)[0]['damage_base'], expected)
+        self.assertEqual(f['resource'], 0)
+
     def test_multiple_enemy_actions_happen_during_one_long_cast(self):
         data = direct()
         data['sides']['a']['hp']=data['sides']['a']['stats']['max_hp']=1000

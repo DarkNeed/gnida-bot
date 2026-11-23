@@ -72,8 +72,10 @@ def replay(stage, proof, elapsed):
         # A single shield: rotation, drain and recovery are never multiplied.
         lead = max(range(len(members)), key=lambda i: members[i]['stats'].get('enemyAttack', 0))
         carrier = deepcopy(states[lead])
+        carrier['enabled'] = None  # Each source has its own set of successful strikes.
         carrier['events'] = sorted([dict(e, id=f'{i}/{e["id"]}') for i, s in enumerate(states)
-                                    for e in s['events']], key=lambda e: e['at'])
+                                    for e in s['events'] if s['enabled'] is None or s['enabled'][e['strike']]],
+                                   key=lambda e: e['at'])
     point = dict(x=360, y=160, r=6, vx=0, vy=0)
     index, control = 0, {}
     for tick in range(total):

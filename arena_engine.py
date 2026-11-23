@@ -1345,6 +1345,7 @@ def resolve_skill(
     allies=None,
     raid_context=None,
     qte=None,
+    _damage_reference=False,
 ) -> dict:
     """Resolve one paid action; masks and projectile weights are server replays."""
     rng = rng or random.SystemRandom()
@@ -1561,6 +1562,13 @@ def resolve_skill(
                 * rng.uniform(0.95, 1.05)
             ),
         )
+        last_strike_scale = 1
+        if any(t in skill.tags for t in ('final_train','final_execution')):
+            last_pierce=.50 if 'final_train' in skill.tags else .60
+            base_defense=effective_stat(target,'physical_defense')
+            last_strike_scale=(100+4*defense)/(100+4*base_defense*(1-min(.9,last_pierce+pet_pierce)))
+        if _damage_reference:
+            return dict(damage=damage, critical=critical, last_strike_scale=last_strike_scale)
         if pattern_contacts is not None:
             reference_damage=damage
             exact_potential = 0
@@ -1568,10 +1576,8 @@ def resolve_skill(
             for c in pattern_contacts:
                 multiplier=(1.5 if not critical and c['strike'] < len(timing_criticals)
                             and timing_criticals[c['strike']] is True else 1)
-                if c['strike']==strike_count-1 and any(t in skill.tags for t in ('final_train','final_execution')):
-                    last_pierce=.50 if 'final_train' in skill.tags else .60
-                    base_defense=effective_stat(target,'physical_defense')
-                    multiplier*=(100+4*defense)/(100+4*base_defense*(1-min(.9,last_pierce+pet_pierce)))
+                if c['strike']==strike_count-1:
+                    multiplier*=last_strike_scale
                 if block_pattern:
                     exact_potential += reference_damage*c['weight']*multiplier
                     rounded = math.floor(exact_potential+.5)
@@ -1598,9 +1604,7 @@ def resolve_skill(
             budget=[int(full_damage*s) for s in shares]
             for i in range(full_damage-sum(budget)):budget[i%strike_count]+=1
             if weighted:
-                last_pierce=.50 if 'final_train' in skill.tags else .60
-                base_defense=effective_stat(target,'physical_defense')
-                budget[-1]=round(budget[-1]*(100+4*defense)/(100+4*base_defense*(1-min(.9,last_pierce+pet_pierce))))
+                budget[-1]=round(budget[-1]*last_strike_scale)
             if not critical:
                 budget = [round(value * (1.5 if i < len(timing_criticals)
                           and timing_criticals[i] is True else 1)) for i, value in enumerate(budget)]
@@ -1620,6 +1624,8 @@ def resolve_skill(
             damage=final_incoming(target,damage,actor,raid_context)
             damage=gear.incoming(target,damage,gear_action_id)
             target["hp"] = max(0, target["hp"] - damage)
+    if _damage_reference:
+        return dict(damage=0, critical=False, last_strike_scale=1)
     if timing_criticals:
         critical = critical or any(part['hit'] and part.get('critical') for part in strike_results or [])
     final_received(target,actor,skill,hit,dodged,min(before[other]['hp'],damage))
