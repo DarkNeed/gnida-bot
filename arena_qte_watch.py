@@ -3,6 +3,7 @@ import asyncio
 from dataclasses import dataclass, field
 import json
 import math
+from struct import Struct
 import time
 
 from aiohttp import web, WSMsgType
@@ -14,6 +15,18 @@ MAX_FRAME_BYTES = 512 * 1024
 MAX_INPUTS = 7200
 MAX_TICKS = 7200
 HUB_KEY = web.AppKey('qte_watch_hub', object)
+# A tick, an input kind, and two lossless double-precision values. Keep the
+# WebSocket format unchanged, but don't retain thousands of Python dicts.
+INPUT_RECORD = Struct('<HBdd')
+SHIELD, TARGET, AXES = range(3)
+
+
+def unpack_input(tick, kind, first, second):
+    if kind == SHIELD:
+        return dict(t=tick, angle=first, active=bool(second))
+    if kind == TARGET:
+        return dict(t=tick, target=[first, second])
+    return dict(t=tick, x=first, y=second)
 
 
 def integer(value, low, high):
@@ -33,7 +46,7 @@ class Stream:
     stage: dict
     socket: object
     tick: int = 0
-    inputs: list = field(default_factory=list)
+    _history: bytearray = field(default_factory=bytearray)
     clicks: list = field(default_factory=list)
     ended: bool = False
     aborted: bool = False
@@ -42,7 +55,8 @@ class Stream:
 
     def packet(self):
         return dict(type='data', id=self.stage['id'], tick=self.tick,
-                    inputs=self.inputs, clicks=self.clicks, reset=True,
+                    inputs=[unpack_input(*item) for item in INPUT_RECORD.iter_unpack(self._history)],
+                    clicks=self.clicks, reset=True,
                     ended=self.ended, aborted=self.aborted)
 
     def accept(self, data):
@@ -74,13 +88,14 @@ class Stream:
         incoming, clicks = data.get('inputs', []), data.get('clicks', [])
         if not isinstance(incoming, list) or not isinstance(clicks, list):
             raise ValueError('Некорректная запись трансляции.')
-        old_inputs, old_clicks = ([], []) if reset else (self.inputs, self.clicks)
-        if len(incoming) + len(old_inputs) > min(MAX_INPUTS, total) or len(clicks) + len(old_clicks) > self.stage['strikes']:
+        old_size, old_clicks = (0, []) if reset else (len(self._history), self.clicks)
+        if len(incoming) + old_size // INPUT_RECORD.size > min(MAX_INPUTS, total) or len(clicks) + len(old_clicks) > self.stage['strikes']:
             raise ValueError('Переполнен буфер трансляции.')
         if self.stage['kind'] == 'attack' and incoming or self.stage['kind'] != 'attack' and clicks:
             raise ValueError('Неподходящий вид управления.')
-        previous = old_inputs[-1]['t'] if old_inputs else -1
+        previous = INPUT_RECORD.unpack_from(self._history, old_size - INPUT_RECORD.size)[0] if old_size else -1
         clean = []
+        packed = bytearray()
         for item in incoming:
             if not isinstance(item, dict):
                 raise ValueError('Некорректное управление.')
@@ -89,21 +104,25 @@ class Stream:
             if self.stage.get('version') == 3 or self.stage.get('defense_mode') == 'block':
                 if type(item.get('active')) is not bool:
                     raise ValueError('Некорректное состояние щита.')
-                value = dict(t=t, angle=number(item.get('angle'), -math.pi, math.pi), active=item['active'])
+                record = (t, SHIELD, number(item.get('angle'), -math.pi, math.pi), item['active'])
             elif 'target' in item:
                 target = item['target']
                 if not isinstance(target, list) or len(target) != 2:
                     raise ValueError('Некорректная цель движения.')
-                value = dict(t=t, target=[number(target[0], 0, 720), number(target[1], 0, 320)])
+                record = (t, TARGET, number(target[0], 0, 720), number(target[1], 0, 320))
             else:
-                value = dict(t=t, x=number(item.get('x', 0), -1, 1), y=number(item.get('y', 0), -1, 1))
-            clean.append(value)
+                record = (t, AXES, number(item.get('x', 0), -1, 1), number(item.get('y', 0), -1, 1))
+            packed.extend(INPUT_RECORD.pack(*record))
+            clean.append(unpack_input(*record))
         previous = old_clicks[-1] if old_clicks else -1
         clean_clicks = []
         for item in clicks:
             previous = integer(item, previous + 1, tick)
             clean_clicks.append(previous)
-        self.inputs = old_inputs + clean
+        if reset:
+            self._history = packed
+        else:
+            self._history.extend(packed)
         self.clicks = old_clicks + clean_clicks
         self.tick, self.ended, self.aborted, self.last_packet = tick, ended, aborted, now
         if ended:
@@ -226,11 +245,11 @@ def add_qte_watch_routes(app, db, read_member, authenticate):
     hub = WatchHub()
     app[HUB_KEY] = hub
 
-    async def row_for(scope, token):
+    async def chat_for(scope, token):
         row = await (db.arena_get(token) if scope == 'battle' else db.arena_raid_get(token))
         if row['status'] != 'active':
             raise ValueError('Бой уже завершён.')
-        return row
+        return row['chat_id']
 
     async def endpoint(request):
         scope, token = request.match_info['scope'], request.match_info['token']
@@ -247,8 +266,7 @@ def add_qte_watch_routes(app, db, read_member, authenticate):
             if not isinstance(hello.get('auth'), str):
                 raise ValueError('Нет авторизации Telegram.')
             actor = authenticate(hello['auth'])
-            row = await row_for(scope, token)
-            await read_member(row['chat_id'], actor)
+            await read_member(await chat_for(scope, token), actor)
             role = hello['role']
             follow = hello.get('follow', False)
             if type(follow) is not bool:
@@ -284,8 +302,7 @@ def add_qte_watch_routes(app, db, read_member, authenticate):
                 while not ws.closed:
                     await asyncio.sleep(12)
                     try:
-                        current = await row_for(scope, token)
-                        await read_member(current['chat_id'], actor)
+                        await read_member(await chat_for(scope, token), actor)
                     except Exception:
                         await ws.close(code=1008, message=b'Access expired')
                         return
@@ -303,9 +320,11 @@ def add_qte_watch_routes(app, db, read_member, authenticate):
                 if rate_count > 25:
                     raise ValueError('Слишком много пакетов трансляции.')
                 data = json.loads(message.data)
+                del message
                 if not isinstance(data, dict):
                     raise ValueError('Некорректный пакет.')
                 if data.get('type') == 'ping':
+                    del data
                     continue
                 if role == 'source':
                     stream = room['streams'].get(actor)
@@ -313,6 +332,7 @@ def add_qte_watch_routes(app, db, read_member, authenticate):
                         raise ValueError('Трансляция уже закрыта.')
                     packet = stream.accept(data)
                     await hub.broadcast(room, actor, packet)
+                    del packet
                     if stream.ended:
                         await hub.advance(room, actor)
                 elif data.get('type') == 'select':
@@ -326,6 +346,7 @@ def add_qte_watch_routes(app, db, read_member, authenticate):
                     await hub.select(room, ws, selected)
                 else:
                     raise ValueError('Зритель не может передавать управление.')
+                del data
         except (ValueError, TypeError, KeyError, asyncio.TimeoutError) as error:
             await hub.send(ws, dict(type='error', message=str(error)))
             await ws.close(code=1008)

@@ -52,6 +52,22 @@ class AvatarCacheTests(unittest.IsolatedAsyncioTestCase):
         count=bot.get_user_profile_photos.await_count;await cache.get(259)
         self.assertEqual(bot.get_user_profile_photos.await_count,count+1)
 
+    async def test_avatar_cache_evicts_by_bytes_in_lru_order(self):
+        cache=GuildAvatarCache(None,max_bytes=20)
+        cache.download=AsyncMock(side_effect=lambda user:(bytes(25 if user==4 else 9),'image/png'))
+        await cache.get(1)
+        await cache.get(2)
+        await cache.get(1)  # refresh its LRU position without downloading
+        await cache.get(3)
+        self.assertEqual(list(cache.cache),[1,3])
+        self.assertEqual(cache.cached_bytes,18)
+        self.assertEqual(len((await cache.get(4))[0]),25)  # returned, but not retained
+        self.assertNotIn(4,cache.cache)
+        deadline,value=cache.cache[1]
+        cache.cache[1]=(0,value)
+        await cache.get(1)
+        self.assertEqual(cache.cached_bytes,18)
+
     def test_party_layout_uses_avatar_and_rank_beside_name(self):
         root=Path(__file__).resolve().parents[1]/'webapp'
         js=(root/'guild.js').read_text(encoding='utf-8')

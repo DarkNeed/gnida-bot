@@ -510,13 +510,17 @@ class ArenaQteMixin:
             )
 
     def _qte_expire_locked(self, scope, token=None):
+        # Snapshot keys only: resolving a stage can update or delete other
+        # flows. Loading every JSON payload at once inflates each sweep.
         rows = self.connection.execute(
-            "SELECT payload FROM arena_qte_flows WHERE scope=?"
+            "SELECT token,actor_id FROM arena_qte_flows WHERE scope=?"
             + (" AND token=?" if token else ""),
             (scope, token) if token else (scope,),
         ).fetchall()
         for raw in rows:
-            flow = json.loads(raw["payload"])
+            flow = self._qte_load_locked(scope, raw["token"], raw["actor_id"])
+            if flow is None:
+                continue
             if not self._qte_valid_locked(flow):
                 self._qte_delete_locked(flow)
             elif flow["stages"][0]["expires"] <= time.time():

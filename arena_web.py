@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import parse_qsl
@@ -495,7 +496,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
 def create_arena_app(
     db, bot, token: str, changed=None, raid_changed=None, *, pets_payments_enabled=False, rp_publisher=None, guild_publisher=None
 ) -> web.Application:
-    member_cache: dict[tuple[int, int], float] = {}
+    member_cache: OrderedDict[tuple[int, int], float] = OrderedDict()
 
     async def app_menu(chat,actor):
         result=await menu_view(db,chat,actor)
@@ -508,12 +509,13 @@ def create_arena_app(
         now = time.monotonic()
         key = (chat, actor)
         if member_cache.get(key, 0) > now:
+            member_cache.move_to_end(key)
             return
         await require_member(bot, chat, actor)
-        if len(member_cache) > 2000:
-            for stale in [k for k, expires in member_cache.items() if expires <= now]:
-                member_cache.pop(stale, None)
-        member_cache[key] = now + 20
+        member_cache[key] = time.monotonic() + 20
+        member_cache.move_to_end(key)
+        while len(member_cache) > 2048:
+            member_cache.popitem(last=False)
 
     @web.middleware
     async def guard(request, handler):

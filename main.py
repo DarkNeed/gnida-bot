@@ -37,11 +37,23 @@ def pet_sales_enabled() -> bool:
     return getenv("PETS_PAYMENTS_ENABLED", "1").strip() == "1"
 
 
+def telegram_updates_limit() -> int:
+    raw = getenv("TELEGRAM_UPDATES_LIMIT", "").strip() or "24"
+    try:
+        limit = int(raw)
+    except ValueError:
+        limit = 0
+    if not 1 <= limit <= 64:
+        raise RuntimeError("TELEGRAM_UPDATES_LIMIT must be an integer from 1 to 64")
+    return limit
+
+
 async def main() -> None:
     load_dotenv()
     token = getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN is missing in .env")
+    updates_limit = telegram_updates_limit()
 
     raw_kargassia_chat_id = getenv("KARGASSIA_CHAT_ID", "").strip()
     try:
@@ -198,7 +210,7 @@ async def main() -> None:
                 logging.exception("Arena timeout sweep failed")
             await asyncio.sleep(5)
 
-    logging.info("GnidaBot is starting")
+    logging.info("GnidaBot is starting (max %d Telegram update handlers)", updates_limit)
     try:
         if webapp_url:
             port = int(getenv("PORT") or getenv("WEBAPP_PORT") or "8080")
@@ -218,6 +230,9 @@ async def main() -> None:
             bot,
             allowed_updates=dispatcher.resolve_used_update_types(),
             close_bot_session=False,
+            # Take the semaphore before creating a Task. Transiently slow
+            # Telegram calls must not leave an unlimited backlog in Python.
+            tasks_concurrency_limit=updates_limit,
         )
     finally:
         if duel_task:

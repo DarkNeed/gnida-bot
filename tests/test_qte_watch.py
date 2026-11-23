@@ -66,6 +66,26 @@ class StreamTests(unittest.TestCase):
         stream.accept(dict(type='data',id=attack['id'],tick=30,clicks=[30],ended=True))
         self.assertEqual(stream.clicks,[30])
 
+    def test_compact_history_round_trips_deltas_and_replaces_only_after_validation(self):
+        stage = self.stage()
+        stage.update(version=2,defense_preparation=1)
+        stream = Stream(stage,None)
+        motion = [dict(t=0,x=.123456789012345,y=-.987654321098765),dict(t=2,target=[100.25,51.875])]
+        initial = stream.accept(dict(type='data',id='stage',tick=3,inputs=motion))
+        self.assertEqual(initial['inputs'],motion)
+        stream.last_packet = 0
+        later = dict(t=4,x=-1,y=0)
+        stream.accept(dict(type='data',id='stage',tick=5,inputs=[later]))
+        self.assertEqual(stream.packet()['inputs'],motion+[later])
+        stream.last_packet = 0
+        with self.assertRaises(ValueError):
+            stream.accept(dict(type='data',id='stage',tick=6,reset=True,
+                               inputs=[dict(t=3,x=0,y=0),dict(t=2,x=0,y=0)]))
+        self.assertEqual(stream.packet()['inputs'],motion+[later])
+        stream.accept(dict(type='data',id='stage',tick=6,reset=True,inputs=[later],ended=True))
+        self.assertEqual(stream.packet()['inputs'],[later])
+        self.assertLess(len(stream._history),32)
+
     @unittest.skipUnless(shutil.which('node'), 'Node required')
     def test_browser_replay_matches_live_simulations(self):
         for name in ('qte_watch.cjs','qte_watch_follow.cjs'):
