@@ -48,7 +48,7 @@ def format_message_top(top):
         label = f"{name} ({username})" if username else name
         lines.append(f"{place}. {label} - {row['message_count']}")
     if not top["entries"]:
-        lines.append("Пока нет учтённых сообщений за эту неделю.")
+        lines.append("За прошедшую неделю нет учтённых сообщений.")
     return "\n".join(lines)
 
 
