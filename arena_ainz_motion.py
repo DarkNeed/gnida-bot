@@ -30,9 +30,12 @@ def geometry(h,age):
         vy=3*(v*v*(h['c1y']-h['y'])+2*v*u*(h['c2y']-h['c1y'])+u*u*(h['ty']-h['c2y']))/h['pathTime']
     elif path=='wave':
         length=math.hypot(h['vx'],h['vy']) or 1;nx,ny=-h['vy']/length,h['vx']/length
-        envelope=1-math.exp(-age*3)
-        offset=h['amplitude']*math.sin(age*h['frequency'])*envelope
-        derivative=h['amplitude']*(h['frequency']*math.cos(age*h['frequency'])*envelope+3*math.sin(age*h['frequency'])*math.exp(-age*3))
+        damping=math.exp(-age*3)
+        envelope=1-damping
+        phase=age*h['frequency']
+        sine=math.sin(phase)
+        offset=h['amplitude']*sine*envelope
+        derivative=h['amplitude']*(h['frequency']*math.cos(phase)*envelope+3*sine*damping)
         x,y=h['x']+h['vx']*age+nx*offset,h['y']+h['vy']*age+ny*offset
         vx,vy=h['vx']+nx*derivative,h['vy']+ny*derivative
     elif path=='orbitLaunch':

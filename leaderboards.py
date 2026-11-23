@@ -12,6 +12,8 @@ RATING_PLACEMENT_GAMES = 5
 RATING_DAILY_LIMIT = 10
 RATING_PAIR_SECONDS = 86400
 TOP_PAGE_SIZE = 10
+_PLACED_RATINGS = f"games>={RATING_PLACEMENT_GAMES}"
+_RATING_ORDER = "rating DESC,wins DESC,actor_id"
 
 
 def rating_season(timestamp):
@@ -35,12 +37,14 @@ def elo_delta(rating, opponent, score):
 class LeaderboardsMixin:
     def _connect_leaderboards(self):
         self._ensure_column("arena_battles", "ranked", "INTEGER NOT NULL DEFAULT 0")
-        self.connection.executescript("""
+        self.connection.executescript(f"""
             CREATE TABLE IF NOT EXISTS arena_ratings (
                 season TEXT NOT NULL,actor_id INTEGER NOT NULL,rating INTEGER NOT NULL DEFAULT 1000,
                 games INTEGER NOT NULL DEFAULT 0,wins INTEGER NOT NULL DEFAULT 0,
                 losses INTEGER NOT NULL DEFAULT 0,draws INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(season,actor_id));
+            CREATE INDEX IF NOT EXISTS idx_arena_placed_rating_{RATING_PLACEMENT_GAMES}
+                ON arena_ratings(season,{_RATING_ORDER}) WHERE {_PLACED_RATINGS};
             CREATE TABLE IF NOT EXISTS arena_rating_results (
                 token TEXT PRIMARY KEY,season TEXT NOT NULL,a_actor INTEGER NOT NULL,b_actor INTEGER NOT NULL,
                 a_delta INTEGER NOT NULL,b_delta INTEGER NOT NULL,counted INTEGER NOT NULL,
@@ -124,23 +128,38 @@ class LeaderboardsMixin:
         if type(page) is not int or page < 0:
             raise ValueError("Некорректная страница.")
         async with self._lock:
-            rows = [dict(r) for r in self.connection.execute("""SELECT r.*,
-                COALESCE((SELECT display_name FROM users u WHERE u.user_id=r.actor_id ORDER BY last_seen DESC,chat_id LIMIT 1),CAST(r.actor_id AS TEXT)) AS name
-                FROM arena_ratings r WHERE season=? AND games>=? ORDER BY rating DESC,wins DESC,actor_id""",
-                (season, RATING_PLACEMENT_GAMES))]
-            for index, entry in enumerate(rows, 1):
-                entry["place"] = index
-                entry["title"] = ({1: "Чемпион арены", 2: "Серебряный дуэлянт", 3: "Бронзовый дуэлянт"}.get(index, "") if season < current else "")
+            base = f"FROM arena_ratings WHERE season=? AND {_PLACED_RATINGS}"
+            total = self.connection.execute("SELECT COUNT(*) " + base, (season,)).fetchone()[0]
             own = self._rating_profile_locked(season, actor)
-            own["place"] = next((r["place"] for r in rows if r["actor_id"] == actor), None)
+            own["place"] = None
+            if own["games"] >= RATING_PLACEMENT_GAMES:
+                # Count the three non-overlapping ranges ahead of this player
+                # in the same order used for pagination.
+                own["place"] = 1 + self.connection.execute(f"""
+                    SELECT SUM(n) FROM (
+                        SELECT COUNT(*) AS n {base} AND rating>?
+                        UNION ALL SELECT COUNT(*) {base} AND rating=? AND wins>?
+                        UNION ALL SELECT COUNT(*) {base} AND rating=? AND wins=? AND actor_id<?
+                    )
+                """, (season, own["rating"], season, own["rating"], own["wins"],
+                      season, own["rating"], own["wins"], actor)).fetchone()[0]
             if mine and own["place"]:
                 page = (own["place"] - 1) // TOP_PAGE_SIZE
-            pages = max(1, math.ceil(len(rows) / TOP_PAGE_SIZE))
+            pages = max(1, (total + TOP_PAGE_SIZE - 1) // TOP_PAGE_SIZE)
             page = min(page, pages - 1)
+            offset = page * TOP_PAGE_SIZE
+            # Select the page by index before resolving names. Do not send
+            # discarded rows through the Python object layer.
+            entries = [dict(r) for r in self.connection.execute(f"""SELECT r.*,
+                COALESCE((SELECT display_name FROM users u WHERE u.user_id=r.actor_id ORDER BY last_seen DESC,chat_id LIMIT 1),CAST(r.actor_id AS TEXT)) AS name
+                FROM arena_ratings r WHERE season=? AND {_PLACED_RATINGS}
+                ORDER BY {_RATING_ORDER} LIMIT ? OFFSET ?""", (season, TOP_PAGE_SIZE, offset))]
+            titles = {1: "Чемпион арены", 2: "Серебряный дуэлянт", 3: "Бронзовый дуэлянт"} if season < current else {}
+            for place, entry in enumerate(entries, offset + 1):
+                entry.update(place=place, title=titles.get(place, ""))
             seasons = sorted({current, season} | {r[0] for r in self.connection.execute("SELECT DISTINCT season FROM arena_ratings")}, reverse=True)
             return dict(season=season, current_season=current, archived=season < current,
-                entries=rows[page * TOP_PAGE_SIZE:(page + 1) * TOP_PAGE_SIZE], own=own,
-                total=len(rows), page=page, pages=pages, seasons=seasons,
+                entries=entries, own=own, total=total, page=page, pages=pages, seasons=seasons,
                 placement_games=RATING_PLACEMENT_GAMES, daily_limit=RATING_DAILY_LIMIT)
 
     def _archive_enterprise_locked(self, site, timestamp):

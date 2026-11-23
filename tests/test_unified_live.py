@@ -285,6 +285,22 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('_queue_wait',public['state'])
         self.assertEqual(public['state']['action_queue']['version'],3)
 
+    async def test_global_qte_expiry_leaves_the_following_stage_open(self):
+        row = await self.duel()
+        token = row['token']
+        for actor in (10, 20):
+            row = await self.db.arena_interactive_action(token, actor, row['revision'], 'skill', 'bum_punch')
+        flow = self.db._qte_load_locked('battle', token)
+        first, second = flow['stages'][:2]
+        first['expires'] = 1
+        self.db._qte_save_locked(flow)
+        self.db.connection.commit()
+        await self.db.arena_expire()
+        current = self.db._qte_load_locked('battle', token)['stages'][0]
+        self.assertEqual(current['id'], second['id'])
+        await self.db.arena_expire()
+        self.assertEqual(self.db._qte_load_locked('battle', token)['stages'][0], current)
+
     async def test_raid_choice_tickets_persist_and_cannot_be_reused(self):
         from arena_raid_web import raid_view
         row=await self.db.arena_raid_create(1,10,'lei_heng',silent=True)

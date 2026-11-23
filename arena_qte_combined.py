@@ -68,6 +68,8 @@ def replay(stage, proof, elapsed):
     totals = [math.ceil(_member_duration(m) * HZ - 1e-7) for m in members] if not block else []
     states = [block_create(m) if block else defense(profile(m['profile']), m['stats'], m['seed'],
               m.get('enabled_strikes'), m.get('defense_preparation', 1)) for m in members]
+    shared = stage.get('shared_motion') == 2
+    solo = not block and shared and len(states) == 1
     if block:
         # A single shield: rotation, drain and recovery are never multiplied.
         lead = max(range(len(members)), key=lambda i: members[i]['stats'].get('enemyAttack', 0))
@@ -77,13 +79,18 @@ def replay(stage, proof, elapsed):
                                     for e in s['events'] if s['enabled'] is None or s['enabled'][e['strike']]],
                                    key=lambda e: e['at'])
     point = dict(x=360, y=160, r=6, vx=0, vy=0)
+    if solo:
+        states[0]['player'] = point
     index, control = 0, {}
     for tick in range(total):
         if index < len(events) and events[index]['t'] == tick:
             control, index = events[index], index + 1
         if block:
             block_step(carrier, control)
-        elif stage.get('shared_motion') == 2:
+        elif solo:
+            if tick < totals[0]:
+                defense_step(states[0], control)
+        elif shared:
             active = []
             for i, s in enumerate(states):
                 if tick >= totals[i]:

@@ -20,6 +20,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DefenseRegressions(unittest.TestCase):
+    def test_fast_collision_checks_keep_tangencies_and_swept_hits(self):
+        from arena_qte_patterns import _segments_within, touches
+        # A beam five pixels above a horizontal movement is exactly tangent.
+        self.assertTrue(_segments_within(0, 0, 10, 0, 2, 5, 8, 5, 5))
+        self.assertFalse(_segments_within(0, 0, 10, 0, 2, 5.0000000001, 8, 5.0000000001, 5))
+        # Both projectile samples are outside the player, but the projectile
+        # crosses them between ticks. Checking endpoints alone would miss it.
+        player = dict(x=12, y=30, r=2)
+        h = dict(type='bullet', x=0, y=30, vx=16, vy=0, r=1, start=0)
+        self.assertFalse(touches(h, player, player, .5, .5))
+        self.assertTrue(touches(h, player, player, 1.5, 1))
+        self.assertFalse(touches(h, player, player, 2.5, 1))
+
     def test_companions_cannot_hit_outside_a_perfect_defense(self):
         from arena_engine import resolve_skill
         cases=(('mage','mage_necromancer','mana_blob'),('ring','ring_fauvist','red_etude'))

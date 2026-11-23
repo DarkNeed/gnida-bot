@@ -550,6 +550,19 @@ class RaidStoreTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "Раунд"):
             await self.db.arena_raid_action(row["token"], 20, 1, "bum_punch")
 
+    async def test_sweep_does_not_read_fresh_lobbies_or_load_unchanged_roster_twice(self):
+        active = await self.start()
+        lobby = await self.db.arena_raid_create(1, 40, silent=True)
+        with patch.object(self.db, '_raid_row_locked', wraps=self.db._raid_row_locked) as read:
+            self.assertEqual(await self.db.arena_raid_expire(), [])
+        read.assert_called_once_with(active['token'], participants=False)
+        self.db.connection.execute("UPDATE arena_raids SET deadline=0 WHERE token=?", (lobby['token'],))
+        self.db.connection.commit()
+        cancelled, = await self.db.arena_raid_expire()
+        self.assertEqual(cancelled['token'], lobby['token'])
+        self.assertEqual(cancelled['status'], 'cancelled')
+        self.assertIn('participants', cancelled)
+
     async def test_timeout_survives_restart_no_offline_round_cascade(self):
         row = await self.start()
         self.save(row, json.loads(row["data_json"]), int(time.time()) - 10000)

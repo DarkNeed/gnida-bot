@@ -10,6 +10,14 @@ import time
 from arena_qte_rules import replay
 
 
+# Match the index expression exactly. Deriving it from the saved stage keeps
+# old databases, in-progress games and older writers compatible.
+_QTE_EXPIRES = """CASE WHEN json_valid(payload)
+    THEN CAST(json_extract(payload, '$.stages[0].expires') AS REAL) END"""
+_QTE_DUE_KEYS = f"""SELECT token,actor_id FROM arena_qte_flows
+    WHERE scope=? AND ({_QTE_EXPIRES})<=?"""
+
+
 def strike_count(skill):
     if 'five_strike' in skill.tags:return 5
     return (
@@ -215,12 +223,14 @@ def damage_preview(attacker, target, skill, *, details=False, contact=False, ski
 
 class ArenaQteMixin:
     def _connect_qte(self):
-        self.connection.executescript("""
+        self.connection.executescript(f"""
             CREATE TABLE IF NOT EXISTS arena_combat_settings (
                 actor_id INTEGER PRIMARY KEY, minigames INTEGER NOT NULL CHECK(minigames IN (0,1)));
             CREATE TABLE IF NOT EXISTS arena_qte_flows (
                 scope TEXT NOT NULL, token TEXT NOT NULL, actor_id INTEGER NOT NULL,
                 payload TEXT NOT NULL, PRIMARY KEY(scope,token,actor_id));
+            CREATE INDEX IF NOT EXISTS idx_qte_due
+                ON arena_qte_flows(scope, ({_QTE_EXPIRES}), token, actor_id);
             CREATE TABLE IF NOT EXISTS arena_character_defense (
                 actor_id INTEGER NOT NULL, slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 5),
                 mode TEXT NOT NULL CHECK(mode IN ('dodge','block')), PRIMARY KEY(actor_id,slot));
@@ -351,16 +361,16 @@ class ArenaQteMixin:
 
     def _qte_valid_locked(self, flow):
         try:
-            row = (
-                self._raid_row_locked(flow["token"])
-                if flow["scope"] == "raid"
-                else self._arena_row_locked(flow["token"])
+            table, column = (
+                ("arena_raids", "data_json") if flow["scope"] == "raid"
+                else ("arena_battles", "state_json")
             )
-            if row["status"] != "active":
+            row = self.connection.execute(
+                f"SELECT status,{column} FROM {table} WHERE token=?", (flow["token"],)
+            ).fetchone()
+            if not row or row["status"] != "active":
                 return False
-            state = json.loads(
-                row["data_json"] if flow["scope"] == "raid" else row["state_json"]
-            )
+            state = json.loads(row[column])
             if flow.get('unified_group'):
                 return bool(state.get('_queue_wait', {}).get('id') == flow['unified_group'])
             if flow["scope"] == "battle":
@@ -534,13 +544,18 @@ class ArenaQteMixin:
             )
 
     def _qte_expire_locked(self, scope, token=None):
-        # Snapshot keys only: resolving a stage can update or delete other
-        # flows. Loading every JSON payload at once inflates each sweep.
-        rows = self.connection.execute(
-            "SELECT token,actor_id FROM arena_qte_flows WHERE scope=?"
-            + (" AND token=?" if token else ""),
-            (scope, token) if token else (scope,),
-        ).fetchall()
+        # Take a snapshot of keys only. Resolving a stage can replace or delete
+        # another flow, so reload each candidate before validating its deadline.
+        if token is None:
+            rows = self.connection.execute(_QTE_DUE_KEYS, (scope, time.time())).fetchall()
+            rows.sort(key=lambda row: (row["token"], row["actor_id"]))
+        else:
+            # Match-local requests still discard stale stages immediately,
+            # even if the obsolete stage's deadline is in the future.
+            rows = self.connection.execute(
+                "SELECT token,actor_id FROM arena_qte_flows WHERE scope=? AND token=? ORDER BY actor_id",
+                (scope, token),
+            ).fetchall()
         for raw in rows:
             flow = self._qte_load_locked(scope, raw["token"], raw["actor_id"])
             if flow is None:
@@ -561,14 +576,18 @@ class ArenaQteMixin:
             if not flow or not self._qte_valid_locked(flow):
                 return None
             stage = flow["stages"][0]
-            from arena_casino_chance import public as casino_public
-            public = casino_public(deepcopy(stage))
-            public["server_now"] = time.time()
+            public = None
+            if stage["actor"] == actor:
+                # The stage was decoded for this request only, not shared or
+                # cached. The public envelope strips its private casino seed.
+                from arena_casino_chance import public as casino_public
+                public = casino_public(stage)
+                public["server_now"] = time.time()
             return dict(
                 waiting=True,
                 kind=stage["kind"],
                 actor=stage["actor"],
-                challenge=public if stage["actor"] == actor else None,
+                challenge=public,
             )
 
     async def arena_qte_watchables(self, scope, token, viewer):
@@ -599,7 +618,7 @@ class ArenaQteMixin:
             if stage['expires'] <= time.time():
                 raise ValueError('Время мини-игры истекло.')
             from arena_casino_chance import public as casino_public
-            return casino_public(deepcopy(stage))
+            return casino_public(stage)
 
     async def arena_qte_casino_roll(self, scope, token, actor, ident, choice):
         from arena_casino_chance import commit_account

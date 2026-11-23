@@ -6,6 +6,8 @@ seeds and stats are used. Damage weights remain relative to the native skill.
 
 import math
 
+from arena_nazarick_patterns import advance_homing
+
 HZ = 120
 TAU = math.tau
 W, H = 720, 320
@@ -923,6 +925,16 @@ def segment_distance(ax, ay, bx, by, cx, cy, dx, dy):
     )
 
 
+def _segments_within(ax, ay, bx, by, cx, cy, dx, dy, limit):
+    # Reject clearly separated boxes before doing four point-to-segment tests.
+    # A tiny conservative margin keeps the original test at float boundaries.
+    pad = limit + 1e-9
+    if (max(ax, bx) + pad < min(cx, dx) or max(cx, dx) + pad < min(ax, bx)
+            or max(ay, by) + pad < min(cy, dy) or max(cy, dy) + pad < min(ay, by)):
+        return False
+    return segment_distance(ax, ay, bx, by, cx, cy, dx, dy) <= limit
+
+
 def touches(h, old, now, t, dt):
     if h.get('pendingLaunch') and t<h['start']+h.get('freezeFor',0):return False
     g = geometry(h, t)
@@ -930,23 +942,35 @@ def touches(h, old, now, t, dt):
     a, b, c, d = old["x"], old["y"], now["x"], now["y"]
     typ = h["type"]
     if typ == "bullet":
-        prev = dict(h, x=h['lastX'], y=h['lastY']) if 'lastX' in h else geometry(h, max(h["start"], t - dt))
+        x, y, radius = g['x'], g['y'], g['r'] + r
         if h.get('length'):
             length = math.hypot(g['vx'],g['vy']) or 1
-            tail_x=g['x']-g['vx']/length*h['length']
-            tail_y=g['y']-g['vy']/length*h['length']
-            if segment_distance(a,b,c,d,tail_x,tail_y,g['x'],g['y'])<=g['r']+r:return True
-        return (
-            distance(0, 0, prev["x"] - a, prev["y"] - b, g["x"] - c, g["y"] - d)
-            <= g["r"] + r
-        )
+            tail_x=x-g['vx']/length*h['length']
+            tail_y=y-g['vy']/length*h['length']
+            if _segments_within(a,b,c,d,tail_x,tail_y,x,y,radius):return True
+        if 'lastX' in h:
+            px, py = h['lastX'], h['lastY']
+        else:
+            previous_t = max(h['start'], t - dt)
+            sample = h.get('_last_pose')
+            # Only reuse an exact time match. Keep the original t-dt
+            # computation when its floating-point value differs.
+            if sample is not None and sample[0] == previous_t:
+                _, px, py = sample
+            else:
+                prev = geometry(h, previous_t)
+                px, py = prev['x'], prev['y']
+            h['_last_pose'] = (t, x, y)
+        ax, ay, bx, by = px - a, py - b, x - c, y - d
+        pad = radius + 1e-9
+        if (ax > pad and bx > pad or ax < -pad and bx < -pad
+                or ay > pad and by > pad or ay < -pad and by < -pad):
+            return False
+        return distance(0, 0, ax, ay, bx, by) <= radius
     if typ == "line":
-        return (
-            segment_distance(a, b, c, d, g["ax"], g["ay"], g["bx"], g["by"])
-            <= g["r"] + r
-        )
+        return _segments_within(a, b, c, d, g["ax"], g["ay"], g["bx"], g["by"], g["r"] + r)
     if typ == 'polyline':
-        return any(segment_distance(a,b,c,d,*p,*q)<=g['r']+r for p,q in zip(g['points'],g['points'][1:]))
+        return any(_segments_within(a,b,c,d,*p,*q,g['r']+r) for p,q in zip(g['points'],g['points'][1:]))
     if typ == 'safe_zone':
         return math.hypot(c-g['x'],d-g['y']) > g['r']-r
     if typ in ("circle", "well"):
@@ -954,12 +978,11 @@ def touches(h, old, now, t, dt):
     if typ == "rect":
         x, y, w, ht = g["x"], g["y"], g["w"], g["h"]
         return (
-            segment_distance(a, b, c, d, x, y, x + w, y) <= r
-            or segment_distance(a, b, c, d, x, y + ht, x + w, y + ht) <= r
-            or segment_distance(a, b, c, d, x, y, x, y + ht) <= r
-            or segment_distance(a, b, c, d, x + w, y, x + w, y + ht) <= r
-            or x <= c <= x + w
-            and y <= d <= y + ht
+            (x <= c <= x + w and y <= d <= y + ht)
+            or _segments_within(a, b, c, d, x, y, x + w, y, r)
+            or _segments_within(a, b, c, d, x, y + ht, x + w, y + ht, r)
+            or _segments_within(a, b, c, d, x, y, x, y + ht, r)
+            or _segments_within(a, b, c, d, x + w, y, x + w, y + ht, r)
         )
     if typ == "ring":
         angle = math.atan2(d - g["y"], c - g["x"])
@@ -1031,37 +1054,43 @@ def defense_move(s, control, speed=None):
 
 
 def defense_contacts(s, old):
-    dt, previous = 1 / HZ, s['time'] - 1 / HZ
-    p = s['player']
+    dt, t = 1 / HZ, s['time']
+    previous = t - dt
+    p, hits, contacts = s['player'], s['hitIds'], s['contacts']
+    moving = None
     if s['p'].get('chaplain', 0) >= 2:
-        s.setdefault('history', []).append(dict(t=s['time'], x=p['x'], y=p['y']))
-        s['history'] = s['history'][-720:]
+        history = s.setdefault('history', [])
+        history.append(dict(t=t, x=p['x'], y=p['y']))
+        if len(history) > 720:
+            del history[:-720]
     for h in s["hazards"]:
         if h.get('homing'):
-            from arena_nazarick_patterns import advance_homing
-            advance_homing(h,p,s['time'],dt)
+            advance_homing(h,p,t,dt)
         if (
             h["disabled"]
             or h["end"] < previous
-            or h["start"] > s["time"]
-            or h["damageId"] in s["hitIds"]
+            or h["start"] > t
+            or h["damageId"] in hits
         ):
             continue
-        if h.get('moveOnly') and math.hypot(p['x']-old['x'],p['y']-old['y'])<.001:
-            continue
-        if touches(h, old, p, s["time"], dt):
-            s["hitIds"].add(h["damageId"])
-            s["contacts"].append(
+        if h.get('moveOnly'):
+            if moving is None:
+                moving = math.hypot(p['x']-old['x'],p['y']-old['y']) >= .001
+            if not moving:
+                continue
+        if touches(h, old, p, t, dt):
+            hits.add(h["damageId"])
+            contacts.append(
                 dict(
                     id=h["damageId"],
                     strike=h["strike"],
                     weight=h["weight"],
                     tier=h["tier"],
-                    tick=jsround(s["time"] * HZ),
+                    tick=jsround(t * HZ),
                     **({'status':h['status']} if h.get('status') else {}),
                 )
             )
-    s["hazards"] = [h for h in s["hazards"] if h["end"] >= s["time"]]
+    s["hazards"] = [h for h in s["hazards"] if h["end"] >= t]
 
 
 def replay(challenge, proof, elapsed):
@@ -1086,8 +1115,9 @@ def replay(challenge, proof, elapsed):
         )
         all_hazards = {}
         for e in s["events"]:
+            offset = len(s["hazards"])
             prepare(s, e)
-            for h in s["hazards"]:
+            for h in s["hazards"][offset:]:
                 if not h["disabled"]:
                     all_hazards[h["damageId"]] = dict(
                         id=h["damageId"],

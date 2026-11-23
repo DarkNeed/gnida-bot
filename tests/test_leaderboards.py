@@ -131,6 +131,36 @@ class LeaderboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(old["entries"][0]["title"], "Чемпион арены")
         self.assertEqual(old["own"]["rating"], before["own"]["rating"])
 
+    async def test_indexed_pages_and_own_place_share_all_tie_breakers(self):
+        season = "2026-09"
+        rows = [(actor, 1700 if actor == 13 else 1500, 6, 5 if actor in (17, 31) else 4)
+                for actor in range(10, 43)]
+        rows.append((100, 2000, 4, 4))  # Still in calibration.
+        with self.db.connection:
+            self.db.connection.executemany(
+                "INSERT INTO arena_ratings(season,actor_id,rating,games,wins) VALUES(?,?,?,?,?)",
+                [(season, *row) for row in rows])
+            self.db.connection.execute("UPDATE users SET last_seen=1 WHERE user_id=13")
+            self.db.connection.execute("""UPDATE users SET last_seen=2,display_name='Newest name'
+                WHERE user_id=13 AND chat_id=-200""")
+        ordered = sorted((r for r in rows if r[2] >= 5), key=lambda r: (-r[1], -r[3], r[0]))
+        first = await self.db.arena_leaderboard(100, season=season)
+        self.assertEqual(first['entries'][0]['name'], 'Newest name')
+        self.assertEqual([r['actor_id'] for r in first['entries']], [r[0] for r in ordered[:10]])
+        self.assertEqual([r['title'] for r in first['entries'][:3]],
+                         ['Чемпион арены', 'Серебряный дуэлянт', 'Бронзовый дуэлянт'])
+        self.assertIsNone(first['own']['place'])
+        last = await self.db.arena_leaderboard(41, season=season, page=10 ** 30)
+        self.assertEqual(last['page'], 3)
+        self.assertEqual(last['entries'][-1]['name'], '42')
+        self.assertEqual(last['total'], len(ordered))
+        for actor in (17, 31, 23, 41):
+            mine = await self.db.arena_leaderboard(actor, season=season, mine=True)
+            position = [r[0] for r in ordered].index(actor)
+            self.assertEqual(mine['own']['place'], position+1)
+            self.assertEqual(mine['page'], position//10)
+            self.assertEqual(mine['entries'][position%10]['actor_id'], actor)
+
     async def test_daily_cap_and_moscow_day_boundary(self):
         for target in range(20, 30):
             self.seed_result(b=target)

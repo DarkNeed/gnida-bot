@@ -166,20 +166,21 @@ class RaidMixin:
                                     cooldown_remaining=remaining, cooldown_seconds=RAID_REWARD_COOLDOWN)
             return result
 
-    def _raid_row_locked(self, token):
+    def _raid_row_locked(self, token, *, participants=True):
         raw = self.connection.execute(
             "SELECT * FROM arena_raids WHERE token=?", (token,)
         ).fetchone()
         if not raw:
             raise ValueError("Рейд не найден.")
         row = dict(raw)
-        row["participants"] = [
-            dict(p)
-            for p in self.connection.execute(
-                "SELECT * FROM arena_raid_players WHERE token=? ORDER BY actor_id",
-                (token,),
-            ).fetchall()
-        ]
+        if participants:
+            row["participants"] = [
+                dict(p)
+                for p in self.connection.execute(
+                    "SELECT * FROM arena_raid_players WHERE token=? ORDER BY actor_id",
+                    (token,),
+                ).fetchall()
+            ]
         return row
 
     def _raid_busy_locked(self, chat, user, exclude="", active_only=False):
@@ -484,10 +485,14 @@ class RaidMixin:
         changed = []
         now = int(time.time())
         rows = self.connection.execute(
-            "SELECT token FROM arena_raids WHERE status IN ('lobby','active')"
+            """SELECT token FROM arena_raids WHERE status='active' OR
+               (status='lobby' AND (deadline<=? OR (NOT silent AND message_id IS NULL AND created_at<=?)))""",
+            (now, now - 60),
         ).fetchall()
         for raw in rows:
-            original = self._raid_row_locked(raw["token"])
+            # No participant list is needed to check timers/ownership. Hydrate
+            # that list only for changes returned to the publisher.
+            original = self._raid_row_locked(raw["token"], participants=False)
             row = self._raid_cleanup_locked(original)
             if row["status"] == "lobby" and (
                 row["deadline"] <= now
@@ -498,15 +503,16 @@ class RaidMixin:
                     "UPDATE arena_raids SET status='cancelled',revision=revision+1,finished_at=? WHERE token=?",
                     (now, row["token"]),
                 )
+                row = self._raid_row_locked(row["token"])
             elif row["status"] == "active" and row["deadline"] <= now:
                 data = json.loads(row['data_json'])
                 if data.get('unified_version') == 3 and not data.get('_queue_wait'):
                     from arena_unified_store import expire
                     expire(self, 'raid', row, data)
                 else:self._raid_resolve_locked(row, data)
-            fresh = self._raid_row_locked(row["token"])
-            if fresh["revision"] != original["revision"]:
-                changed.append(fresh)
+                row = self._raid_row_locked(row["token"])
+            if row["revision"] != original["revision"]:
+                changed.append(row)
         return changed
 
     async def arena_raid_expire(self):

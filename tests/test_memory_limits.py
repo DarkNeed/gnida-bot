@@ -4,7 +4,7 @@ import sqlite3
 import unittest
 from unittest.mock import patch
 
-from arena_qte_live import ArenaQteMixin
+from arena_qte_live import ArenaQteMixin, _QTE_DUE_KEYS
 from main import telegram_updates_limit
 
 
@@ -22,6 +22,13 @@ class TelegramLimitsTests(unittest.TestCase):
 
 
 class QteSweepTests(unittest.TestCase):
+    def make_database(self, cls=ArenaQteMixin):
+        db = cls()
+        db.connection = sqlite3.connect(":memory:")
+        self.addCleanup(db.connection.close)
+        db.connection.row_factory = sqlite3.Row
+        return db
+
     def test_reads_current_payloads_without_reviving_flows_removed_during_sweep(self):
         completed = []
 
@@ -38,10 +45,7 @@ class QteSweepTests(unittest.TestCase):
                     (json.dumps(dict(token="c",stages=[dict(expires=1e10)])),),
                 )
 
-        db = Sweep()
-        db.connection = sqlite3.connect(":memory:")
-        self.addCleanup(db.connection.close)
-        db.connection.row_factory = sqlite3.Row
+        db = self.make_database(Sweep)
         db._connect_qte()
         db.connection.executemany(
             "INSERT INTO arena_qte_flows VALUES ('raid',?,1,?)",
@@ -50,3 +54,42 @@ class QteSweepTests(unittest.TestCase):
         db._qte_expire_locked("raid")
         self.assertEqual(completed,["a"])
         self.assertEqual(db._qte_load_locked("raid","c",1)["stages"][0]["expires"],1e10)
+
+    def test_adds_deadline_index_to_existing_database_and_reads_only_due_flows(self):
+        checked = []
+        completed = []
+
+        class Sweep(ArenaQteMixin):
+            def _qte_valid_locked(self, flow):
+                checked.append(flow['token'])
+                return flow['token'] != 'stale'
+
+            def _qte_complete_locked(self, flow, *, expired):
+                assert expired
+                completed.append(flow['token'])
+                self._qte_delete_locked(flow)
+
+        db = self.make_database(Sweep)
+        db.connection.execute("""CREATE TABLE arena_qte_flows (
+            scope TEXT NOT NULL, token TEXT NOT NULL, actor_id INTEGER NOT NULL,
+            payload TEXT NOT NULL, PRIMARY KEY(scope,token,actor_id))""")
+        db.connection.executemany("INSERT INTO arena_qte_flows VALUES (?,?,?,?)", [
+            (scope, token, 0, json.dumps(dict(scope=scope, token=token, owner=0, stages=[dict(expires=end)])))
+            for scope, token, end in [('battle', 'due', 100), ('battle', 'live', 101),
+                                      ('battle', 'stale', 101), ('raid', 'other', 99)]
+        ])
+        db._connect_qte()
+        plan = db.connection.execute("EXPLAIN QUERY PLAN " + _QTE_DUE_KEYS, ('battle', 100)).fetchall()
+        self.assertTrue(any('idx_qte_due' in row['detail'] and '<expr><?' in row['detail'] for row in plan), plan)
+        with patch("arena_qte_live.time.time", return_value=100):
+            db._qte_expire_locked('battle')
+            self.assertEqual(checked, ['due'])
+            self.assertEqual(completed, ['due'])
+            self.assertIsNotNone(db._qte_load_locked('battle', 'stale'))
+            db._qte_expire_locked('battle', 'stale')
+            self.assertEqual(checked, ['due', 'stale'])
+            self.assertIsNone(db._qte_load_locked('battle', 'stale'))
+            self.assertIsNotNone(db._qte_load_locked('raid', 'other'))
+        with patch("arena_qte_live.time.time", return_value=101):
+            db._qte_expire_locked('battle')
+        self.assertEqual(completed, ['due', 'live'])

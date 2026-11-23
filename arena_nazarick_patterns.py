@@ -308,12 +308,10 @@ COLORS=dict(shalltear='#ff244c',demiurge='#e74620',albedo='#8145cf',
 
 
 def time_stopped(s):
-    if identity(s['p']) and identity(s['p'])[0]=='ainz6':
-        elapsed=s['time']-s.get('preparation',0)
-        return identity(s['p'])[1:]==(6,0) and 0<=elapsed<10.4 and .5<=elapsed%5.2<2.5
-    ident=identity(s['p'])
+    if identity(s['p']) not in (('ainz6',6,0), ('ainz',2,0)):
+        return False
     elapsed=s['time']-s.get('preparation',0)
-    return ident==('ainz',2,0) and 0<=elapsed<10.4 and .5 <= elapsed%5.2 < 2.5
+    return 0<=elapsed<10.4 and .5<=elapsed%5.2<2.5
 
 
 def advance_homing(h,p,t,dt):
