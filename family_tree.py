@@ -24,7 +24,7 @@ def family_map(state):
     root = state["origin"]
     edges = defaultdict(list)
     branches = ((EMPTY_ORIGIN, user) for user in state.get("branches", ())) if root == EMPTY_ORIGIN else ()
-    for a, b in [*state["parents"], *state["marriages"], *branches]:
+    for a, b in [*state["parents"], *state["marriages"], *state.get("siblings", ()), *branches]:
         edges[a].append(b)
         edges[b].append(a)
     visited = set()
@@ -64,7 +64,31 @@ def close_relatives(state, a, b, parents=None):
     parents = parent_index(state) if parents is None else parents
     av, ap = upwards(parents, a)
     bv, bp = upwards(parents, b)
-    return a in bv or b in av or bool(ap & bp)
+    return a in bv or b in av or bool(ap & bp) or sorted((a, b)) in state.get("siblings", ())
+
+
+def validate_generations(state):
+    """Sibling groups share a generation. Parent links must descend between groups."""
+    siblings = state["siblings"]
+    if not siblings:
+        return
+    _, components, _ = family_map(dict(origin=None, parents=[], marriages=[], siblings=siblings))
+    groups = {person: group[0] for group in components for person in group}
+    edges, incoming = defaultdict(set), defaultdict(int)
+    for parent, child in state["parents"]:
+        a, b = groups.get(parent, parent), groups.get(child, child)
+        incoming.setdefault(a, 0)
+        if b not in edges[a]:
+            edges[a].add(b)
+            incoming[b] += 1
+    ready = [person for person, count in incoming.items() if count == 0]
+    for person in ready:
+        for child in edges[person]:
+            incoming[child] -= 1
+            if incoming[child] == 0:
+                ready.append(child)
+    if len(ready) != len(incoming):
+        raise FamilyError("Эта связь противоречит записанным поколениям.")
 
 
 def spouse(state, user):
@@ -107,9 +131,10 @@ class FamilyTreeMixin:
     def _family_state(self, chat):
         row = self.connection.execute("SELECT revision,state FROM family_trees WHERE chat_id=?", (chat,)).fetchone()
         if row is None:
-            return 0, dict(origin=None, branches=[], parents=[], marriages=[], judges=[])
+            return 0, dict(origin=None, branches=[], parents=[], marriages=[], siblings=[], judges=[])
         state = json.loads(row["state"])
         state.setdefault("branches", [])
+        state.setdefault("siblings", [])
         return row["revision"], state
 
     def _family_write(self, chat, revision, state, actor, description):
@@ -158,7 +183,7 @@ class FamilyTreeMixin:
             judges = state["judges"] if owner else []
             title = self.connection.execute("SELECT title FROM chats WHERE chat_id=?", (chat,)).fetchone()
             view_ids = map_ids | set(judges) | {entry["actor"] for entry in log}
-            edit_ids = ({i for edge in state["parents"] + state["marriages"] for i in edge}
+            edit_ids = ({i for edge in state["parents"] + state["marriages"] + state["siblings"] for i in edge}
                         | set(judges) | set(state["branches"])) if owner else set()
             view_ids |= edit_ids
             partner = spouse(state, actor)
@@ -170,8 +195,9 @@ class FamilyTreeMixin:
                 row.pop("chat_id")
             return dict(revision=revision, origin=state["origin"], members=sorted(members), detached=detached,
                         branches=state["branches"] if state["origin"] == EMPTY_ORIGIN else [],
-                        parents=state["parents"], marriages=state["marriages"],
-                        editor=dict(parents=state["parents"], marriages=state["marriages"]) if owner else None,
+                        parents=state["parents"], marriages=state["marriages"], siblings=state["siblings"],
+                        editor=dict(parents=state["parents"], marriages=state["marriages"],
+                                    siblings=state["siblings"]) if owner else None,
                         people=self._family_people(chat, view_ids), owner=owner, judge=judge, judges=judges,
                         cases=cases, more_cases=more, log=log, spouse=partner, actor=actor,
                         title=title["title"] if title else "Семейный архив")
@@ -260,6 +286,7 @@ class FamilyTreeMixin:
             if sum(c == b for _, c in state["parents"]) >= 2:
                 raise FamilyError("У участника уже два родителя.")
             state["parents"].append([a, b])
+            validate_generations(state)
             index = parent_index(state)
             if any(close_relatives(state, x, y, index) for x, y in state["marriages"]):
                 raise FamilyError("Эта связь сделает супругов близкими родственниками.")
@@ -269,6 +296,23 @@ class FamilyTreeMixin:
                 raise FamilyError("Такой связи больше нет.")
             state["parents"].remove([a, b])
             description = "удалена родственная связь"
+        elif operation in ("sibling", "unsibling"):
+            if not a or not b or a == b:
+                raise FamilyError("Выбери двух разных участников.")
+            pair = sorted((a, b))
+            if operation == "sibling":
+                if pair in state["siblings"]:
+                    raise FamilyError("Эта связь братьев или сестёр уже записана.")
+                if spouse(state, a) == b:
+                    raise FamilyError("Супругов нельзя записать как брата или сестру.")
+                state["siblings"].append(pair)
+                validate_generations(state)
+                description = "добавлена связь братьев или сестёр"
+            else:
+                if pair not in state["siblings"]:
+                    raise FamilyError("Такая связь братьев или сестёр не записана.")
+                state["siblings"].remove(pair)
+                description = "удалена связь братьев или сестёр"
         elif operation == "marry":
             if not a or not b or a == b:
                 raise FamilyError("Выбери двух разных участников.")
@@ -293,7 +337,7 @@ class FamilyTreeMixin:
             raise FamilyError("Неизвестная правка.")
         ids = [i for i in (a, b) if i not in (None, EMPTY_ORIGIN)]
         names = {p["id"]: p["name"] for p in self._family_people(chat, ids)}
-        separator = " и " if operation == "marry" else " → "
+        separator = " и " if operation in ("marry", "sibling", "unsibling") else " → "
         return description + (": " + separator.join(names[i] for i in ids) if ids else "") + (f". {reason}" if reason else "")
 
     async def family_edit(self, chat, actor, operation, a, b=None, reason="", *, expected=None):

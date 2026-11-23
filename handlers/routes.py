@@ -221,6 +221,7 @@ IMMUNITY_TEXT = "Сочные титяндры @Kit_kitovich23, настольк
 SLEEPY_BLOCKED_ATTACKERS = {"cheto_neveru", "kit_kitovich23"}
 SLEEPY_PROTECTION_TEXT = "Не трожь отца!"
 MODERATION_RE = re.compile(r"^[!/](бан|мут|пред)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
+DELETE_BOT_REPLY_RE = re.compile(r"^\s*(?:[!/]?удали)(?:@\w+)?\s*$", re.IGNORECASE)
 RESTORE_RE = re.compile(r"^[!/](разбан|размут)(?:@\w+)?(?:\s|$)", re.IGNORECASE)
 CLEAR_RE = re.compile(
     r"^[!/](?:снять\s+(?:преды|обвинения)|очистить\s+репутацию)(?:@\w+)?(?:\s|$)",
@@ -879,6 +880,8 @@ class TrackingMiddleware(BaseMiddleware):
 
 
 async def has_restrict_rights(bot: Bot, chat_id: int, user_id: int) -> bool:
+    if user_id == CUSTOM_COMMAND_OWNER_ID:
+        return True
     member = await bot.get_chat_member(chat_id, user_id)
     if isinstance(member, ChatMemberOwner):
         return True
@@ -897,7 +900,7 @@ async def is_chat_participant(bot: Bot, chat_id: int, user_id: int) -> bool:
 
 
 async def ensure_admin(message: Message, bot: Bot) -> bool:
-    if not message.from_user:
+    if not message.from_user or getattr(message, "sender_chat", None):
         await message.answer("Команда недоступна анонимным администраторам.")
         return False
     try:
@@ -5249,6 +5252,34 @@ def create_router(
                 f"Не получилось применить действие: {html.escape(str(error))}"
             )
 
+    @router.message(F.reply_to_message, F.text.regexp(DELETE_BOT_REPLY_RE))
+    async def delete_bot_reply(message: Message, bot: Bot) -> None:
+        actor, reply = message.from_user, message.reply_to_message
+        if not actor or actor.is_bot or message.sender_chat:
+            return
+        if message.chat.type != "private" and message.chat.type not in GROUP_TYPES:
+            return
+        if actor.id != CUSTOM_COMMAND_OWNER_ID:
+            if message.chat.type not in GROUP_TYPES:
+                return
+            try:
+                member = await bot.get_chat_member(message.chat.id, actor.id)
+            except (TelegramBadRequest, TelegramForbiddenError):
+                return
+            allowed = isinstance(member, ChatMemberOwner) or (
+                isinstance(member, ChatMemberAdministrator) and member.can_delete_messages
+            )
+            if not allowed:
+                return
+        if (not reply or not reply.from_user or reply.from_user.id != bot.id
+                or reply.sender_chat or reply.chat.id != message.chat.id):
+            await message.answer("Ответь «удали» на сообщение Гнида-бота.")
+            return
+        try:
+            await bot.delete_message(message.chat.id, reply.message_id)
+        except (TelegramBadRequest, TelegramForbiddenError):
+            await message.answer("Не удалось удалить сообщение. Проверь права бота и возраст сообщения.")
+
     @router.message(text_or_caption_regexp(MODERATION_RE))
     async def moderation(message: Message, bot: Bot) -> None:
         if message.chat.type not in GROUP_TYPES or not await ensure_admin(message, bot):
@@ -5258,21 +5289,28 @@ def create_router(
         if not match or not message.from_user:
             return
         action = match.group(1).casefold()
-        target = await resolve_target(message, database, command_payload(text))
+        payload = command_payload(text)
+        first, rest = split_first(payload)
+        if action == "бан" and first.casefold() == "себя":
+            target = (message.from_user.id, display_name(message.from_user), rest)
+        else:
+            target = await resolve_target(message, database, payload)
         if not target:
             return
         target_id, target_name, remainder = target
-        if await stored_sleepy_attack_is_blocked(
-            database, message.chat.id, message.from_user, target_id
-        ):
-            await message.answer(SLEEPY_PROTECTION_TEXT)
-            return
-        if await target_is_immune(database, message.chat.id, target_id):
-            await message.answer(IMMUNITY_TEXT)
-            return
         if target_id == message.from_user.id:
-            await message.answer("На себя эту команду применить нельзя.")
-            return
+            if action != "бан":
+                await message.answer("На себя эту команду применить нельзя.")
+                return
+        else:
+            if await stored_sleepy_attack_is_blocked(
+                database, message.chat.id, message.from_user, target_id
+            ):
+                await message.answer(SLEEPY_PROTECTION_TEXT)
+                return
+            if await target_is_immune(database, message.chat.id, target_id):
+                await message.answer(IMMUNITY_TEXT)
+                return
 
         reason = remainder.strip() or "не указана"
         try:
@@ -5817,8 +5855,7 @@ def create_router(
                     id=f"{author}:{game_type}", title=title,
                     description="Дуэль на 1 HP без ставок прямо в этой переписке",
                     input_message_content=InputTextMessageContent(
-                        message_text=f"{icon} {creator_name} вызывает на перестрелку!\n"
-                                     "❤️ По 1 HP, без ставок. Соперник, нажми «Принять вызов».",
+                        message_text=f"{icon} {creator_name} вызывает на перестрелку.",
                         parse_mode=None,
                     ),
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[[

@@ -86,6 +86,26 @@ class FamilyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p["id"] for p in swap["removed"]],[1,2,3,4])
         self.assertEqual((await self.db.family_view(-100,2,False))["members"],[5])
 
+    async def test_siblings_connect_components_and_reject_impossible_generations(self):
+        await self.edit("origin", 1)
+        await self.edit("link", 1, 2)
+        await self.edit("link", 3, 4)
+        await self.edit("sibling", 3, 2)
+        view = await self.db.family_view(-100, 2, True)
+        self.assertEqual(view["members"], [1, 2, 3, 4])
+        self.assertEqual(view["siblings"], [[2, 3]])
+        self.assertEqual(view["parents"], [[1, 2], [3, 4]])
+        with self.assertRaisesRegex(FamilyError, "близкими|Близкие"):
+            await self.db.family_offer(-100, 2, 3)
+        for operation, a, b in [("sibling", 2, 3), ("sibling", 2, 4), ("link", 2, 3), ("sibling", 0, 3)]:
+            with self.subTest(operation=operation, a=a, b=b), self.assertRaises(FamilyError):
+                await self.db.family_edit(-100, 1, operation, a, b)
+        await self.edit("unsibling", 3, 2)
+        view = await self.db.family_view(-100, 1, True)
+        self.assertEqual(view["members"], [1, 2])
+        self.assertEqual(view["detached"], [[3, 4]])
+        self.assertEqual(view["siblings"], [])
+
     async def test_offer_confirmation_is_single_use_and_recipient_only(self):
         token = await self.db.family_offer(-100,1,3)
         for chat,actor in [(-200,3),(-100,1),(-100,2)]:
@@ -256,3 +276,10 @@ class FamilyTest(unittest.IsolatedAsyncioTestCase):
         view = await (await client.get(path,headers=auth(2))).json()
         self.assertEqual(view["spouse"],3)
         self.assertEqual(view["marriages"],[[2,3]])
+        siblings = dict(op="preview", edit="sibling", a=2, b=4)
+        self.assertEqual((await client.post(path, json=siblings, headers=auth(2))).status, 400)
+        preview = await (await client.post(path, json=siblings, headers=auth(1))).json()
+        siblings.update(op="apply", revision=preview["revision"], proof=preview["proof"])
+        self.assertEqual((await client.post(path, json=siblings, headers=auth(1))).status, 200)
+        view = await (await client.get(path, headers=auth(2))).json()
+        self.assertEqual(view["siblings"], [[2, 4]])

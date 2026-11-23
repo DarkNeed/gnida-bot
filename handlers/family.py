@@ -15,6 +15,7 @@ from handlers.routes import message_content, text_or_caption_regexp
 FAMILY_RE = re.compile(r"^\s*[/!]древо(?:@\w+)?(?=\s|$)", re.I)
 OFFER_RE = re.compile(r"family:([0-9a-f]{24}):(accept|decline|cancel)")
 EDITS = {("исток",):"origin", ("связь",):"link", ("убрать","связь"):"unlink",
+         ("родные",):"sibling", ("убрать","родных"):"unsibling",
          ("судья","+"):"appoint", ("судья","-"):"revoke"}
 
 
@@ -113,7 +114,15 @@ def create_family_router(db, bot, username, enabled):
                 if not owner:
                     raise FamilyError("Редактировать древо может владелец чата или создатель бота.")
                 arguments = parts[len(prefix):]
-                if edit in ("link","unlink"):
+                if edit in ("sibling", "unsibling"):
+                    if len(arguments) == 2:
+                        targets = arguments
+                    elif len(arguments) == 1 and message.reply_to_message:
+                        targets = [arguments[0], None]
+                    else:
+                        raise FamilyError("Укажи двух участников: !древо родные @ник1 @ник2.")
+                    ids = [(await pick(message, arg, historical=edit=="unsibling"))[0] for arg in targets]
+                elif edit in ("link","unlink"):
                     if arguments and arguments[0].casefold() == "исток" and len(arguments) <= 2:
                         target, _ = await pick(message, arguments[1] if len(arguments) == 2 else None, historical=edit=="unlink")
                         ids = [EMPTY_ORIGIN, target]
@@ -137,7 +146,8 @@ def create_family_router(db, bot, username, enabled):
             if owner:
                 commands += ("\n!древо исток пустой · !древо исток @ник · !древо судья +/− @ник\n"
                              "!древо связь @родитель @ребёнок · !древо связь исток @ник\n"
-                             "!древо убрать связь @родитель @ребёнок · !древо убрать связь исток @ник")
+                             "!древо убрать связь @родитель @ребёнок · !древо убрать связь исток @ник\n"
+                             "!древо родные @ник1 @ник2 · !древо убрать родных @ник1 @ник2")
             await message.answer(commands)
         except ValueError as error:
             await message.answer(str(error))

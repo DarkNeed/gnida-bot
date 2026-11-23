@@ -9,6 +9,7 @@ from pathlib import Path
 
 from aiogram.types import Chat, ChatMemberOwner, Message, MessageEntity, PhotoSize, User
 from checkers import initial_board
+from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from database import Database
 from parsing import command_payload
 
@@ -517,6 +518,52 @@ class RoutePatternTests(unittest.TestCase):
 
 
 class TargetResolutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_owner_can_self_ban_without_telegram_admin_role(self):
+        database = SimpleNamespace(record_action=AsyncMock())
+        router = create_router(database, kargassia_chat_id=None)
+        handler = next(h.callback for h in router.message.handlers if h.callback.__name__ == "moderation")
+        bot = SimpleNamespace(get_chat_member=AsyncMock(return_value=None), ban_chat_member=AsyncMock())
+        message = SimpleNamespace(
+            chat=Chat(id=-1001, type="supergroup"), text="!бан себя тест",
+            from_user=User(id=CUSTOM_COMMAND_OWNER_ID, is_bot=False, first_name="Владелец"),
+            reply_to_message=None, caption=None, answer=AsyncMock(), sender_chat=None,
+        )
+        await handler(message, bot)
+        bot.get_chat_member.assert_not_awaited()
+        bot.ban_chat_member.assert_awaited_once_with(-1001, CUSTOM_COMMAND_OWNER_ID)
+        database.record_action.assert_awaited_once_with(
+            -1001, CUSTOM_COMMAND_OWNER_ID, "ban", "тест", CUSTOM_COMMAND_OWNER_ID
+        )
+        bot.ban_chat_member.reset_mock()
+        message.from_user = User(id=20, is_bot=False, first_name="Участник")
+        await handler(message, bot)
+        bot.get_chat_member.assert_awaited_once_with(-1001, 20)
+        bot.ban_chat_member.assert_not_awaited()
+
+    async def test_delete_checks_requester_and_exact_bot_reply(self):
+        router = create_router(SimpleNamespace(), kargassia_chat_id=None)
+        handler = next(h.callback for h in router.message.handlers if h.callback.__name__ == "delete_bot_reply")
+        actor = User(id=CUSTOM_COMMAND_OWNER_ID, is_bot=False, first_name="Владелец")
+        member = User(id=20, is_bot=False, first_name="Участник")
+        bot = SimpleNamespace(id=44, get_chat_member=AsyncMock(return_value=None), delete_message=AsyncMock())
+        chat = Chat(id=-1001, type="supergroup")
+        reply = SimpleNamespace(chat=chat, message_id=42, sender_chat=None, from_user=User(id=44, is_bot=True, first_name="Бот"))
+        message = SimpleNamespace(chat=chat, from_user=actor, sender_chat=None, reply_to_message=reply, answer=AsyncMock())
+        await handler(message, bot)
+        bot.delete_message.assert_awaited_once_with(chat.id, 42)
+        bot.get_chat_member.assert_not_awaited()
+        bot.delete_message.reset_mock()
+        message.from_user = member
+        await handler(message, bot)
+        bot.delete_message.assert_not_awaited()
+        bot.get_chat_member.return_value = ChatMemberOwner(status="creator", user=member, is_anonymous=False)
+        await handler(message, bot)
+        bot.delete_message.assert_awaited_once_with(chat.id, 42)
+        bot.delete_message.reset_mock()
+        reply.from_user = User(id=45, is_bot=True, first_name="Другой бот")
+        await handler(message, bot)
+        bot.delete_message.assert_not_awaited()
+
     async def test_friendly_rps_does_not_transfer_losers_slave(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "friendly.sqlite3")

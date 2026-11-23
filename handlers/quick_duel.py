@@ -10,7 +10,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from handlers.routes import PRIVATE_GAMES_SCOPE, display_name, message_content, text_or_caption_regexp
-from quick_duel import (ACTIONS, DISRUPT_CHANCE, DuelError, HIT_CHANCES, INLINE_INVITE_PREFIX, INVITE_SECONDS,
+from quick_duel import (ACTIONS, DISRUPT_CHANCE, DuelError, HIT_CHANCES, INLINE_INVITE_PREFIX,
                         MAX_ROUNDS, TURN_SECONDS, inline_invite_data)
 
 
@@ -42,34 +42,28 @@ def duel_text(duel):
     names = [escape(fighter['name']) for fighter in state['fighters']]
     lines = ['🤠 <b>Дуэль</b>']
     if status == 'pending':
-        lines.extend([f"{names[0]} вызывает <a href=\"tg://user?id={duel['guest']}\">{names[1]}</a>.",
-                      f'❤️ По 1 HP · без ставок · принять за {INVITE_SECONDS // 60} мин.'])
+        lines.append(f"{names[0]} вызывает <a href=\"tg://user?id={duel['guest']}\">{names[1]}</a>.")
         return '\n'.join(lines)
     endings = {'declined': '❌ Вызов отклонён.', 'cancelled': '↩️ Вызов отозван.',
                'expired': '⌛ Время на принятие вызова вышло.'}
     if status in endings:
         return '\n'.join(lines + [endings[status]])
-    if status == 'active':
-        lines[0] += f" · раунд {state['round']}/{MAX_ROUNDS}"
-    for name, fighter in zip(names, state['fighters']):
-        hp, aim = fighter['hp'], fighter['aim']
-        detail = f" · 🔫 {HIT_CHANCES[aim]}%" if status == 'active' else ''
-        if status == 'active' and fighter['cooldown']:
-            detail += ' · 💨 перезарядка'
-        lines.append(f"{'❤️' if hp else '🖤'} <b>{name}</b>: {hp} HP · 🎯 {aim}/2{detail}")
-    last = state['last']
-    if last:
-        lines.append(f"\n<b>Итог раунда {last['round']}</b>")
-        for name, move, effects in zip(names, last['moves'], last['effects']):
-            lines.append(f"{name}: {ACTIONS[move]} — {escape(', '.join(effects))}")
-    if status == 'active':
-        lines.append(f'\n🤫 Выбор скрыт до конца раунда · {TURN_SECONDS} сек. на ход.')
-    else:
+    if status != 'active':
         winner, reason = state['winner'], state['reason']
-        detail = {'timeout': 'Время на ход вышло.', 'round_limit': f'Сыграно {MAX_ROUNDS} раундов.'}.get(reason)
-        lines.append('\n🤝 Ничья.' if winner is None else f'\n🏆 Победитель: <b>{names[winner]}</b>.')
+        detail = {'timeout': 'Время вышло.', 'round_limit': f'Лимит {MAX_ROUNDS} раундов.'}.get(reason)
+        lines.append('🤝 Ничья.' if winner is None else f'🏆 Победитель: <b>{names[winner]}</b>.')
         if detail:
             lines.append(detail)
+        return '\n'.join(lines)
+    lines[0] += f" · {state['round']}/{MAX_ROUNDS} · {TURN_SECONDS} с"
+    for name, fighter in zip(names, state['fighters']):
+        reload = ' · перезарядка' if fighter['cooldown'] else ''
+        lines.append(f"<b>{name}</b> · 🔫 {HIT_CHANCES[fighter['aim']]}%{reload}")
+    last = state['last']
+    if last:
+        lines.append(f"<b>Итог раунда {last['round']}</b>")
+        for name, effects in zip(names, last['effects']):
+            lines.append(f"{name}: {escape(', '.join(effects))}")
     return '\n'.join(lines)
 
 

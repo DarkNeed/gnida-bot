@@ -16,7 +16,8 @@
     .match(/^family_(-[1-9]\d{0,15})(?:_([a-z]+)(?:_(\d{1,16}))?(?:_(\d{1,16}))?)?$/);
   const base=entry ? '/api/family/'+entry[1] : '';
   const kinds={blank:'Создать пустой Исток',origin:'Назначить участника Истоком',attach:'Прикрепить ветвь к Истоку',
-    detach:'Отсоединить ветвь от Истока',link:'Добавить родство',marry:'Внести брак',unlink:'Убрать родство',appoint:'Назначить судью',revoke:'Снять судью'};
+    detach:'Отсоединить ветвь от Истока',link:'Добавить родство',sibling:'Добавить брата или сестру',
+    unsibling:'Убрать связь брата или сестры',marry:'Внести брак',unlink:'Убрать родство',appoint:'Назначить судью',revoke:'Снять судью'};
   const editPayload=(kind,fields)=>kind==='blank'?{edit:'origin',a:0}:
     kind==='attach'||kind==='detach'?{edit:kind==='attach'?'link':'unlink',a:0,b:fields.b}:{edit:kind,...fields};
   let state, people=new Map(), tab=entry?.[2]==='file'?'file':'tree', selected, scene, activeEditor='origin', chosen={}, pending, busy=false;
@@ -55,9 +56,11 @@
     const detached=state.detached||[], ids=[...state.members,...detached.flat()];
     const out=new Map(ids.map(id=>[id,[]])), ins=new Map(ids.map(id=>[id,[]]));
     const partners=new Map(state.marriages.flatMap(([a,b])=>[[a,b],[b,a]]));
+    const siblings=new Map(ids.map(id=>[id,[]]));
+    for(const [a,b] of state.siblings||[]){siblings.get(a).push(b);siblings.get(b).push(a);}
     for(const [p,c] of [...state.parents,...(state.branches||[]).map(id=>[0,id])]){out.get(p).push(c);ins.get(c).push(p);}
-    const main=state.members.length?layoutPart(state.members,state.origin,out,ins,partners):null;
-    const parts=detached.map(ids=>layoutPart(ids,null,out,ins,partners));
+    const main=state.members.length?layoutPart(state.members,state.origin,out,ins,partners,siblings):null;
+    const parts=detached.map(ids=>layoutPart(ids,null,out,ins,partners,siblings));
     const width=Math.max(main?.width||300,...parts.map(part=>part.width),parts.length>1?600:300);
     const spots=new Map();
     const place=(part,x,y)=>{for(const [id,[u,v]] of part.spots)spots.set(id,[x+u,y+v]);};
@@ -70,9 +73,36 @@
       x+=part.width;rowHeight=Math.max(rowHeight,part.height);
     }
     const height=parts.length?y+rowHeight+12:main.height;
-    return {spots,width,height,partners,ins,out,detachedStart:parts.length?start:null};
+    return {spots,width,height,partners,ins,out,siblings,detachedStart:parts.length?start:null};
   }
-  function layoutPart(ids,origin,out,ins,partners) {
+  function alignSiblings(ids,rank,out,siblings) {
+    const groupOf=new Map(), groups=[];
+    for(const id of ids){
+      if(groupOf.has(id))continue;
+      const group={ids:[id],rank:0,next:new Set(),incoming:0};
+      groups.push(group);
+      groupOf.set(id,group);
+      for(const person of group.ids){
+        group.rank=Math.max(group.rank,rank.get(person));
+        for(const other of siblings.get(person))if(!groupOf.has(other)){
+          groupOf.set(other,group);
+          group.ids.push(other);
+        }
+      }
+    }
+    for(const id of ids)for(const child of out.get(id)){
+      const a=groupOf.get(id), b=groupOf.get(child);
+      if(!a.next.has(b)){a.next.add(b);b.incoming++;}
+    }
+    const ready=groups.filter(group=>!group.incoming);
+    for(const group of ready)for(const child of group.next){
+      child.rank=Math.max(child.rank,group.rank+1);
+      if(--child.incoming===0)ready.push(child);
+    }
+    for(const group of ready)for(const id of group.ids)rank.set(id,group.rank);
+    return groupOf;
+  }
+  function layoutPart(ids,origin,out,ins,partners,siblings) {
     const rank=new Map(ids.map(id=>[id,origin===null||id===origin?0:1]));
     const remaining=new Map(ids.map(id=>[id,ins.get(id).length]));
     const order=ids.filter(id=>!remaining.get(id)), direct=new Set([origin]);
@@ -92,9 +122,11 @@
       if(rank.has(partner))rank.set(id,Math.max(rank.get(id),rank.get(partner)));
     }
     for(const p of order)for(const c of out.get(p))rank.set(c,Math.max(rank.get(c),rank.get(p)+1));
-    const rows=[];
-    for(const id of ids)(rows[rank.get(id)]??=[]).push(id);
-    const width=Math.max(origin===null?215:510,...rows.filter(Boolean).map(row=>row.length*187+28));
+    const groupOf=alignSiblings(ids,rank,out,siblings);
+    const ranks=[];
+    for(const id of ids)(ranks[rank.get(id)]??=[]).push(id);
+    const rows=ranks.filter(Boolean);
+    const width=Math.max(origin===null?215:510,...rows.map(row=>row.length*187+28));
     const height=rows.length*114+10, spots=new Map();
     rows.forEach((row,y)=>{
       const slot=new Set(row);
@@ -105,9 +137,13 @@
       }
       const ranked=row.map(id=>[id,weight(id)]).sort(([a,x],[b,y])=>x-y||a-b);
       const placed=[];
-      for(const [id] of ranked)if(slot.delete(id)){
-        placed.push(id);
-        const p=partners.get(id);if(slot.delete(p))placed.push(p);
+      for(const [id] of ranked)if(slot.has(id)){
+        const siblings=groupOf.get(id).ids.filter(person=>slot.delete(person));
+        placed.push(...siblings);
+        for(const person of siblings){
+          const partner=partners.get(person);
+          if(slot.has(partner))for(const member of groupOf.get(partner).ids)if(slot.delete(member))placed.push(member);
+        }
       }
       placed.forEach((id,i)=>spots.set(id,[width*(i+.5)/placed.length,49+y*114]));
     });
@@ -124,6 +160,10 @@
         paths.push('<path class="spouse" d="M'+x+' '+y+' H'+u+'"/>');
       }
       rings.push('<span class="ring" aria-hidden="true" style="left:'+mid+'px;top:'+((y+v)/2)+'px">💍</span>');
+    }
+    for(const [a,b] of state.siblings||[]){
+      const [x,y]=spots.get(a), [u,v]=spots.get(b);
+      paths.push('<path class="sibling" d="M'+x+' '+(y+29)+' V'+(y+41)+' H'+u+' V'+(v+29)+'"/>');
     }
     for(const [id,from] of ins){
       const [x,y]=spots.get(id),end=y-32;
@@ -185,8 +225,11 @@
   function selectedInfo(){
     const party=scene.partners.get(selected), children=scene.out.get(selected)||[];
     if(selected===0)return '<strong>🌌 Исток</strong> · ветвей: '+children.length;
+    const siblings=scene.siblings.get(selected)||[];
     return '<strong>'+esc(name(selected))+'</strong> · родители: '+(scene.ins.get(selected)?.filter(id=>id!==0).length||0)+' · дети: '+children.length+
-      (party===undefined?'':' · в браке: '+esc(name(party)));
+      (party===undefined?'':' · в браке: '+esc(name(party)))+
+      (siblings.length?' · братья и сёстры: '+siblings.map(id=>esc(name(id))).join(', '):'')+
+      (state.owner?' '+button('Добавить брата или сестру','edit:sibling:'+selected):'');
   }
   function tree() {
     const noOrigin=state.origin==null?'<div class="row"><p class="muted">Владелец ещё не назначил Исток.</p>'+
@@ -200,6 +243,7 @@
       graph()+[...scene.spots.keys()].sort((a,b)=>
         scene.spots.get(a)[1]-scene.spots.get(b)[1]||scene.spots.get(a)[0]-scene.spots.get(b)[0]).map(card).join('')+'</div></div></div>'+
       '<div class="map-controls"><div class="legend"><span>Родство</span><span class="married">Брак</span>'+
+      (state.siblings?.length?'<span class="siblings">Братья и сёстры</span>':'')+
       (state.origin===0?'<span class="attached">Ветвь Истока</span>':'')+'</div><div class="actions">'+
       '<output aria-label="Масштаб" class="muted"></output>'+button('−','zoom:out')+button('+','zoom:in')+button('Всё древо','zoom:fit')+
       (state.origin==null?'':button('К Истоку','zoom:root'))+
@@ -329,14 +373,16 @@
       '</section>';
   }
   function editor() {
-    const wedding=activeEditor==='marry', two=wedding||['link','unlink'].includes(activeEditor);
+    const wedding=activeEditor==='marry', sibling=['sibling','unsibling'].includes(activeEditor);
+    const two=wedding||sibling||['link','unlink'].includes(activeEditor);
     const selectedPerson=chosen.a, related=(state.editor?.parents||[]).filter(p=>p.includes(selectedPerson));
+    const siblings=(state.editor?.siblings||[]).filter(p=>p.includes(selectedPerson));
     const marriage=(state.editor?.marriages||[]).find(pair=>pair.includes(selectedPerson));
     const branchMode=activeEditor==='attach'||activeEditor==='detach';
     const fields=activeEditor==='blank'?'<p class="muted">Галактика без привязки к игроку. Существующее древо сохранится.</p>':
       branchMode?picker('b','Участник в начале ветви',chosen.b?name(chosen.b):''):
-      picker('a',wedding?'Первый супруг':two?'Родитель':'Участник',chosen.a?name(chosen.a):'')+
-      (two?picker('b',wedding?'Второй супруг':'Ребёнок',chosen.b?name(chosen.b):''):'');
+      picker('a',wedding?'Первый супруг':sibling?'Участник':two?'Родитель':'Участник',chosen.a?name(chosen.a):'')+
+      (two?picker('b',wedding?'Второй супруг':sibling?'Брат или сестра':'Ребёнок',chosen.b?name(chosen.b):''):'');
     return '<section class="panel stack"><h2>Редактор связей</h2><form class="stack" id="edit"><label>Действие<select id="edit-kind">'+
       Object.entries(kinds).filter(([id])=>state.origin===0||id===activeEditor||!['attach','detach'].includes(id))
         .map(([id,label])=>'<option value="'+id+'"'+(id===activeEditor?' selected':'')+'>'+label+'</option>').join('')+
@@ -346,6 +392,8 @@
       '<button class="primary">Проверить правку</button></form>'+
       (related.length?'<div class="stack"><h3>Родство выбранного участника</h3>'+related.map(([a,b])=>'<div class="row"><span>'+esc(name(a))+' → '+esc(name(b))+'</span>'+
         button('Убрать','unlink:'+a+':'+b,'danger')+'</div>').join('')+'</div>':'')+
+      (siblings.length?'<div class="stack"><h3>Братья и сёстры</h3>'+siblings.map(([a,b])=>'<div class="row"><span>'+esc(name(a===selectedPerson?b:a))+'</span>'+
+        button('Убрать','unsibling:'+a+':'+b,'danger')+'</div>').join('')+'</div>':'')+
       (marriage?'<p class="muted">💍 '+marriage.map(id=>esc(name(id))).join(' и ')+' · расторжение только через суд</p>':'')+'</section>'+
       (state.origin===0?'<section class="panel stack"><h2>Ветви Истока</h2>'+
         ((state.branches||[]).map(id=>'<div class="row"><strong>'+esc(name(id))+'</strong>'+button('Отсоединить','unlink:0:'+id,'danger')+'</div>').join('')
@@ -421,7 +469,7 @@
       $('.results',host).hidden=true;
       if(field==='tree'){select(id,true);return;}
       chosen[field]=id;const input=$('input',host);input.value=name(id);input.focus();
-      if(field==='a'&&activeEditor==='unlink')render();
+      if(field==='a'&&['unlink','unsibling','sibling'].includes(activeEditor))render();
       return;
     }
     const [action,a,c]=(b.dataset.action||'').split(':');
@@ -429,8 +477,8 @@
       if(action==='cases'){caseID=null;casesOffset=Math.max(0,casesOffset+(a==='next'?20:-20));}
       await load();render();
     });
-    if(action==='edit'){activeEditor=a;chosen={};tab='editor';render();}
-    if(action==='unlink'||action==='revoke'){
+    if(action==='edit'){activeEditor=a;chosen=c?{a:Number(c)}:{};tab='editor';render();}
+    if(action==='unlink'||action==='unsibling'||action==='revoke'){
       activeEditor=action==='unlink'&&a==='0'?'detach':action;chosen={a:Number(a),...(c?{b:Number(c)}:{})};
       run(()=>preview({edit:action,...chosen}));
     }
