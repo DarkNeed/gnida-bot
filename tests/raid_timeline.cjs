@@ -1,11 +1,20 @@
 const assert=require('node:assert/strict'),T=require('../webapp/raid-timeline.js');
-const q={round:1,time:0,phase:'choose',entries:[{actor:'p',at:2},{actor:'weak',at:3.5},{actor:'mage',at:3.5}]};
-const before=T.model(q),during=T.model({...q,phase:'resolve'},2),released=T.model({...q,phase:'defense'},3.5);
-assert(before.every(x=>x.position<1));assert(during.every((x,i)=>x.position>before[i].position));
-assert(during[0].active);assert(!during[1].active);assert.equal(released[1].position,released[2].position);
-assert(released[1].active&&released[2].active);assert.notEqual(released[1].lane,released[2].lane);
-assert(released[0].done);assert.equal(T.model(q)[0].position,before[0].position);
-assert(T.model(q,100).every(x=>x.position===1));assert(T.model(q,-10).every(x=>x.position===0));
+const queue={version:3,round:1,time:0,phase:'choose',entries:[
+ {actor:'weak',started:-1,at:1,duration:2,skill:'stab'},
+ {actor:'mage',started:-.5,at:2.5,duration:3,skill:'spell'},
+]};
+const weak=T.model(queue,'weak'),mage=T.model(queue,'mage');
+assert.equal(weak.progress,.5);
+assert.equal(mage.remaining,2.5);
+assert.equal(T.model({...queue,time:.5},'weak').progress,.75);
+assert.deepEqual(T.predict(weak,0,.5),{outcome:'before',end:.75});
+assert.deepEqual(T.predict(weak,0,1),{outcome:'together',end:1});
+assert.deepEqual(T.predict(weak,0,1.5),{outcome:'after',end:1});
+assert.equal(T.predict(mage,0,1.5).outcome,'before');
+assert.equal(T.model({...queue,phase:'defense',time:1.2,entries:[{...weak,resolving:true},mage]},'weak').progress,1);
+assert.equal(T.model({...queue,time:1.2},'weak'),null,'old cast is not shown after release');
+assert.equal(T.model({...queue,entries:[{actor:'weak',started:0,at:2,duration:2}]},'weak').progress,0);
+assert.deepEqual(T.model(queue,'weak'),weak,'progress is a pure function of server time');
 const e=(round,cast_at,extra={})=>({round,cast_at,...extra});
 assert.deepEqual(T.eventGroups([e(1,2),e(1,3),e(1,3),e(2,3),e(2,3,{chaplain_event:'rewind'}),e(2,3),e(2,undefined)]).map(g=>g.length),[1,2,1,1,1,1]);
-console.log('PASS moving cast markers, simultaneous group, distinct lanes, completion and next-round reset');
+console.log('PASS per-enemy progress, projected action order, exact ties and cast reset');

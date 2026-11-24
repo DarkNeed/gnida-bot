@@ -496,9 +496,13 @@ def advance(data, skills, rng=None):
 
 def public(data, viewer):
     q, fighters = clock(data), roster(data)
-    entries = [dict(actor=e['actor'], at=round(e['end']-q['time'], 3), team='players' if e['actor'] in humans(data) else 'enemies',
-                    skill=e['skill'] if e['actor'] in _enemy_ids(data) or fighters[e['actor']]['controller_id'] == viewer else None,
-                    targets=e.get('intent', {}).get('targets', [e['target']])) for e in q['pending'] + q['group']]
+    human_keys, enemy_keys = set(humans(data)), set(_enemy_ids(data))
+    entries = [dict(actor=e['actor'], at=round(e['end']-q['time'], 3),
+                    started=round(e['start']-q['time'], 3), duration=e['duration'], resolving=resolving,
+                    team='players' if e['actor'] in human_keys else 'enemies',
+                    skill=e['skill'] if e['actor'] in enemy_keys or fighters[e['actor']]['controller_id'] == viewer else None,
+                    targets=e.get('intent', {}).get('targets', [e['target']]))
+               for resolving, group in ((False, q['pending']), (True, q['group'])) for e in group]
     return dict(version=3, colors={key: COLORS[i % len(COLORS)] for i, key in enumerate(fighters)}, entries=entries,
                 time=0, absolute_time=q['time'], animate_from=min(0, q.get('previous_time', q['time'])-q['time']),
                 horizon=max([5, *(e['at'] for e in entries)]),

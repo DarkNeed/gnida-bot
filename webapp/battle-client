@@ -392,10 +392,37 @@ async function api(path,body){
   if(Number.isFinite(data.server_time))serverClockOffset=data.server_time*1000-Date.now();
   return data;
 }
-function hud(s,key){
-  return '<div class="hud '+(key===near?"player":"enemy")+'"><div class="row"><div class="name">'+esc(s.name)+'</div><span class="badge">Lv.'+s.level+'</span><button class="stat-button" data-inspect="'+key+'" aria-label="Статистика '+esc(s.name)+'">ⓘ</button></div><div class="meta">'+esc(s.class_name)+(s.controlled?" · контроль −20%":"")+'</div><div class="barline"><span>HP</span><span id="hp-'+key+'">'+s.hp+" / "+s.stats.max_hp+'</span></div><div class="bar" id="health-'+key+'"><i style="width:'+100*s.hp/s.stats.max_hp+'%"></i></div><div class="barline"><span>'+esc(s.resource_name)+'</span><span id="mp-'+key+'">'+s.resource+" / "+s.stats.resource_max+'</span></div><div class="bar mana" id="mana-'+key+'"><i style="width:'+100*s.resource/s.stats.resource_max+'%"></i></div></div>';
+function vitalFill(key,value,max){
+  const width=max>0?Math.max(0,Math.min(100,100*value/max)):0;
+  return '<i data-vital="'+esc(key)+'" style="width:'+width+'%"></i>';
 }
-function battleScreen(data){
+function captureVitals(field){
+  const state=new Map();
+  for(const fill of field?.querySelectorAll('[data-vital]')||[]){
+    const key=fill.dataset.vital;
+    state.set(key,{width:fill.style.width,label:field.querySelector('[data-vital-label="'+key+'"]')?.textContent});
+  }
+  return state;
+}
+function paintVitals(field,previous,hold=false){
+  if(!field||!previous?.size)return;
+  for(const fill of field.querySelectorAll('[data-vital]')){
+    const key=fill.dataset.vital,from=previous.get(key),to=fill.style.width;
+    if(!from)continue;
+    if(hold){
+      fill.style.width=from.width;
+      const label=field.querySelector('[data-vital-label="'+key+'"]');
+      if(label&&from.label!=null)label.textContent=from.label;
+    }else if(from.width!==to&&!reduced){
+      // Animate only the final HUD, from the last displayed value.
+      fill.animate?.([{width:from.width},{width:to}],{duration:380,easing:'ease-out'});
+    }
+  }
+}
+function hud(s,key){
+  return '<div class="hud '+(key===near?"player":"enemy")+'"><div class="row"><div class="name">'+esc(s.name)+'</div><span class="badge">Lv.'+s.level+'</span><button class="stat-button" data-inspect="'+key+'" aria-label="Статистика '+esc(s.name)+'">ⓘ</button></div><div class="meta">'+esc(s.class_name)+(s.controlled?" · контроль −20%":"")+'</div><div class="barline"><span>HP</span><span id="hp-'+key+'" data-vital-label="hp-'+key+'">'+s.hp+" / "+s.stats.max_hp+'</span></div><div class="bar'+(s.hp/s.stats.max_hp<.3?' low':'')+'" id="health-'+key+'">'+vitalFill('hp-'+key,s.hp,s.stats.max_hp)+'</div><div class="barline"><span>'+esc(s.resource_name)+'</span><span id="mp-'+key+'" data-vital-label="mp-'+key+'">'+s.resource+" / "+s.stats.resource_max+'</span></div><div class="bar mana" id="mana-'+key+'">'+vitalFill('mp-'+key,s.resource,s.stats.resource_max)+'</div></div>';
+}
+function battleScreen(data,{vitals,casts}={}){
   window.ArenaQTEWatch?.context('battle',data.token,data.status==='active'&&!data.state?.finished);
   if(data.qte?.challenge)setTimeout(runPendingMiniGames,0);
   audio.scene(data.state?.finished?'':data.state?.mirror_token?'raid':'battle');
@@ -407,31 +434,28 @@ function battleScreen(data){
   const far=near==="a"?"b":"a",a=data.state.sides[near],b=data.state.sides[far];
   app.innerHTML='<section class="battle">'+top("Арена",data.state.mirror_token?'ЗЕРКАЛО · '+(data.floor===5?'БОСС':'ЭТАЖ '+data.floor+' / 5'):data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":data.ranked?"РЕЙТИНГ":"БЕЗ СТАВКИ")+'</span>')+
     '<div class="field">'+hud(b,far)+'<div class="podium enemy"></div>'+fighterImage(b,"sprite enemy","sprite-"+far)+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near)+'<div class="status-row enemy" id="statuses-'+far+'" aria-label="Эффекты противника"></div><div class="status-row player" id="statuses-'+near+'" aria-label="Эффекты твоего бойца"></div></div><div class="turnbanner" id="turn"></div><div class="turn-timer" id="turn-timer" role="timer" hidden></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+(data.state.mirror_token&&data.actor_id===data.state.sides.a.controller_id?button("К забегу","mirror:"+data.state.mirror_token,"small"):"")+button("В меню","menu","small")+'</footer></section>';
-  mountBattleTimeline(data.state);
+  paintVitals(app.querySelector('.battle .field'),vitals);
+  mountBattleTimeline(data.state,casts);
   renderBattleStatuses();
   renderActions();
   audio.refresh();
   if(inspectSide)showStats(inspectSide);
 }
-function mountBattleTimeline(state){
+function mountBattleTimeline(state,casts){
   const field=app.querySelector?.('.battle .field'),queue=state?.action_queue;
-  if(!field||!queue)return;
-  const next=(queue.entries||[]).filter(e=>e.actor!==near&&e.skill&&state.sides[e.actor]?.controller_id===0).sort((a,b)=>a.at-b.at)[0];
-  if(next&&!state.finished){
+  if(!field||!queue||state.finished){window.RaidTimeline?.mountSolo(null,null);return;}
+  const far=near==='a'?'b':'a';
+  const next=(queue.entries||[]).filter(e=>e.actor===far&&e.skill&&state.sides[e.actor]?.controller_id===0).sort((a,b)=>a.at-b.at)[0];
+  if(next){
     const enemy=state.sides[next.actor],skill=enemy.skill_details?.find(s=>s.skill_id===next.skill);
     const intent=document.createElement('div');intent.className='battle-next-intent';intent.setAttribute('role','status');
-    intent.textContent=enemy.name+' готовит: '+(skill?.name||next.skill)+' · '+(next.at>.01?'через '+Number(next.at).toFixed(2)+' с по шкале':'сейчас');
+    const remaining=Math.max(0,next.at-(queue.time||0));
+    intent.textContent=enemy.name+' готовит: '+(skill?.name||next.skill)+' · '+(remaining>.01?'через '+remaining.toFixed(2)+' с':'сейчас');
     if(skill?.description)intent.title=skill.description;
     field.before(intent);
   }
-  const names=Object.fromEntries(['a','b'].map(key=>[key,state.sides[key]?.name||key]));
-  window.RaidTimeline?.mountSolo(field,queue,names);
+  window.RaidTimeline?.mountSolo(field,queue,state.sides,far,{casts});
 }
-function previewBattleCast(skill,side){
-  if(!current?.state?.action_queue)return;
-  window.RaidTimeline?.preview(app.querySelector('.battle .field'),current.state.active_side,side,skill);
-}
-function clearBattleCast(){window.RaidTimeline?.clearPreview(app.querySelector('.battle .field'));}
 function renderActions(){
   if(!current?.state||!document.getElementById("panel"))return;
   const st=current.state,side=st.sides[st.active_side],mine=side.controller_id===current.actor_id;
@@ -463,18 +487,8 @@ function renderActions(){
     const names=Object.fromEntries(Object.values(st.sides).map(s=>[s.controller_id,s.name]));
     panel.innerHTML+=window.ArenaQTEWatch?.buttons('battle',current.token,current.qte_watch,names)||'';
   }
-  if(mine&&st.action_queue){
-    panel.querySelectorAll('[data-skill]').forEach(button=>{
-      const skill=side.skill_details.find(item=>item.skill_id===button.dataset.skill);
-      if(!skill)return;
-      button.addEventListener('pointerenter',()=>previewBattleCast(skill,side));
-      button.addEventListener('focus',()=>previewBattleCast(skill,side));
-      button.addEventListener('pointerleave',clearBattleCast);
-      button.addEventListener('blur',clearBattleCast);
-    });
-  }
   updateTurnTimer();
-  if(st.unified_version===3&&mine&&!st.finished)window.RaidTimeline?.bind(panel,app.querySelector('.field'),st.active_side,side,'[data-skill]');
+  if(st.action_queue&&mine&&!st.finished)window.RaidTimeline?.bind(panel,app.querySelector('.field'),side,'[data-skill]');
 }
 function updateTurnTimer(){
   const el=document.getElementById('turn-timer');if(!el)return;
@@ -512,6 +526,7 @@ async function animateEvent(event){
   document.getElementById("turn").textContent=userTurn?"Твой ход":"Ход: "+current.state.sides[event.side].name;
   document.getElementById("round").textContent="ХОД "+event.seq;
   panel.innerHTML='<div class="battlelog">'+esc(event.skill_name||event.text)+'</div>';
+  if(event.skill_id||event.skill_name)window.RaidTimeline?.finish?.(app.querySelector('.battle .field'),event.side,event.skill_id,event.cast_at);
   if(event.action_kind==='turn_timeout'){if(event.status_after)renderBattleStatuses(event.status_after);await sleep(1000);return;}
   audio.actionStart(event);
   const attacker=document.getElementById("sprite-"+event.side);
@@ -530,14 +545,6 @@ async function animateEvent(event){
       if(event.hits){if(landed&&amount)await slashImpact(target);else await sleep(190);target?.classList.remove("hurt");}
     }
   }
-  if(event.after)for(const key of ["a","b"]){
-    const s=current.state.sides[key],values=event.after[key];
-    document.getElementById("health-"+key).firstElementChild.style.width=100*values.hp/s.stats.max_hp+"%";
-    document.getElementById("health-"+key).classList.toggle("low",values.hp/s.stats.max_hp<.3);
-    document.getElementById("hp-"+key).textContent=values.hp+" / "+s.stats.max_hp;
-    document.getElementById("mana-"+key).firstElementChild.style.width=100*values.resource/s.stats.resource_max+"%";
-    document.getElementById("mp-"+key).textContent=values.resource+" / "+s.stats.resource_max;
-  }
   if(event.status_after)renderBattleStatuses(event.status_after);
   await sleep(450);target?.classList.remove("hurt");panel.innerHTML='<div class="battlelog">'+esc(event.text)+'</div>';await sleep(700);
 }
@@ -545,13 +552,15 @@ async function applyBattle(data,animate=true){
   if(current&&data.token===current.token&&data.revision<current.revision)return;
   const events=data.state?.log.filter(e=>e.seq>lastSeq)||[];
   if(!current?.state||!data.state){lastSeq=data.state?.log.at(-1)?.seq||0;battleScreen(data);return;}
-  if(current.token!==data.token)closeEffect();
+  const same=current.token===data.token,field=same&&animate?app.querySelector?.('.battle .field'):null;
+  const vitals=captureVitals(field);
+  if(!same)closeEffect();
   statusViews=current.state.sides;
   current=data;
   if(animate){
     for(const event of events){await animateEvent(event);lastSeq=event.seq;}
   }else lastSeq=data.state.log.at(-1)?.seq||0;
-  battleScreen(data);
+  battleScreen(data,{vitals,casts:window.RaidTimeline?.snapshot?.(field)});
   if(animate&&events.length&&data.state.finished){const mine=Object.entries(data.state.sides).find(([,s])=>s.controller_id===data.actor_id)?.[0];audio.effect(!mine||data.state.winner===mine?'victory':'defeat');}
 }
 async function action(action,extra={}){
@@ -1256,7 +1265,7 @@ function nazarickBlessingPanel(data){
   const votes=offer.eligible.map(k=>'<p>'+esc(data.data.players[k].fighter.name)+' · '+(offer.votes[k]?'✓ Принимает':'ожидает решения')+'</p>').join('');
   return '<div class="'+(eligible?'nz-blessing-overlay':'card')+'"><section class="nz-blessing-card"'+(eligible?' role="dialog" aria-modal="true" aria-labelledby="nz-blessing-title"':'')+'><span class="eyebrow">ПОСЛЕДНИЙ ШАНС · РЕШЕНИЕ ВСЕГО ОТРЯДА</span><h2 id="nz-blessing-title">Принять благословение?</h2><div class="nz-blessing-copy"><p>Текущий босс начнётся заново с первой фазы и полным HP. Все участники восстановятся и получат <b>«Сюжетную броню»: входящий урон −50%</b> до конца этого похода.</p><p class="danger-text">Цена для всего отряда: билет на смену класса больше не выпадет. Случайная трофейная пассивка и обычные награды сохраняются. Нужны голоса всех; отказ одного завершает поход.</p>'+votes+'</div><div id="raid-timer" class="turn-timer"></div>'+(eligible?'<div class="stack">'+raidButton(voted?'✓ Ты принимаешь · ждём остальных':'Принять · отказаться от билета','blessing:accept','primary',voted)+raidButton('Отказаться · завершить поход','blessing:decline','danger')+'</div>':'<p>Ты наблюдатель и не участвуешь в голосовании.</p>')+'</section></div>';
 }
-function raidBar(value,max,label,cls=''){return '<div class="barline"><span>'+esc(label)+'</span><span>'+value+' / '+max+'</span></div><div class="bar '+cls+'"><i style="width:'+Math.max(0,Math.min(100,100*value/max))+'%"></i></div>';}
+function raidBar(value,max,label,key,cls=''){return '<div class="barline"><span>'+esc(label)+'</span><span data-vital-label="'+esc(key)+'">'+value+' / '+max+'</span></div><div class="bar '+cls+'">'+vitalFill(key,value,max)+'</div>';}
 function raidDialogue(data){
   const d=data.data?.dialogue;if(!d||data.status!=='active'&&!(data.boss_id==='whaler'&&data.status==='finished'))return '';
   return '<div class="raid-dialogue" data-boss="'+esc(data.boss_id)+'" role="status" aria-live="polite"><div class="raid-dialogue-portrait"></div><div><b>'+esc(d.speaker||'ФУФЕЛШМЕРЦ')+'</b><p>'+esc(d.text)+'</p><small>'+esc(d.warning||'')+'</small></div></div>';
@@ -1347,7 +1356,7 @@ function raidPortrait(f,key,player=null,index=0,spriteTarget=null,compactEnemy=f
   const own=key===String(raidCurrent.actor_id),boss=key==='boss'||!!raidCurrent.data?.enemies?.[key];
   const art=spriteTarget?'<button type="button" class="raid-art encounter-target" data-raid="target:'+esc(key)+'" aria-label="Выбрать цель: '+esc(f.name)+'" aria-pressed="'+(key===encounterTarget)+'"'+(disabled?' disabled':'')+'>':'<div class="raid-art">';
   const floatingStaff=key==='boss'&&raidCurrent.data?.nazarick_view?.floating_staff?'<img class="nz-floating-staff" src="'+esc(raidCurrent.data.nazarick_view.floating_staff)+'" alt="" aria-hidden="true">':'';
-  const hud=compactEnemy?'<div class="raid-hud encounter-compact-hud" aria-label="'+esc(f.name)+'"><div class="encounter-hp-meter"><span class="encounter-hp-value">'+f.hp+' / '+f.stats.max_hp+'</span><div class="bar"><i style="width:'+Math.max(0,Math.min(100,100*f.hp/f.stats.max_hp))+'%"></i></div></div><button type="button" data-raid="inspect:'+esc(key)+'" class="stat-button" aria-label="Подробности: '+esc(f.name)+'" title="'+esc(f.name)+'">ⓘ</button></div>':'<div class="raid-hud"><div class="row"><strong title="'+esc(f.name)+'">'+esc(f.name)+'</strong>'+raidButton('ⓘ','inspect:'+key,'stat-button')+'</div><div class="muted">'+esc(f.class_name)+' · Lv.'+f.level+'</div>'+raidBar(f.hp,f.stats.max_hp,'HP')+(boss&&raidCurrent.boss_id!=='doofenshmirtz'?'':raidBar(f.resource,f.stats.resource_max,f.resource_name,'mana'))+(player?'<div class="raid-ready">'+(player.withdrawn?'Покинул рейд':f.hp<=0?'Боец повержен':player.deported_round===raidCurrent.data.round?'Вернётся в следующем раунде':player.ready?'✓ Готов':own?'Твой боец':'Выбирает навык')+'</div>':'')+'</div>';
+  const hud=compactEnemy?'<div class="raid-hud encounter-compact-hud" aria-label="'+esc(f.name)+'"><div class="encounter-hp-meter"><span class="encounter-hp-value" data-vital-label="hp-'+esc(key)+'">'+f.hp+' / '+f.stats.max_hp+'</span><div class="bar">'+vitalFill('hp-'+key,f.hp,f.stats.max_hp)+'</div></div><button type="button" data-raid="inspect:'+esc(key)+'" class="stat-button" aria-label="Подробности: '+esc(f.name)+'" title="'+esc(f.name)+'">ⓘ</button></div>':'<div class="raid-hud"><div class="row"><strong title="'+esc(f.name)+'">'+esc(f.name)+'</strong>'+raidButton('ⓘ','inspect:'+key,'stat-button')+'</div><div class="muted">'+esc(f.class_name)+' · Lv.'+f.level+'</div>'+raidBar(f.hp,f.stats.max_hp,'HP','hp-'+key)+(boss&&raidCurrent.boss_id!=='doofenshmirtz'?'':raidBar(f.resource,f.stats.resource_max,f.resource_name,'mp-'+key,'mana'))+(player?'<div class="raid-ready">'+(player.withdrawn?'Покинул рейд':f.hp<=0?'Боец повержен':player.deported_round===raidCurrent.data.round?'Вернётся в следующем раунде':player.ready?'✓ Готов':own?'Твой боец':'Выбирает навык')+'</div>':'')+'</div>';
   return '<article id="raid-fighter-'+esc(key)+'" class="raid-fighter '+(boss?'raid-enemy':'raid-ally slot-'+index)+(compactEnemy?' raid-compact-enemy':'')+(own?' raid-own':'')+(disabled?' defeated':'')+(player?.deported_round===raidCurrent.data.round?' raid-deported':'')+'">'+art+fighterImage(chaplainArt(f,key),'raid-sprite')+floatingStaff+'<div class="raid-ground"></div>'+(spriteTarget?'</button>':'</div>')+'<div class="raid-effects">'+effects+'</div>'+hud+'</article>';
 }
 function encounterCanTarget(data=raidCurrent){
@@ -1375,7 +1384,7 @@ function encounterLobby(data){
   if(data.enterprise_defense)return '<div class="card"><span class="eyebrow">ЗАЩИТА ПРЕДПРИЯТИЙ · КОМАНДНЫЙ БОЙ</span><h2>Орочья трудовая инспекция</h2><p>Три орка A-ранга, Lv.19. Фиксированные 410–480 HP, атака 32–33, защита 18–23. Без подстройки под слабого участника.</p><p>Соберите 2–3 игроков. Владелец начинает бой; сам может остаться наблюдателем. Каждый орк действует отдельно. Выбирайте цель нажатием на спрайт.</p><p>Победа предотвращает разграбление. Поражение — 12 часов простоя предприятий. XP, франков и предметов за защиту нет; RP-сборки недоступны.</p><p>Отряд: '+data.participants.length+' / 3</p>'+data.participants.map(p=>'<p>⚔️ '+esc(p.name)+' · '+esc(p.fighter_name)+'</p>').join('')+'</div>';
   return '<div class="card"><span class="eyebrow">РП · БЕЗ НАГРАД</span><h2>Встреча: '+data.encounter_roster.map(m=>esc(m.name)).join(', ')+'</h2><p>Мастер: '+esc(data.master_name)+(data.participants.some(p=>p.actor_id===data.creator_id)?'. Участвует в отряде и управляет встречей.':'. Может остаться наблюдателем или вступить в отряд.')+'</p><p>Отряд: '+data.participants.length+' / 3</p>'+data.participants.map(p=>'<p>⚔️ '+esc(p.name)+' · '+esc(p.fighter_name)+(p.rp_template?' · RP':' · обычный')+'</p>').join('')+'<p class="muted">До трёх врагов с отдельными HP, эффектами и намерениями. Выбирай цель перед навыком. Свои мобы сохраняют заданные уровни и характеристики; готовые мобы подстраиваются под отряд.</p><p class="muted">На сбор — 10 минут, на выбор действия — 2 минуты. Только мастер начинает и завершает встречу. XP, деньги, предметы и награды питомцев не выдаются; кулдауны наград не меняются.</p></div>';
 }
-function raidScreen(data){
+function raidScreen(data,{vitals,casts,hold=false}={}){
   if(current||raidCurrent?.token!==data.token)closeEffect();
   statusViews=null;
   if(data.token!==raidCurrent?.token)encounterTarget='';
@@ -1446,21 +1455,15 @@ body='<div class="raid-intent"><span class="eyebrow">'+esc(raidPhaseLabel(data))
     if(field&&data.data?.chaplain?.swap_target){const line=document.createElement('div');line.className='chaplain-swap-link';line.textContent='ПОДМЕНА ОБРАЗОВ · ИМЕНА И HP НЕ МЕНЯЮТСЯ';field.append(line);}
     if(data.data?.chaplain?.notification){const note=document.createElement('div');note.className='chaplain-system';note.setAttribute('role','status');note.textContent='SYSTEM › '+data.data.chaplain.notification;document.querySelector('.chaplain-regulation')?.prepend(note);}
   }
+  paintVitals(app.querySelector('.raid-field'),vitals,hold);
   if(data.status==='active'){
     // Keep the textual announcement: intent lines cannot replace skill names,
     // special conditions and targets, especially in one-on-one fights.
     const timelineField=document.querySelector?.('.raid-field');
-    window.RaidIntentLines?.mount(timelineField,data,source=>raidAction('intercept',{round:data.data.round,source}));
+    window.RaidIntentLines?.mount(timelineField,data,source=>raidAction('intercept',{round:data.data.round,source}),{casts,hold});
     const ownForTimeline=data.data?.players?.[String(data.actor_id)]?.fighter;
-    if(timelineField&&data.data?.action_queue&&ownForTimeline){
-      if(data.data.unified_version===3)window.RaidTimeline?.bind(app.querySelector('.raid-actions'),timelineField,String(data.actor_id),ownForTimeline,'[data-raid^="skill:"]');
-      const showCast=event=>{const action=event.currentTarget?.dataset?.raid||'',id=action.startsWith('skill:')?action.slice(6):'';const skill=ownForTimeline.skill_details?.find(s=>s.skill_id===id);window.RaidTimeline?.preview(timelineField,String(data.actor_id),ownForTimeline,skill);};
-      const hideCast=()=>window.RaidTimeline?.clearPreview(timelineField);
-      document.querySelectorAll('.raid-actions [data-raid^="skill:"]').forEach(button=>{
-        button.addEventListener('pointerenter',showCast);button.addEventListener('pointerleave',hideCast);
-        button.addEventListener('focusin',showCast);button.addEventListener('focusout',hideCast);
-      });
-    }
+    if(timelineField&&data.data?.action_queue&&ownForTimeline)
+      window.RaidTimeline?.bind(app.querySelector('.raid-actions'),timelineField,ownForTimeline,'[data-raid^="skill:"]');
   }
   updateRaidTimer();if(raidInspect)showRaidDetails(raidInspect);
   if(inspectEffect)showEffect(inspectEffect.side,inspectEffect.id);
@@ -1549,21 +1552,25 @@ async function slashImpact(target){
 }
 async function receiveRaid(data){
   const previous=raidCurrent,events=raidNewEvents(previous,data);
+  const field=()=>app.querySelector?.('.raid-field');
+  const vitals=captureVitals(previous?.token===data.token?field():null);
+  const castState=()=>window.RaidTimeline?.snapshot?.(previous?.token===data.token?field():null);
+  const publish=()=>raidScreen(data,{vitals,casts:castState()});
   const nzEvent=events.find(e=>e.nazarick_event);
   if(data.boss_id==='nazarick'&&nzEvent){
-    raidScreen(data);
+    publish();
     const field=document.querySelector('.raid-field');
     if(field){const notice=document.createElement('div');notice.className='nazarick-transition';notice.textContent=nzEvent.text;
       if(nzEvent.nazarick_event==='reveal'){const img=document.createElement('img');img.src='/static/assets/nazarick/pandora.png';img.alt='Актёр Пандоры';notice.prepend(img);}
       field.append(notice);setTimeout(()=>notice.remove(),nzEvent.nazarick_event==='reveal'?5000:2800);}
     return;
   }
-  if(!events.length){raidScreen(data);return;}
+  if(!events.length){publish();return;}
   raidPlaying=true;
   try{
     const intentHeight=document.querySelector('.raid-intent')?.getBoundingClientRect().height||0;
     let snapshot=events[0].before||{boss:previous.data.boss,...Object.fromEntries(Object.entries(previous.data.players).map(([k,p])=>[k,p.fighter]))};
-    let castClock=previous.data.action_queue?.round===events[0].round?previous.data.action_queue.time||0:0;
+    const priorQueue=previous.data.action_queue;
     for(const group of (window.RaidTimeline?.eventGroups(events)||events.map(e=>[e]))){
       const e=group[0],last=group[group.length-1];
       if(raidCurrent?.token!==data.token)return;
@@ -1571,16 +1578,16 @@ async function receiveRaid(data){
       if(!animated.length){snapshot=last.after;continue;}
       const frame=raidVisual(data,e.before||snapshot);
       frame.data.round=e.round;frame.data.intent={text:'Разыгрывается раунд',targets:[]};
-      const announced=data.data.action_queue;
-      const timeline=announced?.round===e.round?announced:announced?.last?.round===e.round?announced.last:null;
-      if(timeline&&Number.isFinite(e.cast_at)){
-        frame.status='active';
-        frame.data.action_queue={...timeline,phase:'resolve',time:e.cast_at,animate_from:castClock};
-        castClock=e.cast_at;
-      }
+      frame.status='active';
+      // Intermediary log frames must not replay the queue's elapsed interval.
+      frame.data.action_queue=priorQueue?{...priorQueue,phase:'resolve'}:null;
       frame.data.dialogue=e.dialogue?{speaker:data.boss_id==='whaler'?'КИТОБОЙ':'ФУФЕЛШМЕРЦ',text:e.dialogue,warning:'',persistent:false}:null;
       frame.data.log=frame.data.log.filter(item=>!item.seq||item.seq<=last.seq);
-      raidScreen(frame);
+      raidScreen(frame,{vitals,casts:castState(),hold:true});
+      for(const event of animated){
+        if(event.skill||Number.isFinite(event.cast_at))
+          window.RaidTimeline?.finish?.(field(),event.actor,event.skill,event.cast_at);
+      }
       const intent=document.querySelector('.raid-intent');if(intent)intent.style.minHeight=intentHeight+'px';
       const panel=document.querySelector('.raid-actions');
       if(panel){panel.style.minHeight=panel.getBoundingClientRect().height+'px';panel.setAttribute('aria-live','polite');panel.innerHTML=group.map(event=>'<div class="battlelog"><b>'+esc(raidName(data,event.actor))+'</b><br>'+esc(event.text)+'</div>').join('');}
@@ -1593,13 +1600,21 @@ async function receiveRaid(data){
         const f=key==='boss'?frame.data.boss:frame.data.enemies?.[key]||frame.data.players[key]?.fighter;
         if(f)Object.assign(f,values);
         const el=document.getElementById('raid-fighter-'+key);
-        if(el&&f){const enemyIndex=Object.keys(frame.data.enemies||{}).indexOf(key),i=Object.keys(frame.data.players).indexOf(key);el.outerHTML=enemyIndex>=0?encounterPortrait(f,key,enemyIndex):raidPortrait(f,key,frame.data.players[key],i);}
+        if(el&&f){const enemyIndex=Object.keys(frame.data.enemies||{}).indexOf(key),i=Object.keys(frame.data.players).indexOf(key),cast=el.querySelector('.enemy-cast,.ally-cast');
+          el.outerHTML=enemyIndex>=0?encounterPortrait(f,key,enemyIndex):raidPortrait(f,key,frame.data.players[key],i);
+          const updated=document.getElementById('raid-fighter-'+key);
+          if(cast&&f.hp>0){
+            if(cast.classList.contains('ally-cast'))updated?.querySelector('.raid-ready')?.replaceChildren(cast);
+            else updated?.append(cast);
+          }
+          paintVitals(updated,vitals,true);
+        }
       }
       await sleep(300);
     }
   }finally{
     raidPlaying=false;
-    if(raidCurrent?.token===data.token)raidScreen(data);
+    if(raidCurrent?.token===data.token)publish();
     if(previous.status==='active'&&data.status==='finished')audio.effect(data.data.won?'victory':'defeat');
   }
 }

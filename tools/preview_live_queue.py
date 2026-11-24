@@ -42,12 +42,27 @@ async def application():
             row = await db.arena_setup(row['token'],20,'accept')
             prefix = 'b_'
         else:
-            if mode in ('party','encounter'):
+            if mode in ('party','encounter','bars'):
                 row = await db.arena_encounter_create(1,30,['goblin','shaman'])
                 await db.arena_raid_set_message(row['token'],1)
                 for actor in ((10,20) if mode=='party' else (10,)):
                     await db.arena_raid_setup(row['token'],actor,'join')
                 row = await db.arena_raid_setup(row['token'],30,'start')
+                if mode == 'bars':
+                    # One fast attacker and one slow one, with enough HP to
+                    # observe several casts. All actions use production code.
+                    from arena_unified_queue import clock, initialize
+                    from arena_unified_store import catalog
+                    async with db._lock:
+                        state = json.loads(row['data_json'])
+                        state['enemies']['e1']['stats']['speed'] = 30
+                        state['enemies']['e2']['stats']['speed'] = 0
+                        for fighter in [state['players']['10']['fighter'], *state['enemies'].values()]:
+                            fighter['hp'] = fighter['stats']['max_hp'] = 1000
+                        clock(state)['pending'].clear()
+                        initialize(state, catalog(db))
+                        db._raid_save_locked(row, state)
+                        db.connection.commit()
             else:
                 row = await db.arena_raid_create(1,10,request.query.get('boss','lei_heng'),silent=True)
                 row = await db.arena_raid_setup(row['token'],10,'start')

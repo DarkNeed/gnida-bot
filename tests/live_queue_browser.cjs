@@ -14,8 +14,8 @@ const origin=process.env.QUEUE_ORIGIN||'http://127.0.0.1:8155';
    await p.goto(origin+'/live-queue-review?mode='+mode+'&qte=0');
    await skill(p).waitFor();
    await p.locator('.queue-info').first().click();
-   assert.match(await p.locator('.queue-forecast').innerText(),/времени/);
-   assert.equal(await p.locator('.raid-timeline-v3').count(),1);
+   assert.match(await p.locator('.queue-forecast').innerText(),/\d с\./);
+   assert.equal(await p.locator('.enemy-cast').count(),mode==='encounter'?2:1);
    assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
    await p.screenshot({path:`output/live-queue-review/${mode}-${width}.png`,fullPage:true});
    await skill(p).click();
@@ -37,7 +37,7 @@ const origin=process.env.QUEUE_ORIGIN||'http://127.0.0.1:8155';
    await b.locator('[data-skill="bum_punch"],[data-raid="skill:bum_punch"]').click();
    await a.waitForTimeout(4200);
    try{await skill(a).waitFor();}catch(e){console.log(mode,await a.locator('body').innerText(),errors);await a.screenshot({path:'output/live-queue-review/failure-'+mode+'.png',fullPage:true});throw e;}
-   assert.equal(await a.locator('.raid-timeline-v3').count(),1);
+   assert.equal(await a.locator('.enemy-cast').count(),mode==='party'?2:1);
    await a.close();await b.close();
   }
   const p=await page(390);

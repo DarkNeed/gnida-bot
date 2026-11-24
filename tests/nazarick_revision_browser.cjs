@@ -12,7 +12,7 @@ const origin='http://127.0.0.1:8157',out='output/nzd-revision-review';
   await p.locator('button[data-joystick-side=left]').click();await p.locator('[data-combat-close]').click();await p.reload();
   await p.locator('[data-combat-open]').click();await p.locator('button[data-joystick-side=left]').waitFor();assert.equal(await p.locator('button[data-joystick-side=left]').getAttribute('aria-pressed'),'true');
   await p.locator('button[data-joystick-side=right]').click();await p.screenshot({path:out+'/settings-mobile.png'});await p.locator('[data-combat-close]').click();
-  await p.locator('.queue-info').first().click();const range=p.locator('.raid-timeline-preview-range');await range.waitFor();assert((await range.boundingBox()).width>15);await p.screenshot({path:out+'/cast-range-mobile.png'});
+  await p.locator('.queue-info').first().click();const range=p.locator('.enemy-cast-preview').first();await range.waitFor();assert((await range.boundingBox()).width>0);await p.screenshot({path:out+'/cast-range-mobile.png'});
   await p.goto(origin+'/nzd-demo?mode=pattern&room=3&who=gargantua&phase=2&move=0&defense=dodge');await p.locator('.qte-cover').waitFor();
   const canvas=await p.locator('.qte-cover canvas').boundingBox(),right=await p.locator('.qte-cover .qte-stick').boundingBox();assert(right.x+right.width/2>canvas.x+canvas.width/2);
   await p.screenshot({path:out+'/gargantua-mobile.png'});await p.evaluate(()=>QTETouch.setSide('left'));

@@ -105,6 +105,25 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(q.clock(data)['pending'], [npc])
         self.assertEqual([s['kind'] for s in q.stages(data, 'a', SKILLS)], ['attack'])
 
+    def test_public_cast_windows_report_progress_without_disclosing_pvp_skill(self):
+        data = direct(pvp=True)
+        q.initialize(data, SKILLS)
+        commit(data, 'a')
+        pending, = [e for e in q.public(data, 20)['entries'] if e['actor'] == 'a']
+        self.assertIsNone(pending['skill'])
+        self.assertEqual((pending['started'], pending['duration'], pending['at']), (0, .85, .85))
+        self.assertFalse(pending['resolving'])
+
+        data = direct(games=True)
+        q.initialize(data, SKILLS)
+        npc, = q.clock(data)['pending']
+        npc['end'], npc['duration'] = 1.1, 1.1
+        commit(data, 'a')
+        entries = {e['actor']:e for e in q.public(data, 10)['entries']}
+        self.assertTrue(entries['a']['resolving'])
+        self.assertEqual((entries['b']['started'], entries['b']['at'], entries['b']['duration']), (-.85, .25, 1.1))
+        self.assertFalse(entries['b']['resolving'])
+
     def test_attack_preview_can_use_reserved_energy_without_refunding_it(self):
         from arena_qte_live import damage_preview
         data = direct(games=True)
