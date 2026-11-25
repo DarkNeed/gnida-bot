@@ -13,7 +13,7 @@ from family_avatars import FamilyAvatarCache
 from family_tree import EMPTY_ORIGIN, FamilyError
 
 MAX_ID = 2**52 - 1
-EDITS = {"origin", "link", "unlink", "marry", "sibling", "unsibling", "appoint", "revoke"}
+EDITS = {"origin", "link", "unlink", "marry", "unmarry", "sibling", "unsibling", "appoint", "revoke"}
 
 
 def telegram_id(value):
@@ -117,9 +117,11 @@ def register_family(app, db, bot, actor_key, require_member, root):
         if op not in ("preview", "apply") or not owner or body.get("edit") not in EDITS:
             raise FamilyError("Эта правка доступна только владельцу чата.")
         edit = body["edit"]
+        if edit == "unmarry" and actor != CUSTOM_COMMAND_OWNER_ID:
+            raise FamilyError("Расторгнуть брак без суда может только создатель бота.")
         raw_a = body.get("a")
         a = EMPTY_ORIGIN if edit in ("origin", "link", "unlink") and type(raw_a) is int and raw_a == EMPTY_ORIGIN else telegram_id(raw_a)
-        b = telegram_id(body.get("b")) if edit in ("link", "unlink", "marry", "sibling", "unsibling") else None
+        b = telegram_id(body.get("b")) if edit in ("link", "unlink", "marry", "unmarry", "sibling", "unsibling") else None
         revision = body.get("revision") if op == "apply" else None
         if op == "apply":
             proof = body.get("proof")

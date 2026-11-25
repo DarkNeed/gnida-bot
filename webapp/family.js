@@ -17,7 +17,7 @@
   const base=entry ? '/api/family/'+entry[1] : '';
   const kinds={blank:'Создать пустой Исток',origin:'Назначить участника Истоком',attach:'Прикрепить ветвь к Истоку',
     detach:'Отсоединить ветвь от Истока',link:'Добавить родство',sibling:'Добавить брата или сестру',
-    unsibling:'Убрать связь брата или сестры',marry:'Внести брак',unlink:'Убрать родство',appoint:'Назначить судью',revoke:'Снять судью'};
+    unsibling:'Убрать связь брата или сестры',marry:'Внести брак',unmarry:'Расторгнуть брак без суда',unlink:'Убрать родство',appoint:'Назначить судью',revoke:'Снять судью'};
   const editPayload=(kind,fields)=>kind==='blank'?{edit:'origin',a:0}:
     kind==='attach'||kind==='detach'?{edit:kind==='attach'?'link':'unlink',a:0,b:fields.b}:{edit:kind,...fields};
   let state, people=new Map(), tab=entry?.[2]==='file'?'file':'tree', selected, scene, activeEditor='origin', chosen={}, pending, busy=false;
@@ -352,7 +352,7 @@
     $('.selected',screen).innerHTML=selectedInfo();
     if(move){center(id);$('[data-person="'+id+'"]',screen)?.focus({preventScroll:true});}
   }
-  const resultNames={open:'На рассмотрении',approved:'Брак расторгнут',rejected:'Заявление отклонено'};
+  const resultNames={open:'На рассмотрении',approved:'Брак расторгнут',rejected:'Заявление отклонено',editor_closed:'Закрыто: брак расторгнут без суда'};
   function caseRows(judge) {
     return state.cases.map(c=>{
       const own=state.actor===c.a||state.actor===c.b;
@@ -379,28 +379,33 @@
       '</section>';
   }
   function editor() {
-    const wedding=activeEditor==='marry', sibling=['sibling','unsibling'].includes(activeEditor);
-    const two=wedding||sibling||['link','unlink'].includes(activeEditor);
+    const wedding=activeEditor==='marry', divorce=activeEditor==='unmarry', sibling=['sibling','unsibling'].includes(activeEditor);
+    const privileged=state.editor?.marriage_override, marriageAction=wedding||divorce;
+    const two=marriageAction||sibling||['link','unlink'].includes(activeEditor);
     const selectedPerson=chosen.a, related=(state.editor?.parents||[]).filter(p=>p.includes(selectedPerson));
     const siblings=(state.editor?.siblings||[]).filter(p=>p.includes(selectedPerson));
     const marriage=(state.editor?.marriages||[]).find(pair=>pair.includes(selectedPerson));
     const branchMode=activeEditor==='attach'||activeEditor==='detach';
     const fields=activeEditor==='blank'?'<p class="muted">Галактика без привязки к игроку. Существующее древо сохранится.</p>':
       branchMode?picker('b','Участник в начале ветви',chosen.b?name(chosen.b):''):
-      picker('a',wedding?'Первый супруг':sibling?'Участник':two?'Родитель':'Участник',chosen.a?name(chosen.a):'')+
-      (two?picker('b',wedding?'Второй супруг':sibling?'Брат или сестра':'Ребёнок',chosen.b?name(chosen.b):''):'');
+      picker('a',marriageAction?'Первый супруг':sibling?'Участник':two?'Родитель':'Участник',chosen.a?name(chosen.a):'')+
+      (two?picker('b',marriageAction?'Второй супруг':sibling?'Брат или сестра':'Ребёнок',chosen.b?name(chosen.b):''):'');
     return '<section class="panel stack"><h2>Редактор связей</h2><form class="stack" id="edit"><label>Действие<select id="edit-kind">'+
-      Object.entries(kinds).filter(([id])=>state.origin===0||id===activeEditor||!['attach','detach'].includes(id))
+      Object.entries(kinds).filter(([id])=>(id!=='unmarry'||privileged)&&
+        (state.origin===0||id===activeEditor||!['attach','detach'].includes(id)))
         .map(([id,label])=>'<option value="'+id+'"'+(id===activeEditor?' selected':'')+'>'+label+'</option>').join('')+
       '</select></label><div class="'+(two?'fields':'')+'">'+fields+'</div>'+
-      (wedding?'<p class="muted">Запись вносится вручную, без отправки предложения в чат. Расторгнуть брак можно только через суд.</p>':'')+
+      (wedding?'<p class="muted">Запись вносится без предложения в чат. '+(privileged
+        ?'В редакторе можно внести брак между братьями и сёстрами.':'Расторжение — через суд.')+'</p>':'')+
+      (divorce?'<p class="muted">Родство и дети сохранятся. Открытое заявление по этому браку будет закрыто.</p>':'')+
       '<label>Заметка для журнала<textarea id="edit-reason" name="reason" rows="2" maxlength="500"></textarea></label>'+
       '<button class="primary">Проверить правку</button></form>'+
       (related.length?'<div class="stack"><h3>Родство выбранного участника</h3>'+related.map(([a,b])=>'<div class="row"><span>'+esc(name(a))+' → '+esc(name(b))+'</span>'+
         button('Убрать','unlink:'+a+':'+b,'danger')+'</div>').join('')+'</div>':'')+
       (siblings.length?'<div class="stack"><h3>Братья и сёстры</h3>'+siblings.map(([a,b])=>'<div class="row"><span>'+esc(name(a===selectedPerson?b:a))+'</span>'+
         button('Убрать','unsibling:'+a+':'+b,'danger')+'</div>').join('')+'</div>':'')+
-      (marriage?'<p class="muted">💍 '+marriage.map(id=>esc(name(id))).join(' и ')+' · расторжение только через суд</p>':'')+'</section>'+
+      (marriage?'<div class="row"><span>💍 '+marriage.map(id=>esc(name(id))).join(' и ')+'</span>'+
+        (privileged?button('Расторгнуть без суда','unmarry:'+marriage.join(':'),'danger'):'<small>Расторжение через суд</small>')+'</div>':'')+'</section>'+
       (state.origin===0?'<section class="panel stack"><h2>Ветви Истока</h2>'+
         ((state.branches||[]).map(id=>'<div class="row"><strong>'+esc(name(id))+'</strong>'+button('Отсоединить','unlink:0:'+id,'danger')+'</div>').join('')
           ||'<p class="muted">Пока нет ветвей.</p>')+button('Прикрепить ветвь','edit:attach')+'</section>':'')+
@@ -435,7 +440,8 @@
       list(result.added,'Свяжутся с Истоком')+
       list(result.removed,'Потеряют связь с Истоком'),async()=>{
         await api('',{op:'apply',revision:result.revision,proof:result.proof,...payload});
-        await load();render();status(payload.edit==='marry'?'Брак внесён в архив.':'Правка сохранена.');
+        await load();render();status(payload.edit==='marry'?'Брак внесён в архив.':
+          payload.edit==='unmarry'?'Брак расторгнут без суда.':'Правка сохранена.');
     });
   }
   async function run(action) {
@@ -475,7 +481,14 @@
       $('.results',host).hidden=true;
       if(field==='tree'){select(id,true);return;}
       chosen[field]=id;const input=$('input',host);input.value=name(id);input.focus();
-      if(field==='a'&&['unlink','unsibling','sibling'].includes(activeEditor))render();
+      if(field==='a'&&['unlink','unsibling','sibling','marry','unmarry'].includes(activeEditor)){
+        const reason=$('#edit-reason')?.value||'';
+        if(activeEditor==='unmarry'){
+          const pair=state.editor?.marriages.find(pair=>pair.includes(id));
+          chosen.b=pair?.find(other=>other!==id);
+        }
+        render();$('#edit-reason').value=reason;
+      }
       return;
     }
     const [action,a,c]=(b.dataset.action||'').split(':');
@@ -484,7 +497,7 @@
       await load();render();
     });
     if(action==='edit'){activeEditor=a;chosen=c?{a:Number(c)}:{};tab='editor';render();}
-    if(action==='unlink'||action==='unsibling'||action==='revoke'){
+    if(['unlink','unsibling','revoke','unmarry'].includes(action)){
       activeEditor=action==='unlink'&&a==='0'?'detach':action;chosen={a:Number(a),...(c?{b:Number(c)}:{})};
       run(()=>preview({edit:action,...chosen}));
     }
@@ -533,7 +546,7 @@
       await load();
       const [, ,view,a,b]=entry;
       if(view==='file'||view==='court')tab=view;
-      if(Object.hasOwn(kinds,view)&&state.owner){
+      if(Object.hasOwn(kinds,view)&&state.owner&&(view!=='unmarry'||state.editor?.marriage_override)){
         tab='editor';activeEditor=a==='0'?{origin:'blank',link:'attach',unlink:'detach'}[view]||view:view;
         chosen={a:Number(a),...(b?{b:Number(b)}:{})};
       }

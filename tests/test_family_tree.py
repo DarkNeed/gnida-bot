@@ -26,14 +26,65 @@ class FamilyTest(unittest.IsolatedAsyncioTestCase):
             await self.db.upsert_user(-100, user, "person_" + str(user), name, touch=False)
         await self.db.upsert_chat(-100, "Каргассия")
 
-    async def edit(self, operation, a, b=None):
-        result = await self.db.family_edit(-100, 1, operation, a, b)
-        await self.db.family_edit(-100, 1, operation, a, b, expected=result["revision"])
+    async def edit(self, operation, a, b=None, *, actor=1):
+        result = await self.db.family_edit(-100, actor, operation, a, b)
+        await self.db.family_edit(-100, actor, operation, a, b, expected=result["revision"])
         return result
 
     async def marry(self, a, b):
         token = await self.db.family_offer(-100, a, b)
         await self.db.family_offer_action(-100, token, b, "accept")
+
+    async def test_only_bot_owner_can_register_sibling_marriage(self):
+        owner = CUSTOM_COMMAND_OWNER_ID
+        await self.edit("link", 1, 2)
+        await self.edit("link", 1, 3)
+        for a, b in [(2, 3), (4, 5)]:
+            if a == 4:
+                await self.edit("sibling", a, b)
+            with self.assertRaisesRegex(FamilyError, "родственники"):
+                await self.db.family_offer(-100, a, b)
+            with self.assertRaisesRegex(FamilyError, "родственники"):
+                await self.db.family_edit(-100, 1, "marry", a, b)
+            await self.edit("marry", a, b, actor=owner)
+        await self.edit("link", 1, 7)
+        with self.assertRaisesRegex(FamilyError, "родственники"):
+            await self.db.family_edit(-100, owner, "marry", 1, 7)
+        with self.assertRaisesRegex(FamilyError, "родственниками"):
+            await self.db.family_edit(-100, owner, "link", 2, 3)
+        view = await self.db.family_view(-100, owner, True)
+        self.assertEqual(view["marriages"], [[2, 3], [4, 5]])
+        self.assertEqual(view["siblings"], [[4, 5]])
+        self.assertIn([1, 7], view["parents"])
+
+    async def test_editor_removal_closes_open_case_without_changing_parentage(self):
+        owner = CUSTOM_COMMAND_OWNER_ID
+        await self.edit("marry", 2, 3)
+        await self.edit("link", 2, 4)
+        await self.edit("link", 3, 4)
+        case, _, _ = await self.db.family_filing(-100, 2, "передумал")
+        offer = await self.db.family_offer(-101, 2, 3)
+        await self.db.family_offer_action(-101, offer, 3, "accept")
+        await self.db.family_filing(-101, 2, "другой чат")
+        with self.assertRaisesRegex(FamilyError, "создатель бота"):
+            await self.db.family_edit(-100, 1, "unmarry", 2, 3)
+        preview = await self.db.family_edit(-100, owner, "unmarry", 3, 2)
+        self.assertEqual((await self.db.family_view(-100, 2, False))["cases"][0]["status"], "open")
+        await self.db.family_edit(-100, owner, "unmarry", 3, 2, expected=preview["revision"])
+        view = await self.db.family_view(-100, 2, False)
+        self.assertEqual(view["marriages"], [])
+        self.assertEqual(view["parents"], [[2, 4], [3, 4]])
+        self.assertEqual(view["cases"][0]["status"], "editor_closed")
+        self.assertEqual(view["cases"][0]["decided_by"], owner)
+        other_chat = await self.db.family_view(-101, 2, False)
+        self.assertEqual(other_chat["marriages"], [[2, 3]])
+        self.assertEqual(other_chat["cases"][0]["status"], "open")
+        with self.assertRaisesRegex(FamilyError, "Открытое дело"):
+            await self.db.family_decide(-100, 1, True, case, True)
+        await self.edit("marry", 2, 3)
+        new_case, _, created = await self.db.family_filing(-100, 2, "ещё раз")
+        self.assertTrue(created)
+        self.assertNotEqual(case, new_case)
 
     async def test_component_divorce_and_chat_isolation(self):
         await self.edit("origin",1)
@@ -283,3 +334,26 @@ class FamilyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await client.post(path, json=siblings, headers=auth(1))).status, 200)
         view = await (await client.get(path, headers=auth(2))).json()
         self.assertEqual(view["siblings"], [[2, 4]])
+
+        editor = CUSTOM_COMMAND_OWNER_ID
+        await self.edit("appoint", 5)
+        await self.edit("sibling", 2, 3, actor=editor)
+        for actor, allowed in [(1, False), (editor, True)]:
+            view = await (await client.get(path, headers=auth(actor))).json()
+            self.assertIs(view["editor"]["marriage_override"], allowed)
+        divorce = dict(op="preview", edit="unmarry", a=2, b=3)
+        for unauthorized in [1, 2, 5]:
+            self.assertEqual((await client.post(path, json=divorce, headers=auth(unauthorized))).status, 400)
+        # A departed spouse can still be removed from the old register.
+        bot.get_chat_member.side_effect = lambda chat, user: SimpleNamespace(status="left")
+        bot.get_chat_member.reset_mock()
+        response = await client.post(path, json=divorce, headers=auth(editor))
+        self.assertEqual(response.status, 200)
+        draft = await response.json()
+        payload = dict(divorce, op="apply", revision=draft["revision"], proof=draft["proof"])
+        self.assertEqual((await client.post(path, json=payload, headers=auth(editor))).status, 200)
+        self.assertEqual((await client.post(path, json=payload, headers=auth(editor))).status, 400)
+        bot.get_chat_member.assert_not_awaited()
+        view = await self.db.family_view(-100, editor, True)
+        self.assertEqual(view["marriages"], [])
+        self.assertIn([2, 3], view["siblings"])

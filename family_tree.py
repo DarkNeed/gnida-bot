@@ -7,6 +7,8 @@ import time
 import unicodedata
 from collections import defaultdict
 
+from custom_commands import CUSTOM_COMMAND_OWNER_ID
+
 
 class FamilyError(ValueError):
     pass
@@ -60,11 +62,19 @@ def upwards(parents, user):
     return seen, parents[user]
 
 
-def close_relatives(state, a, b, parents=None):
+def close_relationship(state, a, b, parents=None):
     parents = parent_index(state) if parents is None else parents
     av, ap = upwards(parents, a)
     bv, bp = upwards(parents, b)
-    return a in bv or b in av or bool(ap & bp) or sorted((a, b)) in state.get("siblings", ())
+    if a in bv or b in av:
+        return "lineal"
+    if ap & bp or sorted((a, b)) in state.get("siblings", ()):
+        return "siblings"
+    return None
+
+
+def close_relatives(state, a, b, parents=None):
+    return close_relationship(state, a, b, parents) is not None
 
 
 def validate_generations(state):
@@ -197,7 +207,8 @@ class FamilyTreeMixin:
                         branches=state["branches"] if state["origin"] == EMPTY_ORIGIN else [],
                         parents=state["parents"], marriages=state["marriages"], siblings=state["siblings"],
                         editor=dict(parents=state["parents"], marriages=state["marriages"],
-                                    siblings=state["siblings"]) if owner else None,
+                                    siblings=state["siblings"],
+                                    marriage_override=actor == CUSTOM_COMMAND_OWNER_ID) if owner else None,
                         people=self._family_people(chat, view_ids), owner=owner, judge=judge, judges=judges,
                         cases=cases, more_cases=more, log=log, spouse=partner, actor=actor,
                         title=title["title"] if title else "Семейный архив")
@@ -253,7 +264,8 @@ class FamilyTreeMixin:
                         ON CONFLICT(chat_id,user_id) DO UPDATE SET photo_key=excluded.photo_key,image=excluded.image,mime=excluded.mime""",
                         (chat, user, *avatar))
 
-    def _family_edit(self, chat, state, operation, a, b, reason):
+    def _family_edit(self, chat, actor, state, operation, a, b, reason):
+        marriage_override = actor == CUSTOM_COMMAND_OWNER_ID
         if operation == "origin":
             if a == state["origin"]:
                 raise FamilyError("Это уже Исток древа.")
@@ -279,7 +291,8 @@ class FamilyTreeMixin:
                 state["branches"].remove(b)
                 description = "ветвь отсоединена от Истока"
         elif operation == "link":
-            if a == b or b == state["origin"] or b in upwards(parent_index(state), a)[0]:
+            previous = parent_index(state)
+            if a == b or b == state["origin"] or b in upwards(previous, a)[0]:
                 raise FamilyError("Эта связь замкнёт древо или сделает Исток чьим-то ребёнком.")
             if [a, b] in state["parents"]:
                 raise FamilyError("Такая связь уже записана.")
@@ -288,8 +301,11 @@ class FamilyTreeMixin:
             state["parents"].append([a, b])
             validate_generations(state)
             index = parent_index(state)
-            if any(close_relatives(state, x, y, index) for x, y in state["marriages"]):
-                raise FamilyError("Эта связь сделает супругов близкими родственниками.")
+            for x, y in state["marriages"]:
+                relation = close_relationship(state, x, y, index)
+                if relation == "lineal" or (relation == "siblings" and not marriage_override
+                                             and close_relationship(state, x, y, previous) != "siblings"):
+                    raise FamilyError("Эта связь сделает супругов близкими родственниками.")
             description = "добавлена родственная связь"
         elif operation == "unlink":
             if [a, b] not in state["parents"]:
@@ -303,7 +319,7 @@ class FamilyTreeMixin:
             if operation == "sibling":
                 if pair in state["siblings"]:
                     raise FamilyError("Эта связь братьев или сестёр уже записана.")
-                if spouse(state, a) == b:
+                if spouse(state, a) == b and not marriage_override:
                     raise FamilyError("Супругов нельзя записать как брата или сестру.")
                 state["siblings"].append(pair)
                 validate_generations(state)
@@ -313,15 +329,26 @@ class FamilyTreeMixin:
                     raise FamilyError("Такая связь братьев или сестёр не записана.")
                 state["siblings"].remove(pair)
                 description = "удалена связь братьев или сестёр"
-        elif operation == "marry":
+        elif operation in ("marry", "unmarry"):
             if not a or not b or a == b:
                 raise FamilyError("Выбери двух разных участников.")
-            if spouse(state, a) or spouse(state, b):
-                raise FamilyError("Один из участников уже состоит в браке.")
-            if close_relatives(state, a, b):
-                raise FamilyError("Близкие родственники не могут заключить брак.")
-            state["marriages"].append(sorted((a, b)))
-            description = "брак внесён через редактор"
+            pair = sorted((a, b))
+            if operation == "unmarry":
+                if not marriage_override:
+                    raise FamilyError("Расторгнуть брак без суда может только создатель бота.")
+                if pair not in state["marriages"]:
+                    raise FamilyError("У этих участников нет действующего брака друг с другом.")
+                state["marriages"].remove(pair)
+                description = "брак расторгнут без суда"
+            else:
+                if spouse(state, a) or spouse(state, b):
+                    raise FamilyError("Один из участников уже состоит в браке.")
+                relation = close_relationship(state, a, b)
+                if relation and (relation != "siblings" or not marriage_override):
+                    raise FamilyError("Близкие родственники не могут заключить брак.")
+                state["marriages"].append(pair)
+                description = ("брак братьев или сестёр внесён создателем бота" if relation == "siblings"
+                               else "брак внесён через редактор")
         elif operation in ("appoint", "revoke"):
             if operation == "appoint":
                 if a in state["judges"]:
@@ -337,7 +364,7 @@ class FamilyTreeMixin:
             raise FamilyError("Неизвестная правка.")
         ids = [i for i in (a, b) if i not in (None, EMPTY_ORIGIN)]
         names = {p["id"]: p["name"] for p in self._family_people(chat, ids)}
-        separator = " и " if operation in ("marry", "sibling", "unsibling") else " → "
+        separator = " и " if operation in ("marry", "unmarry", "sibling", "unsibling") else " → "
         return description + (": " + separator.join(names[i] for i in ids) if ids else "") + (f". {reason}" if reason else "")
 
     async def family_edit(self, chat, actor, operation, a, b=None, reason="", *, expected=None):
@@ -350,7 +377,7 @@ class FamilyTreeMixin:
                 if expected is not None and revision != expected:
                     raise FamilyError("Древо уже изменилось. Проверь правку ещё раз.")
                 before = family_map(state)[0]
-                summary = self._family_edit(chat, state, operation, a, b, reason)
+                summary = self._family_edit(chat, actor, state, operation, a, b, reason)
                 after = family_map(state)[0]
                 if expected is not None:
                     self._family_write(chat, revision, state, actor, summary)
@@ -358,6 +385,12 @@ class FamilyTreeMixin:
                         self.connection.execute(
                             "DELETE FROM family_offers WHERE chat_id=? AND (sender IN (?,?) OR recipient IN (?,?))",
                             (chat, a, b, a, b),
+                        )
+                    elif operation == "unmarry":
+                        self.connection.execute(
+                            "UPDATE family_cases SET status='editor_closed',decided_by=? "
+                            "WHERE chat_id=? AND a=? AND b=? AND status='open'",
+                            (actor, chat, *sorted((a, b))),
                         )
                 result = dict(revision=revision, summary=summary,
                               added=self._family_people(chat, after - before),

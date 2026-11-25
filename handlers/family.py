@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from arena_links import arena_link
 from arena_web import require_member
+from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from family_tree import EMPTY_ORIGIN, FamilyError
 from family_web import family_access, family_target, MAX_ID
 from handlers.routes import message_content, text_or_caption_regexp
@@ -16,6 +17,7 @@ FAMILY_RE = re.compile(r"^\s*[/!]древо(?:@\w+)?(?=\s|$)", re.I)
 OFFER_RE = re.compile(r"family:([0-9a-f]{24}):(accept|decline|cancel)")
 EDITS = {("исток",):"origin", ("связь",):"link", ("убрать","связь"):"unlink",
          ("родные",):"sibling", ("убрать","родных"):"unsibling",
+         ("внести","брак"):"marry", ("убрать","брак"):"unmarry",
          ("судья","+"):"appoint", ("судья","-"):"revoke"}
 
 
@@ -113,15 +115,17 @@ def create_family_router(db, bot, username, enabled):
                     continue
                 if not owner:
                     raise FamilyError("Редактировать древо может владелец чата или создатель бота.")
+                if edit == "unmarry" and user.id != CUSTOM_COMMAND_OWNER_ID:
+                    raise FamilyError("Расторгнуть брак без суда может только создатель бота.")
                 arguments = parts[len(prefix):]
-                if edit in ("sibling", "unsibling"):
+                if edit in ("sibling", "unsibling", "marry", "unmarry"):
                     if len(arguments) == 2:
                         targets = arguments
                     elif len(arguments) == 1 and message.reply_to_message:
                         targets = [arguments[0], None]
                     else:
-                        raise FamilyError("Укажи двух участников: !древо родные @ник1 @ник2.")
-                    ids = [(await pick(message, arg, historical=edit=="unsibling"))[0] for arg in targets]
+                        raise FamilyError(f"Укажи двух участников: !древо {' '.join(prefix)} @ник1 @ник2.")
+                    ids = [(await pick(message, arg, historical=edit in ("unsibling", "unmarry")))[0] for arg in targets]
                 elif edit in ("link","unlink"):
                     if arguments and arguments[0].casefold() == "исток" and len(arguments) <= 2:
                         target, _ = await pick(message, arguments[1] if len(arguments) == 2 else None, historical=edit=="unlink")
@@ -147,7 +151,10 @@ def create_family_router(db, bot, username, enabled):
                 commands += ("\n!древо исток пустой · !древо исток @ник · !древо судья +/− @ник\n"
                              "!древо связь @родитель @ребёнок · !древо связь исток @ник\n"
                              "!древо убрать связь @родитель @ребёнок · !древо убрать связь исток @ник\n"
-                             "!древо родные @ник1 @ник2 · !древо убрать родных @ник1 @ник2")
+                             "!древо родные @ник1 @ник2 · !древо убрать родных @ник1 @ник2\n"
+                             "!древо внести брак @ник1 @ник2")
+            if user.id == CUSTOM_COMMAND_OWNER_ID:
+                commands += "\n!древо убрать брак @ник1 @ник2"
             await message.answer(commands)
         except ValueError as error:
             await message.answer(str(error))
