@@ -30,7 +30,8 @@
     statControls.forEach(el=>el.disabled=!!sim);
     $('start').hidden=!!sim;$('hit').hidden=!sim||mode!=='attack'||paused;$('stop').hidden=!sim;
     $('movement').hidden=!sim||mode!=='defense'||paused;$('resume').hidden=!paused;
-    $('idle').hidden=!!sim||!!record;canvas.dataset.phase=paused?'paused':sim?.kind||'idle';
+    $('idle').hidden=!!sim||!!record;$('qte-outcome').hidden=!!sim||!record;
+    canvas.dataset.phase=paused?'paused':sim?.kind||(record?'result':'idle');
     document.querySelectorAll('[data-mode]').forEach(b=>{b.disabled=!!sim;b.classList.toggle('selected',b.dataset.mode===mode);b.setAttribute('aria-pressed',String(b.dataset.mode===mode));});
   }
   function feedback(text,kind=''){const node=$('feedback');node.textContent=text;node.className=kind;}
@@ -176,7 +177,7 @@
       location.href='/qte-lab/casino/?skill='+encodeURIComponent(selected.id);return;
     }
     record=null;clearInput();paused=document.hidden;
-    sim=mode==='defense'?E.defense(selected,stats(),seed(),model()):E.attack(selected,stats(),seed(),model());lastFrame=0;
+    sim=mode==='defense'?E.defense(selected,stats(),seed(),model()):E.attack(selected,stats(),seed(),model());lastFrame=0;accumulator=0;
     labels();controls();health(sim);feedback(mode==='defense'?'Секунда подготовки, затем атака. Крупные светящиеся угрозы сильнее мелких; цвет соответствует магии противника.':'Подготовься. На каждый удар — одно нажатие без повторной попытки.');
     $('trial').scrollIntoView({block:'start',behavior:'instant'});canvas.focus({preventScroll:true});
   }
@@ -188,11 +189,14 @@
     const r=mode==='defense'?E.defenseResult(s):E.attackResult(s),success=!aborted&&(mode==='defense'?r.hits===0:r.hits===r.total);
     const text=aborted?`Испытание прервано · урон ${r.damage}.`:mode==='defense'?success?'Полное уклонение · урон 0.':`${r.hp<=0?'Испытатель повержен. ':''}Касаний: ${r.hits} · получено ${r.damage} урона · осталось ${r.hp} HP.`:`Попаданий ${r.hits}/${r.total} · нанесено ${r.damage} урона · у мишени ${r.hp} HP.`;
     const detail=`${selected.skill.name} · ${mode==='defense'?'уклонение':'попадание'} · узор ${seed()} · точность/уклонение ${stats().accuracy}/${stats().evasion}, враг ${stats().enemyAccuracy}/${stats().enemyEvasion} · опора ${s.damageBase}, HP ${s.initialHp} · `+Object.entries(E.DAMAGE_TIERS).map(([id,t])=>t.name+': '+s.contacts.filter(c=>c.tier===id).length).join(', ');
+    $('qte-outcome-title').textContent=aborted?'Испытание прервано':mode==='defense'&&success?'Полное уклонение':'Испытание завершено';
+    $('qte-outcome-detail').textContent=mode==='defense'?`Касаний: ${r.hits} · Урон: ${r.damage}`:`Попаданий: ${r.hits} / ${r.total}`;
     record={text,detail,skill:selected.id,mode,seed:seed(),stats:stats(),aborted,damage:r.damage,hp:r.hp,damageBase:s.damageBase,initialHp:s.initialHp};health(s);sim=null;paused=false;clearInput();controls();dots(mode==='attack'?r.mask:[]);feedback(text,success?'success':'fail');$('phase-time').textContent=aborted?'ПРЕРВАНО':'ИТОГ';log(text,detail);
   }
   function hit(){if(!sim||paused||mode!=='attack')return;const ok=E.hit(sim);if(ok===null)return;dots(sim.results);health(sim);feedback(ok?(sim.contacts.at(-1).critical?'Крит ×1,5':'Попадание')+' · урон '+sim.contacts.at(-1).damage:'Промах. Повторной попытки нет.',ok?'success':'fail');drawAttack(sim);if(sim.ended)finish();}
-  function pause(){if(!sim)return;paused=true;clearInput();controls();feedback('Пауза. Нажми «Продолжить»: ожидание не засчитывает уклонение.');}
-  $('resume').addEventListener('click',()=>{if(!sim)return;paused=false;lastFrame=0;clearInput();controls();canvas.focus({preventScroll:true});});
+  function pause(){if(!sim)return;paused=true;clearInput();controls();feedback('Пауза, пока окно скрыто. Время и касания не засчитываются.');}
+  function resume(){if(!sim||!paused||document.hidden)return;paused=false;lastFrame=0;accumulator=0;clearInput();controls();}
+  $('resume').addEventListener('click',()=>{resume();canvas.focus({preventScroll:true});});
   $('start').addEventListener('click',begin);$('hit').addEventListener('click',hit);$('stop').addEventListener('click',()=>finish(true));
   $('shuffle').addEventListener('click',()=>{if(!sim){$('seed').value=seed()%999999+1;record=null;controls();drawIdle();feedback('Номер узора изменён. Навык и характеристики прежние.');}});
   $('clear').addEventListener('click',()=>{attempt=0;$('log').replaceChildren();});
@@ -213,24 +217,37 @@
     if(mode==='defense'&&keymap[e.code]){e.preventDefault();keys.add(keymap[e.code]);}
   });
   window.addEventListener('keyup',e=>{if(keymap[e.code])keys.delete(keymap[e.code]);});
-  window.addEventListener('blur',pause);document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
+  window.addEventListener('blur',clearInput);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();else resume();});
   document.querySelectorAll('[data-move]').forEach(b=>{
     b.addEventListener('pointerdown',e=>{if(!sim||paused)return;e.preventDefault();b.setPointerCapture(e.pointerId);pointers.set(e.pointerId,b.dataset.move);touch.clear();});
     for(const name of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(name,e=>pointers.delete(e.pointerId));
   });
   function input(){const all=new Set([...keys,...pointers.values()]),x=+all.has('right')-+all.has('left'),y=+all.has('down')-+all.has('up');if(x||y)return {x,y};const cmd=touch.input();return cmd.target?{target:{x:cmd.target[0],y:cmd.target[1]}}:cmd;}
   let accumulator=0;
-  function frame(now){
-    const delta=lastFrame?(now-lastFrame)/1000:0;lastFrame=now;
+  function pulse(now){
+    // A slow visible frame is not a user pause. Cap catch-up at 100 ms
+    // rather than dropping the test or registering unavoidable contacts.
+    const delta=lastFrame?Math.min(.10,(now-lastFrame)/1000):0;lastFrame=now;
     if(sim&&!paused){
-      if(delta>.25){pause();accumulator=0;}
+      accumulator+=delta;while(accumulator>=1/120&&sim&&!sim.ended){if(mode==='defense')E.defenseStep(sim,1/120,input());else E.attackStep(sim,1/120);accumulator-=1/120;}
+      if(sim.ended)finish();
       else{
-        accumulator+=delta;while(accumulator>=1/120&&sim&&!sim.ended){if(mode==='defense')E.defenseStep(sim,1/120,input());else E.attackStep(sim,1/120);accumulator-=1/120;}
-        if(sim){$('phase-time').textContent=Math.max(0,sim.duration-sim.time).toFixed(1)+' с';health(sim);if(mode==='defense')drawDefense(sim);else{drawAttack(sim);dots(sim.results);}if(sim.ended)finish();}
+        $('phase-time').textContent=Math.max(0,sim.duration-sim.time).toFixed(1)+' с';
+        health(sim);if(mode==='defense')drawDefense(sim);else{drawAttack(sim);dots(sim.results);}
       }
     }else accumulator=0;
-    requestAnimationFrame(frame);
   }
+  function frame(){
+    requestAnimationFrame(frame);
+    pulse(performance.now());
+  }
+  // Telegram/WebViews can suspend animation frames without hiding the
+  // document. The same clock keeps the trial moving and paints the fallback.
+  setInterval(()=>{
+    const now=performance.now();
+    if(sim&&!paused&&!document.hidden&&now-lastFrame>=120)pulse(now);
+  },80);
   const groups=[...new Map(catalog.map(s=>[s.class_id,s.class_name])).entries()];
   $('class-filter').append(new Option('Все классы и боссы',''),...groups.map(([id,name])=>new Option(name,id)));
   const used=new Set(profiles.map(p=>p.kind));for(const [id,f] of Object.entries(E.FAMILIES))if(used.has(id))$('family-filter').append(new Option(f[0],id));

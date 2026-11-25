@@ -165,18 +165,21 @@ def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True
                     result=None
                     qte.pop('dodge',None)
             if result is not None:qte['pattern_dodge']=result
-    return resolve_skill(
-        pair_state(actor, target),
-        "a",
-        skill_id,
-        skills,
-        rng,
-        advance_turn=False,
-        tick_actor_bleed=tick_actor_bleed,
-        allies=allies,
-        raid_context=raid_context,
-        qte=qte or None,
-    )
+    def land(attacker, recipient, *, context, proof, tick, companions=None):
+        return resolve_skill(pair_state(attacker, recipient), 'a', skill_id, skills, rng,
+                             advance_turn=False, tick_actor_bleed=tick, allies=companions,
+                             raid_context=context, qte=proof or None)
+
+    from arena_summons import scripted_splash, expose
+    source, splash_key, unit = scripted_splash(raid_context, target, skill_id)
+    shadow = deepcopy(actor) if unit is not None else None
+    with expose(target, unit is not None):
+        result = land(actor, target, context=raid_context, proof=qte, tick=tick_actor_bleed, companions=allies)
+    if shadow is not None:
+        splash = land(shadow, unit, context=None, proof=None, tick=False)
+        log_event(raid_context, source, splash_key, splash['text'], skill=skill_id,
+                  damage=splash['damage'], damage_type=splash.get('damage_type'), hit=splash['hit'])
+    return result
 
 
 def set_intent(data):
@@ -232,6 +235,7 @@ def set_intent(data):
             )
         data["intent"] = dict(
             kind="attack",
+            area=pattern == 0,
             phase=phase,
             skill=("lei_explosive_slash", "lei_double_slash", "lei_perfected_flurry")[
                 pattern
@@ -247,6 +251,7 @@ def set_intent(data):
     if pattern == 0:
         intent = dict(
             kind="attack",
+            area=True,
             skill="raid_rampage" if phase == 2 else "raid_sweep",
             targets=list(living),
             text="Готовит удар цепью по всему отряду.",
@@ -395,7 +400,7 @@ def raid_snapshot(data):
         k: p["fighter"] for k, p in data["players"].items()
     }
     fighters.update(data.get('enemies', {}))
-    return {
+    snapshot = {
         k: deepcopy(
             {
                 field: f.get(field, {})
@@ -404,6 +409,10 @@ def raid_snapshot(data):
         )
         for k, f in fighters.items()
     }
+    if data.get('unified_version') == 3:
+        from arena_summons import public
+        snapshot['_summons'] = deepcopy(public(data))
+    return snapshot
 
 
 def log_event(data, actor, target, text, **extra):
@@ -428,6 +437,8 @@ def log_event(data, actor, target, text, **extra):
 
 
 def defend(fighter,opponent=None,raid_context=None):
+    from arena_cultist import record_action
+    record_action(fighter, None)
     if opponent is not None:
         from arena_archclasses import obey_enemy_prescript
         from arena_finals import break_grip

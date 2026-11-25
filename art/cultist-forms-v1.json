@@ -1,0 +1,28 @@
+{
+  "generator": "Built-in imagegen; original alpha preserved in 512×768 deployment exports",
+  "output_dir": "webapp/assets/archclasses",
+  "inspiration": {
+    "cthulhu": "https://www.hplovecraft.com/writings/texts/fiction/mm.aspx",
+    "yog": "https://www.hplovecraft.com/writings/texts/fiction/dh.aspx",
+    "shub": "https://www.chaosium.com/dark-ages/?setCurrencyId=1",
+    "hastur": "https://www.gutenberg.org/ebooks/21523"
+  },
+  "forms": {
+    "cthulhu": {
+      "file": "cultist_cthulhu_final.png",
+      "prompt": "Use case: stylized-concept. Asset type: one production combat sprite for a 2D dark fantasy Telegram RPG. Subject: Star-spawn of R'lyeh, a transformed cultist: broad humanoid silhouette, cephalopod mantle and closely clustered facial tendrils, leathery folded partially open bat wings, amphibian legs. Desaturated deep teal and weathered bronze, broken highlights on wet skin, scraps of old ritual cloth only. Tall full-body sprite. Style: moody Lovecraftian horror, inked painterly dark anime game illustration, not photorealistic, strong graphic contours and restrained rim light, readable downscaled to 140 px tall. Composition: one centered complete figure, three-quarter facing screen right when anatomy permits, contained silhouette with comfortable clear padding on all sides. Background: genuine transparency with clean alpha, no stage, no ground shadow, no haze outside the figure, no writing, no logo, no UI; never paint a checkerboard."
+    },
+    "yog": {
+      "file": "cultist_yog_final.png",
+      "prompt": "Use case: stylized-concept. Asset type: one production combat sprite for a 2D dark fantasy Telegram RPG. Subject: Child of the Gate, a transformed cultist: a self-contained living tangle of uneven overlapping pale violet spheres, rib-like organic strands suspended inside, small dark occlusions and thin ivory arcs. Utterly nonhumanoid, asymmetric compact hovering silhouette made of solid visible material, NO separate dreamscape. Violet-black, pearl and a little cold-lilac light. Style: moody Lovecraftian horror, inked painterly dark anime game illustration, not photorealistic, strong graphic contours and restrained rim light, readable downscaled to 140 px tall. Composition: one centered complete figure, three-quarter facing screen right when anatomy permits, contained silhouette with comfortable clear padding on all sides. Background: genuine transparency with clean alpha, no stage, no ground shadow, no haze outside the figure, no writing, no logo, no UI; never paint a checkerboard."
+    },
+    "shub": {
+      "file": "cultist_shub_final.png",
+      "prompt": "Use case: stylized-concept. Asset type: one production combat sprite for a 2D dark fantasy Telegram RPG. Subject: Dark Young of the Black Goat, a transformed cultist: nonhuman mass of gnarled charcoal roots, several firm cloven black hooves, antler-like branches and knotted bark at top, a few crevices reflecting muted moss light. Readable bent silhouette, deep forest black and desaturated moss green, no scenery. Style: moody Lovecraftian horror, inked painterly dark anime game illustration, not photorealistic, strong graphic contours and restrained rim light, readable downscaled to 140 px tall. Composition: one centered complete figure, three-quarter facing screen right when anatomy permits, contained silhouette with comfortable clear padding on all sides. Background: genuine transparency with clean alpha, no stage, no ground shadow, no haze outside the figure, no writing, no logo, no UI; never paint a checkerboard."
+    },
+    "hastur": {
+      "file": "cultist_hastur_final.png",
+      "prompt": "Use case: stylized-concept. Asset type: one production combat sprite for a 2D dark fantasy Telegram RPG. Subject: Living Mask of Carcosa, a transformed cultist with no human body: tall specter of antique ragged ochre silk robes held in the shape of a sovereign, bare porcelain mourning mask under a ragged hood, pitch-black empty space where skin should be, hem shredding into a few short opaque ribbons. Sooted yellow ochre, antique bronze, graphite and old ivory. No weapons or throne. Style: moody Lovecraftian horror, inked painterly dark anime game illustration, not photorealistic, strong graphic contours and restrained rim light, readable downscaled to 140 px tall. Composition: one centered complete figure, three-quarter facing screen right when anatomy permits, contained silhouette with comfortable clear padding on all sides. Background: genuine transparency with clean alpha, no stage, no ground shadow, no haze outside the figure, no writing, no logo, no UI; never paint a checkerboard."
+    }
+  }
+}

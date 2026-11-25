@@ -1,0 +1,79 @@
+{
+  "generator": "built-in image_gen",
+  "transparent_background": true,
+  "alpha_cleanup": true,
+  "alpha_cleanup_authorized": "Да, убрать ореол программно",
+  "alpha_cleanup_tool": "tools/prepare_guild_sprites.py",
+  "files": [
+    {
+      "id": "goblin",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-4b2273e7-7301-4d7a-b10a-82aee4684b55.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/goblin-v1.png"
+    },
+    {
+      "id": "slime",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-c7376e49-2e43-4adb-846c-dc9980f7d131.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/slime-v1.png"
+    },
+    {
+      "id": "shaman",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-6eeeb1b9-b6c2-4e37-b2ce-316b030decb4.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/shaman-v1.png"
+    },
+    {
+      "id": "spider",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-3c259b27-03d0-4acd-93b3-31504f27e939.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/spider-v1.png"
+    },
+    {
+      "id": "wolf",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-f5edaacb-55a1-40ef-9ff2-e352a5579f54.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/wolf-v1.png"
+    },
+    {
+      "id": "orc",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-9b882b39-9b59-4945-8bbf-ff9a0a857950.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/orc-v1.png"
+    },
+    {
+      "id": "troll",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-8bc0f629-335d-44c6-a544-d7ddbe7e0db9.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/troll-v1.png"
+    },
+    {
+      "id": "wraith",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-409a56c8-b46c-4981-9902-1ca3386509a8.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/wraith-v1.png"
+    },
+    {
+      "id": "golem",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-b980b40f-a83c-4dfa-87ea-b02c2603e1f4.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/golem-v1.png"
+    },
+    {
+      "id": "wyvern",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-83bc8680-2144-45a7-9481-396182b9f5ea.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/wyvern-v1.png"
+    },
+    {
+      "id": "lich",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-e8f0d0f0-b34a-446e-8df9-3cfead433b32.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/lich-v1.png"
+    },
+    {
+      "id": "dragon",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-9d9c0210-e7a8-40e9-83a5-fc23e85fca59.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/dragon-v1.png"
+    },
+    {
+      "id": "ancient",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-5c961680-867e-4bef-8232-c24677ed6326.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/ancient-v1.png"
+    },
+    {
+      "id": "deathlord",
+      "source": "C:\\Users\\Pikac\\.codex\\generated_images\\01a0290d-bff1-7480-9538-e6a0b5b63241\\exec-eaedde31-5796-4c2f-bbe2-5a7b118e58d2.png",
+      "destination": "C:/MyFiles/Bots/GnidaBot/webapp/assets/guild/deathlord-v1.png"
+    }
+  ]
+}

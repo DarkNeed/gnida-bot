@@ -1,6 +1,7 @@
 """Explicit progression decisions, including choosing to keep the current class."""
 
 from arena_archclasses import branch_options
+from arena_cultist import FORMS as CULT_FORMS
 from arena_rpg import RPG_BRANCHES
 
 
@@ -18,6 +19,11 @@ def pending_choice(profile):
 
 
 def choice_avatar(class_id, archclass_id="", stage=10):
+    if class_id == 'cultist' or (not class_id and archclass_id in CULT_FORMS):
+        if form := CULT_FORMS.get(archclass_id):
+            sprite = form["id"] if stage >= 20 else archclass_id
+            return '/static/assets/archclasses/' + sprite + '.png'
+        return '/static/assets/cultist.png'
     if class_id=='gambler' or archclass_id in ('casino_hustler','casino_lucky'):
         key=archclass_id if archclass_id in ('casino_hustler','casino_lucky') else 'gambler'
         return '/static/assets/casino/'+key+('_final' if key!='gambler' and stage>=20 else '')+'.png'

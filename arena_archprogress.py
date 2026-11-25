@@ -297,6 +297,9 @@ def upgrade_description(branch_id):
 
 def milestones(source):
     key = source["archclass_id"]
+    from arena_cultist import PATRONS, milestones as cult_milestones
+    if key in PATRONS:
+        return cult_milestones(source)
     if key.startswith('casino_'):
         sid='casino_house' if key=='casino_hustler' else 'casino_deposit'
         return [dict(level=12,description='Родные атаки: сила +1.',unlocked=source['level']>=12),
@@ -328,6 +331,9 @@ def milestones(source):
 def unique_rule(skill, source):
     key = skill_branch(skill)
     if not key or key != source.get("archclass_id"):
+        return None
+    from arena_cultist import PATRONS
+    if key in PATRONS:
         return None
     changes = dict(power=skill.power + 2) if skill.damage_type else {}
     values = {

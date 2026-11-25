@@ -14,3 +14,6 @@
 .health-panel{border:1px solid #334a5d;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#0e1b29}.health-panel>div:first-child,.health-panel p{display:flex;justify-content:space-between;gap:10px;font-size:11px;margin:0}.health-panel strong{font-variant-numeric:tabular-nums;font-weight:600;color:#d8eee6}.health-track{height:7px;border-radius:4px;background:#070e18;overflow:hidden;margin:8px 0}.health-track i{display:block;width:100%;height:100%;background:linear-gradient(90deg,#56aa98,#a0d4af)}.health-panel p{font-size:10px;line-height:1.5;color:#a2b7c9;flex-wrap:wrap}#chance-status{color:var(--gold)}#strike-dots[hidden]{display:none}#damage-legend{border-left:2px solid var(--gold);padding-left:9px}.health-panel.depleted .health-track i{background:#da8d85}.health-panel.depleted strong{color:#ecaaa5}
 .qte-touch-mode .movement .qte-stick{display:block}.qte-touch-mode .movement .pad{display:none}
 @media(pointer:coarse){.movement .qte-stick{display:block}.movement .pad{display:none}}
+#qte-outcome:not([hidden]){position:absolute;inset:0;display:grid;place-content:center;gap:9px;text-align:center;pointer-events:none;background:#080c16bb;color:#efe4ca;padding:12px}
+#qte-outcome strong{font-size:clamp(14px,3vw,22px);font-weight:600}
+#qte-outcome small{font-size:clamp(10px,2vw,13px);color:#b9bbc9}

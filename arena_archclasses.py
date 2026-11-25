@@ -1,5 +1,6 @@
 """Native specializations. They modify existing skills, never add combat slots."""
 from arena_rpg import RPG_BRANCHES
+from arena_cultist import FORMS as CULT_FORMS, PATRONS, final_form as cult_final_form
 
 ARCHCLASS_LEVEL = 10
 ARCHCLASS_FINAL_LEVEL = 20
@@ -149,6 +150,12 @@ ARCHCLASSES.update({key:branch(cid,name,PATHS[key][0],PATHS[key][1],PATHS[key][5
     for key,(cid,name,description) in RPG_BRANCHES.items()})
 from arena_casino import BRANCHES as CASINO_BRANCHES
 ARCHCLASSES.update(CASINO_BRANCHES)
+ARCHCLASSES.update({
+    key: branch("cultist", "Культист Бездны · " + name, CULT_FORMS[key]["name"],
+                f"Пассивка «{passive}». {description}",
+                f'{CULT_FORMS[key]["appearance"]} Пассивка «{CULT_FORMS[key]["passive"]}». {CULT_FORMS[key]["description"]}')
+    for key, (name, passive, description) in PATRONS.items()
+})
 from arena_finals import FINALS
 for _key, (_class, _title, _description) in FINALS.items():
     ARCHCLASSES[_key].update(final_name=_title,final_description=_description)
@@ -172,13 +179,16 @@ def archclass_view(source):
     final = final_stage(source)
     from arena_archprogress import milestones
 
-    return dict(
+    view = dict(
         entry,
         id=source["archclass_id"],
         stage=20 if final else 10,
         title=entry["final_name"] if final else entry["name"],
         progression=milestones(source),
     )
+    if form := cult_final_form(source):
+        view["form"] = dict(form)
+    return view
 
 
 def class_title(source, base_name):

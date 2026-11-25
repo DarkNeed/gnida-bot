@@ -203,8 +203,9 @@ def intents(data):
             continue
         move=available[0] if available else 0
         if f.get('nzd_ritual'):move=4
-        targets=(list(living) if move in (2,4) and who in ('gargantua','mare','victim','narberal','entoma') or move==3 and who=='aura' and phase==2 else [target] if target else [])
-        out[key]=dict(kind='attack',skill=f'nz_{who}_p{phase}_{move}',targets=targets,
+        area = move in (2,4) and who in ('gargantua','mare','victim','narberal','entoma') or move==3 and who=='aura' and phase==2
+        targets=list(living) if area else [target] if target else []
+        out[key]=dict(kind='attack',skill=f'nz_{who}_p{phase}_{move}',targets=targets,area=area,
             phase=phase,text=MOVES[who][phase-1][move])
     if out:
         data['enemy_intents']=out;data['intent']=dict(kind='encounter',targets=[],phase=max(i['phase'] for i in out.values()),

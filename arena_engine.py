@@ -39,6 +39,7 @@ from arena_rpg import (
     rpg_received_damage, rpg_effect, rpg_after_action, branch as rpg_branch,
 )
 from arena_assassin import build_catalog as build_assassin_catalog
+import arena_cultist as cult
 from arena_rpg_combat import context as rpg_action_context, incoming as rpg_incoming, incoming_multiplier as rpg_incoming_multiplier, paid_action as rpg_paid_action, revive as rpg_revive
 from arena_finals import (context as final_context, modifiers as final_modifiers,
     incoming as final_incoming, received as final_received, after_action as final_after_action,
@@ -633,6 +634,10 @@ _assassin_classes, _assassin_skills = build_assassin_catalog(FighterClass, Skill
 FIGHTER_CLASSES.update(_assassin_classes)
 BUILTIN_SKILLS.update(_assassin_skills)
 VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _assassin_classes.items()})
+_cult_classes, _cult_skills = cult.build_catalog(FighterClass, Skill, effect)
+FIGHTER_CLASSES.update(_cult_classes)
+BUILTIN_SKILLS.update(_cult_skills)
+VISIBLE_CLASS_ALIASES.update({c.name.casefold(): k for k, c in _cult_classes.items()})
 from arena_casino import build_catalog as build_casino_catalog
 _casino_classes, _casino_skills = build_casino_catalog(FighterClass, Skill, effect)
 FIGHTER_CLASSES.update(_casino_classes)
@@ -1098,6 +1103,9 @@ def skill_restriction(side: dict, skill: Skill, own_turns=None) -> str:
     reason = rpg_restriction(side, skill)
     if reason:
         return reason
+    reason = cult.restriction(side, skill)
+    if reason:
+        return reason
     if "twice_per_battle" in skill.tags and side.get("epic_state", {}).get("skill_uses", {}).get(skill.skill_id, 0) >= 2:
         return "Два применения в этом бою уже потрачены."
     if "fourth_action" in skill.tags and (side.get("own_turns", 0) if own_turns is None else own_turns) < 3:
@@ -1308,6 +1316,7 @@ def skip_turn(state: dict) -> None:
         k: {"hp": s["hp"], "resource": s["resource"]} for k, s in state["sides"].items()
     }
     order_note = obey_enemy_prescript(actor, None,state['sides']['b' if key=='a' else 'a'])
+    cult.record_action(actor, None)
     _tick(actor)
     text = "Время вышло: ход пропущен (2 минуты)."
     if order_note:
@@ -1512,7 +1521,7 @@ def resolve_skill(
     if ("once_per_battle" in skill.tags or 'once_on_hit' in skill.tags and hit) and skill_id not in actor.get('used_skills', []):
         actor.setdefault("used_skills", []).append(skill_id)
     order_note = obey_enemy_prescript(actor, skill_id,target,raid_context)
-    damage = 0
+    damage, brood_absorbed = 0, 0
     if hit and skill.damage_type:
         attack = effective_stat(actor, skill.damage_type + "_attack")
         if 'hybrid_attack' in skill.tags:
@@ -1537,6 +1546,7 @@ def resolve_skill(
                 * relic_multiplier
                 * gear_multiplier
                 * rpg_multiplier
+                * cult.damage_multiplier(actor, target, skill)
                 * mastery_multiplier
                 * parry_multiplier
                 * actor.get("raid_damage_multiplier", 1)
@@ -1587,6 +1597,7 @@ def resolve_skill(
                     c['potential']=max(1,math.floor(reference_damage*c['weight']*multiplier+.5))
             potential=sum(c['potential'] for c in pattern_contacts)
             remaining=gear.incoming(target,final_incoming(target,simultaneous_damage(target,rpg_incoming(target,potential,rpg_branch(target))),actor,raid_context),gear_action_id) if potential else 0
+            remaining, brood_absorbed = cult.incoming(target, remaining)
             redirected=potential-remaining
             for c in pattern_contacts:
                 held=min(redirected,c['potential']);redirected-=held
@@ -1609,7 +1620,9 @@ def resolve_skill(
                 budget = [round(value * (1.5 if i < len(timing_criticals)
                           and timing_criticals[i] is True else 1)) for i, value in enumerate(budget)]
             potential=sum(budget[i] for i,p in enumerate(strike_results) if p['hit'])
-            redirected=potential-gear.incoming(target,final_incoming(target,simultaneous_damage(target,potential),actor,raid_context),gear_action_id)
+            remaining = gear.incoming(target,final_incoming(target,simultaneous_damage(target,potential),actor,raid_context),gear_action_id)
+            remaining, brood_absorbed = cult.incoming(target, remaining)
+            redirected = potential - remaining
             for i, part in enumerate(strike_results):
                 if part["hit"]:
                     held=min(redirected,budget[i]);redirected-=held
@@ -1623,6 +1636,7 @@ def resolve_skill(
             damage = simultaneous_damage(target,damage)
             damage=final_incoming(target,damage,actor,raid_context)
             damage=gear.incoming(target,damage,gear_action_id)
+            damage, brood_absorbed = cult.incoming(target, damage)
             target["hp"] = max(0, target["hp"] - damage)
     if _damage_reference:
         return dict(damage=0, critical=False, last_strike_scale=1)
@@ -1646,12 +1660,16 @@ def resolve_skill(
         from arena_chaplain import amendment_action, amendment_active
         amendment_returned = bool(amendment_active(actor))
         amendment_note = amendment_action(actor)
+    cult.record_action(actor, skill.damage_type)
     _tick(actor,tick_dot=False,preserve_rally=True)
     if amendment_returned:
         # Start after this action's tick: all five subsequent own turns count.
         from arena_chaplain import AMENDMENT_COOLDOWN
         actor['cooldowns'][skill_id] = AMENDMENT_COOLDOWN
     effects_text = []
+    if brood_absorbed:
+        effects_text.append(f"отпрыск принял {brood_absorbed} урона"
+                            + ("" if cult.cover_view(target) else " и погиб"))
     if amendment_note:
         effects_text.append(amendment_note)
     charmed = False
@@ -1798,6 +1816,7 @@ def resolve_skill(
     arch_notes = arch_after_action(
         actor, target, skill, hit, skills or BUILTIN_SKILLS, rng
     )
+    arch_notes += cult.after_action(actor, target, skill, hit, raid_context)
     self_damage = revenge_recoil(actor, min(before[other]["hp"], damage))
     bleed_damage = min(actor["hp"], pending_bleed)
     actor["hp"] -= bleed_damage

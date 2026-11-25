@@ -66,7 +66,8 @@ def set_kit_intent(data):
     targets = keys if skill in ('kit_rift', 'kit_coins', 'kit_eclipse') else [target]
     if skill == 'kit_field':
         targets = []
-    data['intent'] = dict(kind='kit', phase=phase, skill=skill, targets=targets, text=texts[skill])
+    data['intent'] = dict(kind='kit', phase=phase, skill=skill, targets=targets, text=texts[skill],
+                          area=skill in ('kit_rift', 'kit_coins', 'kit_eclipse'))
     data.pop('kit_prediction', None)
     for p in data['players'].values():
         p['fighter']['effects'] = [e for e in p['fighter']['effects'] if e.get('id') != 'kit_foreseen']

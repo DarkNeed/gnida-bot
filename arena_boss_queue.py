@@ -73,8 +73,20 @@ def _prepare(data, keys, skills, rng):
 
 def _land(data, released, guards, skills, rng):
     from arena_combined_damage import incoming_group
-    with incoming_group(data, released, skills):
-        return _land_group(data, released, guards, skills, rng)
+    from arena_qte_live import guard_subskills
+    if data.get('unified_version') == 3:
+        data['_scripted_brood_areas'] = {}
+        for r in released:
+            i = r['intent']
+            if i.get('skill') and r.get('summon_targets'):
+                sid = i['skill']
+                for part in guard_subskills(r['fighter'], sid) or [sid]:
+                    data['_scripted_brood_areas'][part] = r['source'], r['summon_targets']
+    try:
+        with incoming_group(data, released, skills):
+            return _land_group(data, released, guards, skills, rng)
+    finally:
+        data.pop('_scripted_brood_areas', None)
 
 
 def _land_group(data, released, guards, skills, rng):

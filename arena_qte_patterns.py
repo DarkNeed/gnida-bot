@@ -54,6 +54,9 @@ def random_values(seed):
 
 def family(s):
     ident, n = s.get("base_id", ""), s.get("name", "").lower()
+    from arena_cultist import SKILL_PATTERNS
+    if ident in SKILL_PATTERNS:
+        return SKILL_PATTERNS[ident]
     if ident in {'mimic_claw','mimic_shards','mimic_gaze'}:
         return {'mimic_claw':'slash','mimic_shards':'stars','mimic_gaze':'mirror'}[ident]
     from arena_guild_patterns import FAMILIES as guild_families
@@ -474,6 +477,10 @@ def defense(p, stats, seed, enabled=None, preparation=1):
     if guild:
         count = 4 + (1 if npc >= 3 else 0)
         span = (count - 1) * (1.12 - .16 * d['intensity'])
+    from arena_cultist_qte import RHYTHM
+    if (move := RHYTHM.get(p['skill'].get('base_id'))) is not None:
+        count, span = move
+        d["warning"] = max(.57, d["warning"])
     events = [
         dict(
             at=preparation + 0.18 + i * span / max(1, count - 1),
@@ -598,6 +605,10 @@ def prepare(s, e):
         beam(cx - dx, cy - dy, cx + dx, cy + dy, width, delay)
 
     k = p["kind"]
+    from arena_cultist_qte import prepare as cult_prepare
+    if cult_prepare(s, e, add, ident):
+        _register_shapes(s, e, shapes)
+        return
     from arena_guild_patterns import prepare as guild_prepare
     if ident and ident.startswith('guild_') and guild_prepare(s,e,add):
         pass
@@ -845,9 +856,15 @@ def prepare(s, e):
         )
     else:
         raise ValueError("Неизвестный узор.")
+    _register_shapes(s, e, shapes)
+
+
+def _register_shapes(s, e, shapes):
+    i, k = e["index"], s["p"]["kind"]
     for j, h in enumerate(shapes):
         h["id"] = f"wave:{i}:{j}"
-        h["damageId"] = f"wave:{i}:bolt" if k == "lightning" and j < 2 else h["id"]
+        damage_group = h.get("damageGroup") or ("bolt" if k == "lightning" and j < 2 else None)
+        h["damageId"] = f"wave:{i}:{damage_group}" if damage_group else h["id"]
         h["disabled"] = h.get('visualOnly',False) or s["enabled"] is not None and not s["enabled"][h["strike"]]
         h.setdefault(
             "tier",
@@ -863,6 +880,10 @@ def prepare(s, e):
     e["ready"] = True
 
 
+def _fold_center(cy, speed, age):
+    return cy + age*speed + (1 if speed>0 else -1)*11*math.sin(age*12)
+
+
 def geometry(h, t):
     age = max(0, t - h["start"])
     if h['type']=='line' and ('chestMoveX' in h or 'chestMoveY' in h):
@@ -873,20 +894,65 @@ def geometry(h, t):
     if h.get('ainzPath'):
         from arena_ainz_motion import geometry as ainz_geometry
         return ainz_geometry(h,age)
+    if 'drapeBank' in h:
+        u = min(1, age/.70)
+        scale = u*u*(3-2*u)
+        edge = h['drapeEdge']
+        width = (W-edge if h['drapeBank'] else edge)*scale
+        return dict(h,x=W-width if h['drapeBank'] else 0,w=width)
+    if h.get('fold'):
+        lo, hi, cy, speed, phase, bend = h['fold']
+        center = _fold_center(cy, speed, age)
+        points = []
+        for n in range(9):
+            x = lo+(hi-lo)*n/8
+            y = center + bend*math.sin(x*.019+phase+age*2.4) + 5*math.sin(x*.071-age*6)
+            points.append((x,y))
+        return dict(h, points=points)
+    if h.get('cultSlide'):
+        x = h['x'] + age*h['cultSlide']
+        if 'tideBank' in h:
+            cy = h['routeY']+h['tideBend']*math.sin(age*4.9+h['tidePhase'])
+            half = h['routeGap']/2
+            top, bottom = (cy+half, H+25) if h['tideBank'] else (-25, cy-half)
+            points = []
+            for n in range(9):
+                y = top+(bottom-top)*n/8
+                px = x+21+13*math.sin(y*.031+age*7+h['tidePhase'])+5*math.sin(y*.121-age*9)
+                points.append((px,y))
+            return dict(h, x=x, y=top, h=bottom-top, routeY=cy, points=points)
+        return dict(h, x=x)
+    if h.get('cultGrow'):
+        scale = min(1, age/h['cultGrow'])
+        a = h.get('clockTurn', 0)*age
+        cs, sn = math.cos(a), math.sin(a)
+        dx, dy = h['bx']-h['ax'], h['by']-h['ay']
+        return dict(h, bx=h['ax']+(dx*cs-dy*sn)*scale, by=h['ay']+(dx*sn+dy*cs)*scale)
     if h['type'] == 'line' and h.get('clockTurn'):
         a = h['clockTurn'] * age
         cs, sn = math.cos(a), math.sin(a)
         dx, dy = h['bx']-h['ax'], h['by']-h['ay']
         return dict(h, bx=h['ax']+dx*cs-dy*sn, by=h['ay']+dx*sn+dy*cs)
     if h["type"] == "bullet":
+        if h.get('waveA'):
+            length = math.hypot(h['vx'], h['vy']) or 1
+            nx, ny = -h['vy']/length, h['vx']/length
+            offset = h['waveA'] * math.sin(h['waveF']*age)
+            slope = h['waveA'] * h['waveF'] * math.cos(h['waveF']*age)
+            return dict(h, x=h['x']+h['vx']*age+nx*offset, y=h['y']+h['vy']*age+ny*offset,
+                        vx=h['vx']+nx*slope, vy=h['vy']+ny*slope)
         if h.get('returnAt'):
             travel=age if age<=h['returnAt'] else 2*h['returnAt']-age
             sign=1 if age<=h['returnAt'] else -1
             return dict(h,x=h['x']+h['vx']*travel,y=h['y']+h['vy']*travel,vx=h['vx']*sign,vy=h['vy']*sign)
         if h.get('orbit'):
-            a=h['orbitAngle']+h['orbitSpeed']*age;r=h['orbitRadius']+h['spiral']*age
-            return dict(h,x=h['cx']+math.cos(a)*r,y=h['cy']+math.sin(a)*r,
-                vx=math.cos(a)*h['spiral']-math.sin(a)*r*h['orbitSpeed'],
+            travel=min(age,h.get('riteGather',age))
+            a=h['orbitAngle']+h['orbitSpeed']*travel;r=h['orbitRadius']+h['spiral']*travel
+            sx=h.get('orbitStretch',1)
+            if travel < age:
+                return dict(h,x=h['cx']+math.cos(a)*r*sx,y=h['cy']+math.sin(a)*r,vx=0,vy=0)
+            return dict(h,x=h['cx']+math.cos(a)*r*sx,y=h['cy']+math.sin(a)*r,
+                vx=(math.cos(a)*h['spiral']-math.sin(a)*r*h['orbitSpeed'])*sx,
                 vy=math.sin(a)*h['spiral']+math.cos(a)*r*h['orbitSpeed'])
         if 'px' in h:
             return dict(h, x=h['px'], y=h['py'])
@@ -937,12 +1003,36 @@ def _segments_within(ax, ay, bx, by, cx, cy, dx, dy, limit):
 
 def touches(h, old, now, t, dt):
     if h.get('pendingLaunch') and t<h['start']+h.get('freezeFor',0):return False
+    if h.get('fold'):
+        lo, hi, cy, speed, _, bend = h['fold']
+        center = _fold_center(cy, speed, max(0, t-h['start']))
+        pad = h['r']+now['r']+1e-9
+        vertical = abs(bend)+5+pad
+        if (max(old['x'],now['x'])<lo-pad or min(old['x'],now['x'])>hi+pad
+                or max(old['y'],now['y'])<center-vertical or min(old['y'],now['y'])>center+vertical):
+            return False
+    if 'tideBank' in h:
+        x = h['x']+max(0,t-h['start'])*h['cultSlide']+21
+        pad = h['r']+now['r']+18+1e-9
+        if max(old['x'],now['x'])<x-pad or min(old['x'],now['x'])>x+pad:
+            return False
     g = geometry(h, t)
     r = now["r"]
     a, b, c, d = old["x"], old["y"], now["x"], now["y"]
     typ = h["type"]
     if typ == "bullet":
         x, y, radius = g['x'], g['y'], g['r'] + r
+        if h.get('cultVine'):
+            ax, ay = h['x'], h['y']
+            for bx, by, _ in h.get('vineTrail', ()):
+                if _segments_within(a,b,c,d,ax,ay,bx,by,h['vineBody']+r):
+                    return True
+                ax, ay = bx, by
+            if _segments_within(a,b,c,d,ax,ay,x,y,h['vineBody']+r):
+                return True
+            for bx, by, qx, qy in h.get('vineBranches', ()):
+                if _segments_within(a,b,c,d,bx,by,qx,qy,h['vineTwig']+r):
+                    return True
         if h.get('length'):
             length = math.hypot(g['vx'],g['vy']) or 1
             tail_x=x-g['vx']/length*h['length']
@@ -1041,7 +1131,8 @@ def defense_move(s, control, speed=None):
         p["x"] += dx / length * travel
         p["y"] += dy / length * travel
     for h in s["hazards"]:
-        if h["type"] == "well" and h["start"] <= s["time"] < h["end"]:
+        if (h["type"] == "well" and h["start"] <= s["time"] < h["end"]
+                and not (h.get("motif") == "cult_sink" and h["disabled"])):
             length = math.hypot(h["x"] - p["x"], h["y"] - p["y"])
             if 1 < length < 170:
                 p["x"] += (h["x"] - p["x"]) / length * h["pull"] * dt
@@ -1051,6 +1142,25 @@ def defense_move(s, control, speed=None):
     p["vx"] = (p["x"] - old["x"]) / dt
     p["vy"] = (p["y"] - old["y"]) / dt
     return old
+
+
+def _grow_vine(h,p,t,dt):
+    if h["disabled"] or t<h['start'] or t>min(h['end'],h['start']+h['vineStop']):
+        return
+    advance_homing(h,p,t,dt)
+    trail = h.get('vineTrail', ())
+    bx, by, bt = trail[-1] if trail else (h['x'],h['y'],h['start'])
+    if t-bt < .071:
+        return
+    x, y = h['px'], h['py']
+    h['vineTrail'] = (*trail,(x,y,t))
+    n = len(trail)
+    if n%3==1:
+        length = math.hypot(x-bx,y-by) or 1
+        ux, uy = (x-bx)/length, (y-by)/length
+        side = 1 if n%2 else -1
+        qx, qy = x-ux*12-uy*17*side, y-uy*12+ux*17*side
+        h['vineBranches'] = (*h.get('vineBranches', ()),(x,y,qx,qy))
 
 
 def defense_contacts(s, old):
@@ -1064,7 +1174,9 @@ def defense_contacts(s, old):
         if len(history) > 720:
             del history[:-720]
     for h in s["hazards"]:
-        if h.get('homing'):
+        if h.get('cultVine'):
+            _grow_vine(h,p,t,dt)
+        elif h.get('homing'):
             advance_homing(h,p,t,dt)
         if (
             h["disabled"]

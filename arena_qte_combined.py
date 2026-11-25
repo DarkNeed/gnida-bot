@@ -26,6 +26,8 @@ def combine(members, actor, hp):
     from arena_combined_damage import damage_factor
     count = sum(bool(m.get('profile', {}).get('damage_type') and m.get('damage_base', 0) > 0) for m in members)
     result['incoming_factor'] = damage_factor(count)
+    if cover := next((m['cult_cover'] for m in members if m.get('cult_cover')), None):
+        result['cult_cover'] = deepcopy(cover)
     result['duration'] = duration(result)
     return result
 

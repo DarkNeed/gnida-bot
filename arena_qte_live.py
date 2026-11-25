@@ -132,6 +132,9 @@ def challenge(kind, attacker, target, skill, actor, *, skills=None):
         ),
     )
     if kind == 'defense':
+        from arena_cultist import cover_view
+        if cover := cover_view(target):
+            result['cult_cover'] = cover
         if subskills:
             from arena_raid_engine import BOSS_SKILLS
             forecasts = [forecast, *(damage_preview(attacker, target, BOSS_SKILLS[sid], details=True,
@@ -636,7 +639,7 @@ class ArenaQteMixin:
                 return outcome
 
     async def arena_interactive_action(
-        self, token, actor, revision, action, skill="", proof=None, challenge_id=None, choice_id=None
+        self, token, actor, revision, action, skill="", proof=None, challenge_id=None, choice_id=None, target=None, source=None
     ):
         async with self._lock:
             with self.connection:
@@ -650,8 +653,10 @@ class ArenaQteMixin:
                 flow = self._qte_load_locked("battle", token)
                 if state.get('unified_version') == 3 and action != 'qte':
                     from arena_unified_store import direct
-                    direct(self, row, actor, revision, skill, choice_id)
+                    direct(self, row, actor, revision, skill, choice_id, target, intercept=action=='intercept', source=source)
                     return self._arena_row_locked(token)
+                if action == 'intercept':
+                    raise ValueError('В этом бою перехват недоступен.')
                 if action == "qte":
                     if (
                         not flow

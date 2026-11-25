@@ -81,6 +81,7 @@ def set_doof_intent(data):
         phase=phase,
         skill=skill,
         targets=keys if pattern in (1, 4) else [target],
+        area=pattern in (1, 4),
         text=warnings[pattern],
     )
     data["dialogue"] = dict(

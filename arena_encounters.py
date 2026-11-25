@@ -197,13 +197,14 @@ def set_intents(data, skills=None):
                 selected = (random.SystemRandom().choice(usable) if fighter['rp_ai'] == 'random' else usable[0]) if usable else 'bum_punch'
             from arena_engine import effective_skill
             kind, text = 'attack', effective_skill(pair_state(fighter,opponent),'a',selected,catalog).name
-            if guild_mob in ('dragon','ancient','wyvern') and selected=='guild_fire':
+            area = guild_mob in ('dragon','ancient','wyvern') and selected=='guild_fire'
+            if area:
                 targets=list(players);text+=' · дыхание по всему отряду'
             if guild_mob=='chest_mimic':
                 from arena_chest_mimic import MASS_ATTACKS
-                if selected in MASS_ATTACKS:targets=list(players);text+=' · по всему отряду'
+                if selected in MASS_ATTACKS:targets=list(players);text+=' · по всему отряду';area=True
                 if fighter.get('chest_phase')==2:text+=' · ненасытность'
-            intents[key] = dict(kind=kind, skill=selected, targets=targets, text=text)
+            intents[key] = dict(kind=kind, skill=selected, targets=targets, text=text, area=bool(area))
             if fighter['rp_ai'] == 'sequence' and usable:
                 intents[key]['next_ai_index'] = position + 1
             continue

@@ -97,6 +97,7 @@ def set_intent(data):
         kind="whaler",
         skill=skill,
         targets=targets,
+        area=skill != 'whaler_harpoon',
         phase=data["phase"],
         text=warning,
         ritual_target=30 * len(keys) if ritual else 0,

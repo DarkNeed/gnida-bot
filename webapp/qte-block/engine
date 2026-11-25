@@ -60,6 +60,7 @@
       pressure:clamp((enemyAttack+20)/(armor+30),.65,1.5),blockReduction:.75};
   }
   function threats(p,seed,params,preparation,activeDuration){
+    const cult=E.cultBlockThreats(p,seed,params);if(cult)return cult;
     const guild=E.guildBlockThreats(p,seed,params);if(guild)return guild;
     const copy=p.skill.copy_skill;
     if(p.skill.base_id==='nz_pandora_p2_1'&&copy&&copy.base_id!=='mana_shot'&&!(copy.base_id||'').startsWith('nz_'))return threats(E.profile(copy),seed,{...params,warning:params.warning+.20},preparation,activeDuration);
@@ -122,7 +123,7 @@
     const preparation=1,activeDuration=((typeof module==='object'&&module.exports?require('../nazarick-qte.js'):globalThis.NazarickQTE)?.blockDuration(p)??9.5)-1,hp=clamp(Number(options.hp)||200,1,5000);
     const power=clamp(Number(options.power)||30,1,1000),enemyAttack=Math.max(0,Number(stats.enemyAttack)||0);
     return {kind:'block',p,params,stats:{...stats},seed,preparation,activeDuration,duration:preparation+activeDuration,
-      time:0,ended:false,hp,initialHp:hp,power,damageBase:power*(1+enemyAttack/20),damage:0,exactDamage:0,
+      time:0,ended:false,hp,initialHp:hp,power,damageBase:power*(1+enemyAttack/20),damage:0,exactDamage:0,cover:E.coverState(options.cultCover),
       referenceDamage:options.referenceDamage??null,strikeDamageBases:options.strikeDamageBases||[],strikeCriticalBases:options.strikeCriticalBases||[],splitDamage:!!options.splitDamage,damageParts:[],criticalBase:!!options.criticalBase,criticalStrikes:options.criticalStrikes||[],endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,
       afterArmor:0,prevented:0,stamina:params.maxStamina,angle:0,active:false,requested:false,
       raisedAt:-100,lastRaise:-100,loweredAt:-100,perfectUntil:-100,brokenUntil:-100,
@@ -164,7 +165,7 @@
     const exact=afterArmor*(1-reduction),part=s.splitDamage?event.strike:0,prior=s.damageParts[part]||0;
     s.afterArmor+=afterArmor;s.exactDamage+=exact;s.damageParts[part]=prior+exact;s.prevented+=afterArmor*reduction;
     // Round the aggregate, not every tiny pellet up to one HP.
-    const damage=Math.min(s.hp,Math.max(0,Math.round(prior+exact)-Math.round(prior)));
+    const damage=Math.min(s.hp,E.coveredDamage(s,Math.round(prior),Math.round(prior+exact)));
     s.damage+=damage;s.hp-=damage;
     s.contacts.push({id:event.id,time:s.time,x:s.player.x,y:s.player.y,strike:event.strike,
       tier:event.tier,kind:event.kind,angle:event.angle,raw,afterArmor,damage,outcome,reduction,...(event.status&&reduction<1?{status:event.status}:{})});

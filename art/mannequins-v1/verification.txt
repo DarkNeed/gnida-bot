@@ -1,0 +1,3 @@
+PASS: 24 native-sized transparent PNG poses, binary alpha only.
+PASS: 12 Aseprite files reopened; two frames and four layers each.
+Sizes: 36x36, 64x64, 128x128.

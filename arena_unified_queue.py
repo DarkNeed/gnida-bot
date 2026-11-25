@@ -10,6 +10,8 @@ import secrets
 
 from arena_skill_timing import duration, forecast, schedule, release
 from arena_action_queue import COLORS
+from arena_cultist import consume_whisper, record_action
+import arena_summons as summons
 
 VERSION = 3
 
@@ -20,9 +22,9 @@ def enabled(data):
 
 def roster(data):
     if 'sides' in data:
-        return data['sides']
+        return {**data['sides'], **summons.troop(data)}
     return {**{k: p['fighter'] for k, p in data['players'].items()},
-            **(data.get('enemies') or {'boss': data['boss']})}
+            **(data.get('enemies') or {'boss': data['boss']}), **summons.troop(data)}
 
 
 def humans(data):
@@ -52,13 +54,14 @@ def pair(actor, target):
 
 def _enemy_ids(data):
     if 'sides' in data:
-        return [k for k, f in roster(data).items() if f['controller_id'] == 0]
+        return [k for k, f in data['sides'].items() if f['controller_id'] == 0]
     return list(data.get('enemies') or {'boss': data['boss']})
 
 
 def cast_team(data):
+    owners = {key: owner for key, (owner, _, _) in summons.units(data).items()}
     if 'sides' in data:
-        return lambda key: key
+        return lambda key: owners.get(key, key)
     enemies = set(_enemy_ids(data))
     return lambda key: 'enemy' if key in enemies else 'party'
 
@@ -75,6 +78,9 @@ def _plan(data, skills):
             q['pending']=[e for e in q['pending'] if e['actor'] not in stale]
             from arena_encounters import set_intents
             set_intents(data,skills)
+    brood = summons.units(data)
+    q['pending'] = [e for e in q['pending'] if e['skill'] != summons.BITE or
+                    e['actor'] in brood and brood[e['actor']][2]['predator']]
     busy = {e['actor'] for e in q['pending'] + q['group']}
     for key in _enemy_ids(data):
         if key in busy or fighters[key]['hp'] <= 0 or not humans(data):
@@ -83,16 +89,40 @@ def _plan(data, skills):
             from arena_npc_ai import choose_skill
             target = 'a' if key == 'b' else 'b'
             sid = choose_skill(dict(pair(fighters[key], fighters[target]), active_side='a'), 'a', skills)
+            if sid in skills and skills[sid].hostile:
+                target = summons.choose_target(data, target, fighters[key].get('own_turns', 0))
             intent = dict(kind='attack', skill=sid, targets=[target])
         else:
             intent = deepcopy((data.get('enemy_intents') or {'boss': data['intent']}).get(key, {}))
             sid = intent.get('skill')
             target = next((k for k in intent.get('targets', []) if k in humans(data)), humans(data)[0])
+            if (data.get('kind') == 'encounter' and not fighters[key].get('nzd_guardian')
+                    and not intent.get('area') and not intent.get('interceptor')
+                    and len(intent.get('targets', [])) == 1 and sid in skills and skills[sid].hostile):
+                target = summons.choose_target(data, target, fighters[key].get('own_turns', 0))
+                intent['targets'] = [target]
+                data['enemy_intents'][key] = intent
         skill = effective_skill(pair(fighters[key], fighters[target]), 'a', sid, skills) if sid in skills else None
         from arena_engine import Skill
         utility = Skill('queue_utility', 'Подготовка', 'universal', 1, None, 0, 100, 0, 0)
         event = schedule(q, key, sid, target, duration(fighters[key], skill or utility))
+        consume_whisper(fighters[key])
         event['intent'] = intent
+    team = cast_team(data)
+    for key, (owner, _, unit) in brood.items():
+        if not unit['predator'] or key in busy:
+            continue
+        foes = [k for k, f in fighters.items() if team(k) != team(owner) and f['hp'] > 0
+                and not f.get('is_summon') and (not f.get('nzd_ritual') or f.get('nzd_ritual_complete'))]
+        if foes:
+            # Follow the owner's most recent hostile target if it is still alive.
+            target = unit.get('prey')
+            if target not in foes:
+                target = foes[0]
+            from arena_engine import Skill
+            bite = Skill(summons.BITE, 'Хватка корней', 'ragamuffin', 1, 'physical', .85, 100, 0, 0, cast_base=3.2)
+            schedule(q, key, summons.BITE, target, duration(unit, bite))
+            consume_whisper(unit)
 
 
 def initialize(data, skills):
@@ -117,6 +147,9 @@ def submit(data, key, sid, target, skills, *, ident=None, timeout=False):
     fighters = roster(data)
     if target not in fighters or fighters[target]['hp'] <= 0 or target == key:
         raise ValueError('Выбери живого противника.')
+    team = cast_team(data)
+    if team(target) == team(key):
+        raise ValueError('Выбери живого противника.')
     actor = fighters[key]
     if sid == 'defend' or sid == 'potion' or sid.startswith('chaplain_anchor:'):
         if sid.startswith('chaplain_anchor:'):
@@ -127,14 +160,20 @@ def submit(data, key, sid, target, skills, *, ident=None, timeout=False):
     else:
         skill = validate_skill(pair(actor, fighters[target]), 'a', sid, skills)
         cost = pet_cost(actor, skill, gift_cost(actor, skill))
-    if 'sides' not in data and data['players'][key].get('intercept_source'):
+    direct = 'sides' in data
+    reservations = clock(data).get('intercepts', {}) if direct else data['players'][key]
+    ticket = key if direct else 'intercept_source'
+    if reservations.get(ticket):
         if actor['resource'] < cost + 8:
             raise ValueError('Не хватает энергии с учётом перехвата.')
         actor['resource'] -= 8
-        data['players'][key].pop('intercept_source', None)
+        reservations.pop(ticket, None)
     actor['resource'] -= cost
     event = schedule(clock(data), key, sid, target, duration(actor, skill))
+    consume_whisper(actor)
     event.update(reserved=cost, timeout=timeout)
+    if skill.hostile and (brood := next((u for owner, _, u in summons.units(data).values() if owner == key), None)):
+        brood['prey'] = target
     clock(data)['choices'].pop(key, None)
     if 'sides' not in data:
         data['players'][key].update(selected=sid, selected_target=target)
@@ -144,13 +183,15 @@ def submit(data, key, sid, target, skills, *, ident=None, timeout=False):
 def _log(data, key, target, text, **event):
     if 'sides' in data:
         from arena_engine import battle_status_snapshot
-        side = key if key in data['sides'] else 'a'
+        side = key if key in data['sides'] else key.split(':')[1]
         seq = max(data.get('event_seq', 0), data['log'][-1].get('seq', 0) if data['log'] else 0) + 1
         data['event_seq'] = seq
-        data['log'].append(dict(seq=seq, side=side, text=text,
+        data['log'].append(dict(seq=seq, side=side, source=key, target=target, text=text,
             status_after=battle_status_snapshot(data), **event))
     else:
         from arena_raid_engine import log_event
+        if key.startswith('brood:'):
+            event['actor_name'] = summons.NAME
         log_event(data, key, target, text, **event)
         data['log'][-1]['cast_at'] = clock(data)['time']
 
@@ -173,10 +214,13 @@ def _finish(data):
 def _begin(data, key):
     from arena_engine import restore_turn_resource
     from arena_plague import begin_turn
-    if key not in roster(data):return
+    if key.startswith('brood:') or key not in roster(data):return
     fighter = roster(data)[key]
     if fighter['hp'] <= 0:
         return
+    if (damage := summons.tick_protector(fighter)) > 0:
+        unit_key = f"brood:{key}:{fighter.get('rpg_state', {}).get('cult_brood_serial', 1)}"
+        _log(data, unit_key, unit_key, f'Периодический урон: −{damage} HP.', damage=damage)
     # Raid NPC handlers already apply their own start-of-action plague tick.
     # Direct opponents use the same begin boundary as the player's fighter.
     poison = begin_turn(fighter) if 'sides' in data or key in humans(data) else 0
@@ -219,17 +263,24 @@ def _release_group(data, skills, rng):
             if event['actor'] in enemy_keys:
                 if any(e['kind'] == 'stun' for e in fighters[event['actor']]['effects']):continue
                 released.append(dict(source=event['actor'], fighter=deepcopy(fighters[event['actor']]),
-                                     intent=dict(skill=event['skill'], targets=[event['target']])))
+                                     intent=deepcopy(event['intent'])))
+    for cast in released:
+        intent = cast['intent']
+        if intent.get('area'):
+            cast['summon_targets'] = {k: owner for k, (owner, _, _) in summons.units(data).items()
+                                      if owner in intent.get('targets', [])}
     attacks = {}
     for event in q['group']:
         key, sid = event['actor'], event['skill']
         if key not in humans(data) or sid not in skills:
             continue
-        f, target = fighters[key], fighters[event['target']]
+        f, target = fighters[key], fighters.get(event['target'])
+        if not target or target.get('is_summon'):
+            continue
         if not effective_skill(pair(f,target),'a',sid,skills).hostile:continue
         if f['hp'] > 0 and target['hp'] > 0 and not any(e['kind'] == 'stun' for e in f['effects']):
             attacks[key] = event
-    targets = {k for r in released if r['intent'].get('targets') and r['intent'].get('skill') in skills and
+    targets = {k for r in released if r['intent'].get('targets') and r['intent']['targets'][0] in fighters and r['intent'].get('skill') in skills and
                effective_skill(pair(r['fighter'],fighters[r['intent']['targets'][0]]),'a',r['intent']['skill'],skills).hostile
                for k in r['intent']['targets'] if k in humans(data)}
     # In PvP both human casts may land at the same timestamp.
@@ -273,8 +324,11 @@ def stages(data, key, skills):
             continue
         skill = effective_skill(pair(source, fighters[key]), 'a', sid, skills)
         if not skill.hostile:continue
-        stage = challenge('defense', _forecast_caster(source, pending['attacks'].get(released['source'])),
-                          fighters[key], skill, actor, skills=skills)
+        exposed = (key in released.get('summon_targets', {}).values()
+                   or summons.intercepted_own_brood(released['intent'], key))
+        with summons.expose(fighters[key], exposed):
+            stage = challenge('defense', _forecast_caster(source, pending['attacks'].get(released['source'])),
+                              fighters[key], skill, actor, skills=skills)
         stage.update(encounter_enemy=released['source'], name=source.get('name', '')+' · '+skill.name)
         members.append(stage)
     if members:
@@ -320,20 +374,31 @@ def _damage_group(data):
 def _settle_group(data, skills, rng):
     from arena_engine import resolve_skill, _tick, use_healing_potion
     q, fighters, pending = clock(data), roster(data), data['_queue_wait']
+    brood = summons.units(data)
     completed = list(q['group'])
     nazarick_before = tuple(data.get('_cast_queue', {}).get('signature', [None, None]))
     for event in completed:
         key = event['actor']
+        if event['skill'] == summons.BITE:
+            entry, target = brood.get(key), fighters.get(event['target'])
+            if entry and entry[1]['hp'] > 0 and entry[2]['hp'] > 0 and entry[2]['predator'] and target and target['hp'] > 0:
+                ev = summons.strike(entry[2], target, rng)
+                _log(data, key, event['target'], ev['text'], skill=summons.BITE, skill_name='Хватка корней',
+                     damage=ev['damage'], damage_type='physical', hit=ev['hit'])
+            continue
         if key in _enemy_ids(data) and 'sides' not in data:
             continue
-        f, target = fighters[key], fighters[event['target']]
+        f, target = fighters[key], fighters.get(event['target'])
         simultaneous_ko = ('sides' in data and f['hp'] <= 0 and
                            any(r['source'] == key and r['fighter']['hp'] > 0 for r in pending['released']))
-        if (f['hp'] <= 0 and not simultaneous_ko) or target['hp'] <= 0:
+        if f['hp'] > 0 or simultaneous_ko:
+            f['resource'] = min(f['stats']['resource_max'], f['resource'] + event.get('reserved', 0))
+        if (f['hp'] <= 0 and not simultaneous_ko) or not target or target['hp'] <= 0:
             _log(data, key, key, 'Подготовленное действие отменено: боец или цель повержены.')
+            if key in data.get('players', {}):
+                data['players'][key].update(selected=None, selected_target=None)
             continue
         if simultaneous_ko:f['hp'] = 1
-        f['resource'] = min(f['stats']['resource_max'], f['resource'] + event.get('reserved', 0))
         result = pending['attack_results'].get(key, {})
         if 'sides' in data:
             result = dict(result, **pending['guards'].get(event['target'], {}).get(key, {}))
@@ -343,6 +408,7 @@ def _settle_group(data, skills, rng):
                 _tick(f)
                 _log(data, key, key, 'Ошеломление: каст сорван.', damage=0, hit=False)
             elif event['skill'] in ('defend', 'potion'):
+                record_action(f, None)
                 if event['skill'] == 'potion':
                     use_healing_potion(pair(f, target), 'a')
                 _tick(f)
@@ -350,13 +416,14 @@ def _settle_group(data, skills, rng):
             else:
                 state = pair(f, target)
                 try:
-                    ev = resolve_skill(state, 'a', event['skill'], skills, rng, advance_turn=False, qte=result)
+                    with summons.expose(target, summons.intercepted_own_brood(event.get('intent', {}), event['target'])):
+                        ev = resolve_skill(state, 'a', event['skill'], skills, rng, advance_turn=False, qte=result)
                 except ValueError:
                     _tick(f)
                     ev = dict(text='Условия навыка изменились: каст сорван.', damage=0, hit=False)
                 seq = max(data.get('event_seq', 0), data['log'][-1].get('seq', 0) if data['log'] else 0) + 1
                 data['event_seq'] = seq
-                ev.update(side=key, seq=seq)
+                ev.update(side=key, seq=seq, source=key, target=event['target'])
                 ev['after'] = {k: dict(hp=v['hp'], resource=v['resource']) for k, v in fighters.items()}
                 from arena_engine import battle_status_snapshot
                 ev['status_after'] = battle_status_snapshot(data)
@@ -391,10 +458,13 @@ def _settle_group(data, skills, rng):
             from arena_action_queue import _land
         else:
             from arena_boss_queue import _land
+        brood.update(summons.units(data))
         _land(data, pending['released'], pending['guards'], skills, rng)
+    summons.cleanup(data, brood)
     q['group'] = []
     data.pop('_queue_wait', None)
-    q['pending'] = [e for e in q['pending'] if roster(data).get(e['actor'], {}).get('hp', 0) > 0]
+    living = roster(data)
+    q['pending'] = [e for e in q['pending'] if living.get(e['actor'], {}).get('hp', 0) > 0]
     if _finish(data):
         return
     if data.get('nazarick_run_id') and data.get('kind')=='encounter':
@@ -497,12 +567,15 @@ def advance(data, skills, rng=None):
 def public(data, viewer):
     q, fighters = clock(data), roster(data)
     human_keys, enemy_keys = set(humans(data)), set(_enemy_ids(data))
+    brood_owners = {k: owner for k, (owner, _, _) in summons.units(data).items()}
     entries = [dict(actor=e['actor'], at=round(e['end']-q['time'], 3),
                     started=round(e['start']-q['time'], 3), duration=e['duration'], resolving=resolving,
-                    team='players' if e['actor'] in human_keys else 'enemies',
-                    skill=e['skill'] if e['actor'] in enemy_keys or fighters[e['actor']]['controller_id'] == viewer else None,
-                    targets=e.get('intent', {}).get('targets', [e['target']]))
-               for resolving, group in ((False, q['pending']), (True, q['group'])) for e in group]
+                    team='players' if brood_owners.get(e['actor'], e['actor']) in human_keys else 'enemies',
+                    skill=e['skill'] if e['actor'] in enemy_keys or e['actor'].startswith('brood:') or
+                        fighters[e['actor']]['controller_id'] == viewer else None,
+                    targets=e.get('intent', {}).get('targets', [e['target']]),
+                    **{k: e['intent'][k] for k in ('interceptor', 'original_target') if k in e.get('intent', {})})
+               for resolving, group in ((False, q['pending']), (True, q['group'])) for e in group if e['actor'] in fighters]
     return dict(version=3, colors={key: COLORS[i % len(COLORS)] for i, key in enumerate(fighters)}, entries=entries,
                 time=0, absolute_time=q['time'], animate_from=min(0, q.get('previous_time', q['time'])-q['time']),
                 horizon=max([5, *(e['at'] for e in entries)]),
@@ -516,22 +589,37 @@ def forecast_skill(data, key, skill):
     return forecast(clock(data)['time'], duration(roster(data)[key], skill), min(ends) if ends else None, window=0)
 
 
-def intercept(data, actor, source):
-    key = str(actor)
+def intercept(data, actor, source, skills):
+    direct = 'sides' in data
+    key = next((k for k in humans(data) if data['sides'][k]['controller_id'] == actor), None) if direct else str(actor)
     event = next((e for e in clock(data)['pending'] if e['actor'] == source), None)
-    if key not in ready(data) or data.get('_queue_wait') or not event or len(event.get('intent', {}).get('targets', [])) != 1:
+    intent = (event or {}).get('intent', {})
+    skill = skills.get(intent.get('skill'))
+    if (key not in ready(data) or data.get('_queue_wait') or data.get('finished') or
+        not event or source not in _enemy_ids(data) or not skill or not skill.hostile or
+        intent.get('area') or len(intent.get('targets', [])) != 1):
         raise ValueError('Можно перехватить только незавершённую одиночную атаку до выбора своего навыка.')
-    intent, player = event['intent'], data['players'][key]
+    reservations = clock(data).setdefault('intercepts', {}) if direct else data['players'][key]
+    ticket = key if direct else 'intercept_source'
     if intent.get('interceptor') == key:
         intent['targets'] = [intent.pop('original_target')]
         intent.pop('interceptor')
-        player.pop('intercept_source', None)
+        reservations.pop(ticket, None)
     else:
         original = intent['targets'][0]
-        if original == key or original not in ready(data) or player.get('intercept_source') or intent.get('interceptor'):
-            raise ValueError('Союзник или твой перехват уже заняты действием.')
-        if player['fighter']['resource'] < 8:raise ValueError('Нужно 8 энергии.')
+        brood = summons.units(data).get(original)
+        friendly_brood = brood is not None and cast_team(data)(brood[0]) == cast_team(data)(key)
+        if (original == key or not (friendly_brood or not direct and original in ready(data))
+                or reservations.get(ticket) or intent.get('interceptor')):
+            raise ValueError('Можно прикрыть живого отпрыска или союзника, который ещё не выбрал действие.')
+        fighter = data['sides'][key] if direct else data['players'][key]['fighter']
+        if fighter['resource'] < 8:raise ValueError('Нужно 8 энергии.')
         intent.update(original_target=original, interceptor=key, targets=[key])
-        player['intercept_source'] = source
+        reservations[ticket] = source
     event['target'] = intent['targets'][0]
-    (data.get('enemy_intents') or {'boss': data['intent']})[source].update(deepcopy(intent))
+    if not direct:
+        public_intent = (data.get('enemy_intents') or {'boss': data['intent']})[source]
+        visible = deepcopy(intent)
+        for flag in ('interceptor', 'original_target'):
+            public_intent.pop(flag, None)
+        public_intent.update(visible)

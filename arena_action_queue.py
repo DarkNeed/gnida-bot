@@ -110,7 +110,7 @@ def intercept(data, actor, source, skills):
     """Reserve one single-target attack before either participant commits."""
     if data.get('unified_version') == 3:
         from arena_unified_queue import intercept as unified_intercept
-        return unified_intercept(data, actor, source)
+        return unified_intercept(data, actor, source, skills)
     from arena_raid_engine import alive_players
     key = str(actor)
     p = alive_players(data).get(key)
@@ -234,12 +234,19 @@ def _release(data, key, skills):
             _log(data, key, target, dict(text='Прикрытие: обе защиты +35%.'))
         return None
     living = alive_players(data)
-    i['targets'] = list(dict.fromkeys(str(k) for k in i.get('targets', []) if str(k) in living))
+    brood = {}
+    if data.get('unified_version') == 3:
+        from arena_summons import units
+        brood = units(data)
+    i['targets'] = list(dict.fromkeys(str(k) for k in i.get('targets', []) if str(k) in living or str(k) in brood))
+    if i.get('area'):
+        i['targets'] += [k for k, (owner, _, _) in brood.items() if owner in i['targets']]
     if not i['targets']:
         _tick(enemy)
         return None
     try:
-        validate_skill(pair_state(enemy, living[i['targets'][0]]['fighter']), 'a', i['skill'], skills)
+        target = i['targets'][0]
+        validate_skill(pair_state(enemy, brood[target][2] if target in brood else living[target]['fighter']), 'a', i['skill'], skills)
     except ValueError as error:
         _tick(enemy)
         _log(data, key, key, dict(text='Объявленный навык недоступен: '+str(error)+' Каст сорван.'))
@@ -255,22 +262,29 @@ def _land(data, released, guards, skills, rng):
 
 def _land_group(data, released, guards, skills, rng):
     from arena_raid_engine import alive_players, native_attack
+    from arena_summons import expose, intercepted_own_brood, units
     for r in released:
         key, original, i = r['source'], r['fighter'], r['intent']
         enemy = data['enemies'][key]
         after = None
         data['_qte_boss_phase'], data['intent'] = True, i
+        brood = units(data) if data.get('unified_version') == 3 else {}
+        exposed = {owner for k, (owner, _, _) in brood.items() if k in i['targets']}
         for target in i['targets']:
-            if target not in alive_players(data):
-                continue
-            f = data['players'][target]['fighter']
+            if target in brood:
+                f = brood[target][2]
+            elif target in alive_players(data):
+                f = data['players'][target]['fighter']
+            else:continue
+            if f['hp'] <= 0:continue
             guard = guards.get(target, {}).get(key)
             if guard:
                 f['_qte_guard'] = dict(guard, skill=i['skill'])
             attacker = deepcopy(original)
             try:
-                event = native_attack(attacker, f, i['skill'], skills, rng,
-                                      allies=[v for v in data['enemies'].values() if v['hp'] > 0], raid_context=data)
+                with expose(f, target in exposed or intercepted_own_brood(i, target)):
+                    event = native_attack(attacker, f, i['skill'], skills, rng,
+                                          allies=[v for v in data['enemies'].values() if v['hp'] > 0], raid_context=data)
             finally:
                 f.pop('_qte_guard', None)
             after = after or attacker

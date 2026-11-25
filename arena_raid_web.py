@@ -178,6 +178,9 @@ async def raid_view(db, row, actor):
             )
         )
     if data:
+        if data.get('unified_version') == 3:
+            from arena_summons import public as summons_view
+            data['summons'] = summons_view(data)
         if data.get('action_queue_version'):
             from arena_action_queue import public_queue
             data['action_queue'] = public_queue(data, {**BOSS_SKILLS, **skills}, actor)
@@ -220,6 +223,8 @@ async def raid_view(db, row, actor):
         for key, player in data["players"].items():
             player.pop('qte_result',None)
             await decorate(player["fighter"], player["fighter_id"],character_slot=player.get('character_slot',1))
+            if data.get('unified_version') == 3:
+                player['fighter']['show_brood_unit'] = True
             player['fighter'].pop('plagiarism_memory',None)
             player["ready"] = player["selected"] is not None
             if data.get('unified_version') == 3:

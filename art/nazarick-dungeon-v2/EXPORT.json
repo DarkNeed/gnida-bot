@@ -1,0 +1,67 @@
+[
+  {
+    "id": "gargantua",
+    "alpha_peak": 255,
+    "removed_floor": 155
+  },
+  {
+    "id": "cocytus",
+    "alpha_peak": 255,
+    "removed_floor": 155
+  },
+  {
+    "id": "aura",
+    "alpha_peak": 255,
+    "removed_floor": 155
+  },
+  {
+    "id": "mare",
+    "alpha_peak": 254,
+    "removed_floor": 155
+  },
+  {
+    "id": "sebas",
+    "alpha_peak": 254,
+    "removed_floor": 155
+  },
+  {
+    "id": "sebas_dragon",
+    "alpha_peak": 255,
+    "removed_floor": 155
+  },
+  {
+    "id": "victim",
+    "alpha_peak": 255,
+    "removed_floor": 65
+  },
+  {
+    "id": "yuri",
+    "alpha_peak": 254,
+    "removed_floor": 155
+  },
+  {
+    "id": "narberal",
+    "alpha_peak": 254,
+    "removed_floor": 155
+  },
+  {
+    "id": "lupusregina",
+    "alpha_peak": 254,
+    "removed_floor": 155
+  },
+  {
+    "id": "solution",
+    "alpha_peak": 255,
+    "removed_floor": 155
+  },
+  {
+    "id": "entoma",
+    "alpha_peak": 255,
+    "removed_floor": 155
+  },
+  {
+    "id": "cz",
+    "alpha_peak": 255,
+    "removed_floor": 155
+  }
+]

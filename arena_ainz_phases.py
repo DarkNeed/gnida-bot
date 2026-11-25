@@ -156,7 +156,8 @@ def set_intent(data):
         m['ritual']=dict(hp=boss['hp'],threshold=round(boss['stats']['max_hp']*.04),start=data['round'])
         kind,targets='ritual',[]
     text=SKILLS[sid].name if kind!='ritual' else 'Аинз готовит великий ритуал смерти.'
-    intents={'boss':dict(kind=kind,skill=sid if kind=='attack' else None,targets=targets,phase=phase,text=text)}
+    intents={'boss':dict(kind=kind,skill=sid if kind=='attack' else None,targets=targets,phase=phase,text=text,
+                         area=kind=='attack' and move in (1,2))}
     for index,(key,f) in enumerate(data['enemies'].items()):
         if key=='boss' or f['hp']<=0:continue
         skill=f['loadout'][0]

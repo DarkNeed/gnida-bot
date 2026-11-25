@@ -136,7 +136,7 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             side["class_rarity_name"] = RARITY_LABELS[cls.rarity]
             side["sprite"] = (
                 side["class_id"]
-                if side["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter", "gambler", "assassin"} | FINGER_IDS
+                if side["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter", "gambler", "assassin", "cultist"} | FINGER_IDS
                 else "ragamuffin"
             )
             side.update(
@@ -238,6 +238,8 @@ async def battle_view(db, row: dict, actor: int) -> dict:
                 state['active_side'] = own_key
                 state['choice_id'] = choice(state, own_key)
             state['action_queue'] = public(state, actor)
+            from arena_summons import public as summons_view
+            state['summons'] = summons_view(state)
             state.pop('_unified', None)
             state.pop('_queue_wait', None)
             state.pop('_cast_queue', None)
@@ -355,7 +357,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
         profile["catchup_level"] = level_from_total_xp(target) if target > profile["xp"] else 0
         profile["sprite"] = (
             profile["class_id"]
-            if profile["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter", "gambler", "assassin"} | FINGER_IDS
+            if profile["class_id"] in {"cutie", "jock", "nerd", "warrior", "mage", "priest", "hunter", "gambler", "assassin", "cultist"} | FINGER_IDS
             else "ragamuffin"
         )
         profile.update(await db.arena_sprite_info(chat, profile["user_id"]))
@@ -682,7 +684,7 @@ def create_arena_app(
             raise ValueError("Некорректный запрос.")
         action = body.get("action")
         # Controllers/fighters must still be in the group, even for offers created earlier.
-        if action in {"accept", "select", "consent", "skill", "qte"}:
+        if action in {"accept", "select", "consent", "skill", "qte", "intercept"}:
             for k in ("a", "b"):
                 if row[k + "_owner"]:
                     await require_member(bot, row["chat_id"], row[k + "_owner"])
@@ -690,14 +692,14 @@ def create_arena_app(
                     await require_member(bot, row["chat_id"], row[k + "_fighter"])
         if action == "select":
             await require_member(bot, row["chat_id"], int_field(body, "fighter"))
-        if action in {"skill","qte"}:
+        if action in {"skill","qte","intercept"}:
             row = await db.arena_interactive_action(
                 row["token"],
                 actor,
                 int_field(body, "revision"),
                 str(action),str(body.get("skill", "")),
                 proof=body.get('proof'),challenge_id=body.get('challenge_id'),
-                choice_id=body.get('choice_id'),
+                choice_id=body.get('choice_id'),target=body.get('target'),source=body.get('source'),
             )
         else:
             controlled = body.get("controlled", True)

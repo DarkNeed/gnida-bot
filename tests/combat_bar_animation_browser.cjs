@@ -8,7 +8,7 @@ async function track(page){
   window.barAnimations=[];
   window.vitalFrames=[];
   Element.prototype.animate=function(frames,options){
-   const key=this.dataset.vital||(this.matches('.enemy-cast-fill')&&'cast:'+this.closest('.enemy-cast').dataset.actor);
+   const key=this.dataset.vital||(this.matches('.raid-timeline-dot')&&'cast:'+this.dataset.actor);
    if(key)window.barAnimations.push({key,frames});
    return animate.call(this,frames,options);
   };
@@ -45,21 +45,21 @@ async function checkVitals(page,{manaKey}={}){
   await cut.waitFor();
   await p.waitForFunction(()=>window.vitalFrames.length>0);
   await cut.click();
-  await p.waitForFunction(()=>[...document.querySelectorAll('.enemy-cast-track')].every(n=>+n.getAttribute('aria-valuenow')>0)
+  await p.waitForFunction(()=>document.querySelector('.raid-timeline').dataset.now!=='Сейчас · 0.00'
     && document.querySelector('[data-raid="skill:assassin_cut"]:not([disabled])'));
   await p.waitForTimeout(450);
   let animations=await checkVitals(p);
   assert.deepEqual(animations.filter(a=>a.key.startsWith('cast:')).map(a=>a.key).sort(),['cast:e1','cast:e2']);
 
-  const first=await p.locator('[data-actor=e1] .enemy-cast-track').getAttribute('aria-valuenow');
+  const first=await p.locator('.raid-timeline').getAttribute('data-now');
   await p.evaluate(()=>{window.barAnimations=[];window.vitalFrames=window.vitalFrames.slice(-1);});
   await cut.click();
-  await p.waitForFunction(before=>+document.querySelector('[data-actor=e1] .enemy-cast-track')?.getAttribute('aria-valuenow')<before
-    && document.querySelector('[data-raid="skill:assassin_cut"]:not([disabled])'),+first);
+  await p.waitForFunction(before=>document.querySelector('.raid-timeline')?.dataset.now!==before
+    && document.querySelector('[data-raid="skill:assassin_cut"]:not([disabled])'),first);
   await p.waitForTimeout(450);
   animations=await checkVitals(p);
   assert.deepEqual(animations.filter(a=>a.key.startsWith('cast:')).map(a=>a.key).sort(),['cast:e1','cast:e2']);
-  assert.equal(animations.find(a=>a.key==='cast:e1').frames.at(-1).transform,'scaleX(1)','only old cast fills to completion');
+  assert(animations.filter(a=>a.key.startsWith('cast:')).every(a=>a.frames.at(0).left!==a.frames.at(-1).left));
   await p.close();
 
   const raid=await browser.newPage();
@@ -85,6 +85,6 @@ async function checkVitals(page,{manaKey}={}){
   await solo.waitForTimeout(450);
   await checkVitals(solo,{manaKey:'mp-a'});
   await solo.close();
-  console.log('PASS one visual update each for HP, resource and continuing/completed casts');
+  console.log('PASS one visual update each for HP, resource and shared timeline markers');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

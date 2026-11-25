@@ -61,7 +61,7 @@ class ProgressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(choice["level"], 5)
         self.assertTrue(choice["options"][0]["current"])
         self.assertEqual(choice["options"][0]["id"], "stay")
-        self.assertEqual(len(choice["options"]), 14)
+        self.assertEqual(len(choice["options"]), 15)
         before = (p["xp"], p["loadout"])
         await self.choose("stay")
         p = await self.profile()
@@ -228,6 +228,18 @@ class ProgressionClientTests(unittest.TestCase):
         profile.pop("sprite_url")
         self.assertEqual(runner.run_client("out=sprite(input);", profile), choice_avatar("jock", "mge_bro"))
 
+    def test_cult_form_temporarily_takes_priority_over_saved_custom_skin(self):
+        runner = client_tests.ArenaMarketClientTests()
+        from arena_cultist import FORMS
+        branch = "cultist_yog"
+        custom = "/sprites/" + "c"*64 + ".png"
+        profile = dict(class_id="cultist", sprite_url=custom,
+                       class_avatar_url=choice_avatar("cultist", branch), archclass={"stage":10})
+        self.assertEqual(runner.run_client("out=sprite(input);", profile), custom)
+        profile["archclass"] = {"stage":20,"form":FORMS[branch]}
+        self.assertEqual(runner.run_client("out=sprite(input);", profile), choice_avatar("cultist", branch, 20))
+        self.assertEqual(profile["sprite_url"],custom)
+
 
 class ArchclassAssetsTests(unittest.IsolatedAsyncioTestCase):
     async def test_every_branch_asset_served_and_is_transparent(self):
@@ -235,20 +247,24 @@ class ArchclassAssetsTests(unittest.IsolatedAsyncioTestCase):
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
-            for key in ARCHCLASSES:
-                response = await client.get(choice_avatar("", key))
-                self.assertEqual(response.status, 200, key)
-                raw = await response.read()
-                self.assertLess(len(raw), 700000)
-                with Image.open(BytesIO(raw)) as im:
-                    from arena_rpg import RPG_BRANCHES
-                    if key in RPG_BRANCHES:
-                        self.assertEqual(im.width,512)
-                        self.assertTrue(96<=im.height<=768)
-                    else:
-                        self.assertEqual(im.size, (512, 768))
-                    self.assertEqual(im.mode, "RGBA")
-                    self.assertEqual(im.getchannel("A").getextrema(), (0, 255))
-                    self.assertEqual(im.getpixel((0, 0)), (0, 0, 0, 0))
+            from arena_cultist import FORMS
+            from arena_rpg import RPG_BRANCHES
+            for key in (*ARCHCLASSES, "cultist"):
+                for stage in (10,20) if key in FORMS else (10,):
+                    with self.subTest(key=key,stage=stage):
+                        url = choice_avatar("cultist") if key == "cultist" else choice_avatar("", key, stage)
+                        response = await client.get(url)
+                        self.assertEqual(response.status, 200)
+                        raw = await response.read()
+                        self.assertLess(len(raw), 700000)
+                        with Image.open(BytesIO(raw)) as im:
+                            if key in RPG_BRANCHES:
+                                self.assertEqual(im.width,512)
+                                self.assertTrue(96<=im.height<=768)
+                            else:
+                                self.assertEqual(im.size, (512, 768))
+                            self.assertEqual(im.mode, "RGBA")
+                            self.assertEqual(im.getchannel("A").getextrema(), (0, 255))
+                            self.assertEqual(im.getpixel((0, 0)), (0, 0, 0, 0))
         finally:
             await client.close()

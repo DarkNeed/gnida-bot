@@ -12,6 +12,14 @@
     return {tier:'heavy',weight:.6};
   }
   function damageValue(base,weight){return base<=0?0:Math.max(1,Math.round(base*weight));}
+  function coverState(cover){return cover?.hp>0?{hp:cover.hp,percent:cover.percent}:null;}
+  function coveredDamage(s,prior,total){
+    const incoming=Math.max(0,total-prior),cover=s.cover;
+    if(!incoming||!cover?.hp)return incoming;
+    const shares=x=>Math.floor((Math.min(x,s.initialHp)*cover.percent+50)/100);
+    const absorbed=Math.min(cover.hp,shares(total)-shares(prior));
+    cover.hp-=absorbed;return incoming-absorbed;
+  }
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   function hash(value){let n=2166136261;for(const c of String(value)){n=Math.imul(n^c.charCodeAt(0),16777619);}return n>>>0;}
   function rng(seed){let n=seed>>>0;return()=>{n=(Math.imul(n,1664525)+1013904223)>>>0;return n/4294967296;};}
@@ -123,6 +131,8 @@
     result.forEach((e,i)=>e.strike=Math.min(p.strikes-1,Math.floor(i*p.strikes/result.length)));return result;
   }
   function family(skill){
+    const cult={cult_sign:'edict',cult_voice:'void',cult_rite:'death',cult_depths:'beast',arch_cultist_cthulhu:'beast',arch_cultist_yog:'portal',arch_cultist_hastur:'script',cult_yellow:'mirror',cult_roots:'beast'};
+    if(Object.hasOwn(cult,skill.base_id))return cult[skill.base_id];
     if(['mimic_claw','mimic_shards','mimic_gaze'].includes(skill.base_id))return {mimic_claw:'slash',mimic_shards:'stars',mimic_gaze:'mirror'}[skill.base_id];
     const guardianFamily=NZ?.guardianFamily?.(skill);if(guardianFamily)return guardianFamily;
     const guild=GUILD_MOVES[(skill.base_id||'').slice(6)];if((skill.base_id||'').startsWith('guild_')&&guild)return guild;
@@ -183,7 +193,18 @@
     const basic=skill.base_id==='bum_punch'&&skill.name==='Удар бомжа';
     const nazarick=NZ?.identity({skill});
     const chest=(skill.base_id||'').startsWith('guild_chest_');
-    return {id,seed,kind,title:nazarick||chest?skill.name:basic?'Простой удар':entry[0],color:chest?'#daaab1':nazarick?NZ.colors[nazarick.who]:entry[1],hint:chest?(skill.description||'Уходи от зубов и языка; монеты могут вернуться обратно.'):nazarick?(skill.description||'Следи за контурами предупреждений. Тяжёлые снаряды опаснее мелких.'):basic?'Три коротких замаха без ударных волн. Выйди из небольшого отмеченного круга.':entry[2],style:entry[3],skill,basic,
+    const cult=skill.class_id==='cultist'?({
+      cult_sign:['#caa0f2','Печать раскрывается под ногами. Её лезвия поворачиваются, пока пробуждается глаз.'],
+      cult_voice:['#cdbdd5','Шёпот расслаивает поле; две половины голоса проходят навстречу друг другу.'],
+      cult_rite:['#df8664','Два хоровода сходятся к алтарю и расходятся быстрым залпом.'],
+      cult_depths:['#8da6a1','Из мути проступают искажённые отражения. Некоторые обретают плоть.'],
+      arch_cultist_cthulhu:['#91e3d8','Прилив и отлив пересекаются, а в воде остаются воронки.'],
+      arch_cultist_yog:['#b6a5ff','Два разнесённых выхода выбрасывают сферы поперёк арены.'],
+      cult_yellow:['#eac369','Маски скользят через поле. Только у настоящих горят глазницы.'],
+      arch_cultist_hastur:['#d7a748','Прожектор, репетиция двойников и финальный занавес.'],
+      cult_roots:['#b7c290','Корни идут за тобой. Опасны и шипы, и выросшие стволы.'],
+    })[skill.base_id]:null;
+    return {id,seed,kind,title:nazarick||chest||cult?skill.name:basic?'Простой удар':entry[0],color:chest?'#daaab1':nazarick?NZ.colors[nazarick.who]:cult?.[0]||entry[1],hint:chest?(skill.description||'Уходи от зубов и языка; монеты могут вернуться обратно.'):nazarick?(skill.description||'Следи за контурами предупреждений. Тяжёлые снаряды опаснее мелких.'):basic?'Три коротких замаха без ударных волн. Выйди из небольшого отмеченного круга.':cult?.[1]||entry[2],style:entry[3],skill,basic,
       strikes:clamp(skill.strikes||1,1,6),kit:(skill.base_id||'').startsWith('kit_'),
       moon:skill.base_id==='arch_hunter_moon',hunterShot:skill.base_id==='hunter_shot',casinoJackpot:(skill.name||'').startsWith('777'),chaplain,phase:r()*TAU,polarity:r()<.5?-1:1,
       speed:.94+r()*.18,spread:.78+r()*.34,interval:.8+r()*.4,drift:r()>.6,
@@ -270,7 +291,32 @@
     if(p.basic){d.warning=Math.max(.66,d.warning);d.size=24+8*d.intensity;}
     if(npc&&fairNPC)d.warning=Math.max(.50,d.warning);
     d.warning+=stats.extraWarning||0;
+    if(Object.hasOwn(CULT_RHYTHM,p.skill.base_id))d.warning=Math.max(.57,d.warning);
     return d;
+  }
+  const CULT_RHYTHM={cult_sign:[4,4.05],cult_voice:[4,3.9],cult_rite:[3,3.15],cult_depths:[4,4.1],
+    arch_cultist_cthulhu:[3,3.80],arch_cultist_yog:[4,3.90],cult_roots:[4,4.10],cult_yellow:[4,4.20],arch_cultist_hastur:[3,4.18]};
+  const CULT_BLOCK={
+    cult_sign:[[0,0,'slash',.29,'cult_ink'],[.53,2,'slash',.36,'cult_eye']],
+    cult_voice:[[0,0,'slash',.32,'cult_echo'],[.63,4,'wave',.45,'cult_echo']],
+    cult_rite:[[0,-1,'bolt',.18,'cult_wax'],[.40,0,'bolt',.18,'cult_wax'],[1.02,0,'wave',.43,'cult_altar'],[1.55,4,'bolt',.32,'cult_wax']],
+    cult_depths:[[0,0,'feint',0,'cult_wraith'],[.55,3,'slash',.31,'cult_wraith'],[1.01,-1,'bolt',.42,'cult_wraith']],
+    arch_cultist_cthulhu:[[0,0,'wave',.58,'cult_tide'],[.92,4,'slash',.37,'cult_limb']],
+    arch_cultist_yog:[[0,0,'bolt',.20,'cult_comet'],[.58,4,'bolt',.34,'cult_sphere'],[.94,5,'bolt',.21,'cult_sphere']],
+    cult_roots:[[0,0,'slash',.19,'cult_root'],[.38,-2,'slash',.21,'cult_root'],[.83,2,'slash',.33,'cult_root']],
+    cult_yellow:[[0,0,'feint',0,'cult_mask'],[.65,2,'slash',.33,'cult_mask'],[1.19,-2,'bolt',.32,'cult_mask']],
+    arch_cultist_hastur:[[0,0,'slash',.36,'cult_actor'],[.79,0,'slash',.32,'cult_reprise'],[1.46,4,'wave',.48,'cult_curtain']],
+  };
+  function cultBlockThreats(p,seed,params){
+    if(!Object.hasOwn(CULT_BLOCK,p.skill.base_id))return null;
+    const spec=CULT_BLOCK[p.skill.base_id],offset=Math.floor(rng(seed^p.seed)()*8),result=[];
+    for(let cycle=0;cycle<3;cycle++)for(const [delay,shift,kind,weight,motif] of spec){
+      const a=(offset+cycle*3+shift)*Math.PI/4;
+      result.push({id:'block:'+result.length,at:2.02+cycle*2.58+delay,angle:Math.atan2(Math.sin(a),Math.cos(a)),
+        kind,motif,tier:weight>=.42?'heavy':weight>=.26?'normal':'minor',warning:Math.max(.59,params.warning)+(kind==='wave'?.14:0),weight,resolved:false});
+    }
+    result.forEach((e,i)=>e.strike=Math.min(p.strikes-1,Math.floor(i*p.strikes/result.length)));
+    return result;
   }
   function defense(p,stats,seed=1,options={}){
     const d=defenseDifficulty(p,stats),r=rng(seed^p.seed);
@@ -287,13 +333,148 @@
       count=4+((p.skill.npc_tier||0)>=3?1:0);
       span=(count-1)*(1.12-.16*d.intensity);
     }
+    if(Object.hasOwn(CULT_RHYTHM,p.skill.base_id))[count,span]=CULT_RHYTHM[p.skill.base_id];
     const model=damageModel(options),preparation=clamp(options.preparation??1,0,3);
     const activeDuration=NZ?.activeDuration(p)??6.8;
     return {kind:'defense',p,d,...model,strikeDamageBases:options.strikeDamageBases||[],strikeCriticalBases:options.strikeCriticalBases||[],criticalBase:!!options.criticalBase,criticalStrikes:options.criticalStrikes||[],preparation,activeDuration,hp:model.initialHp,endOnDeath:options.endOnDeath!==false,enabledStrikes:options.enabledStrikes||null,damage:0,contacts:[],hitIds:[],projectileCount:0,time:0,duration:preparation+activeDuration,ended:false,player:{x:W*.32,y:H*.5,r:6},hazards:[],
+      cover:coverState(options.cultCover),coverRaw:0,
       events:Array.from({length:count},(_,i)=>({at:preparation+.18+i*(p.kind==='casino_jackpot'?4.1:span)/Math.max(1,count-1),strike:Math.min(p.strikes-1,Math.floor(i*p.strikes/count)),index:i,
         jitter:r(),angle:r()*TAU,ready:false})),received:[]};
   }
   function line(ax,ay,bx,by,r,extra={}){return {type:'line',ax,ay,bx,by,r,...extra};}
+  // Mirrors arena_cultist_qte.py; hit geometry is independent of canvas art.
+  function cultPrepare(s,e,add,id){
+    if(!Object.hasOwn(CULT_RHYTHM,id))return false;
+    const d=s.d,i=e.index,j=e.jitter,odd=i%2,sign=odd?1:-1,pace=1+.20*d.intensity;
+    const x=clamp(s.player.x+(s.player.vx||0)*Math.min(d.lead,.12),24,W-24);
+    const y=clamp(s.player.y+(s.player.vy||0)*Math.min(d.lead,.12),24,H-24);
+    const stroke=(ax,ay,bx,by,motif,delay=0,duration=.22,width=9,extra={})=>
+      add(line(ax,ay,bx,by,width,{motif,tier:'normal',weight:.28,...extra}),delay,duration);
+    const disc=(x,y,r,motif,delay=0,duration=.26,weight=.48,extra={})=>
+      add({type:'circle',x,y,r,motif,tier:'heavy',weight,...extra},delay,duration);
+    const bolt=(x,y,vx,vy,motif,delay=0,duration=1.8,weight=.16,extra={})=>
+      add({type:'bullet',x,y,vx,vy,r:8,motif,tier:weight>=.22?'normal':'minor',weight,...extra},delay,duration);
+    const edge=index=>{
+      let u=(index%1)*(2*(W+H-48));
+      if(u<W-24)return [12+u,12];u-=W-24;
+      if(u<H-24)return [W-12,12+u];u-=H-24;
+      return u<W-24?[W-12-u,H-12]:[12,H-12-(u-(W-24))];
+    };
+    if(id==='cult_sign'){
+      const a=Math.atan2(H/2-y,W/2-x)+sign*(.48+.32*j);
+      for(let n=0;n<5;n++){
+        const b=a+1.10+n*.94;
+        stroke(x,y,x+Math.cos(b)*162,y+Math.sin(b)*162,'cult_ink',.04*(n%2),.56,8,
+          {cultGrow:.34,clockTurn:sign*.94,damageGroup:'seal_blades',weight:.24});
+      }
+      disc(x,y,58+7*d.intensity,'cult_eye',.13,.42);
+    }else if(id==='cult_voice'){
+      const center=clamp(x+sign*(65+j*42),115,W-115),gap=110-20*d.intensity;
+      [[-20,center-gap/2],[center+gap/2,W+20]].forEach(([lo,hi],n)=>{
+        const down=(odd+n)%2;
+        add({type:'polyline',motif:'cult_echo',r:11+n*2,tier:'normal',weight:.37,
+          fold:[lo,hi,down?-25:H+25,285*pace*(down?1:-1),j*TAU+n*1.5,sign*(18+n*5)],tone:n},n*.20,1.24);
+      });
+    }else if(id==='cult_rite'){
+      const cx=W/2+(j-.5)*54,cy=H/2+sign*12;
+      let candle=0;
+      [[12,132,2.56],[8,95,2.3]].forEach(([count,radius,stretch],layer)=>{
+        for(let n=0;n<count;n++){
+          if(((n-i*2-layer*3)%count+count)%count<(layer===0?2:1))continue;
+          const a=e.angle+n*TAU/count,delay=layer*.17+n%2*.045,gather=1.13-delay+n%3*.035;
+          const release=1.43+layer*.10+n%2*.055,speed=sign*(layer===0?1.50:-1.25);
+          bolt(cx+Math.cos(a)*radius*stretch,cy+Math.sin(a)*radius,0,0,'cult_wax',delay,release-delay,.16,
+            {r:9,orbit:true,cx,cy,orbitRadius:radius,orbitStretch:stretch,orbitAngle:a,
+              orbitSpeed:speed,spiral:(11-radius)/gather,riteGather:gather,damageGroup:'gather:'+layer,candle});
+          const b=a+speed*gather,bx=cx+Math.cos(b)*11*stretch,by=cy+Math.sin(b)*11;
+          const [tx,ty]=candle===16?[clamp(s.player.x,12,W-12),clamp(s.player.y,12,H-12)]:edge(candle/16+i*.063+j*.05);
+          const travel=.74+.09*layer;
+          bolt(bx,by,(tx-bx)/travel,(ty-by)/travel,'cult_wax',release,travel+.08,.22,
+            {r:9,waveA:candle===16?0:(12+layer*7)*sign,waveF:TAU/travel,riteOut:true,candle,damageGroup:'scatter:'+layer});
+          candle++;
+        }
+      });
+      disc(cx,cy,51,'cult_altar',1.21,.23);
+    }else if(id==='cult_depths'){
+      const side=odd?7:W-7;
+      [[side,clamp(y-sign*75,24,H-24)],[clamp(x-140,30,W-30),odd?9:H-9],
+        [clamp(x+155,30,W-30),odd?H-9:9],[W-side,clamp(y+sign*122,20,H-20)],
+        [clamp(x+sign*(220+j*52),24,W-24),odd?H-9:9]].forEach(([ax,ay],n)=>{
+        const a=Math.atan2(y-ay,x-ax)+sign*(n-2)*.12,v=(203+n*17)*pace;
+        bolt(ax,ay,Math.cos(a)*v,Math.sin(a)*v,'cult_wraith',n*.115,1.62,n===0||n===2?.24:.17,
+          {r:n%2?15:19,waveA:sign*(27+n*7)*(n%2?1:-1),waveF:5.1+n*.39,vision:n});
+      });
+      for(const n of [0,1])bolt(W-side,47+214*n,-sign*215,sign*(1-2*n)*40,'cult_wraith',.38+n*.08,1.53,0,
+        {r:19,waveA:36*(1-2*n),waveF:4.6,vision:n+5,visualOnly:true});
+    }else if(id==='arch_cultist_cthulhu'){
+      for(const n of [0,1]){
+        const direction=sign*(1-2*n),gap=113-14*d.intensity-n*12;
+        const cy=clamp(y+sign*(33+24*j)-sign*n*50,gap/2+29,H-gap/2-29);
+        for(const bank of [0,1])add({type:'polyline',x:direction>0?-42:W,r:20,
+          cultSlide:direction*(495+n*81)*pace,motif:'cult_tide',routeY:cy,routeGap:gap,
+          tideBank:bank,tideBend:19+6*n,tidePhase:sign*n*1.24,tier:'heavy',weight:.42,damageGroup:'tide:'+n},n*.94,1.64);
+      }
+      for(const n of [0,1]){
+        const wx=clamp(x+sign*(n?127:-112),61,W-61),wy=clamp(y+sign*(n?87:-79),43,H-43);
+        add({type:'well',x:wx,y:wy,r:29,pull:34,motif:'cult_sink',tier:'normal',weight:.22},.28+n*.34,.88);
+      }
+    }else if(id==='arch_cultist_yog'){
+      for(const pair of [0,1]){
+        const facing=sign*(1-2*pair),ex=facing>0?111+pair*19:W-111-pair*19;
+        const ey=(odd+pair)%2?47+j*51:H-47-j*51,gx=W-ex,gy=H-ey+sign*19,delay=pair*.49;
+        for(const n of [-1,1]){
+          const px=gx-facing*87,py=gy+n*29;
+          bolt(px,py,(gx-px)/.32,(gy-py)/.32,'cult_comet',delay+.045*(n+1),.32,.11);
+        }
+        const aim=facing>0?0:Math.PI,tilt=Math.atan2(y-ey,Math.max(90,Math.abs(x-ex)))*facing*.28;
+        for(const n of [-2,-1,0,1,2]){
+          const a=aim+tilt+.31*n,v=(280+Math.abs(n)*17)*pace;
+          bolt(ex,ey,Math.cos(a)*v,Math.sin(a)*v,'cult_sphere',delay+.38+.065*Math.abs(n),1.56,n===0?.23:.13,
+            {r:n===0?10:8,waveA:facing*(18+Math.abs(n)*10)*(n>=0?1:-1),waveF:4.5+Math.abs(n)*.7,
+              gate_x:gx,gate_y:gy,gate_show:n===0,gate_pair:pair});
+        }
+      }
+    }else if(id==='cult_roots'){
+      [[clamp(x-sign*(80+j*42),28,W-28),odd?0:H],
+        [x<W/2?0:W,clamp(y+sign*(60+j*26),25,H-25)],
+        [clamp(x+sign*(99+j*45),28,W-28),odd?H:0]].forEach(([ax,ay],n)=>{
+        const a=Math.atan2(y-ay,x-ax)+sign*(n-1)*.31,speed=(177+13*n)*pace;
+        bolt(ax,ay,Math.cos(a)*speed,Math.sin(a)*speed,'cult_root',n*.24,1.94,.26,
+          {r:10,homing:1.32,turnRate:2.9,vineStop:1.47,vineBody:7.5,vineTwig:3,cultVine:true});
+      });
+    }else if(id==='cult_yellow'){
+      const near=clamp(x+sign*(142+j*54),46,W-46),far=clamp(x-sign*(116+j*61),46,W-46);
+      [[near,odd?18:H-18],[far,odd?H-18:18],[odd?W-14:14,clamp(y-sign*76,30,H-30)],
+        [odd?14:W-14,clamp(y+sign*93,30,H-30)]].forEach(([ax,ay],n)=>{
+        const decoy=n%2===1,a=Math.atan2(y-ay,x-ax)+sign*(decoy?.44:-.19),v=(n<2?194:258)*pace;
+        bolt(ax,ay,Math.cos(a)*v,Math.sin(a)*v,'cult_mask',.12+n*.24,1.39,decoy?0:.36,
+          {r:17,waveA:sign*(36+n*3),waveF:5.9-n*.4,visualOnly:decoy});
+      });
+    }else{
+      const old=s.cultCue;s.cultCue=[x,y];
+      if(i===0){
+        disc(x,y,64+8*d.intensity,'cult_stage',.12,.38,.47);
+        for(const n of [0,1]){
+          const [bx,by]=n?[9,46]:[W-9,H-52],py=clamp(y+(1-2*n)*52,25,H-25),travel=.75+.10*n;
+          bolt(bx,by,(x-bx)/travel,(py-by)/travel,'cult_actor',.17+.20*n,travel+.22,.30,
+            {r:15,length:29,waveA:27*(1-2*n),waveF:TAU/travel,crossing:travel});
+        }
+      }else if(i===1){
+        const [ox,oy]=old||[x,y];
+        [[ox,oy],[W-ox,H-oy],[x,y]].forEach(([tx,ty],n)=>{
+          const bx=clamp(tx+sign*(95-95*n),24,W-24),by=n%2?H-8:8,travel=.65+.08*n;
+          bolt(bx,by,(tx-bx)/travel,(ty-by)/travel,'cult_actor',.12+.23*n,travel+.25,.28,
+            {r:16,length:23,waveA:38*(1-2*(n%2)),waveF:TAU/travel,replay_x:tx,replay_y:ty,reprise:true,crossing:travel});
+        });
+        disc(ox,oy,55,'cult_reprise',.78,.38,.35);
+      }else{
+        const center=clamp(x+(x<W/2?1:-1)*(86+j*34),90,W-90),gap=138-17*d.intensity;
+        for(const bank of [0,1])add({type:'rect',x:0,y:0,w:0,h:H,motif:'cult_curtain',tier:'heavy',
+          weight:.49,drapeBank:bank,drapeEdge:center+(bank?1:-1)*gap/2,damageGroup:'curtain'},.05+.14*bank,1.33);
+      }
+    }
+    return true;
+  }
   function prepare(s,e){
     const copy=s.p.skill.copy_skill;
     if(s.p.skill.base_id==='nz_pandora_p2_1'&&copy&&copy.base_id!=='mana_shot'&&!(copy.base_id||'').startsWith('nz_')){
@@ -323,7 +504,8 @@
       fan(bx,by,Math.atan2(ty-by,tx-bx),n,spread,delay,motif);};
     const cross=(radius=17,delay=0)=>{beam(x,0,x,H,radius,delay);beam(0,y,W,y,radius,delay+.12);};
     const diagonal=(theta,width=18,delay=0)=>{const dx=Math.cos(theta)*900,dy=Math.sin(theta)*900,cx=x+(tx-x)*.6,cy=y+(ty-y)*.6;beam(cx-dx,cy-dy,cx+dx,cy+dy,width,delay);};
-    if((id||'').startsWith('guild_')&&guildPrepare(s,e,add)){
+    if(cultPrepare(s,e,add,id)){
+    }else if((id||'').startsWith('guild_')&&guildPrepare(s,e,add)){
     }else if(NZ?.identity(p)){
       for(const h of NZ.shapes(s,e)){const {delay,duration,...shape}=h;add(shape,delay,duration);}
     }else if(p.kind==='casino_cards'){
@@ -454,7 +636,8 @@
       default:throw new Error('Unknown pattern '+p.kind);
     }
     for(let j=0;j<shapes.length;j++){
-      const h=shapes[j];h.id='wave:'+i+':'+j;h.damageId=p.kind==='lightning'&&j<2?'wave:'+i+':bolt':h.id;
+      const h=shapes[j],group=h.damageGroup||(p.kind==='lightning'&&j<2?'bolt':null);
+      h.id='wave:'+i+':'+j;h.damageId=group?'wave:'+i+':'+group:h.id;
       h.disabled=!!h.visualOnly||!!s.enabledStrikes&&!s.enabledStrikes[h.strike];
       h.tier=h.tier||(['line','circle','rect'].includes(h.type)?'heavy':h.type==='ring'||h.type==='well'?'normal':'minor');
       h.weight=h.weight??DAMAGE_TIERS[h.tier].weight;
@@ -464,15 +647,48 @@
     s.projectileCount+=new Set(shapes.filter(h=>!h.disabled).map(h=>h.damageId)).size;
     e.ready=true;
   }
+  function foldCenter(cy,speed,age){return cy+age*speed+Math.sign(speed)*11*Math.sin(age*12);}
   function geometry(h,t){
     let age=Math.max(0,t-h.start);
     if(h.type==='line'&&('chestMoveX' in h||'chestMoveY' in h)){const dx=(h.chestMoveX||0)*age,dy=(h.chestMoveY||0)*age;return {...h,ax:h.ax+dx,ay:h.ay+dy,bx:h.bx+dx,by:h.by+dy};}
     if(h.freezeFor&&age>h.freezeAt)age=h.freezeAt+Math.max(0,age-h.freezeAt-h.freezeFor);
     if(h.ainzPath)return NZ.motion(h,age);
+    if(h.drapeBank!==undefined){
+      const u=Math.min(1,age/.70),scale=u*u*(3-2*u),w=(h.drapeBank?W-h.drapeEdge:h.drapeEdge)*scale;
+      return {...h,x:h.drapeBank?W-w:0,w};
+    }
+    if(h.fold){
+      const [lo,hi,cy,speed,phase,bend]=h.fold,center=foldCenter(cy,speed,age);
+      const points=Array.from({length:9},(_,n)=>{
+        const x=lo+(hi-lo)*n/8;return [x,center+bend*Math.sin(x*.019+phase+age*2.4)+5*Math.sin(x*.071-age*6)];
+      });
+      return {...h,points};
+    }
+    if(h.cultSlide){
+      const x=h.x+age*h.cultSlide;
+      if(h.tideBank!==undefined){
+        const cy=h.routeY+h.tideBend*Math.sin(age*4.9+h.tidePhase),half=h.routeGap/2;
+        const [top,bottom]=h.tideBank?[cy+half,H+25]:[-25,cy-half],points=Array.from({length:9},(_,n)=>{
+          const y=top+(bottom-top)*n/8;
+          return [x+21+13*Math.sin(y*.031+age*7+h.tidePhase)+5*Math.sin(y*.121-age*9),y];
+        });
+        return {...h,x,y:top,h:bottom-top,routeY:cy,points};
+      }
+      return {...h,x};
+    }
+    if(h.cultGrow){
+      const scale=Math.min(1,age/h.cultGrow),a=(h.clockTurn||0)*age,cs=Math.cos(a),sn=Math.sin(a),dx=h.bx-h.ax,dy=h.by-h.ay;
+      return {...h,bx:h.ax+(dx*cs-dy*sn)*scale,by:h.ay+(dx*sn+dy*cs)*scale};
+    }
     if(h.type==='line'&&h.clockTurn){const a=h.clockTurn*age,cs=Math.cos(a),sn=Math.sin(a),dx=h.bx-h.ax,dy=h.by-h.ay;return {...h,bx:h.ax+dx*cs-dy*sn,by:h.ay+dx*sn+dy*cs};}
     if(h.type==='bullet'){
+      if(h.waveA){
+        const length=Math.hypot(h.vx,h.vy)||1,nx=-h.vy/length,ny=h.vx/length;
+        const offset=h.waveA*Math.sin(h.waveF*age),slope=h.waveA*h.waveF*Math.cos(h.waveF*age);
+        return {...h,x:h.x+h.vx*age+nx*offset,y:h.y+h.vy*age+ny*offset,vx:h.vx+nx*slope,vy:h.vy+ny*slope};
+      }
       if(h.returnAt){const travel=age<=h.returnAt?age:2*h.returnAt-age,sign=age<=h.returnAt?1:-1;return {...h,x:h.x+h.vx*travel,y:h.y+h.vy*travel,vx:h.vx*sign,vy:h.vy*sign};}
-      if(h.orbit){const a=h.orbitAngle+h.orbitSpeed*age,r=h.orbitRadius+h.spiral*age;return{...h,x:h.cx+Math.cos(a)*r,y:h.cy+Math.sin(a)*r,vx:Math.cos(a)*h.spiral-Math.sin(a)*r*h.orbitSpeed,vy:Math.sin(a)*h.spiral+Math.cos(a)*r*h.orbitSpeed};}
+      if(h.orbit){const travel=Math.min(age,h.riteGather??age),a=h.orbitAngle+h.orbitSpeed*travel,r=h.orbitRadius+h.spiral*travel,sx=h.orbitStretch??1;return{...h,x:h.cx+Math.cos(a)*r*sx,y:h.cy+Math.sin(a)*r,vx:travel<age?0:(Math.cos(a)*h.spiral-Math.sin(a)*r*h.orbitSpeed)*sx,vy:travel<age?0:Math.sin(a)*h.spiral+Math.cos(a)*r*h.orbitSpeed};}
       if(h.px!==undefined)return {...h,x:h.px,y:h.py};
       if(h.turn){const a=h.turn*age,cs=Math.cos(a),sn=Math.sin(a);
         return {...h,x:h.x+(h.vx*sn+h.vy*(cs-1))/h.turn,y:h.y+(h.vx*(1-cs)+h.vy*sn)/h.turn};}
@@ -489,8 +705,34 @@
   }
   function touches(h,old,now,t,dt){
     if(h.pendingLaunch&&t<h.start+(h.freezeFor||0))return false;
+    if(h.fold){
+      const [lo,hi,cy,speed,,bend]=h.fold,center=foldCenter(cy,speed,Math.max(0,t-h.start));
+      const pad=h.r+now.r+1e-9,vertical=Math.abs(bend)+5+pad;
+      if(Math.max(old.x,now.x)<lo-pad||Math.min(old.x,now.x)>hi+pad||
+        Math.max(old.y,now.y)<center-vertical||Math.min(old.y,now.y)>center+vertical)return false;
+    }
+    if(h.tideBank!==undefined){
+      const x=h.x+Math.max(0,t-h.start)*h.cultSlide+21,pad=h.r+now.r+18+1e-9;
+      if(Math.max(old.x,now.x)<x-pad||Math.min(old.x,now.x)>x+pad)return false;
+    }
     const g=geometry(h,t),r=now.r;
-    if(h.type==='bullet'){const previous=h.lastX!==undefined?{x:h.lastX,y:h.lastY}:geometry(h,Math.max(h.start,t-dt));if(h.length){const len=Math.hypot(g.vx,g.vy)||1;if(segmentDistance(old.x,old.y,now.x,now.y,g.x-g.vx/len*h.length,g.y-g.vy/len*h.length,g.x,g.y)<=g.r+r)return true;}return distance(0,0,previous.x-old.x,previous.y-old.y,g.x-now.x,g.y-now.y)<=g.r+r;}
+    if(h.type==='bullet'){
+      if(h.cultVine){
+        const segment=(ax,ay,bx,by,width)=>{
+          const pad=width+r+1e-9;
+          return !(Math.max(ax,bx)+pad<Math.min(old.x,now.x)||Math.min(ax,bx)-pad>Math.max(old.x,now.x)||
+            Math.max(ay,by)+pad<Math.min(old.y,now.y)||Math.min(ay,by)-pad>Math.max(old.y,now.y))&&
+            segmentDistance(old.x,old.y,now.x,now.y,ax,ay,bx,by)<=width+r;
+        };
+        let ax=h.x,ay=h.y;
+        for(const [bx,by] of h.vineTrail||[]){
+          if(segment(ax,ay,bx,by,h.vineBody))return true;ax=bx;ay=by;
+        }
+        if(segment(ax,ay,g.x,g.y,h.vineBody))return true;
+        for(const b of h.vineBranches||[])if(segment(...b,h.vineTwig))return true;
+      }
+      const previous=h.lastX!==undefined?{x:h.lastX,y:h.lastY}:geometry(h,Math.max(h.start,t-dt));if(h.length){const len=Math.hypot(g.vx,g.vy)||1;if(segmentDistance(old.x,old.y,now.x,now.y,g.x-g.vx/len*h.length,g.y-g.vy/len*h.length,g.x,g.y)<=g.r+r)return true;}return distance(0,0,previous.x-old.x,previous.y-old.y,g.x-now.x,g.y-now.y)<=g.r+r;
+    }
     if(h.type==='line')return segmentDistance(old.x,old.y,now.x,now.y,g.ax,g.ay,g.bx,g.by)<=g.r+r;
     if(h.type==='polyline')return g.points.slice(1).some((q,i)=>segmentDistance(old.x,old.y,now.x,now.y,...g.points[i],...q)<=g.r+r);
     if(h.type==='safe_zone')return Math.hypot(now.x-g.x,now.y-g.y)>g.r-r;
@@ -526,26 +768,43 @@
       if(input.target){dx=input.target.x-old.x;dy=input.target.y-old.y;}
       const length=Math.hypot(dx,dy),travel=input.target?Math.min(length,speed*step):speed*step*Math.min(1,length);
       if(length){s.player.x+=dx/length*travel;s.player.y+=dy/length*travel;}
-      for(const h of s.hazards)if(h.type==='well'&&s.time>=h.start&&s.time<h.end){
+      for(const h of s.hazards)if(h.type==='well'&&s.time>=h.start&&s.time<h.end&&!(h.motif==='cult_sink'&&h.disabled)){
         const len=Math.hypot(h.x-s.player.x,h.y-s.player.y);if(len>1&&len<170){s.player.x+=(h.x-s.player.x)/len*h.pull*step;s.player.y+=(h.y-s.player.y)/len*h.pull*step;}
       }
       s.player.x=clamp(s.player.x,12,W-12);s.player.y=clamp(s.player.y,12,H-12);
       s.player.vx=(s.player.x-old.x)/step;s.player.vy=(s.player.y-old.y)/step;
       return old;
   }
+  function growVine(h,player,time,step){
+    if(h.disabled||time<h.start||time>Math.min(h.end,h.start+h.vineStop))return;
+    NZ?.advanceHoming(h,player,time,step);
+    const trail=h.vineTrail||[],[bx,by,bt]=trail.at(-1)||[h.x,h.y,h.start];
+    if(time-bt<.071)return;
+    const x=h.px,y=h.py,n=trail.length;
+    h.vineTrail=[...trail,[x,y,time]];
+    if(n%3===1){
+      const length=Math.hypot(x-bx,y-by)||1,ux=(x-bx)/length,uy=(y-by)/length,side=n%2?1:-1;
+      h.vineBranches=[...(h.vineBranches||[]),[x,y,x-ux*12-uy*17*side,y-uy*12+ux*17*side]];
+    }
+  }
   function defenseContacts(s,step,old){
       const previous=s.time-step;
       if(s.p.chaplain>=2){(s.history??=[]).push({t:s.time,x:s.player.x,y:s.player.y});if(s.history.length>720)s.history.shift();}
-      for(const h of s.hazards){if(h.homing)NZ?.advanceHoming(h,s.player,s.time,step);if(h.disabled||h.end<previous||h.start>s.time||s.hitIds.includes(h.damageId))continue;
+      for(const h of s.hazards){
+        if(h.cultVine)growVine(h,s.player,s.time,step);
+        else if(h.homing)NZ?.advanceHoming(h,s.player,s.time,step);
+        if(h.disabled||h.end<previous||h.start>s.time||s.hitIds.includes(h.damageId))continue;
         if(h.moveOnly&&Math.hypot(s.player.x-old.x,s.player.y-old.y)<.001)continue;
         if(touches(h,old,s.player,s.time,step)){
           s.hitIds.push(h.damageId);if(!s.received.includes(h.strike))s.received.push(h.strike);
-          const damage=Math.min(s.hp,h.rawDamage);s.hp-=damage;s.damage+=damage;
+          const damage=Math.min(s.hp,coveredDamage(s,s.coverRaw,s.coverRaw+h.rawDamage));
+          if(s.cover)s.coverRaw+=h.rawDamage;
+          s.hp-=damage;s.damage+=damage;
           s.contacts.push({id:h.damageId,time:s.time,damage,raw:h.rawDamage,weight:h.weight,tier:h.tier,strike:h.strike,x:s.player.x,y:s.player.y,...(h.status?{status:h.status}:{})});
           if(s.hp<=0&&s.endOnDeath){s.ended=true;break;}
         }}
       s.hazards=s.hazards.filter(h=>h.end>=s.time);
   }
   function defenseResult(s){return {hits:s.contacts.length,total:s.projectileCount,dodged:s.projectileCount-s.contacts.length,damage:s.damage,hp:s.hp,mask:Array.from({length:s.p.strikes},(_,i)=>!s.received.includes(i))};}
-  return {W,H,FAMILIES,DAMAGE_TIERS,impact,attackWeights,damageValue,hash,rng,clamp,family,profile,difficulty,defenseDifficulty,guildBlockThreats,attack,attackStep,attackFrame,attackResult,hit,defense,defenseStep,defenseBegin,defenseMove,defenseSpeed,defenseContacts,defenseResult,geometry,distance,segmentDistance,touches};
+  return {W,H,FAMILIES,DAMAGE_TIERS,impact,attackWeights,damageValue,coverState,coveredDamage,hash,rng,clamp,family,profile,difficulty,defenseDifficulty,guildBlockThreats,cultBlockThreats,attack,attackStep,attackFrame,attackResult,hit,defense,defenseStep,defenseBegin,defenseMove,defenseSpeed,defenseContacts,defenseResult,geometry,distance,segmentDistance,touches};
 });

@@ -10,7 +10,7 @@
    for(const s of states)if(s.enabledStrikes)s.events=s.events.filter(e=>s.enabledStrikes[e.strike]);
    carrier.events=states.flatMap((s,i)=>s.events.map(e=>({...e,id:i+'/'+e.id}))).sort((a,b)=>a.at-b.at);carrier.duration=stage.duration;
   }
-  return {stage,states,block,carrier,player:{x:360,y:160,r:6,vx:0,vy:0},time:0,duration:stage.duration,ended:false,contacts:[],damage:0,hp:stage.target_hp,initialHp:stage.target_hp,seen:states.map(()=>0),damageParts:states.map(()=>[])};
+  return {stage,states,block,carrier,player:{x:360,y:160,r:6,vx:0,vy:0},time:0,duration:stage.duration,ended:false,contacts:[],damage:0,hp:stage.target_hp,initialHp:stage.target_hp,cover:E.coverState(stage.cult_cover),seen:states.map(()=>0),damageParts:states.map(()=>[])};
  }
  function step(s,input={}){
   if(s.ended)return;s.time+=1/120;let moved=null;
@@ -36,7 +36,7 @@
     // fractions accumulate before rounding. Never present a tiny hit as zero.
     part.exact+=base*weight*critical;
     part.raw+=s.block?Math.max(0,Math.round(part.exact)-part.raw):E.damageValue(base,weight*critical);
-    const scaled=Math.round(part.raw*(s.stage.incoming_factor??1)),damage=scaled-part.scaled;
+    const scaled=Math.round(part.raw*(s.stage.incoming_factor??1)),damage=m.cult_cover?E.coveredDamage(s,part.scaled,scaled):scaled-part.scaled;
     part.scaled=scaled;s.contacts.push({...c,weight,source:m.encounter_enemy,damage});s.damage+=damage;
    }
    s.seen[i]=contacts.length;
@@ -81,7 +81,7 @@
  function draw(ctx,canvas,s){
   const height=s.block?400:320;ctx.fillStyle='#091320';ctx.fillRect(0,0,720,height);ctx.strokeStyle='#1b2c40';ctx.lineWidth=.5;for(let x=0;x<720;x+=30){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,height);ctx.stroke();}for(let y=0;y<height;y+=30){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(720,y);ctx.stroke();}
   if(s.block)blockArena(ctx);
-  const proxy=layerContext(ctx);s.states.forEach(state=>{if(state.time<state.preparation)return;ctx.save();const view={...state,contacts:[],player:s.block?state.player:s.player};(s.block?globalThis.QTEBlockView:globalThis.QTEView).draw(proxy,canvas,view);ctx.restore();});
+  const proxy=layerContext(ctx);s.states.forEach(state=>{if(state.time<state.preparation)return;ctx.save();const view={...state,layered:true,contacts:[],player:s.block?state.player:s.player};(s.block?globalThis.QTEBlockView:globalThis.QTEView).draw(proxy,canvas,view);ctx.restore();});
   if(s.block)blockGuard(ctx,s);else{ctx.save();ctx.translate(s.player.x,s.player.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#a1e5d9';ctx.shadowColor='#8fe6dd';ctx.shadowBlur=12;ctx.fillRect(-5,-5,10,10);ctx.restore();}
   if(s.time<1){ctx.fillStyle='#0c1725bb';ctx.fillRect(0,0,720,height);ctx.fillStyle='#e8ca86';ctx.font='bold 24px Segoe UI';ctx.textAlign='center';ctx.fillText('ПРИГОТОВЬСЯ · '+(1-s.time).toFixed(1),360,height/2);}
  }

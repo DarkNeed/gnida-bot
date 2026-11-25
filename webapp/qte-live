@@ -6,6 +6,7 @@
   // Read only newly created contacts. Cluster near-simultaneous pellets into
   // one sound; redraws, exact blocks and aborted widgets cannot replay it.
   function damageFeedback(kind){let seen=0,last=-Infinity;return sim=>{const contacts=sim.contacts||[],fresh=contacts.slice(seen);seen=contacts.length;const hits=fresh.filter(c=>c.damage>0);if(!hits.length)return;const now=performance.now();if(now-last<90)return;last=now;try{window.ArenaAudio?.effect?.(kind==='attack'?(hits.some(c=>c.critical)?'critical':'qte_hit'):'qte_hurt');}catch{}};}
+  function coverText(s){return s.cover?' · Отпрыск: '+s.cover.hp+' HP':'';}
   function play(challenge,context){window.ArenaQTEWatch?.pause();return challenge.version===4?playCombined(challenge,context):challenge.casino_mode?playChance(challenge,context):challenge.version===3&&challenge.defense_mode==='block'?playBlock(challenge,context):challenge.version===2?playPatterns(challenge,context):playLegacy(challenge);}
   function playCombined(challenge,context){
     if(active)return Promise.reject(new Error('Другая мини-игра уже открыта.'));
@@ -17,21 +18,21 @@
       canvas.height=s.block?400:320;canvas.setAttribute('aria-label',s.block?'Удерживай левую кнопку мыши на поле или используй WASD: щит следует за направлением':'WASD или джойстик уклонения');
       find('h2').textContent=challenge.members.map(m=>m.name).join(' + ');find('.qte-help').textContent=s.block?'Держи ЛКМ на поле или WASD навстречу угрозам. Отпусти для восстановления стойкости.':challenge.members.some(m=>(m.profile?.base_id||m.profile?.id||m.skill?.base_id||'').startsWith('nz_ainz6_'))?'Двигай маркер мышью, WASD или джойстиком.':'Уводи маркер от всех угроз. Убийство слабого врага до каста убирает его помехи.';
       if(challenge.incoming_factor<1)find('.qte-help').textContent+=' Совместный прямой урон −'+Math.round((1-challenge.incoming_factor)*100)+'%.';
-      document.body.append(cover);
+      document.body.append(cover);const releaseTimeline=window.RaidTimeline?.attach(find('section'));
       const unlock=QTETouch.lockViewport(cover),abort=new AbortController(),on=(e,n,f)=>e.addEventListener(n,f,{signal:abort.signal});
       const keys=new Set(),proof={ticks:Math.ceil(s.duration*120-1e-7),inputs:[]};let tick=0,last=0,accumulator=0,encoded='',angle=0,done=false,raf,watch,aim=null,canvasPointer=null;
       const touch=QTETouch.attach({canvas,stick:find('.qte-stick'),width:720,height:canvas.height,getPlayer:()=>s.block?{x:360,y:200}:s.player,isDefense:()=>true,onTouch:()=>cover.classList.add('qte-touch-mode')});
       const deadline=performance.now()+Math.max(0,(challenge.expires-(challenge.server_now||Date.now()/1000))*1000);
       const relay=window.ArenaQTEWatch?.source(challenge,context,()=>({tick,inputs:proof.inputs}));active={challenge:challenge.id};canvas.focus({preventScroll:true});
-      function finish(failed=false){if(done)return;done=true;relay?.finish({abort:failed});cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();cover.remove();unlock();active=null;previous?.isConnected&&previous.focus?.({preventScroll:true});resolve(failed?{abort:true}:proof);}
+      function finish(failed=false){if(done)return;done=true;relay?.finish({abort:failed});cancelAnimationFrame(raf);clearInterval(watch);abort.abort();touch.destroy();releaseTimeline?.();cover.remove();unlock();active=null;previous?.isConnected&&previous.focus?.({preventScroll:true});resolve(failed?{abort:true}:proof);}
       function point(e){const r=canvas.getBoundingClientRect();return {x:(e.clientX-r.left)*720/r.width-360,y:(e.clientY-r.top)*canvas.height/r.height-canvas.height/2};}
       function input(){let x=+(keys.has('KeyD')||keys.has('ArrowRight'))-+(keys.has('KeyA')||keys.has('ArrowLeft')),y=+(keys.has('KeyS')||keys.has('ArrowDown'))-+(keys.has('KeyW')||keys.has('ArrowUp'));const touchInput=touch.input();if(!x&&!y&&Math.hypot(touchInput.x||0,touchInput.y||0)>.12){x=touchInput.x;y=touchInput.y;}if(!s.block)return x||y?{x,y}:touchInput;if(canvasPointer!==null&&aim){x=aim.x;y=aim.y;}const directed=Math.hypot(x,y)>.05;if(directed)angle=Math.atan2(y,x);return {angle,active:directed||keys.has('Space')||canvasPointer!==null};}
       on(window,'keydown',e=>{if(e.code==='Escape'){e.preventDefault();finish(true);return;}if(['KeyW','KeyA','KeyS','KeyD','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code)){e.preventDefault();keys.add(e.code);}});on(window,'keyup',e=>keys.delete(e.code));on(window,'blur',()=>{keys.clear();touch.clear();aim=null;canvasPointer=null;});on(document,'visibilitychange',()=>{if(document.hidden)finish(true);});on(find('.qte-abort'),'click',()=>finish(true));
       on(canvas,'pointerdown',e=>{if(!s.block||canvasPointer!==null)return;e.preventDefault();canvasPointer=e.pointerId;aim=point(e);try{canvas.setPointerCapture(e.pointerId);}catch(_){}});
       on(canvas,'pointermove',e=>{if(s.block&&e.pointerId===canvasPointer){e.preventDefault();aim=point(e);}});
       for(const name of ['pointerup','pointercancel','lostpointercapture'])on(canvas,name,e=>{if(e.pointerId===canvasPointer){canvasPointer=null;aim=null;}});
-      function draw(){feedback(s);C.draw(ctx,canvas,s);find('.qte-count').textContent=Math.max(0,(s.time<1?1:s.duration)-s.time).toFixed(1)+' С';find('.qte-hp-value').textContent=s.hp+' / '+s.initialHp;find('.qte-hp-track i').style.width=100*s.hp/s.initialHp+'%';find('.qte-live-status').textContent=s.time<1?'Приготовься: угрозы ещё не активны.':s.block?'Стойкость: '+Math.round(s.carrier.stamina)+' · касаний '+s.contacts.length:'Касаний: '+s.contacts.length;}
-      function frame(now){if(done)return;if(now>=deadline){finish(true);return;}accumulator+=last?(now-last)/1000:0;last=now;while(accumulator>=1/120&&!done){accumulator-=1/120;const cmd=input(),value=JSON.stringify(cmd);if(value!==encoded){proof.inputs.push({t:tick,...cmd});encoded=value;}C.step(s,cmd);tick++;if(tick===proof.ticks){draw();finish();}}if(!done){draw();raf=requestAnimationFrame(frame);}}
+      function draw(){feedback(s);C.draw(ctx,canvas,s);find('.qte-count').textContent=Math.max(0,(s.time<1?1:s.duration)-s.time).toFixed(1)+' С';find('.qte-hp-value').textContent=s.hp+' / '+s.initialHp;find('.qte-hp-track i').style.width=100*s.hp/s.initialHp+'%';find('.qte-live-status').textContent=(s.time<1?'Приготовься: угрозы ещё не активны.':s.block?'Стойкость: '+Math.round(s.carrier.stamina)+' · касаний '+s.contacts.length:'Касаний: '+s.contacts.length)+coverText(s);}
+      function frame(now){if(done)return;if(now>=deadline){finish(true);return;}accumulator+=last?(now-last)/1000:0;last=now;while(accumulator>=1/120&&!done){accumulator-=1/120;const cmd=input(),value=JSON.stringify(cmd);if(value!==encoded){proof.inputs.push({t:tick,...cmd});encoded=value;}C.step(s,cmd);tick++;if(tick===proof.ticks)finish();}if(!done){draw();raf=requestAnimationFrame(frame);}}
       watch=setInterval(()=>{if(performance.now()>=deadline)finish(true);},200);draw();raf=requestAnimationFrame(frame);
     });
   }
@@ -56,7 +57,7 @@
     const B=window.QTEBlock,V=window.QTEBlockView;
     if(!B||!V||!window.QTETouch?.lockViewport)return Promise.reject(new Error('Обнови арену: блокирование не загрузилось.'));
     return new Promise(resolve=>{
-      const s=B.create(challenge.profile,challenge.stats,challenge.seed,{hp:challenge.target_hp,referenceDamage:challenge.damage_base,strikeDamageBases:challenge.strike_damage_bases,strikeCriticalBases:challenge.strike_critical_bases,splitDamage:!!challenge.subskills,criticalBase:challenge.critical_base,criticalStrikes:challenge.critical_strikes,endOnDeath:false,enabledStrikes:challenge.enabled_strikes});
+      const s=B.create(challenge.profile,challenge.stats,challenge.seed,{hp:challenge.target_hp,referenceDamage:challenge.damage_base,strikeDamageBases:challenge.strike_damage_bases,strikeCriticalBases:challenge.strike_critical_bases,splitDamage:!!challenge.subskills,criticalBase:challenge.critical_base,criticalStrikes:challenge.critical_strikes,endOnDeath:false,enabledStrikes:challenge.enabled_strikes,cultCover:challenge.cult_cover});
       const cover=document.createElement('div');cover.className='qte-cover qte-pattern qte-block qte-defense';
       cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Блокирование атаки"><div class="qte-heading"><div><p class="qte-eyebrow">ЗАЩИТА · БЛОКИРОВАНИЕ</p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"><span class="qte-help-full">Держи щит навстречу атаке. Отпускай для стойкости; новое поднятие перед ударом — точный блок.</span><span class="qte-help-compact">Держи направление — блок. Отпусти — восстанови стойкость.</span></p><div class="qte-health"><div><span>Твои HP · прогноз</span><strong class="qte-hp-value"></strong></div><div class="qte-hp-track"><i></i></div><div class="qte-block-stamina"><span>Стойкость</span><strong class="qte-stamina-value"></strong></div><div class="qte-hp-track qte-stamina-track"><i></i></div></div><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="400" tabindex="0" aria-label="Стрелки или WASD направляют щит, пробел поднимает блок"></canvas></div><div class="qte-live-status" role="status"></div><div class="qte-controls"><div class="qte-live-buttons"><button class="qte-abort">Пропустить · все попадания</button></div><button class="qte-block-raise" data-direction="raise">Держать блок</button><button class="qte-stick" aria-label="Джойстик направления щита"><span aria-hidden="true"></span></button><div class="qte-live-pad"><button data-direction="up">↑</button><button data-direction="left">←</button><button data-direction="down">↓</button><button data-direction="right">→</button></div></div><p class="qte-info">Обычный блок −75% урона после брони; точный — весь. Волна требует свежего поднятия щита. Урон и результат проверяет сервер.</p></section>';
       const find=q=>cover.querySelector(q),canvas=find('canvas'),ctx=canvas.getContext('2d'),previousFocus=document.activeElement,feedback=damageFeedback('defense');
@@ -106,7 +107,7 @@
         find('.qte-hp-value').textContent=s.hp+' / '+s.initialHp;find('.qte-hp-track i').style.width=100*s.hp/s.initialHp+'%';
         find('.qte-stamina-value').textContent=Math.round(s.stamina)+' / '+Math.round(s.params.maxStamina);
         find('.qte-stamina-track i').style.width=100*s.stamina/s.params.maxStamina+'%';
-        find('.qte-live-status').textContent=s.time<s.preparation?'Приготовься: атака ещё не началась.':s.time<s.brokenUntil?'Стойкость пробита!':`Блоки ${s.blocks} · точные ${s.perfects} · пропущено ${s.misses}`;
+        find('.qte-live-status').textContent=(s.time<s.preparation?'Приготовься: атака ещё не началась.':s.time<s.brokenUntil?'Стойкость пробита!':`Блоки ${s.blocks} · точные ${s.perfects} · пропущено ${s.misses}`)+coverText(s);
       }
       function frame(now){
         if(done)return;const dt=last?(now-last)/1000:0;last=now;if(now>=deadline){finish(true);return;}
@@ -126,7 +127,7 @@
     if(!E||!V||!window.QTETouch?.attach||!window.QTETouch?.lockViewport)return Promise.reject(new Error('Обнови арену: новые мини-игры не загрузились.'));
     return new Promise(resolve=>{
       const defense=challenge.kind==='defense',p=E.profile(challenge.profile);
-      const sim=(defense?E.defense:E.attack)(p,challenge.stats,challenge.seed,{damageBase:challenge.damage_base,strikeDamageBases:challenge.strike_damage_bases,strikeCriticalBases:challenge.strike_critical_bases,criticalBase:challenge.critical_base,criticalStrikes:challenge.critical_strikes,hp:challenge.target_hp,endOnDeath:false,enabledStrikes:challenge.enabled_strikes,preparation:challenge.defense_preparation??0});
+      const sim=(defense?E.defense:E.attack)(p,challenge.stats,challenge.seed,{damageBase:challenge.damage_base,strikeDamageBases:challenge.strike_damage_bases,strikeCriticalBases:challenge.strike_critical_bases,criticalBase:challenge.critical_base,criticalStrikes:challenge.critical_strikes,hp:challenge.target_hp,endOnDeath:false,enabledStrikes:challenge.enabled_strikes,preparation:challenge.defense_preparation??0,cultCover:challenge.cult_cover});
       const cover=document.createElement('div');cover.className='qte-cover qte-pattern '+(defense?'qte-defense':'qte-attack');
       cover.innerHTML='<section class="qte-window" role="dialog" aria-modal="true" aria-label="Боевая мини-игра"><div class="qte-heading"><div><p class="qte-eyebrow"></p><h2></h2></div><strong class="qte-count"></strong></div><p class="qte-help"><span class="qte-help-full"></span><span class="qte-help-compact"></span></p><div class="qte-health"><div><span class="qte-health-label"></span><strong class="qte-hp-value"></strong></div><div class="qte-hp-track"><i></i></div></div><div class="qte-field"><canvas class="qte-live-canvas" width="720" height="320" tabindex="0" aria-label="Пробел для попадания, пальцем или WASD для уклонения"></canvas></div><div class="qte-live-status" role="status"></div><div class="qte-controls"><div class="qte-live-buttons"><button class="qte-hit">УДАР · ПРОБЕЛ / КАСАНИЕ</button><button class="qte-abort">Пропустить · неуспех</button></div><p class="qte-touch-help">Веди пальцем по полю или тяни джойстик.<small>Касание не переносит маркер под палец.</small></p><button class="qte-stick" aria-label="Джойстик уклонения"><span aria-hidden="true"></span></button><div class="qte-live-pad"><button data-direction="up" aria-label="Вверх">↑</button><button data-direction="left" aria-label="Влево">←</button><button data-direction="down" aria-label="Вниз">↓</button><button data-direction="right" aria-label="Вправо">→</button></div></div><p class="qte-info">HP — предварительный расчёт. Итоговый урон и эффекты проверяет сервер. Пропуск защиты засчитывает все угрозы.</p></section>';
       const find=s=>cover.querySelector(s),canvas=find('canvas'),ctx=canvas.getContext('2d'),feedback=damageFeedback(defense?'defense':'attack');
@@ -159,7 +160,7 @@
         const ready=defense&&sim.time<sim.preparation;
         feedback(sim);V.draw(ctx,canvas,sim);find('.qte-count').textContent=(ready?sim.preparation-sim.time:Math.max(0,sim.duration-sim.time)).toFixed(1)+' С';
         cover.dataset.preparing=String(ready);
-        if(defense)find('.qte-live-status').textContent=ready?'Приготовься: атака ещё не началась.':'Касаний: '+sim.contacts.length;
+        if(defense)find('.qte-live-status').textContent=(ready?'Приготовься: атака ещё не началась.':'Касаний: '+sim.contacts.length)+coverText(sim);
         find('.qte-hp-value').textContent=sim.hp+' / '+sim.initialHp;
         find('.qte-hp-track i').style.width=100*sim.hp/sim.initialHp+'%';
         if(!defense){const f=E.attackFrame(sim);find('.qte-hit').disabled=!f.canHit||sim.ended;}
@@ -167,7 +168,7 @@
       function hit(){
         if(defense||done)return;const ok=E.hit(sim);if(ok===null)return;proof.clicks.push(tick);
         find('.qte-live-status').textContent=ok?(sim.contacts.at(-1)?.critical?'Критический удар ×1,5!':'Попадание засчитано.'):'Промах. Повторной попытки нет.';
-        draw();if(sim.ended)finish();
+        if(sim.ended)finish();else draw();
       }
       const keymap={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',KeyA:'left',KeyD:'right',KeyW:'up',KeyS:'down'};
       on(window,'keydown',e=>{
@@ -187,7 +188,7 @@
       function step(){
         if(defense){const cmd=input(),encoded=JSON.stringify(cmd);if(encoded!==lastInput){proof.inputs.push({t:tick,...cmd});lastInput=encoded;}E.defenseStep(sim,1/120,cmd.target?{target:{x:cmd.target[0],y:cmd.target[1]}}:cmd);tick++;}
         else{tick++;E.attackStep(sim,Math.min(sim.duration,tick/120)-sim.time);}
-        if(sim.ended){draw();finish();}
+        if(sim.ended)finish();
       }
       function frame(now){
         if(done)return;const dt=last?(now-last)/1000:0;last=now;if(now>=deadline){finish(true);return;}

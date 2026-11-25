@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b1019"><title>Посылка торговца · Питомцы арены</title>
+  <link rel="stylesheet" href="/review.css"><script defer src="/review.js"></script>
+</head>
+<body>
+<main>
+  <header><a class="brand" href="#"><span class="brand-mark">✦</span> ГНИДА <small>АРЕНА</small></a><span class="demo-tag">ЭСКИЗ · БЕЗ СПИСАНИЙ</span></header>
+  <section class="intro"><div class="eyebrow">АРХИВ СТРАНСТВУЮЩЕГО ТОРГОВЦА</div><h1>Кто там <em>в посылке?</em></h1><p>Некоторые спутники приносят удачу. Остальные — неприятности вашим врагам.</p></section>
+  <section class="summon-layout">
+    <div class="stage" id="stage" data-phase="idle" aria-label="Сцена открытия посылки">
+      <canvas id="particles" aria-hidden="true"></canvas><div class="vignette"></div><div class="rays" aria-hidden="true"></div><div class="ring ring-one"></div><div class="ring ring-two"></div><div class="ground"></div>
+      <div class="stage-top"><span id="stageLabel">НЕИЗВЕСТНЫЙ СПУТНИК</span><button id="skip" class="quiet" hidden>Пропустить</button></div>
+      <div class="crate" aria-hidden="true"><div class="crate-lid"></div><div class="crate-body"><div class="crate-band"></div><div class="seal">✦</div><span class="corner c1"></span><span class="corner c2"></span><span class="corner c3"></span><span class="corner c4"></span></div><div class="crate-light"></div></div>
+      <div class="reveal" aria-hidden="true"><div class="rarity" id="rarity">ЛЕГЕНДАРНЫЙ</div><img id="heroPet" alt=""><h2 id="heroName"></h2><p id="heroQuote"></p></div>
+      <div class="phase-caption" id="phaseCaption">Внутри что-то шевелится.</div><div class="flash" aria-hidden="true"></div>
+    </div>
+    <aside class="controls">
+      <div class="eyebrow">ДЕМО ОТКРЫТИЯ</div><h2>Посылка с характером</h2><p class="muted">Шестнадцать нарисованных спутников. Выберите кого показать или доверьтесь случаю.</p>
+      <label for="petChoice">Кто выпадет</label><select id="petChoice"><option value="random">Случайный питомец</option></select>
+      <label for="rarityChoice">Свет раскрытия</label><select id="rarityChoice"><option value="auto">По демонстрационной редкости</option><option value="common">Обычный · серебро</option><option value="rare">Редкий · лазурь</option><option value="epic">Эпический · фиолетовый</option><option value="legendary">Легендарный · золото</option></select>
+      <button id="open" class="primary">Открыть посылку <span>↗</span></button>
+      <div class="toggles"><label><input type="checkbox" id="sound" checked> Звук раскрытия</label><label><input type="checkbox" id="gentle"> Мягкая анимация</label></div>
+      <div class="result-note" id="resultNote"><span class="note-icon">◇</span><div><strong>Сначала — внешний вид</strong><p>Питомцы, редкости и эффекты здесь только для просмотра. Покупок и выдачи предметов нет.</p></div></div>
+      <div class="last-result" id="lastResult" aria-live="polite" hidden><span class="eyebrow">ВАШ СПУТНИК</span><h3 id="resultName"></h3><p id="resultEffect"></p><button id="inspectResult" class="secondary">Посмотреть спрайт</button></div>
+    </aside>
+  </section>
+  <section class="collection"><div class="section-title"><div><div class="eyebrow">КОЛЛЕКЦИЯ СПУТНИКОВ</div><h2>Маленькие. Но не безобидные.</h2></div><span class="counter">16 <small>СПРАЙТОВ</small></span></div><p class="muted">Нажмите на питомца: полный рисунок, концепция эффекта и проверка на светлом фоне.</p><div id="gallery" class="gallery"></div></section>
+  <footer>Демонстрационный макет. Игровые эффекты и вероятности выпадения ещё не подключены.</footer>
+</main>
+<dialog id="petDialog"><button class="dialog-close" aria-label="Закрыть просмотр">✕</button><div class="portrait" id="portrait"><img id="detailImage" alt=""></div><div class="detail"><div class="eyebrow" id="detailFamily"></div><h2 id="detailName"></h2><p id="detailEffect"></p><blockquote id="detailQuote"></blockquote><label class="background-toggle"><input type="checkbox" id="lightBackground"> Светлый фон для проверки прозрачности</label><button class="primary" id="summonChosen">Показать выпадение <span>↗</span></button></div></dialog>
+</body>
+</html>

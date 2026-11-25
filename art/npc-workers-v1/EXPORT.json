@@ -1,0 +1,86 @@
+[
+  {
+    "id": "accountant-male",
+    "bytes": {
+      "sprite": 351315,
+      "-small": 39378
+    }
+  },
+  {
+    "id": "skeleton-male",
+    "bytes": {
+      "sprite": 332072,
+      "-small": 37491
+    }
+  },
+  {
+    "id": "paladin-male",
+    "bytes": {
+      "sprite": 365146,
+      "-small": 40633
+    }
+  },
+  {
+    "id": "diplomat-male",
+    "bytes": {
+      "sprite": 258626,
+      "-small": 29761
+    }
+  },
+  {
+    "id": "miner-male",
+    "bytes": {
+      "sprite": 339966,
+      "-small": 38309
+    }
+  },
+  {
+    "id": "mechanic-male",
+    "bytes": {
+      "sprite": 356024,
+      "-small": 40007
+    }
+  },
+  {
+    "id": "accountant-female",
+    "bytes": {
+      "sprite": 271997,
+      "-small": 32485
+    }
+  },
+  {
+    "id": "skeleton-female",
+    "bytes": {
+      "sprite": 389097,
+      "-small": 42662
+    }
+  },
+  {
+    "id": "paladin-female",
+    "bytes": {
+      "sprite": 369137,
+      "-small": 40415
+    }
+  },
+  {
+    "id": "diplomat-female",
+    "bytes": {
+      "sprite": 297569,
+      "-small": 32690
+    }
+  },
+  {
+    "id": "miner-female",
+    "bytes": {
+      "sprite": 334355,
+      "-small": 40287
+    }
+  },
+  {
+    "id": "mechanic-female",
+    "bytes": {
+      "sprite": 297493,
+      "-small": 33923
+    }
+  }
+]

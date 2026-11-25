@@ -118,7 +118,7 @@ def set_intent(data):
     if data['boss']['hp'] <= data['boss']['stats']['max_hp'] * .45 and phase < 4:
         text += ' Часы идут назад: на 30% HP его здоровье будет восстановлено.'
     data['intent'] = dict(kind='chaplain_rewind' if ordinary else 'attack', skill=skill,
-                          targets=targets, phase=phase, text=text)
+                          targets=targets, phase=phase, text=text, area=not ordinary and index != 0)
     data['dialogue'] = dict(speaker='КАПЕЛЛАН', text=(
         'Всё согласно регламенту.' if phase <= 2 else 'Ручное вмешательство.' if phase == 3 else
         'Последняя редакция. Исправления больше не принимаются.'),

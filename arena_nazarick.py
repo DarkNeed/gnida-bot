@@ -281,7 +281,7 @@ def set_intent(data):
     text = ('Подготовка великого ритуала: нанесите 10% максимального HP босса за этот раунд, чтобы ослабить удар.'
         if kind=='ritual' else SKILLS[skill].name)
     if boss.get('nz_copy'):text+=' — '+boss['nz_copy']['name']
-    data['enemy_intents'] = {'boss':dict(kind=kind, skill=skill if kind=='attack' else None, targets=targets, phase=phase, text=text)}
+    data['enemy_intents'] = {'boss':dict(kind=kind, skill=skill if kind=='attack' else None, targets=targets, phase=phase, text=text, area=kind=='attack' and move!=0)}
     for index,(key,f) in enumerate(living_enemies(data).items()):
         if key=='boss':continue
         sid=f['loadout'][0]

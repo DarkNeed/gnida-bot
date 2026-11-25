@@ -62,7 +62,7 @@ def drive(db, scope, row, data):
         db.connection.execute(f'UPDATE {table} SET {column}=? WHERE token=?', (json.dumps(data, ensure_ascii=False), row['token']))
 
 
-def direct(db, row, actor, revision, sid, choice_id=None):
+def direct(db, row, actor, revision, sid, choice_id=None, target=None, *, intercept=False, source=None):
     if row['status'] != 'active' or choice_id is None and row['revision'] != revision:
         raise ValueError('Бой или выбранное действие уже изменились. Обнови арену.')
     if row['mode'] != 'wasteland' and row['deadline'] <= time.time():
@@ -74,6 +74,13 @@ def direct(db, row, actor, revision, sid, choice_id=None):
         for side in ('a','b') if row['mode'] == 'slaves' else ('a',):
             if not db._arena_owns_locked(row['chat_id'],row[side+'_owner'],row[side+'_fighter']):
                 raise ValueError('Владелец бойца сменился. Бой недоступен.')
+    if intercept:
+        if not isinstance(source, str) or choice_id is None or choice_id != queue.choice(data, key):
+            raise ValueError('Выбор уже изменился. Обнови бой.')
+        queue.intercept(data, actor, source, catalog(db))
+        _save(db, 'battle', row, data)
+        db.connection.execute('UPDATE arena_battles SET deadline=? WHERE token=?', (row['deadline'], row['token']))
+        return
     if sid == 'surrender':
         data.update(finished=True, winner='b' if key == 'a' else 'a', finish_reason='surrender')
         db.connection.execute("DELETE FROM arena_qte_flows WHERE scope='battle' AND token=?", (row['token'],))
@@ -91,7 +98,9 @@ def direct(db, row, actor, revision, sid, choice_id=None):
         native_roulette(db, 'battle', row['token'], actor)
     skills = catalog(db)
     db._qte_snapshot_locked('battle', row, data)
-    queue.submit(data, key, sid, 'b' if key == 'a' else 'a', skills,
+    if target is not None and (not isinstance(target, str) or not target.startswith('brood:')):
+        raise ValueError('Некорректная цель.')
+    queue.submit(data, key, sid, target or ('b' if key == 'a' else 'a'), skills,
                  ident=choice_id if choice_id is not None else queue.choice(data, key))
     if row.get('ranked'):
         data.setdefault('ranked_actions', {'a':0, 'b':0})[key] += 1

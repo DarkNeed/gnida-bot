@@ -38,6 +38,10 @@ def parameters(p, stats):
 
 
 def threats(p, seed, params):
+    from arena_cultist_qte import block_threats as cult_threats
+    cult = cult_threats(p, seed, params)
+    if cult is not None:
+        return cult
     from arena_guild_patterns import block_threats as guild_threats
     guild=guild_threats(p,seed,params)
     if guild is not None:return guild

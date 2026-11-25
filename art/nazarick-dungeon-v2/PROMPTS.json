@@ -1,0 +1,110 @@
+{
+  "mode": "built-in image_gen",
+  "assets": [
+    {
+      "id": "gargantua",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Gargantua from Overlord: colossal broad ancient stone golem with rough dark gray rock skin, bulky arms, angular faceless stone head, deep stone plates, ancient engraved joints and faint gold seams. Its scale is conveyed by monumental proportions rather than scenery. Two legs and two arms, no human face, no weapon.",
+      "transparent": true
+    },
+    {
+      "id": "cocytus",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Cocytus from Overlord: tall blue ice insectoid warrior, FOUR arms each holding a different melee weapon (katana, spear, curved blade and axe), long insect mandibles, prominent icy spikes along chitin, digitigrade legs, segmented tail and freezing blue-white chitin armor. No human face or human clothing.",
+      "transparent": true
+    },
+    {
+      "id": "aura",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Aura Bella Fiora from Overlord, young dark elf girl beast tamer with short blonde hair, long pointed ears and heterochromatic eyes. Her iconic tailored white suit with dark trim and green bow, long trousers and sturdy boots, confident lively stance holding a coiled whip. Completely covered age-appropriate adventure clothing, no sexualization.",
+      "transparent": true
+    },
+    {
+      "id": "mare",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Mare Bello Fiore from Overlord, young shy dark elf boy druid with short blonde hair, pointed ears and heterochromatic eyes, wearing his iconic green hooded cloak over a fully covered white-and-dark fantasy uniform with a modest knee-length pleated skirt and boots. Holds a large gnarled wooden staff with both hands. Gentle expression, powerful posture. Age-appropriate, nonsexual.",
+      "transparent": true
+    },
+    {
+      "id": "sebas",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Sebas Tian from Overlord: elderly dignified powerful butler with swept-back short white hair and a neatly trimmed white beard, dark impeccable long tailcoat, white shirt and gloves, black trousers and shoes. One gloved fist raised in a restrained martial arts stance, calm stern face, physically imposing but elegant. No weapons.",
+      "transparent": true
+    },
+    {
+      "id": "sebas_dragon",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Sebas Tian's draconic combat transformation, a game interpretation for Overlord: imposing upright silver-gray dragon-man with a recognizably dignified elderly stern face, swept-back horned crown, plated scales, clawed fists in a martial artist stance and a long tail. Fragments of a black butler coat at waist and shoulders connect it to Sebas. No giant wings obscuring silhouette. Clearly nonhuman full-body boss.",
+      "transparent": true
+    },
+    {
+      "id": "victim",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Victim from Overlord: small otherworldly pink angelic creature suspended in the air, curled rounded abstract body with a small uncanny gentle face, pale wing-like bony appendages and a delicate white antler-like halo. Non-graphic, no blood, no gore. Floating isolated character, an unsettling sacrificial guardian, NOT a human baby photograph.",
+      "transparent": true
+    },
+    {
+      "id": "yuri",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Yuri Alpha from Overlord, adult combat maid: dark hair neatly in a bun, rectangular glasses, composed stern expression, long black-and-white Victorian maid battle dress with white apron, sturdy boots and massive dark metal gauntlets raised to guard. Fully dressed, elegant, nonsexual.",
+      "transparent": true
+    },
+    {
+      "id": "narberal",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Narberal Gamma from Overlord, adult battle maid: long black hair in a high ponytail, cold disdainful expression, black-and-white armored Victorian maid uniform, white headpiece, long practical skirt and boots. Holds an elegant metal magic staff with a small restrained blue lightning crystal, no surrounding electric aura. Fully dressed, nonsexual.",
+      "transparent": true
+    },
+    {
+      "id": "lupusregina",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Lupusregina Beta from Overlord, adult cheerful sinister battle maid: long red hair in two braids, characteristic dark maid cap, black-and-white Victorian maid battle uniform, white apron, long practical skirt and boots. Carries a massive cleric battle mace. Friendly smile with dangerous confidence, fully dressed and nonsexual.",
+      "transparent": true
+    },
+    {
+      "id": "solution",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Solution Epsilon from Overlord, adult blonde slime battle maid in her recognizable elaborate dark blue-and-white Victorian maid dress with long skirt and white apron. Refined smile, blonde curls, one hand subtly translucent aqua to reveal slime nature while keeping all clothing intact, no dripping puddles or scenery. Fully dressed, nonsexual.",
+      "transparent": true
+    },
+    {
+      "id": "entoma",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: Entoma Vasilissa Zeta from Overlord: uncanny insect battle maid with a brown twin-bun hairstyle, a pale porcelain-like human face mask with dark eyes, red-and-black modest Japanese-inspired maid clothing, long skirt and insect-like chitinous hands holding a compact magical talisman. Some articulated insect limbs peek behind the silhouette. Covered and nonsexual.",
+      "transparent": true
+    },
+    {
+      "id": "cz",
+      "prompt": "Use case: stylized-concept. Asset type: ONE standalone full-body 2D boss sprite for a dark anime RPG, matching elegant detailed painterly anime game art with clean sharp silhouettes and thin dark outlines. Exactly ONE character, full body including all limbs and held weapons, centered with transparent padding. Three-quarter idle combat stance facing LEFT toward players. Muted rich colors, detailed materials, dramatic restrained light on figure only. Genuinely transparent background, no ground shadow, scenery, smoke, glow halo, text, frame or watermark. Preserve recognizable Overlord anime design; practical readable game silhouette. Subject: CZ2128 Delta from Overlord, adult-presenting automaton combat maid with short salmon-pink hair, black eyepatch, white headpiece and a black-and-white practical armored maid uniform with metal panels, covered legs and boots. Holds a large futuristic-fantasy rifle diagonally down-left, impassive face. No text or insignia, fully dressed and nonsexual.",
+      "transparent": true
+    },
+    {
+      "id": "bg_tombs",
+      "prompt": "Use case: stylized-concept. Asset type: wide 16:9 painted dark-fantasy anime RPG battle arena background, matching lavish gothic Overlord Nazarick environments. No characters, no HUD, no lettering, no logos. Elevated three-quarter side view, a broad clear traversable foreground floor in lower two thirds for placing 2D fighter sprites. Detailed atmospheric architecture or landscape behind it, readable subdued values, cinematic lighting, coherent perspective. Scene: The first floor tombs of Nazarick: vast stone burial hall, vaulted gothic arches, sealed sarcophagi lining the sides, deep violet flames in bronze braziers and aged carved columns. An ancient sealed gate in far background, gray-blue stone floor.",
+      "transparent": false
+    },
+    {
+      "id": "bg_catacombs",
+      "prompt": "Use case: stylized-concept. Asset type: wide 16:9 painted dark-fantasy anime RPG battle arena background, matching lavish gothic Overlord Nazarick environments. No characters, no HUD, no lettering, no logos. Elevated three-quarter side view, a broad clear traversable foreground floor in lower two thirds for placing 2D fighter sprites. Detailed atmospheric architecture or landscape behind it, readable subdued values, cinematic lighting, coherent perspective. Scene: The second floor blood catacombs of Nazarick: aristocratic underground crimson crypt, dark iron gates, carved bone-like pillars, ruby glass lamps, shallow blood-red channels around the edges of a clear black stone central floor. Ominous, no gore.",
+      "transparent": false
+    },
+    {
+      "id": "bg_lake",
+      "prompt": "Use case: stylized-concept. Asset type: wide 16:9 painted dark-fantasy anime RPG battle arena background, matching lavish gothic Overlord Nazarick environments. No characters, no HUD, no lettering, no logos. Elevated three-quarter side view, a broad clear traversable foreground floor in lower two thirds for placing 2D fighter sprites. Detailed atmospheric architecture or landscape behind it, readable subdued values, cinematic lighting, coherent perspective. Scene: The fourth floor underground lake of Nazarick: immense cavern with a black mirror lake and gigantic ancient stone supports, a broad stone causeway serving as foreground battlefield. Cold teal reflections, distant stalactites, immense scale, no golem or characters.",
+      "transparent": false
+    },
+    {
+      "id": "bg_glacier",
+      "prompt": "Use case: stylized-concept. Asset type: wide 16:9 painted dark-fantasy anime RPG battle arena background, matching lavish gothic Overlord Nazarick environments. No characters, no HUD, no lettering, no logos. Elevated three-quarter side view, a broad clear traversable foreground floor in lower two thirds for placing 2D fighter sprites. Detailed atmospheric architecture or landscape behind it, readable subdued values, cinematic lighting, coherent perspective. Scene: The fifth floor frozen glacier of Nazarick: blue crystal ice citadel, massive jagged ice formations, snow-covered steps, distant frosty fortress gate. Broad flat icy foreground with subtle frost etchings. Severe blue-white light, no characters.",
+      "transparent": false
+    },
+    {
+      "id": "bg_jungle",
+      "prompt": "Use case: stylized-concept. Asset type: wide 16:9 painted dark-fantasy anime RPG battle arena background, matching lavish gothic Overlord Nazarick environments. No characters, no HUD, no lettering, no logos. Elevated three-quarter side view, a broad clear traversable foreground floor in lower two thirds for placing 2D fighter sprites. Detailed atmospheric architecture or landscape behind it, readable subdued values, cinematic lighting, coherent perspective. Scene: The sixth floor forest of Nazarick: enormous magical underground rainforest beneath an artificial blue sky, vast ancient tree roots, glowing green flora and distant stone amphitheater, broad earthen-and-stone clearing in foreground. Lush deep emerald with gold shafts of light.",
+      "transparent": false
+    },
+    {
+      "id": "bg_wilderness",
+      "prompt": "Use case: stylized-concept. Asset type: wide 16:9 painted dark-fantasy anime RPG battle arena background, matching lavish gothic Overlord Nazarick environments. No characters, no HUD, no lettering, no logos. Elevated three-quarter side view, a broad clear traversable foreground floor in lower two thirds for placing 2D fighter sprites. Detailed atmospheric architecture or landscape behind it, readable subdued values, cinematic lighting, coherent perspective. Scene: The forbidden eighth floor of Nazarick: uncanny empty pale wilderness under a starless violet-black sky, distant white spires, black roots breaking pale ground and a far ritual gate, sparse golden ritual lights. A broad quiet flat floor in foreground, divine dread, no characters or creatures.",
+      "transparent": false
+    },
+    {
+      "id": "bg_royal",
+      "prompt": "Use case: stylized-concept. Asset type: wide 16:9 painted dark-fantasy anime RPG battle arena background, matching lavish gothic Overlord Nazarick environments. No characters, no HUD, no lettering, no logos. Elevated three-quarter side view, a broad clear traversable foreground floor in lower two thirds for placing 2D fighter sprites. Detailed atmospheric architecture or landscape behind it, readable subdued values, cinematic lighting, coherent perspective. Scene: The ninth floor royal suite of Nazarick: opulent white marble reception hall, gold filigree, deep burgundy carpets, huge chandeliers and doors to grand chambers. Broad empty marble-and-carpet foreground, serene luxury with subtly ominous violet shadows. No throne or characters.",
+      "transparent": false
+    },
+    {
+      "id": "bg_antechamber",
+      "prompt": "Use case: stylized-concept. Asset type: wide 16:9 painted dark-fantasy anime RPG battle arena background, matching lavish gothic Overlord Nazarick environments. No characters, no HUD, no lettering, no logos. Elevated three-quarter side view, a broad clear traversable foreground floor in lower two thirds for placing 2D fighter sprites. Detailed atmospheric architecture or landscape behind it, readable subdued values, cinematic lighting, coherent perspective. Scene: The tenth floor antechamber of Nazarick before the throne room: immense polished black marble hall with gold pillars, ornate double doors at the far end, six empty maid guard stations beside the walls, white and blue candlelight. A broad flat clear foreground for a martial arts boss battle. No characters.",
+      "transparent": false
+    }
+  ]
+}

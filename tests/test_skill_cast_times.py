@@ -35,7 +35,7 @@ class SkillCastTimeTests(unittest.TestCase):
                 slow = dict(fighter, stats=dict(fighter['stats'], speed=0), effects=[])
                 self.assertLess(cast_time(fighter, skill), cast_time(slow, skill))
 
-    def test_browser_fallback_matches_server_and_each_bar_uses_its_cast_duration(self):
+    def test_browser_fallback_matches_server_and_fixed_scale_separates_markers(self):
         state = self.fighter()
         fighter = state['sides']['a']
         fighter['effective_stats'] = {k: effective_stat(fighter, k) for k in fighter['stats']}
@@ -45,14 +45,14 @@ class SkillCastTimeTests(unittest.TestCase):
 const timeline=require('./webapp/raid-timeline.js');
 const input=JSON.parse(require('fs').readFileSync(0,'utf8'));
 console.log(JSON.stringify({times:input.skills.map(s=>timeline.castTime(input.fighter,s)),
-  positions:[1,2,3].map(duration=>timeline.model({...input.queue,time:1,entries:[{actor:'b',started:0,at:duration,duration}]},'b').progress)}));
+  positions:timeline.model({...input.queue,entries:[1,2,3].map(at=>({actor:'b',at}))}).map(e=>e.position)}));
 """
         output = json.loads(subprocess.check_output(['node', '-e', script],
             cwd=Path(__file__).resolve().parents[1], input=json.dumps(dict(
                 fighter=fighter, skills=skills, queue=direct_public_queue(state, BUILTIN_SKILLS)
             )).encode()))
         self.assertEqual(output['times'], [cast_time(fighter, BUILTIN_SKILLS[s['skill_id']]) for s in skills])
-        self.assertEqual(output['positions'], [1, .5, 1 / 3])
+        self.assertEqual(output['positions'], [.2, .4, .6])
 
 
 if __name__ == '__main__':

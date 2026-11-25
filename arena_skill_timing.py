@@ -36,7 +36,9 @@ def base_duration(skill):
 
 def duration(fighter, skill):
     from arena_engine import effective_stat
+    from arena_cultist import cast_multiplier
     value = base_duration(skill) / (1 + max(0, effective_stat(fighter, 'speed')) * .035)
+    value *= cast_multiplier(fighter)
     return max(.75, math.floor(value * 20 + .5) / 20)
 
 

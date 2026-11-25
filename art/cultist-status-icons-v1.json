@@ -1,0 +1,41 @@
+{
+  "generator": "built-in imagegen",
+  "export": "144×144 RGBA, transparent channel preserved; cropped, scaled and padded for display",
+  "icons": {
+    "cult_seal": {
+      "asset": "webapp/assets/status-effects-v4/cult_seal.png",
+      "source_id": "exec-06519d9d-5288-4f2f-84ed-1ea56723e105",
+      "prompt": "Use case: stylized-concept. Asset type: one small 2D fantasy RPG status-effect icon, read at 20–26 pixels. Subject: a crimson wax occult seal with a single jagged pale scar cut through its center; dull red, clearly circular. Draw the icon in dark-fantasy painted ink, strong bold silhouette and distinct high-contrast color blocks, delicate surface detail only within the main shape. Center one object, large within a square canvas, equal clear margins. Genuine transparent RGBA with completely empty surroundings. No outer tile, badge rim, backdrop, ambient glow, particles, text, checkerboard, unrelated objects, drop shadow or watermark."
+    },
+    "cult_whisper": {
+      "asset": "webapp/assets/status-effects-v4/cult_whisper.png",
+      "source_id": "exec-1051cfb5-41e1-4324-a0c1-fa907a2501cf",
+      "prompt": "Use case: stylized-concept. Asset type: one small 2D fantasy RPG status-effect icon, read at 20–26 pixels. Subject: a deep ocean-blue open spiral shell emitting two sharp curling teal sound traces; cool turquoise, recognizably a spiral. Draw the icon in dark-fantasy painted ink, strong bold silhouette and distinct high-contrast color blocks, delicate surface detail only within the main shape. Center one object, large within a square canvas, equal clear margins. Genuine transparent RGBA with completely empty surroundings. No outer tile, badge rim, backdrop, ambient glow, particles, text, checkerboard, unrelated objects, drop shadow or watermark."
+    },
+    "cult_yellow": {
+      "asset": "webapp/assets/status-effects-v4/cult_yellow.png",
+      "source_id": "exec-1946da58-98fc-439f-890f-4a99b11c4b22",
+      "prompt": "Use case: stylized-concept. Asset type: one small 2D fantasy RPG status-effect icon, read at 20–26 pixels. Subject: a tarnished gold theatrical mask with two wide black eye slits and a tapered chin; unmistakably face-shaped, solid golden silhouette. Draw the icon in dark-fantasy painted ink, strong bold silhouette and distinct high-contrast color blocks, delicate surface detail only within the main shape. Center one object, large within a square canvas, equal clear margins. Genuine transparent RGBA with completely empty surroundings. No outer tile, badge rim, backdrop, ambient glow, particles, text, checkerboard, unrelated objects, drop shadow or watermark."
+    },
+    "cult_gate": {
+      "asset": "webapp/assets/status-effects-v4/cult_gate.png",
+      "source_id": "exec-425852ef-523f-4bd6-adde-427fe2005f81",
+      "prompt": "Use case: stylized-concept. Asset type: one small 2D fantasy RPG status-effect icon, read at 20–26 pixels. Subject: a pointed violet stone arch surrounding a single luminous silver-purple slit; clear rectangular pointed doorway silhouette. Draw the icon in dark-fantasy painted ink, strong bold silhouette and distinct high-contrast color blocks, delicate surface detail only within the main shape. Center one object, large within a square canvas, equal clear margins. Genuine transparent RGBA with completely empty surroundings. No outer tile, badge rim, backdrop, ambient glow, particles, text, checkerboard, unrelated objects, drop shadow or watermark."
+    },
+    "cult_fanaticism": {
+      "asset": "webapp/assets/status-effects-v4/cult_fanaticism.png",
+      "source_id": "exec-dbd47aad-64a8-432e-97ce-4ac6134b57de",
+      "prompt": "Use case: stylized-concept. Asset type: one small 2D fantasy RPG status-effect icon, read at 20–26 pixels. Subject: a tall hot-magenta flame floating in the single bowl of a blackened silver censer; simple pointed flame silhouette with warm plum accents. Draw the icon in dark-fantasy painted ink, strong bold silhouette and distinct high-contrast color blocks, delicate surface detail only within the main shape. Center one object, large within a square canvas, equal clear margins. Genuine transparent RGBA with completely empty surroundings. No outer tile, badge rim, backdrop, ambient glow, particles, text, checkerboard, unrelated objects, drop shadow or watermark."
+    },
+    "brood_guard": {
+      "asset": "webapp/assets/status-effects-v4/brood_guard.png",
+      "source_id": "exec-6ad507eb-36a2-4413-ab0f-5b4c6bfddede",
+      "prompt": "Use case: stylized-concept. Asset type: one small 2D fantasy RPG status-effect icon, read at 20–26 pixels. Subject: an olive-green thornwood shield with a tiny pair of antlers merged into the top rim; broad protective shield silhouette, subdued gold highlights. Draw the icon in dark-fantasy painted ink, strong bold silhouette and distinct high-contrast color blocks, delicate surface detail only within the main shape. Center one object, large within a square canvas, equal clear margins. Genuine transparent RGBA with completely empty surroundings. No outer tile, badge rim, backdrop, ambient glow, particles, text, checkerboard, unrelated objects, drop shadow or watermark."
+    },
+    "brood_predator": {
+      "asset": "webapp/assets/status-effects-v4/brood_predator.png",
+      "source_id": "exec-a7d2a76f-4446-4426-a593-164489b9803a",
+      "prompt": "Use case: stylized-concept. Asset type: one small 2D fantasy RPG status-effect icon, read at 20–26 pixels. Subject: a diagonal trio of ivory-tipped root claws bundled into one clear shape; sharp claw silhouette, copper-red highlights. Draw the icon in dark-fantasy painted ink, strong bold silhouette and distinct high-contrast color blocks, delicate surface detail only within the main shape. Center one object, large within a square canvas, equal clear margins. Genuine transparent RGBA with completely empty surroundings. No outer tile, badge rim, backdrop, ambient glow, particles, text, checkerboard, unrelated objects, drop shadow or watermark."
+    }
+  }
+}

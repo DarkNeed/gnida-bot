@@ -1,0 +1,156 @@
+[
+  {
+    "id": "goblin",
+    "source": "art\\guild-v1\\source\\goblin.png",
+    "target": "webapp\\assets\\guild\\goblin-v1.png",
+    "size": [
+      1312,
+      1199
+    ],
+    "pixels_cleaned": 41260,
+    "bytes": 1484246
+  },
+  {
+    "id": "slime",
+    "source": "art\\guild-v1\\source\\slime.png",
+    "target": "webapp\\assets\\guild\\slime-v1.png",
+    "size": [
+      1536,
+      1024
+    ],
+    "pixels_cleaned": 23650,
+    "bytes": 2558735
+  },
+  {
+    "id": "shaman",
+    "source": "art\\guild-v1\\source\\shaman.png",
+    "target": "webapp\\assets\\guild\\shaman-v1.png",
+    "size": [
+      1312,
+      1199
+    ],
+    "pixels_cleaned": 62257,
+    "bytes": 1716849
+  },
+  {
+    "id": "spider",
+    "source": "art\\guild-v1\\source\\spider.png",
+    "target": "webapp\\assets\\guild\\spider-v1.png",
+    "size": [
+      1536,
+      1024
+    ],
+    "pixels_cleaned": 73908,
+    "bytes": 2166306
+  },
+  {
+    "id": "wolf",
+    "source": "art\\guild-v1\\source\\wolf.png",
+    "target": "webapp\\assets\\guild\\wolf-v1.png",
+    "size": [
+      1536,
+      1024
+    ],
+    "pixels_cleaned": 57351,
+    "bytes": 2392450
+  },
+  {
+    "id": "orc",
+    "source": "art\\guild-v1\\source\\orc.png",
+    "target": "webapp\\assets\\guild\\orc-v1.png",
+    "size": [
+      1201,
+      1309
+    ],
+    "pixels_cleaned": 48612,
+    "bytes": 1925301
+  },
+  {
+    "id": "troll",
+    "source": "art\\guild-v1\\source\\troll.png",
+    "target": "webapp\\assets\\guild\\troll-v1.png",
+    "size": [
+      1312,
+      1199
+    ],
+    "pixels_cleaned": 79187,
+    "bytes": 1993606
+  },
+  {
+    "id": "wraith",
+    "source": "art\\guild-v1\\source\\wraith.png",
+    "target": "webapp\\assets\\guild\\wraith-v1.png",
+    "size": [
+      1210,
+      1300
+    ],
+    "pixels_cleaned": 88599,
+    "bytes": 1595639
+  },
+  {
+    "id": "golem",
+    "source": "art\\guild-v1\\source\\golem.png",
+    "target": "webapp\\assets\\guild\\golem-v1.png",
+    "size": [
+      1222,
+      1287
+    ],
+    "pixels_cleaned": 36242,
+    "bytes": 2545449
+  },
+  {
+    "id": "wyvern",
+    "source": "art\\guild-v1\\source\\wyvern.png",
+    "target": "webapp\\assets\\guild\\wyvern-v1.png",
+    "size": [
+      1536,
+      1024
+    ],
+    "pixels_cleaned": 70904,
+    "bytes": 2434903
+  },
+  {
+    "id": "lich",
+    "source": "art\\guild-v1\\source\\lich.png",
+    "target": "webapp\\assets\\guild\\lich-v1.png",
+    "size": [
+      1024,
+      1536
+    ],
+    "pixels_cleaned": 122167,
+    "bytes": 2702027
+  },
+  {
+    "id": "dragon",
+    "source": "art\\guild-v1\\source\\dragon.png",
+    "target": "webapp\\assets\\guild\\dragon-v1.png",
+    "size": [
+      1536,
+      1024
+    ],
+    "pixels_cleaned": 67940,
+    "bytes": 2516996
+  },
+  {
+    "id": "ancient",
+    "source": "art\\guild-v1\\source\\ancient.png",
+    "target": "webapp\\assets\\guild\\ancient-v1.png",
+    "size": [
+      1536,
+      1024
+    ],
+    "pixels_cleaned": 99524,
+    "bytes": 2900676
+  },
+  {
+    "id": "deathlord",
+    "source": "art\\guild-v1\\source\\deathlord.png",
+    "target": "webapp\\assets\\guild\\deathlord-v1.png",
+    "size": [
+      1209,
+      1300
+    ],
+    "pixels_cleaned": 53538,
+    "bytes": 1792157
+  }
+]

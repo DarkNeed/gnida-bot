@@ -98,6 +98,9 @@ async def demo_fighter(request):
             'assassin_blood':['assassin_cut','assassin_expose','assassin_execution'],
         }
         owned=primary.get(cls,humour_fingers.get(cls,assassin_preview.get(arch,owned[:3])))+['arch_'+arch]
+    if cls == 'cultist':
+        from arena_cultist import branch_loadout
+        owned = branch_loadout(arch)
     source = dict(slave_id=1, owner_id=1, class_id=cls, level=20, loadout=owned,archclass_id=arch,archclass_stage=stage,progression_level=resolved)
     state = create_battle_state(
         source,

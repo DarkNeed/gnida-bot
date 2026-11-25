@@ -14,6 +14,7 @@ def basic_skill(skill, side):
         'ring': ('Мазок кистью', 'physical'), 'pinky': ('Короткий разрез', 'physical'),
         'warrior': ('Удар клинком', 'physical'), 'mage': ('Искра маны', 'magic'),
         'priest': ('Искра света', 'magic'), 'hunter': ('Удар охотничьим клинком', 'physical'),
+        'cultist': ('Слабый шёпот', 'magic'),
     }
     name, dtype = names.get(side['class_id'], ('Простой удар', 'physical'))
     return replace(skill, name=name, class_id=side['class_id'], damage_type=dtype,
@@ -64,6 +65,16 @@ def choose_skill(state, key, skills, rng=None):
                 score += 6
         if sid == 'mana_focus' and actor.get('archclass_id') == 'mage_necromancer' and not actor.get('rpg_state', {}).get('summon'):
             score += 45
+        if sid == 'cult_brood':
+            score += 55
+        if sid == 'cult_gate' and 'arch_cultist_yog' in actor['loadout'] and not any(
+                e.get('id') == 'cult_gate_open' for e in actor['effects']):
+            score += 40
+        if sid == 'arch_cultist_shub':
+            brood = actor.get('rpg_state', {}).get('cult_brood', {})
+            score += 42 if not brood.get('predator') and brood.get('stage', 0) >= 2 else -25
+        if sid == 'cult_yellow' and not any(e.get('id') == 'cult_yellow_sign' for e in target['effects']):
+            score += 12
         if history and sid == history[-1]:
             score -= 28
         if len(history) >= 2 and sid == history[-2]:

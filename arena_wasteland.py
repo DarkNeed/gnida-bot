@@ -57,6 +57,12 @@ def enemy_source(level: int, previous_class: str | None = None, rng=None, *, ena
         loadout.append(rng.choice(cheap))
     remaining = [key for key in native if key not in loadout]
     loadout += rng.sample(remaining, min(len(remaining), MAX_ACTIVE_SKILLS - len(loadout)))
+    if class_id == 'cultist':
+        from arena_cultist import branch_loadout
+        setup = branch_loadout(archclass_id)
+        if 'cult_roots' in native:
+            setup[1] = 'cult_roots'
+        loadout = [sid for sid in setup if sid in native]
     inherited = [
         s.skill_id
         for s in BUILTIN_SKILLS.values()

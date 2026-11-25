@@ -1,0 +1,194 @@
+[
+  {
+    "id": "boykisser",
+    "original_size": [
+      1199,
+      1312
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 473906
+  },
+  {
+    "id": "dakimakura",
+    "original_size": [
+      1024,
+      1536
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 471730
+  },
+  {
+    "id": "gachi_duck",
+    "original_size": [
+      1374,
+      1145
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 516930
+  },
+  {
+    "id": "sandwich",
+    "original_size": [
+      1230,
+      1278
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 514721
+  },
+  {
+    "id": "bonzi",
+    "original_size": [
+      1312,
+      1199
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 548376
+  },
+  {
+    "id": "bug",
+    "original_size": [
+      1536,
+      1024
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 342657
+  },
+  {
+    "id": "rat",
+    "original_size": [
+      1224,
+      1285
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 535436
+  },
+  {
+    "id": "pigeon",
+    "original_size": [
+      1208,
+      1302
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 520860
+  },
+  {
+    "id": "printer",
+    "original_size": [
+      1402,
+      1122
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 569038
+  },
+  {
+    "id": "clippy",
+    "original_size": [
+      1096,
+      1436
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 287321
+  },
+  {
+    "id": "hamster",
+    "original_size": [
+      1225,
+      1284
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 668843
+  },
+  {
+    "id": "chao",
+    "original_size": [
+      1145,
+      1374
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 325701
+  },
+  {
+    "id": "smesharik",
+    "original_size": [
+      1243,
+      1265
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 702588
+  },
+  {
+    "id": "taxidermy",
+    "original_size": [
+      1374,
+      1145
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 491886
+  },
+  {
+    "id": "poro",
+    "original_size": [
+      1241,
+      1267
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 711335
+  },
+  {
+    "id": "moon_mimic",
+    "original_size": [
+      1374,
+      1145
+    ],
+    "export_size": [
+      768,
+      768
+    ],
+    "bytes": 705351
+  }
+]
