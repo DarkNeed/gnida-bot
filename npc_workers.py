@@ -60,6 +60,9 @@ class NpcWorkersMixin(WorkforceMixin):
             CREATE TABLE IF NOT EXISTS npc_trips(
                 id TEXT PRIMARY KEY,chat INTEGER NOT NULL,owner INTEGER NOT NULL,mission TEXT NOT NULL,
                 started INTEGER NOT NULL,ends INTEGER NOT NULL,status TEXT NOT NULL,data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS npc_trip_notices(
+                id TEXT PRIMARY KEY,chat_id INTEGER NOT NULL,owner_id INTEGER NOT NULL,
+                finished_at INTEGER NOT NULL,escapes TEXT NOT NULL);
         ''')
         self._init_workforce()
         # One-time visual migration only. No identity, rarity or economics reroll.
@@ -114,7 +117,9 @@ class NpcWorkersMixin(WorkforceMixin):
     def _npc_pay_locked(self, chat, actor, amount):
         if type(amount) is not int or amount<0:raise ValueError('Некорректная сумма.')
         if amount and not self.connection.execute('UPDATE franc_balances SET balance=balance-?,updated_at=? WHERE chat_id=? AND user_id=? AND balance>=?',
-            (amount,now(),chat,actor,amount)).rowcount:raise ValueError('Недостаточно франков в кошельке этого чата.')
+            (amount,now(),chat,actor,amount)).rowcount:
+            row=self.connection.execute('SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?',(chat,actor)).fetchone()
+            raise ValueError(f'В кошельке этого чата {row[0] if row else 0} ₣, нужно {amount} ₣.')
 
     def _npc_stock_locked(self, chat):
         day=(now()+3*HOUR)//DAY
@@ -256,13 +261,19 @@ class NpcWorkersMixin(WorkforceMixin):
             payload['survivors']=survivors
             payload['results']=member_results
             self.connection.execute("UPDATE npc_trips SET status='finished',data=? WHERE id=?",(json.dumps(payload),trip['id']))
+            ids=[item[0] for item in payload['outcomes']]+[m['user_id'] for m in payload.get('humans',[])]
+            by_id=dict(zip(ids,payload['names']))
+            escapes=[by_id[m['user_id']] for m in member_results if m['outcome']=='freed' and m['user_id'] in by_id]
+            if escapes:
+                self.connection.execute('INSERT OR IGNORE INTO npc_trip_notices VALUES(?,?,?,?,?)',
+                    (trip['id'],chat,owner,stamp,json.dumps(escapes,ensure_ascii=False)))
 
     def _npc_view_locked(self, chat, owner):
         self._npc_stock_locked(chat);estate=self._npc_estate_locked(chat,owner)
         workforce=self._workforce_view_locked(chat,owner)
         estate=self._npc_estate_locked(chat,owner)
         owned=self._npc_rows_locked(chat,owner)
-        market=[public(self._npc_decode(r)) for r in self.connection.execute("SELECT * FROM fictional_workers WHERE chat=? AND owner IS NULL AND status IN ('stock','runaway') ORDER BY created DESC LIMIT 12",(chat,))]
+        market=[public(self._npc_decode(r)) for r in self.connection.execute("SELECT * FROM fictional_workers WHERE chat=? AND owner IS NULL AND status IN ('stock','runaway') ORDER BY (status='stock') DESC,created DESC,id LIMIT 12",(chat,))]
         trips=[]
         for row in self.connection.execute('SELECT * FROM npc_trips WHERE chat=? AND owner=? ORDER BY started DESC LIMIT 5',(chat,owner)):
             d=dict(row);p=json.loads(d.pop('data'))
@@ -302,15 +313,18 @@ class NpcWorkersMixin(WorkforceMixin):
         if action=='npc_care':
             self.connection.execute('UPDATE npc_estates SET care=? WHERE chat=? AND owner=?',(stamp,chat,actor))
             return dict(notice='Управляющий проверил условия. Проверка действует 48 часов; еду и отдых она не заменяет.')
+        if action=='npc_agreement':
+            if b.get('confirm') is not True:raise ValueError('Подтверди заключение договора.')
+            return self._workforce_agreement_locked(chat,actor)
         if action in ('npc_trip','npc_trip_quote'):return self._npc_trip_start_locked(chat,actor,b)
         if not isinstance(b.get('id'),str) or len(b['id'])!=32:raise ValueError('Некорректный NPC.')
+        if action=='npc_buy':self._npc_stock_locked(chat)
         row=self.connection.execute('SELECT * FROM fictional_workers WHERE id=? AND chat=?',(b.get('id'),chat)).fetchone()
-        if not row:raise ValueError('NPC больше недоступен.')
+        if not row:raise ValueError('Предложение устарело. Открой обновлённый рынок и выбери другого NPC.' if action=='npc_buy' else 'NPC больше недоступен.')
         r=self._npc_decode(row);d=r['data']
         if action=='npc_buy':
-            self._npc_stock_locked(chat)
-            current=self.connection.execute('SELECT * FROM fictional_workers WHERE id=?',(r['id'],)).fetchone()
-            if not current or current['owner'] is not None or current['status'] not in ('stock','runaway'):raise ValueError('NPC уже приобретён или предложение устарело.')
+            if r['owner'] is not None or r['status'] not in ('stock','runaway'):raise ValueError('NPC уже приобретён или предложение устарело.')
+            if 'price' in b and (type(b['price']) is not int or b['price']!=r['price']):raise ValueError('Цена изменилась. Проверь новое предложение.')
             self._npc_pay_locked(chat,actor,r['price']);r['owner']=actor;r['status']='rest';r['site']=None;r['tick']=stamp
             d['loyalty']=max(40,d['loyalty']);d['history']=(d['history']+[dict(at=stamp,text='Новый владелец')])[-30:]
         else:
@@ -347,9 +361,11 @@ class NpcWorkersMixin(WorkforceMixin):
                 r['owner']=None;r['status']='runaway';r['site']=None
             else:raise ValueError('Неизвестное действие NPC.')
         self._npc_save_locked(r)
-        return dict(notice='Готово. Редкость и история NPC сохранены.')
+        return dict(notice=f'{d["name"]} теперь в списке «Рабы». Списано {r["price"]} ₣.' if action=='npc_buy' else 'Готово. Редкость и история NPC сохранены.')
 
     def _npc_trip_start_locked(self, chat, actor, b):
+        from slave_expeditions import expedition_loss, expedition_group_loss
+        from slave_identity import TRAITS
         self._require_feature_locked(chat,'arena')
         ids=b.get('ids');mission=EXPEDITIONS.get(b.get('mission'))
         if not mission or not isinstance(ids,list) or not 1<=len(ids)<=5 or any(not isinstance(i,str) or len(i)!=32 for i in ids) or len(set(ids))!=len(ids):raise ValueError('Выбери миссию и от одного до пяти разных NPC.')
@@ -364,8 +380,10 @@ class NpcWorkersMixin(WorkforceMixin):
             recent=self.connection.execute('SELECT MAX(started_at) AS latest,MAX(active) AS active FROM slave_expedition_members WHERE user_id=?',(user,)).fetchone()
             if recent['active'] or recent['latest'] is not None and recent['latest']+6*HOUR>now():raise ValueError('Участник уже в походе или не прошло шесть часов.')
             snapshot=self._expedition_source_locked(chat,user)
+            trait=TRAITS[snapshot['identity']['trait_id']]
+            member_power=round(snapshot['power']+snapshot['base_power']*trait.get('mission_power',{}).get(b['mission'],0)/100,1)
             name=self.connection.execute('SELECT display_name FROM users WHERE chat_id=? AND user_id=?',(chat,user)).fetchone()
-            humans.append(dict(user_id=user,epoch=owned['acquired_at'],name=name[0] if name else str(user),power=snapshot['power'],snapshot=snapshot))
+            humans.append(dict(user_id=user,epoch=owned['acquired_at'],name=name[0] if name else str(user),power=member_power,snapshot=snapshot))
         rows=[]
         for npc_id in ids:
             row=self.connection.execute('SELECT * FROM fictional_workers WHERE id=? AND chat=? AND owner=?',(npc_id,chat,actor)).fetchone()
@@ -373,21 +391,31 @@ class NpcWorkersMixin(WorkforceMixin):
             r=self._npc_decode(row)
             if r['status'] not in ('rest','work') or r['data']['ready_at']>now():raise ValueError('NPC недоступен или ещё не прошло шесть часов с прошлого похода.')
             rows.append(r)
-        avg=(sum(power(r['data']) for r in rows)+sum(p['power'] for p in humans))/(len(rows)+len(humans))
-        chance=min(.75,max(.03,mission['base_loss']/100+(mission['power']-avg)/200))
-        names=[r['data']['name'] for r in rows]+[p['name'] for p in humans]
-        quote=dict(names=names,loss_percent=round(chance*100),francs=mission['francs']*(len(rows)+len(humans)),
+        families={p['snapshot']['class_id'] for p in humans}
+        healthy=[r['data'] for r in rows if r['data']['health']>=60 and r['data']['fatigue']<80]
+        guards=bool(families & {'warrior','jock','middle'}) or any(d['trait']=='guard' for d in healthy)
+        support=bool(families & {'priest','cutie'}) or any(d['trait']=='diplomat' for d in healthy)
+        npc_powers=[power(r['data']) for r in rows]
+        avg=(sum(npc_powers)+sum(p['power'] for p in humans))/(len(rows)+len(humans))
+        people=[dict(user_id=r['id'],name=r['data']['name'], loss=expedition_loss(mission,p,avg,support=int(guards)+int(support),
+                     personal=max(0,r['data']['fatigue']-70)/10+max(0,40-r['data']['loyalty'])/10)) for r,p in zip(rows,npc_powers)]
+        people.extend(dict(user_id=p['user_id'],name=p['name'],loss=expedition_loss(mission,p['power'],avg,support=int(guards)+int(support),
+                      personal=TRAITS[p['snapshot']['identity']['trait_id']].get('loss',0)*.4)) for p in humans)
+        names=[p['name'] for p in people]
+        quote=dict(names=names, risks=people,group_loss=expedition_group_loss(p['loss'] for p in people),
+            loss_percent=max(p['loss'] for p in people),francs=mission['francs']*len(people),
             pages=mission['pages'],page_rarity=mission['page_rarity'],duration=mission['duration'])
-        fingerprint=hashlib.sha256(json.dumps([b['mission'],[(r['id'],r['revision']) for r in rows],humans],sort_keys=True).encode()).hexdigest()
+        fingerprint=hashlib.sha256(json.dumps([b['mission'],[(r['id'],r['revision']) for r in rows],humans,quote],sort_keys=True).encode()).hexdigest()
         if b['action']=='npc_trip_quote':return dict(quote=dict(**quote,revision=fingerprint),notice='Риск рассчитан. Отряд ещё не отправлен.')
         if b.get('revision')!=fingerprint:raise ValueError('Сначала рассчитай отряд. Его состав или состояние могли измениться.')
-        rng=random.SystemRandom();payload=dict(names=names,loss_percent=round(chance*100),
-            outcomes=[(r['id'],rng.random()<chance) for r in rows],recruit=rng.choice(list(PROFESSIONS)) if rng.random()<.08 else None)
-        payload['humans']=[dict(user_id=p['user_id'],lost=rng.random()<chance) for p in humans]
+        rng=random.SystemRandom();by_id={p['user_id']:p['loss'] for p in people}
+        payload=dict(names=names,loss_percent=quote['loss_percent'],group_loss=quote['group_loss'],
+            outcomes=[(r['id'],rng.random()*100<by_id[r['id']]) for r in rows],recruit=rng.choice(list(PROFESSIONS)) if rng.random()<.08 else None)
+        payload['humans']=[dict(user_id=p['user_id'],lost=rng.random()*100<by_id[p['user_id']]) for p in humans]
         token=uuid4().hex
         for p in humans:
             self.connection.execute('INSERT INTO slave_expedition_members VALUES(?,?,?,?,?,1,?,NULL,?)',
                 (token,p['user_id'],chat,actor,p['epoch'],now(),json.dumps(p['snapshot'])))
         for r in rows:r['status']='expedition';self._npc_save_locked(r)
         self.connection.execute("INSERT INTO npc_trips VALUES(?,?,?,?,?,?,'active',?)",(token,chat,actor,b['mission'],now(),now()+mission['duration'],json.dumps(payload)))
-        return dict(notice=f'Отряд отправлен. Риск освобождения каждого: {round(chance*100)}%. Результат зафиксирован на сервере.')
+        return dict(notice=f'Отряд отправлен. Риск хотя бы одного побега: {quote["group_loss"]:g}%. Результат зафиксирован.')

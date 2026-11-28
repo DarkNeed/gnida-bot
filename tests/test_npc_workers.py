@@ -84,6 +84,21 @@ class NpcTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):await self.act('npc_rest',actor=20,id=id,revision=self.row(id)['revision'])
         with self.assertRaises(ValueError):await self.act('npc_buy',actor=20,id=id)
 
+    async def test_rotated_offer_is_replaced_and_never_debits(self):
+        market=(await self.db.holdings_view(-100,10))['npc']['market']
+        old=market[0]
+        self.stamp+=DAY
+        balance=await self.db.franc_balance(-100,10)
+        with self.assertRaisesRegex(ValueError,'устарело'):
+            await self.act('npc_buy',id=old['id'],price=old['cost'])
+        fresh=(await self.db.holdings_view(-100,10))['npc']['market']
+        self.assertFalse({w['id'] for w in market}&{w['id'] for w in fresh})
+        with self.assertRaisesRegex(ValueError,'Цена изменилась'):
+            await self.act('npc_buy',id=fresh[0]['id'],price=fresh[0]['cost']-1)
+        self.assertEqual(await self.db.franc_balance(-100,10),balance)
+        await self.act('npc_buy',id=fresh[0]['id'],price=fresh[0]['cost'])
+        self.assertEqual(await self.db.franc_balance(-100,10),balance-fresh[0]['cost'])
+
     async def test_owned_totals_roster_and_tops_include_npcs_without_extra_passive_income(self):
         id=await self.buy()
         self.assertEqual(await self.db.owned_worker_counts(-100,10),dict(human=1,npc=1,total=2))
@@ -191,7 +206,27 @@ class NpcTests(unittest.IsolatedAsyncioTestCase):
         e=await self.event(id);self.assertEqual(e['game_ends'],self.stamp+180)
         self.stamp+=181
         with self.db.connection:self.db._workforce_tick_locked(-100,10)
-        self.assertFalse(self.db.connection.execute('SELECT 1 FROM ownership WHERE chat_id=-100 AND slave_id=100').fetchone())
+        current=await self.event(id)
+        self.assertEqual((current['status'],current['deadline']),('open',e['deadline']))
+        self.assertIsNotNone(await self.db.get_owner(-100,100))
+        with self.assertRaisesRegex(ValueError,'Повторной'):
+            await self.act('workforce_start',id=id,revision=current['revision'])
+        self.stamp=e['deadline'];self.assertEqual((await self.event(id))['status'],'lost')
+        self.assertIsNone(await self.db.get_owner(-100,100))
+
+    async def test_failed_attempt_can_still_negotiate_before_outer_deadline(self):
+        id=self.make_event();e=await self.event(id)
+        await self.act('workforce_start',id=id,revision=e['revision'])
+        for _ in range(6):
+            e=await self.event(id)
+            await self.act('workforce_guess',id=id,revision=e['revision'],guess=[5,4,3])
+        e=await self.event(id)
+        self.assertEqual(e['status'],'open')
+        balance=await self.db.franc_balance(-100,10)
+        await self.act('workforce_negotiate',id=id,revision=e['revision'])
+        self.assertEqual((await self.event(id))['status'],'returned')
+        self.assertEqual(await self.db.franc_balance(-100,10),balance-250)
+        self.assertIsNotNone(await self.db.get_owner(-100,100))
 
     async def test_correct_code_returns_human_without_arena_changes(self):
         id=self.make_event();e=await self.event(id)
@@ -329,6 +364,23 @@ class NpcTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.get_owner(-100,100))['owner_id'],20)
         self.assertEqual(v['npc']['trips'][0]['francs'],50)
 
+    async def test_mixed_quote_is_per_worker_and_escape_is_notified_once(self):
+        from slave_expeditions import expedition_group_loss
+        id=await self.buy();r=self.row(id);r['data'].update(level=20,profession='paladin',trait='guard')
+        with self.db.connection:self.db._npc_save_locked(r)
+        q=(await self.act('npc_trip_quote',ids=[id],users=[100],mission='ruins'))['quote']
+        rates={p['user_id']:p['loss'] for p in q['risks']}
+        self.assertLess(rates[id],rates[100]);self.assertEqual(q['group_loss'],expedition_group_loss(rates.values()))
+        await self.act('npc_trip',ids=[id],users=[100],mission='ruins',revision=q['revision'])
+        trip=self.db.connection.execute('SELECT * FROM npc_trips').fetchone()
+        payload=json.loads(trip['data']);payload.update(outcomes=[[id,True]],humans=[dict(user_id=100,lost=False)],recruit=None)
+        with self.db.connection:self.db.connection.execute('UPDATE npc_trips SET data=? WHERE id=?',(json.dumps(payload),trip['id']))
+        self.stamp+=6*HOUR;await self.db.holdings_view(-100,10)
+        notices=await self.db.expedition_sweep()
+        self.assertEqual(notices,[dict(id=trip['id'],chat_id=-100,owner_id=10,escapes=[r['data']['name']])])
+        await self.db.expedition_notified(trip['id'])
+        self.assertEqual(await self.db.expedition_sweep(),[])
+
     async def test_disable_cancels_mixed_trip_without_leaving_human_absent(self):
         await self.mixed_trip();await self.db.arena_set_module(-100,10,'slavery',False,0)
         self.assertEqual(self.db.connection.execute('SELECT COUNT(*) FROM slave_expedition_members WHERE active=1').fetchone()[0],0)
@@ -355,6 +407,7 @@ class NpcTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_expiry_warning_requires_delivery_and_cannot_be_reset_by_refresh(self):
         await self.buy()
+        self.db.connection.execute('UPDATE franc_balances SET balance=0 WHERE chat_id=-100 AND user_id=10')
         self.db.connection.execute('DELETE FROM workforce_warnings');self.db.connection.commit()
         with self.db.connection:self.db._workforce_tick_locked(-100,10)
         self.stamp+=4*DAY
@@ -364,6 +417,21 @@ class NpcTests(unittest.IsolatedAsyncioTestCase):
         self.stamp+=5*HOUR
         b=(await self.db.holdings_view(-100,10))['npc']['workforce']['warning']['deadline']
         self.assertEqual(a,b)
+
+    async def test_healthy_estate_needs_no_repeat_click_and_agreement_is_local(self):
+        id=await self.buy();self.stamp+=4*DAY
+        self.assertIsNone((await self.db.holdings_view(-100,10))['npc']['workforce']['warning'])
+        r=self.row(id);r['data'].update(loyalty=30,trait='guard')
+        with self.db.connection:self.db._npc_save_locked(r)
+        risk=(await self.db.holdings_view(-100,10))['npc']['workforce']['risk']
+        self.assertEqual((risk['escape_chance'],risk['kidnap_chance']),(2.5,0))
+        balance=await self.db.franc_balance(-100,10)
+        await self.act('npc_agreement',confirm=True)
+        with self.assertRaisesRegex(ValueError,'уже действует'):await self.act('npc_agreement',confirm=True)
+        risk=(await self.db.holdings_view(-100,10))['npc']['workforce']['risk']
+        self.assertEqual((risk['escape_chance'],risk['agreement_until']),(1,self.stamp+72*HOUR))
+        self.assertIsNone((await self.db.holdings_view(-200,10))['npc']['workforce']['risk']['agreement_until'])
+        self.assertEqual(await self.db.franc_balance(-100,10),balance-150)
 
     async def test_module_disable_cancels_new_incident_without_freeing_human(self):
         id=self.make_event();await self.event(id)

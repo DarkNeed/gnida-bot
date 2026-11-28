@@ -39,6 +39,14 @@ class Miss(Roll):
         return 0.99
 
 
+def leave_enemy_open(state):
+    """Fix the cast order so these reward tests assert the player's KO."""
+    from arena_unified_queue import clock
+    queue=clock(state)
+    for event in queue['pending']:
+        if event['actor']=='b':event['end']=queue['time']+60
+
+
 class MirrorLootTests(unittest.TestCase):
     def test_eligible_pools_and_level_quality_boundary(self):
         for level in (1, 9, 10, 20):
@@ -167,6 +175,8 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.db.upsert_chat(2, "Other")
         for user in (10, 20, 30):
             await self.db.upsert_user(1, user, str(user), str(user))
+            # Store tests drive the queue directly (there is no browser proof).
+            await self.db.arena_combat_settings(user,enabled=False)
         await self.db.arena_menu(1, 10)
 
     async def asyncTearDown(self):
@@ -184,6 +194,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         state["sides"]["b"]["hp"] = 1
         state["sides"]["a"]["hp"] = hp
         state["sides"]["a"]["resource"] = resource
+        leave_enemy_open(state)
         self.db.connection.execute(
             "UPDATE arena_battles SET state_json=? WHERE token=?",
             (json.dumps(state), row["token"]),
@@ -212,7 +223,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         return await self.move(run, "gift", run["choices"][0]["id"])
 
     async def test_start_full_resources_no_timer_and_restart_preserves_choices(self):
-        run = await self.db.arena_mirror_start(1, 10)
+        run = await self.db.arena_mirror_start(1, 10, _layout=1)
         self.assertEqual((run["floor"], run["hp"], run["resource"]), (1, 20, 100))
         self.assertEqual((await self.db.arena_get(run["battle_token"]))["deadline"], 0)
         run = await self.win(run)
@@ -227,7 +238,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         self,
     ):
         original = (await self.db.arena_menu(1, 10))["personal"]
-        run = await self.db.arena_mirror_start(1, 10)
+        run = await self.db.arena_mirror_start(1, 10, _layout=1)
         for floor in range(1, 6):
             self.assertEqual(run["floor"], floor)
             row = await self.db.arena_get(run["battle_token"])
@@ -279,7 +290,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.db._arena_busy_locked(1, 10))
 
     async def test_legacy_active_run_gets_loot_but_old_finished_run_is_not_repaid(self):
-        run = await self.db.arena_mirror_start(1, 10)
+        run = await self.db.arena_mirror_start(1, 10, _layout=1)
         self.final_floor(run, legacy=True)
         self.assertEqual(
             (await self.db.arena_mirror_get(run["token"], 10))["item_rewards"], []
@@ -296,7 +307,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_loot_failure_rolls_back_partial_items_money_xp_and_can_retry(self):
-        run = await self.db.arena_mirror_start(1, 10)
+        run = await self.db.arena_mirror_start(1, 10, _layout=1)
         self.final_floor(run)
         add = self.db._arena_add_item_locked
         calls = []
@@ -330,7 +341,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_rewards_stack_for_account_inventory_only_for_controller(self):
         await self.db.force_enslave(1, 30, 10)
         for _ in range(2):
-            run = await self.db.arena_mirror_start(1, 30, 30, True)
+            run = await self.db.arena_mirror_start(1, 30, 30, True, _layout=1)
             self.final_floor(run)
             run = await self.win(run, actor=30, rng=Roll(123))
             self.assertEqual(len(run["item_rewards"]), 4)
@@ -344,7 +355,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.arena_market_view(2, 30))["inventory"], inventory)
 
     async def test_surrender_on_final_floor_gives_no_items(self):
-        run = await self.db.arena_mirror_start(1, 10)
+        run = await self.db.arena_mirror_start(1, 10, _layout=1)
         self.final_floor(run)
         battle = await self.db.arena_get(run["battle_token"])
         await self.db.arena_action(battle["token"], 10, battle["revision"], "surrender")
@@ -355,27 +366,27 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_busy_between_fights_blocks_duel_reset_and_parallel_start(self):
         results = await asyncio.gather(
-            self.db.arena_mirror_start(1, 10),
-            self.db.arena_mirror_start(1, 10),
+            self.db.arena_mirror_start(1, 10, _layout=1),
+            self.db.arena_mirror_start(1, 10, _layout=1),
             return_exceptions=True,
         )
         self.assertEqual(sum(isinstance(r, dict) for r in results), 1)
         run = next(r for r in results if isinstance(r, dict))
         run = await self.win(run)
         for call in (
-            self.db.arena_wasteland(1, 10),
-            self.db.arena_offer(1, 10, 20, "personal"),
-            self.db.arena_edit_profile(1, 10, 10, True, "reset_class", True),
+            lambda: self.db.arena_wasteland(1, 10),
+            lambda: self.db.arena_offer(1, 10, 20, "personal"),
+            lambda: self.db.arena_edit_profile(1, 10, 10, True, "reset_class", True),
         ):
             with self.assertRaises(ValueError):
-                await call
+                await call()
         ended = await self.move(run, "abandon")
         self.assertEqual(ended["status"], "cancelled")
         self.assertFalse(self.db._arena_busy_locked(1, 10))
         await self.db.arena_wasteland(1, 10)
 
     async def test_surrender_no_current_rewards_no_francs(self):
-        run = await self.db.arena_mirror_start(1, 10)
+        run = await self.db.arena_mirror_start(1, 10, _layout=1)
         row = await self.db.arena_get(run["battle_token"])
         done = await self.db.arena_action(
             row["token"], 10, row["revision"], "surrender"
@@ -388,7 +399,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.db._arena_busy_locked(1, 10))
 
     async def test_rest_resource_carry_and_temporary_gifts_next_floor(self):
-        run = await self.win(await self.db.arena_mirror_start(1, 10))
+        run = await self.win(await self.db.arena_mirror_start(1, 10, _layout=1))
         run = await self.gift(run)
         gift = run["gifts"][0]["id"]
         run = await self.move(run, "route", "rest")
@@ -402,7 +413,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(state["sides"]["a"]["passive_details"]), 0)
 
     async def test_invalid_and_concurrent_gift_do_not_duplicate(self):
-        run = await self.win(await self.db.arena_mirror_start(1, 10))
+        run = await self.win(await self.db.arena_mirror_start(1, 10, _layout=1))
         with self.assertRaises(ValueError):
             await self.move(run, "gift", "made_up")
         self.assertEqual(await self.db.arena_mirror_get(run["token"], 10), run)
@@ -415,7 +426,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_merchant_local_currency_only_and_one_purchase(self):
-        run = await self.gift(await self.win(await self.db.arena_mirror_start(1, 10)))
+        run = await self.gift(await self.win(await self.db.arena_mirror_start(1, 10, _layout=1)))
         run = await self.move(run, "route", "merchant")
         bought = await self.move(run, "shop", "heal")
         self.assertEqual((bought["hp"], bought["shards"]), (20, 15))
@@ -425,7 +436,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.arena_market_view(1, 10))["inventory"], [])
 
     async def test_event_risk_has_bounded_hp_cost_and_temporary_curse(self):
-        run = await self.gift(await self.win(await self.db.arena_mirror_start(1, 10)))
+        run = await self.gift(await self.win(await self.db.arena_mirror_start(1, 10, _layout=1)))
         with patch("arena_mirror.random.SystemRandom") as rng:
             rng.return_value.choice.return_value = "altar"
             run = await self.move(run, "route", "event")
@@ -443,7 +454,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_outsider_and_chat_scope_and_no_normal_wasteland_continuation(self):
-        run = await self.db.arena_mirror_start(1, 10)
+        run = await self.db.arena_mirror_start(1, 10, _layout=1)
         with self.assertRaises(ValueError):
             await self.db.arena_mirror_get(run["token"], 20)
         with self.assertRaises(ValueError):
@@ -457,7 +468,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_failed_payout_rolls_back_entire_boss_completion(self):
-        run = await self.db.arena_mirror_start(1, 10)
+        run = await self.db.arena_mirror_start(1, 10, _layout=1)
         row = self.db._mirror_row_locked(run["token"])
         data = json.loads(row["data_json"])
         data["floor"] = 5
@@ -484,7 +495,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
             ("safe", 0, 10, 35),
         ):
             run = await self.gift(
-                await self.win(await self.db.arena_mirror_start(1, 10))
+                await self.win(await self.db.arena_mirror_start(1, 10, _layout=1))
             )
             with patch("arena_mirror.random.SystemRandom") as rng:
                 rng.return_value.choice.return_value = "chest"
@@ -500,7 +511,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
             await self.move(after, "abandon")
 
     async def test_insufficient_shards_and_empty_gift_pool_do_not_corrupt_run(self):
-        run = await self.gift(await self.win(await self.db.arena_mirror_start(1, 10)))
+        run = await self.gift(await self.win(await self.db.arena_mirror_start(1, 10, _layout=1)))
         run = await self.move(run, "route", "merchant")
         row = self.db._mirror_row_locked(run["token"])
         data = json.loads(row["data_json"])
@@ -524,7 +535,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((run["phase"], run["choices"]), ("route", []))
 
     async def test_battle_view_shows_actual_gift_cost_and_bonuses(self):
-        run = await self.db.arena_mirror_start(1, 10)
+        run = await self.db.arena_mirror_start(1, 10, _layout=1)
         row = await self.db.arena_get(run["battle_token"])
         state = json.loads(row["state_json"])
         a = state["sides"]["a"]
@@ -537,7 +548,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(side["damage_bonus"], 0.3)
 
     async def test_concurrent_boss_completion_awards_once(self):
-        run = await self.db.arena_mirror_start(1, 10)
+        run = await self.db.arena_mirror_start(1, 10, _layout=1)
         mirror = self.db._mirror_row_locked(run["token"])
         data = json.loads(mirror["data_json"])
         data["floor"] = 5
@@ -545,6 +556,7 @@ class MirrorStoreTests(unittest.IsolatedAsyncioTestCase):
         battle = await self.db.arena_get(run["battle_token"])
         state = json.loads(battle["state_json"])
         state["sides"]["b"]["hp"] = 1
+        leave_enemy_open(state)
         self.db.connection.execute(
             "UPDATE arena_battles SET state_json=? WHERE token=?",
             (json.dumps(state), battle["token"]),

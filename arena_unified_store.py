@@ -3,6 +3,7 @@ import json
 import time
 
 import arena_unified_queue as queue
+from arena_summons import is_key as is_summon_key
 
 
 def catalog(db):
@@ -98,7 +99,7 @@ def direct(db, row, actor, revision, sid, choice_id=None, target=None, *, interc
         native_roulette(db, 'battle', row['token'], actor)
     skills = catalog(db)
     db._qte_snapshot_locked('battle', row, data)
-    if target is not None and (not isinstance(target, str) or not target.startswith('brood:')):
+    if target is not None and not is_summon_key(target):
         raise ValueError('Некорректная цель.')
     queue.submit(data, key, sid, target or ('b' if key == 'a' else 'a'), skills,
                  ident=choice_id if choice_id is not None else queue.choice(data, key))

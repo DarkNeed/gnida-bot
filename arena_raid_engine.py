@@ -165,18 +165,21 @@ def native_attack(actor, target, skill_id, skills, rng, *, tick_actor_bleed=True
                     result=None
                     qte.pop('dodge',None)
             if result is not None:qte['pattern_dodge']=result
+        if 'contact_reference' in guard:qte['contact_reference']=guard['contact_reference']
     def land(attacker, recipient, *, context, proof, tick, companions=None):
         return resolve_skill(pair_state(attacker, recipient), 'a', skill_id, skills, rng,
                              advance_turn=False, tick_actor_bleed=tick, allies=companions,
                              raid_context=context, qte=proof or None)
 
     from arena_summons import scripted_splash, expose
-    source, splash_key, unit = scripted_splash(raid_context, target, skill_id)
-    shadow = deepcopy(actor) if unit is not None else None
-    with expose(target, unit is not None):
+    splash_targets = scripted_splash(raid_context, target, skill_id)
+    shadow = deepcopy(actor) if splash_targets else None
+    with expose(target, bool(splash_targets)):
         result = land(actor, target, context=raid_context, proof=qte, tick=tick_actor_bleed, companions=allies)
-    if shadow is not None:
-        splash = land(shadow, unit, context=None, proof=None, tick=False)
+    if 'pattern_dodge' in qte and guard.get('defense_skipped'):
+        result['text'] += ' · мини-игра защиты не завершена'
+    for source, splash_key, unit in splash_targets:
+        splash = land(deepcopy(shadow), unit, context=None, proof=None, tick=False)
         log_event(raid_context, source, splash_key, splash['text'], skill=skill_id,
                   damage=splash['damage'], damage_type=splash.get('damage_type'), hit=splash['hit'])
     return result

@@ -122,7 +122,8 @@ def rule(skill, actor, target=None):
     elif key=='ring_fauvist' and sid=='arch_ring_fauvist':
         ready=True;change=dict(name='Сшить хищника',tags=tag('final_summon'))
     elif key=='ring_fauvist' and sid=='last_stroke':
-        ready=bool(m.get('beast',0)>0 and target and len(negative_kinds(target))>=3)
+        from arena_summons import effigy_active
+        ready=bool(effigy_active(actor) and target and len(negative_kinds(target))>=3)
         change=dict(name='Природа исправит тебя',power=30,cost=50,
                     tags=('two_strike','final_joint'))
     elif key=='pinky_dihui' and sid=='moon_arc':
@@ -303,7 +304,14 @@ def after_action(actor,target,skill,hit,damage,before,rng,stat,allies=None,skill
         living=[s for s in (allies or []) if s is not actor and s['hp']>0]
         if living:buff(min(living,key=lambda s:s['hp']/s['stats']['max_hp']),'final_code_guard','incoming_damage_multiplier',.75,1)
     if key=='ring_fauvist':
-        if hit and 'final_summon' in skill.tags:
+        if actor.get('board_summons'):
+            from arena_summons import EFFIGY, raise_units, order_effigy
+            if hit and 'final_summon' in skill.tags:
+                raise_units(actor, (EFFIGY,))
+                notes.append('чучело призвано на 3 следующих действия')
+            else:
+                notes.extend(order_effigy(actor,skill,target,native,qte_avoided))
+        elif hit and 'final_summon' in skill.tags:
             m['beast']=3;notes.append('призвано чучело на 3 следующих действия')
         elif old.get('beast',0)>0:
             m['beast']=max(0,old['beast']-1)

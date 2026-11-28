@@ -25,6 +25,7 @@ def render_arena_index(root: Path) -> str:
 
 REQUIRED_ASSETS = ("style.css", "battle-client", "arena-audio")
 OPTIONAL_ASSETS = (
+    "mirror-dungeon.css", "mirror-dungeon.js",
     "holdings.css", "holdings-client", "npc-workers.js", "npc-workers.css",
     "qte-live", "qte-combined.js", "raid-intents.js", "raid-timeline.js",
     "raid-intents.css", "nazarick-qte.js", "ainz-qte.js", "ainz-qte-art.js",
@@ -50,6 +51,8 @@ def _render_arena_index(root: Path, signature: tuple) -> str:
     return (
         (root / "index.html")
         .read_text(encoding="utf-8")
+        .replace('href="/static/mirror-dungeon.css"', f'href="/static/mirror-dungeon.css?v={version}"')
+        .replace('src="/static/mirror-dungeon.js"', f'src="/static/mirror-dungeon.js?v={version}"')
         .replace('<script src="/static/holdings.js"', f'<link rel="stylesheet" href="/static/npc-workers.css?v={version}"><script src="/static/npc-workers.js?v={version}"></script><script src="/static/holdings.js"')
         .replace('href="/static/style.css"', f'href="/static/style.css?v={version}"')
         .replace('src="/static/client.js"', f'src="/static/client.js?v={version}"')

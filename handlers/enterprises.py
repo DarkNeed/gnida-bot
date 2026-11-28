@@ -304,8 +304,15 @@ async def sweep_recovery_events(db,bot,*,create=True,username=None):
     await publish_slave_buyouts(db,bot,username)
     if not create:return
     for row in await db.workforce_notifications():
-        text=('⚠️ <b>В хозяйстве плохие условия.</b> Есть 24 часа на исправление: проверь кошелёк для содержания, дай NPC отдохнуть, назначь управляющего.'
-              if row['kind']=='warning' else f'🚨 {esc(row["name"])} пропал. Есть 8 часов: мини-игра, поисковая группа, награда помощнику или выкуп при похищении.')
+        if row['kind']=='warning':
+            text='⚠️ <b>В хозяйстве плохие условия.</b> Есть 24 часа на исправление. Риск и меры защиты — в обзоре владений.'
+        else:
+            kidnapped=row.get('event_kind')=='kidnapped'
+            text=f'🚨 {esc(row["name"])} — {"похищение" if kidnapped else "побег"}. Есть 8 часов на розыск.'
+            payload=json.loads(row['data'])
+            if payload.get('cause')=='protection':text+=' Причина: не устранена угроза после отказа от крыши.'
+            elif payload.get('risk_reasons'):text+=' Причины при проверке: '+esc('; '.join(payload['risk_reasons']))+'.'
+            text+=' Доступны мини-игра, поисковая группа и '+('выкуп за 300 ₣.' if kidnapped else 'соглашение о возвращении за 250 ₣.')
         text+='\nЧат: '+esc(row.get('chat_title') or row['chat'])
         if row['kind']=='warning':text+='\nПричины: '+esc('; '.join(json.loads(row['reason'])))
         text+='\nОткрой обзор владений в личном меню бота.'

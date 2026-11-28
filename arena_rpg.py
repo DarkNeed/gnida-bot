@@ -200,8 +200,9 @@ def rpg_received_damage(target, damage, before_hp, action_id=None, raid_context=
     if damage>0 and has_trait(target,'rpg_rally'):
         m['rally_ceiling']=max(m.get('rally_ceiling',0),before_hp)
         m['rally']=min(target['stats']['max_hp'],m.get('rally',0)+damage)
+    from arena_summons import undead_active
     mana_guard = (any(e.get('id') == 'mana_barrier' for e in target['effects'])
-                  or branch(target) == 'mage_necromancer' and m.get('summon', 0) > 0)
+                  or branch(target) == 'mage_necromancer' and undead_active(target))
     if fresh and has_trait(target, 'rpg_barrier_charge') and mana_guard:
         m['mana'] = min(3, m.get('mana', 0) + 1)
     if fresh and branch(target)=='priest_paladin' and (blocked or any(e['kind']=='incoming_damage_multiplier' and e.get('value',1)<1 for e in target['effects'])):
@@ -245,9 +246,18 @@ def rpg_effect(actor,target,item,rng,allies=None,raid_context=None):
         gained=min(30,actor['stats']['resource_max']-actor['resource']);actor['resource']+=gained
         return f'Кровавые пули: −{loss} HP, +{gained} энергии'
     if kind=='rpg_summon':
+        if actor.get('board_summons'):
+            from arena_summons import raise_units, SKELETON
+            raise_units(actor, (SKELETON,))
+            return 'Скелет призван: до трёх самостоятельных атак'
         actor.setdefault('rpg_state',{}).update(summon=3,summon_power=item['value'],summon_fresh=True,death_servants=False)
         return 'скелет призван на три действия'
     if kind=='rpg_death_servants':
+        if actor.get('board_summons'):
+            from arena_summons import raise_units, WARDEN, EXECUTIONER
+            raise_units(actor, (WARDEN, EXECUTIONER))
+            actor.setdefault('rpg_state', {})['souls'] = 0
+            return 'Страж и Палач призваны'
         actor.setdefault('rpg_state',{}).update(summon=3,summon_power=item['value'],summon_fresh=True,death_servants=True,souls=0)
         return 'Страж и Палач призваны на три действия'
     if kind=='rpg_dawn':
@@ -320,7 +330,7 @@ def rpg_after_action(actor,target,skill,hit,damage,before_hp,rng,effective_stat,
         if hit and 'rpg_leech' in skill.tags:
             gain=min(actor['stats']['max_hp']-actor['hp'],round(damage*.30));actor['hp']+=gain
             if gain: notes.append(f'Похищение жизни: +{gain} HP')
-        if m.get('summon',0)>0 and not m.pop('summon_fresh',False) and target['hp']>0:
+        if not actor.get('board_summons') and m.get('summon',0)>0 and not m.pop('summon_fresh',False) and target['hp']>0:
             if context.get('qte_avoided'):
                 m['summon']-=1
                 notes.append('Атака призыва отражена мини-игрой защиты')

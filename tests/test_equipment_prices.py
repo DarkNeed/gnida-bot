@@ -33,6 +33,10 @@ class EquipmentPriceTests(unittest.TestCase):
                         self.assertTrue(0<price<=20000)
                         self.assertEqual(price%10 if price<1000 else price%50,0)
                         public=public_item(i)
+                        if definition['biome']=='mirror':
+                            self.assertFalse(public['sellable'])
+                            self.assertEqual(public['sell_price'],0)
+                            continue
                         self.assertEqual(public['sell_price'],price//20)
                         self.assertEqual(public['sell_percent'],5)
                         self.assertTrue(0<public['sell_price']<=1000)

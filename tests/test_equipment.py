@@ -28,8 +28,9 @@ def battle(first=(),second=()):
 
 class EquipmentCombatTests(unittest.TestCase):
     def test_catalog_and_weights(self):
-        self.assertEqual(len([v for v in gear.CATALOG.values() if v['biome']!='nazarick']),32)
+        self.assertEqual(len([v for v in gear.CATALOG.values() if v['biome'] not in gear.EXCLUSIVE_BIOMES]),32)
         self.assertEqual(len([v for v in gear.CATALOG.values() if v['biome']=='nazarick']),6)
+        self.assertEqual(len([v for v in gear.CATALOG.values() if v['biome']=='mirror']),6)
         self.assertEqual(len({v['slot'] for v in gear.CATALOG.values()}),4)
         self.assertTrue(all(sum(row)==100 for row in gear.CHANCES))
 

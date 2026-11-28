@@ -30,6 +30,9 @@ async def application():
     async def start(request):
         mode = request.query.get('mode', 'solo')
         patron = request.query.get('patron', '')
+        unit = request.query.get('unit', 'skeleton') if mode == 'summons' else ''
+        if unit and unit not in ('skeleton','servants','effigy'):
+            raise web.HTTPBadRequest(text='Неизвестный призыв.')
         if patron and patron not in PATRONS:
             raise web.HTTPBadRequest(text='Неизвестный покровитель.')
         cultist = mode == 'cultist' or bool(patron)
@@ -37,6 +40,16 @@ async def application():
         loadout = branch_loadout(patron) if cultist else ['assassin_cut','assassin_needle','assassin_smoke','arch_assassin_shadow']
         if patron == 'cultist_shub' and stage == 20:
             loadout[1] = 'cult_roots'
+        klass, arch = ('cultist', patron) if cultist else ('assassin', 'assassin_shadow')
+        if unit == 'effigy':
+            klass, arch = 'ring', 'ring_fauvist'
+            loadout = ['arch_ring_fauvist','first_stroke','unfinished_portrait','last_stroke']
+        elif unit:
+            klass, arch = 'mage', 'mage_necromancer'
+            loadout = ['mana_barrier','mana_focus','mana_shot','arch_mage_necromancer']
+        elif mode == 'dragon':
+            klass, arch = 'warrior', ''
+            loadout = ['armor_split','steel_charge','warrior_execute','bum_punch']
         loadout = [key for key in loadout if BUILTIN_SKILLS[key].unlock_level <= stage]
         async with db._lock:
             db.connection.execute("UPDATE arena_battles SET status='cancelled' WHERE status IN ('pending','active')")
@@ -45,7 +58,7 @@ async def application():
             db.connection.execute("""UPDATE personal_profiles SET class_id=?,archclass_id=?,level=?,archclass_stage=?,
                 progression_level=?,loadout=?,skill_memory=NULL,skill_offers='[]',skill_seen='[]',
                 passive_loadout='[]',passive_memory=NULL,passive_seen='[]' WHERE user_id=10""",
-                ('cultist' if cultist else 'assassin', patron if cultist else 'assassin_shadow',
+                (klass, arch,
                  stage, max(10,stage), stage, json.dumps(loadout)))
             db.connection.commit()
         await db.arena_combat_settings(10, enabled=request.query.get('qte','1')!='0',
@@ -84,14 +97,42 @@ async def application():
             await db.arena_set_message(row['token'],1)
             row = await db.arena_setup(row['token'],20,'accept')
             prefix = 'b_'
+        elif mode == 'dragon':
+            from arena_encounters import set_intents
+            from arena_guild_rules import MONSTERS, art, mob_templates
+            from arena_rp import template_fighter
+            from arena_unified_queue import clock, initialize
+            from arena_unified_store import catalog
+            mob = 'ancient' if request.query.get('rank') == 'S' else 'dragon'
+            template, = mob_templates(dict(rank=MONSTERS[mob]['rank'], kind='hunt', monsters=[mob]),dict(kind='boss'),1)
+            row = await db.arena_encounter_create(1,30,['goblin'])
+            await db.arena_raid_set_message(row['token'],1)
+            await db.arena_raid_setup(row['token'],10,'join')
+            row = await db.arena_raid_setup(row['token'],30,'start')
+            async with db._lock:
+                state = json.loads(row['data_json'])
+                skills=catalog(db)
+                dragon=template_fighter(template,-1,db._fighter_catalog_locked()[0],skills)
+                dragon.update(mob_id='custom',enemy_id='e1',controller_id=0,is_boss=False,
+                    guild_monster=mob,guild_sprite=art(mob),npc_tier=min(4,template['npc_tier']))
+                state['enemies']['e1']=state['boss']=dragon
+                state.update(guild_boss_room=True,rp_mode=False)
+                fighter=state['players']['10']['fighter']
+                fighter['hp']=fighter['stats']['max_hp']=600  # Room to test several attacks.
+                clock(state)['pending'].clear()
+                set_intents(state,skills)
+                initialize(state,skills)
+                db._raid_save_locked(row,state)
+                db.connection.commit()
+            prefix = 'r_'
         else:
-            if mode in ('party','encounter','bars','cultist'):
+            if mode in ('party','encounter','bars','cultist','summons'):
                 row = await db.arena_encounter_create(1,30,['goblin','shaman'])
                 await db.arena_raid_set_message(row['token'],1)
                 for actor in ((10,20) if mode=='party' else (10,)):
                     await db.arena_raid_setup(row['token'],actor,'join')
                 row = await db.arena_raid_setup(row['token'],30,'start')
-                if mode in ('bars','cultist') or (mode == 'party' and patron == 'cultist_shub' and request.query.get('summon') == '1'):
+                if mode in ('bars','cultist','summons') or (mode == 'party' and patron == 'cultist_shub' and request.query.get('summon') == '1'):
                     # One fast attacker and one slow one, with enough HP to
                     # observe several casts. All actions use production code.
                     from arena_unified_queue import clock, initialize
@@ -109,6 +150,16 @@ async def application():
                                 enemy['stats']['evasion'] = 0
                             fighter = state['players']['10']['fighter']
                             fighter['hp'] = fighter['stats']['max_hp'] = 260
+                            if unit:
+                                state['enemies']['e1']['stats'].update(physical_attack=4, speed=8)
+                                state['enemies']['e2']['stats'].update(magic_attack=3, speed=0)
+                                if unit == 'servants':
+                                    fighter.setdefault('rpg_state', {})['souls'] = 3
+                                if request.query.get('ready') == '1':
+                                    from arena_summons import raise_units, SKELETON, WARDEN, EXECUTIONER, EFFIGY
+                                    raise_units(fighter, {'skeleton':(SKELETON,), 'servants':(WARDEN, EXECUTIONER),
+                                                          'effigy':(EFFIGY,)}[unit])
+                                    state['enemies']['e1']['own_turns'] = 1
                             if patron == 'cultist_shub' and request.query.get('summon') == '1':
                                 from arena_cultist import after_action
                                 target = state['enemies']['e1']
@@ -204,6 +255,25 @@ async def application():
     app.router.add_get('/live-queue-review',start)
     app.router.add_get('/live-preview',preview)
     app.router.add_get('/cultist-review',cultist_review)
+    async def summon_review(_request):
+        cards = (
+            ('skeleton','Скелет','«Поднять мертвеца» · собственные атаки и Души.',('skeleton',)),
+            ('servants','Страж и Палач','Три Души уже готовы: «Мёртвые не знают усталости».',('warden','executioner')),
+            ('effigy','Чучело хищника','«Сшить хищника», затем атакуй или используй «Незавершённый портрет».',('effigy',)),
+        )
+        content = ''.join(
+            f'<article><div class="art">{"".join(f"""<img src="/static/assets/summons/{sprite}-v1.png" alt="">""" for sprite in sprites)}</div>'
+            f'<h2>{title}</h2><p>{hint}</p><a href="/live-queue-review?mode=summons&amp;unit={kind}&amp;qte=0">Начать бой</a>'
+            f'<a href="/live-queue-review?mode=summons&amp;unit={kind}&amp;qte=0&amp;ready=1">Призыв уже на поле</a></article>'
+            for kind, title, hint, sprites in cards)
+        return web.Response(text='<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+                            '<title>Призывы · Арена</title><style>body{background:#101726;color:#e8edf5;font:16px system-ui;margin:2rem auto;padding:0 1rem;max-width:52rem}'
+                            'main{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,215px),1fr));gap:.75rem}'
+                            'article{padding:1rem;background:#18243a;border:1px solid #364863;border-radius:14px}'
+                            'h2{font-size:1.17rem}p{min-height:3em;color:#c2cce0}.art{display:flex;justify-content:center;height:165px}'
+                            'img{max-width:50%;object-fit:contain}a{display:block;margin-top:.6rem;color:#a9d7ff}</style>'
+                            '<h1>Призванные бойцы</h1><main>'+content+'</main>', content_type='text/html')
+    app.router.add_get('/summons-review',summon_review)
     return app
 
 

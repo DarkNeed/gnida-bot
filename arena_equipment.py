@@ -113,9 +113,16 @@ _SPECS = (
  ('nazarick','armor','nz_throne','Мантия тронного зала','magic_defense','immortal'),
  ('nazarick','accessory','nz_pledge','Клятва Плеяд','max_hp','mercy'),
  ('nazarick','relic','nz_sacrifice','Печать восьмого этажа','magic_attack','empty'),
+ ('mirror','weapon','mirror_edge','Кромка разбитого отражения','physical_attack','opener'),
+ ('mirror','weapon','mirror_staff','Посох обратной стороны','magic_attack','cycle'),
+ ('mirror','armor','mirror_plate','Доспех из чёрного стекла','physical_defense','stone'),
+ ('mirror','armor','mirror_mantle','Мантия стеклянного моря','magic_defense','immortal'),
+ ('mirror','accessory','mirror_sigil','Перстень зазеркалья','max_hp','empty'),
+ ('mirror','relic','mirror_hour','Час по ту сторону','speed','execution'),
 )
 CATALOG = {key:dict(key=key, biome=biome, slot=slot, name=name, main=main, effect=effect)
            for biome,slot,key,name,main,effect in _SPECS}
+EXCLUSIVE_BIOMES = frozenset(('nazarick','mirror'))
 
 
 def item_stats(item):
@@ -130,12 +137,13 @@ def item_stats(item):
 
 def public_item(item):
     value=deepcopy(item); definition=CATALOG[item['key']];valuation=item_valuation(item)
+    sellable=definition['biome']!='mirror'
     value.update(definition, stats=item_stats(item), min_level=LEVELS[RANKS.index(item['rank'])],
                  rarity_name=LABELS[item['rarity']], effect_text=EFFECTS[definition['effect']] if item['rarity'] in ('epic','legendary') else '',
                  salvage=(2,3,5,8,12)[RARITIES.index(item['rarity'])],
                  upgrade_cost=2+item.get('upgrade',0)*2, reroll_cost=5,
-                 base_price=valuation['price'],sell_price=valuation['price']*SELL_PERCENT//100,
-                 sell_percent=SELL_PERCENT,
+                 base_price=valuation['price'],sell_price=valuation['price']*SELL_PERCENT//100 if sellable else 0,
+                 sell_percent=SELL_PERCENT if sellable else 0, sellable=sellable,
                  valuation=valuation)
     return value
 
@@ -156,7 +164,8 @@ def modifiers(actor,target,skill):
     if not skill.damage_type:return 1.
     mult=1.;state=actor.get('gear_state',{})
     if has(actor,'bleeding') and any(e['kind']=='bleed' for e in target['effects']):mult*=1.2
-    if has(actor,'summoner') and skill.damage_type=='magic' and actor.get('rpg_state',{}).get('summon',0)>0:mult*=1.15
+    from arena_summons import undead_active
+    if has(actor,'summoner') and skill.damage_type=='magic' and undead_active(actor):mult*=1.15
     if has(actor,'empty') and actor['resource']<actor['stats']['resource_max']*.25:mult*=1.25
     if has(actor,'execution') and target['hp']<=target['stats']['max_hp']*.3:mult*=1.2
     if has(actor,'opener') and not state.get('attacks',0):mult*=1.3
@@ -185,6 +194,16 @@ def heal_amount(actor,recipient,amount):
     return amount
 
 
+def summoner_refund(actor):
+    if not has(actor,'summoner') or actor['hp'] <= 0:return 0
+    state = actor.setdefault('gear_state', {})
+    if state.get('summon_refund'):return 0
+    state['summon_refund'] = True
+    gain = min(15, actor['stats']['resource_max']-actor['resource'])
+    actor['resource'] += gain
+    return gain
+
+
 def after_action(actor,target,skill,damage,before_hp,summon_before,action_id):
     notes=[];state=actor.setdefault('gear_state',{})
     # A multi-target raid resolves the same paid action once per victim.
@@ -198,11 +217,8 @@ def after_action(actor,target,skill,damage,before_hp,summon_before,action_id):
         gain=min(actor['stats']['max_hp']-actor['hp'],max(0,cap-state.get('leech_healed',0)),round(damage*.06))
         actor['hp']+=gain;state['leech_healed']=state.get('leech_healed',0)+gain
         if gain:notes.append(f'Чаша крови: +{gain} HP')
-    if has(actor,'summoner') and summon_before>0 and not actor.get('rpg_state',{}).get('summon',0) and not state.get('summon_refund'):
-        state['summon_refund']=True
-        if actor['hp']>0:
-            gain=min(15,actor['stats']['resource_max']-actor['resource']);actor['resource']+=gain
-            if gain:notes.append(f'Последняя служба: +{gain} энергии')
+    if summon_before>0 and not actor.get('rpg_state',{}).get('summon',0):
+        if gain := summoner_refund(actor):notes.append(f'Последняя служба: +{gain} энергии')
     ts=target.setdefault('gear_state',{})
     lost=max(0,before_hp-target['hp'])
     if has(target,'troll') and target['hp']>0 and lost>=target['stats']['max_hp']*.2 and target.get('own_turns',0)>=ts.get('troll_ready',0):

@@ -14,13 +14,14 @@
     boss:'<path d="M7 21 4 7l8 5 4-8 4 8 8-5-3 14zM8 26h16"/>',
     event:'<path d="M11 10a5 5 0 1 1 9 3l-4 3v4"/><circle cx="16" cy="25" r="1"/>',
     treasure:'<path d="M4 13h24v14H4zM4 13l4-7h16l4 7M14 13v6h4v-6"/>',
+    shop:'<path d="M4 13 8 6h16l4 7M4 13h24M8 13v13m16-13v13M5 26h22M12 18h8m-4 0v8"/>',
     rest:'<path d="M13 4c7 9-7 11-1 19 0-5 7-6 7-12 13 14 0 22-8 16-6-4-7-13 2-23zM5 30h22"/>',
     unknown:'<path d="m16 3 12 7v13l-12 6-12-6V10z"/><path d="M13 13a3 3 0 1 1 5 2l-2 2v2m0 3v1"/>',
   })[kind]+'</svg>';
   const button=(text,action,style='',disabled=false)=>'<button type="button" data-guild="'+esc(action)+'" class="'+style+'"'+(disabled?' disabled':'')+'>'+text+'</button>';
   const badge=(rank,small=false)=>'<span class="guild-rank'+(small?' tiny':'')+'" data-rank="'+esc(rank)+'">'+esc(rank)+'</span>';
   const monsterArt=m=>m.sprite;
-  window.GuildApp={open};
+  window.GuildApp={open,roomIcon:icon};
 
   async function open(context){
     previous?.abort();const abort=new AbortController();previous=abort;

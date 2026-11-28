@@ -42,7 +42,7 @@ def replay(stage, proof, elapsed):
     members = stage['members']
     if proof.get('abort') is True:
         return dict(sources={m['encounter_enemy']: dict(dodge=(r := native_replay(m, proof, elapsed))['mask'],
-                   pattern_dodge=r) for m in members})
+                   pattern_dodge=r, defense_skipped=True) for m in members})
     total = math.ceil(duration(stage) * HZ - 1e-7)
     if type(proof.get('ticks')) is not int or proof['ticks'] != total or elapsed + .15 < total / HZ:
         raise ValueError('Совместную защиту нужно пройти полностью.')

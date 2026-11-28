@@ -220,7 +220,17 @@ def cover_view(target):
     brood = _brood(target) if not target.get("_cult_brood_exposed") and patron(target) == "cultist_shub" else None
     if brood:
         return dict(hp=brood["hp"], percent=15 if brood["predator"] else 30)
+    from arena_summons import guard
+    unit, percent = guard(target)
+    if unit:
+        return dict(hp=unit["hp"], percent=percent)
     return None
+
+
+def cover_name(target):
+    from arena_summons import TYPES, guard
+    unit, _ = guard(target)
+    return TYPES[unit["kind"]][0].lower() if unit else "отпрыск"
 
 
 def remove_brood(owner):
@@ -233,10 +243,12 @@ def incoming(target, damage):
     """Spend the brood's HP on a cast, not on each pellet or overkill."""
     if damage <= 0 or not (cover := cover_view(target)):
         return damage, 0
-    brood = _brood(target)
+    from arena_summons import guard
+    brood = _brood(target) if patron(target) == "cultist_shub" else None
+    companion = brood or guard(target)[0]
     absorbed = min(cover["hp"], (min(damage, target["hp"]) * cover["percent"] + 50) // 100)
-    brood["hp"] -= absorbed
-    if brood["hp"] <= 0:
+    companion["hp"] -= absorbed
+    if brood and brood["hp"] <= 0:
         remove_brood(target)
     return damage - absorbed, absorbed
 

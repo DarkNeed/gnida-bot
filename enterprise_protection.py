@@ -101,7 +101,7 @@ class EnterpriseProtectionMixin:
         rng.shuffle(candidates)
         for typ,worker,epoch,name in candidates[:3]:
             if self.connection.execute("SELECT 1 FROM workforce_events WHERE worker=? AND worker_type=? AND status IN ('announcing','open','playing','search')",(worker,typ)).fetchone():continue
-            payload=dict(secret=rng.sample(range(len(RECOVERY_SYMBOLS)),3),history=[],bounty=0,protection_event=event['id'])
+            payload=dict(secret=rng.sample(range(len(RECOVERY_SYMBOLS)),3),history=[],bounty=0,cause='protection',protection_event=event['id'])
             self.connection.execute("INSERT INTO workforce_events VALUES(?,?,?,?,?,?,?,'escaped','announcing',?,NULL,NULL,NULL,0,?,0)",
                 (uuid4().hex,chat,owner,worker,typ,epoch,name,now(),json.dumps(payload)))
         self._protection_resolve_locked(event,'escaped')

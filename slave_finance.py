@@ -221,7 +221,8 @@ class SlaveFinanceMixin(FinanceCommandsMixin):
             LEFT JOIN users u ON u.chat_id=w.chat_id AND u.user_id=w.worker_id
             WHERE w.chat_id=? ORDER BY w.created_at DESC,worker_id LIMIT 50''', (chat,)):
             offers.append(dict(worker=stock['worker_id'],name=stock['display_name'] or str(stock['worker_id']),
-                               price=self._finance_buyout_cost_locked(chat,stock['worker_id'],NPC_ID),reason=stock['reason']))
+                               price=self._finance_buyout_cost_locked(chat,stock['worker_id'],NPC_ID),reason=stock['reason'],
+                               listed_at=stock['created_at']))
         return dict(loan=dict(loan) if loan else None,limit=self._finance_limit_locked(actor),offers=offers,
                     chance=WIN_PERCENT,multiplier=5,cooldown=WAGER_COOLDOWN,loan_hours=72,interest_percent=15,
                     passive_hourly_percent=PASSIVE_HOURLY_PERCENT,decay_hours=72,
@@ -313,7 +314,10 @@ class SlaveFinanceMixin(FinanceCommandsMixin):
                     if not stock:
                         raise ValueError('Работник уже недоступен у NPC.')
                     price = self._finance_buyout_cost_locked(chat,worker,NPC_ID)
-                    if type(body.get('price')) is not int or price!=body['price']:
+                    shown, listed=body.get('price'),body.get('listed_at')
+                    if listed is not None and (type(listed) is not int or listed!=stock['created_at']):
+                        raise ValueError('Предложение изменилось. Проверь рынок заново.')
+                    if type(shown) is not int or price>shown or (listed is None and price!=shown):
                         raise ValueError('Цена изменилась. Обнови предложение.')
                     if worker!=actor and self.connection.execute('SELECT 1 FROM ownership WHERE chat_id=? AND slave_id=?',(chat,actor)).fetchone():
                         raise ValueError('Покупатель сам находится в рабстве.')

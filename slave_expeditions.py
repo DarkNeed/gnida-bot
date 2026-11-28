@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import random
 import re
 import uuid
@@ -19,6 +20,25 @@ EXPEDITIONS = {
                   base_loss=23, francs=340, pages=3, page_rarity='rare'),
 }
 PARTICIPANT_COOLDOWN = 6 * 3600
+
+
+def expedition_loss(mission, power, average, *, support=0, personal=0, failed=False):
+    """A recommended party has a low risk, not the mission's nominal difficulty.
+
+    The party can help a weaker member, but cannot hide a large individual gap.
+    Percentages shown in the quote are the same integers used for rolls.
+    """
+    target = mission['power'] * .9
+    individual = (target - power) / mission['power']
+    group = (target - average) / mission['power']
+    risk = mission['base_loss'] / 7 + 28 * max(0, individual) + 14 * max(0, group)
+    risk -= min(2, max(0, -individual) * 8) + support
+    risk += personal + (4 + 10 * max(0, group) if failed else 0)
+    return max(1, min(45 if failed else 35, round(risk)))
+
+
+def expedition_group_loss(losses):
+    return round(100 * (1 - math.prod(1 - loss / 100 for loss in losses)), 1)
 
 
 def now():
@@ -144,15 +164,20 @@ class ExpeditionMixin:
         arcane = bool(families & {'mage', 'nerd', 'ring'})
         avg = sum(m['power'] for m in members) / len(members)
         chance = max(10, min(95, round(avg/cfg['power']*62 + len(members)*3 + len(families)*2 + 3*scouts + 2*arcane)))
+        support = int(healers) + int(guards)
         for m in members:
             trait=TRAITS[m['identity']['trait_id']]
-            m['loss_win'] = max(2, min(60, round(cfg['base_loss'] + (cfg['power']-m['power'])*.55 - 3*healers - 2*guards+trait.get('loss',0))))
-            m['loss_fail'] = max(2,min(65, m['loss_win'] + 8+trait.get('failure_loss',0)))
+            personal = trait.get('loss',0) * .4
+            m['loss_win'] = expedition_loss(cfg,m['power'],avg,support=support,personal=personal)
+            m['loss_fail'] = max(m['loss_win'],expedition_loss(cfg,m['power'],avg,support=support,
+                personal=personal+trait.get('failure_loss',0)*.4,failed=True))
         reward = cfg['francs'] * len(members)
         value = dict(mission=mission, name=cfg['name'], duration=cfg['duration'], members=members,
                      chance=chance, owner_francs=reward, participant_francs=max(5, cfg['francs']//5),
                      pages=cfg['pages'], page_rarity=cfg['page_rarity'],
-                     bonuses=[s for active,s in ((healers,'Поддержка: риск −3 п.п.'),(guards,'Прикрытие: риск −2 п.п.'),
+                     group_loss_win=expedition_group_loss(m['loss_win'] for m in members),
+                     group_loss_fail=expedition_group_loss(m['loss_fail'] for m in members),
+                     bonuses=[s for active,s in ((healers,'Поддержка: риск −1 п.п.'),(guards,'Прикрытие: риск −1 п.п.'),
                                                   (scouts,'Разведка: успех +3 п.п.'),(arcane,'Аномалии: успех +2 п.п.')) if active])
         value['revision'] = digest(value)
         return value
@@ -263,12 +288,26 @@ class ExpeditionMixin:
         async with self._lock:
             with self.connection:
                 self._expedition_finish_due_locked()
-                return [dict(r) for r in self.connection.execute("SELECT id,chat_id,owner_id FROM slave_expeditions WHERE status<>'active' AND notified=0 ORDER BY started_at LIMIT 20")]
+                rows=self.connection.execute('''SELECT id,chat_id,owner_id,finished_at,quote_json,result_json,NULL AS escapes
+                    FROM slave_expeditions WHERE status<>'active' AND notified=0
+                    UNION ALL
+                    SELECT id,chat_id,owner_id,finished_at,NULL,NULL,escapes FROM npc_trip_notices
+                    ORDER BY finished_at LIMIT 20''').fetchall()
+                notices=[]
+                for row in rows:
+                    if row['escapes'] is not None:
+                        escapes=json.loads(row['escapes'])
+                    else:
+                        lost={m['user_id'] for m in json.loads(row['result_json'])['members'] if m['outcome']=='freed'}
+                        escapes=[m['name'] for m in json.loads(row['quote_json'])['members'] if m['user_id'] in lost]
+                    notices.append(dict(id=row['id'],chat_id=row['chat_id'],owner_id=row['owner_id'],escapes=escapes))
+                return notices
 
     async def expedition_notified(self, token):
         async with self._lock:
-            self.connection.execute('UPDATE slave_expeditions SET notified=1 WHERE id=? AND status<>\'active\'', (token,))
-            self.connection.commit()
+            with self.connection:
+                self.connection.execute("UPDATE slave_expeditions SET notified=1 WHERE id=? AND status<>'active'", (token,))
+                self.connection.execute('DELETE FROM npc_trip_notices WHERE id=?',(token,))
 
     def _expedition_public_locked(self, chat, owner):
         rows=self.connection.execute('SELECT * FROM slave_expeditions WHERE chat_id=? AND owner_id=? ORDER BY started_at DESC,rowid DESC LIMIT 10', (chat,owner)).fetchall()

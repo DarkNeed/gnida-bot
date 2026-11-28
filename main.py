@@ -150,8 +150,10 @@ async def main() -> None:
                     await publish_protection(database,bot,username,publisher.raids)
                 for trip in await database.expedition_sweep():
                     try:
+                        escapes=trip['escapes']
                         await bot.send_message(trip['owner_id'],
-                            '🧭 Экспедиция завершена. Итоги и добыча — в твоих владениях.',
+                            '🧭 Экспедиция завершена. '+('Сбежали во время похода: '+', '.join(escapes)+'. ' if escapes else '')+
+                            'Итоги и добыча — в твоих владениях.',parse_mode=None,
                             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
                                 text='Посмотреть итоги',url=arena_link(username,f"holdings_{trip['chat_id']}"))]]))
                     except TelegramAPIError:

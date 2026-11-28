@@ -1373,10 +1373,12 @@ def resolve_skill(
     mastery_before=mastery_context(actor,target)
     mastery_allies = [dict(hp=p['hp']) for p in (allies or [])]
     rpg_context = rpg_action_context(actor,target)
-    rpg_context['action_id']=[actor.get('controller_id'),actor.get('own_turns',0)]
-    gear_action_id=[actor.get('controller_id'),actor.get('slave_id'),actor.get('own_turns',0),state.get('turn',1)]
+    source_id = actor.get('summon_identity') or actor.get('controller_id')
+    rpg_context['action_id']=[source_id,actor.get('own_turns',0)]
+    gear_action_id=[source_id,actor.get('slave_id'),actor.get('own_turns',0),state.get('turn',1)]
     gear_multiplier=gear.modifiers(actor,target,skill)
     gear_summon_before=actor.get('rpg_state',{}).get('summon',0)
+    cover_name = cult.cover_name(target)
     # Capture before _tick expires the last turn; utilities and misses without an
     # attacking skill never trigger it. A missed attack still is an attack.
     pending_bleed = (
@@ -1415,6 +1417,9 @@ def resolve_skill(
     pet_context = pet_before_action(actor, target, skill, actual_cost)
     if "no_critical" in skill.tags:
         critical = False
+    contact_reference = (qte or {}).get('contact_reference')
+    if contact_reference is not None:
+        critical = contact_reference[1]
     timing_criticals = (
         (qte or {}).get('pattern_attack', {}).get('criticals', [])
         if skill.damage_type and 'no_critical' not in skill.tags and not casino_context
@@ -1580,7 +1585,7 @@ def resolve_skill(
         if _damage_reference:
             return dict(damage=damage, critical=critical, last_strike_scale=last_strike_scale)
         if pattern_contacts is not None:
-            reference_damage=damage
+            reference_damage=damage if contact_reference is None else contact_reference[0]
             exact_potential = 0
             rounded_potential = 0
             for c in pattern_contacts:
@@ -1668,7 +1673,7 @@ def resolve_skill(
         actor['cooldowns'][skill_id] = AMENDMENT_COOLDOWN
     effects_text = []
     if brood_absorbed:
-        effects_text.append(f"отпрыск принял {brood_absorbed} урона"
+        effects_text.append(f"{cover_name} принял {brood_absorbed} урона"
                             + ("" if cult.cover_view(target) else " и погиб"))
     if amendment_note:
         effects_text.append(amendment_note)
@@ -1769,6 +1774,7 @@ def resolve_skill(
                     "evasion_flat": "уклонение",
                     "resource": "ресурс",
                     "stun": "ошеломление",
+                    "burn": "горение",
                     "bleed": "кровотечение",
                     "physical_attack_pct": "физ. атака",
                     "resource_leech": "похищение энергии",

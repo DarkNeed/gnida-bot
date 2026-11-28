@@ -39,3 +39,15 @@ button.brood-figure:hover,button.brood-figure:focus-visible,button.brood-figure[
 .brood-sprite.hurt{animation:hurt .4s ease}
 @keyframes brood-root-growth{from{stroke-dashoffset:1;opacity:.45}70%{opacity:1}to{stroke-dashoffset:0;opacity:.72}}
 @media(max-width:550px){.field > .combat-summon.brood-near{left:29%;bottom:18%}.combat-summon.brood-far{right:26%;top:29%}.combat-summon.brood-raid{top:55%;bottom:auto}.brood-hud{padding:2px 4px}}
+.combat-summon[data-kind]:not([data-kind="brood"]) .brood-figure{height:clamp(62px,15vw,115px)}
+.combat-summon[data-kind]:not([data-kind="brood"]) img.brood-sprite{object-fit:contain;object-position:50% 100%}
+.combat-summon[data-pack="2"]{width:clamp(66px,22%,104px)}
+.field>.brood-near[data-pack="2"]{left:calc(29% + var(--summon-lane)*23%);bottom:17%}
+.field>.brood-far[data-pack="2"]{right:calc(25% + var(--summon-lane)*23%);top:29%}
+.combat-summon.brood-raid[data-pack="2"]{left:calc(33% + var(--summon-lane)*25%);top:53%}
+.raid-field:has(.raid-ally.slot-1) .combat-summon.brood-raid[data-pack="2"]{left:calc(19% + var(--brood-slot)*31%);top:calc(47% + var(--summon-lane)*13%)}
+.brood-title>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.combat-summon .brood-title .raid-order-dot{width:6px;height:6px;margin:0}
+.raid-field .combat-summon .brood-title .stat-button{width:19px;height:19px;min-width:19px;min-height:19px}
+.combat-summon[data-pack="2"] .brood-title .raid-order-dot{position:absolute;top:-3px;left:6px}
+.raid-projectile.summon-bolt{width:28px;height:9px;border-radius:1px;background:linear-gradient(90deg,#5eb7a0,#e9f2c5);box-shadow:0 0 9px #55bca2aa;clip-path:polygon(0 20%,84% 0,100% 48%,76% 96%,8% 81%,16% 52%);pointer-events:none}

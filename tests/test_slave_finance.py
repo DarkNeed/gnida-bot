@@ -79,6 +79,21 @@ class FinanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.db.franc_balance(-100,10),before-120)
         self.assertEqual((await self.db.get_owner(-100,100))['owner_id'],10)
 
+    async def test_current_offer_can_be_bought_after_debtor_price_falls(self):
+        await self.enslave_debtor()
+        offer=next(o for o in (await self.db.holdings_view(-100,10))['trader']['finance']['offers'] if o['worker']==20)
+        await self.db.credit_francs(-100,20,150)
+        price=self.db._finance_buyout_cost_locked(-100,20,NPC_ID)
+        self.assertLess(price,offer['price'])
+        before=await self.db.franc_balance(-100,10)
+        with self.assertRaisesRegex(ValueError,'Предложение изменилось'):
+            await self.call('buy',worker=20,price=offer['price'],listed_at=offer['listed_at']-1)
+        with self.assertRaisesRegex(ValueError,'Цена изменилась'):
+            await self.call('buy',worker=20,price=price-1,listed_at=offer['listed_at'])
+        self.assertEqual(await self.db.franc_balance(-100,10),before)
+        await self.call('buy',worker=20,price=offer['price'],listed_at=offer['listed_at'])
+        self.assertEqual(await self.db.franc_balance(-100,10),before-price)
+
     async def test_stale_foreign_expired_and_away_quotes(self):
         q=await self.quote()
         with self.assertRaises(ValueError):await self.call('wager',actor=20,offer=q['offer'])

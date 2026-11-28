@@ -98,7 +98,7 @@ def incoming(target, damage, key):
     if damage <= 0:
         return damage
     m = target.setdefault('rpg_state', {})
-    if key == 'mage_necromancer' and target['level'] >= 12 and m.get('summon', 0) > 0:
+    if key == 'mage_necromancer' and target['level'] >= 12 and not target.get('board_summons') and m.get('summon', 0) > 0:
         guard = .65 if is_final(target) and m.get('death_servants') else .75
         damage = max(1, round(damage * guard))
     return damage
@@ -190,8 +190,12 @@ def post_action(actor, target, skill, hit, damage, key, before, allies=None):
         live = [s for s in (allies or []) if s is not actor and s['hp'] > 0]
         if live:
             buff(min(live, key=lambda s: s['hp']/s['stats']['max_hp']), 'bastion_guard', 'incoming_damage_multiplier', .55, 1)
-    if key == 'mage_necromancer' and hit and 'rpg_soul_spend' in skill.tags and actor['level'] >= 18 and m.get('summon', 0) > 0:
-        m['summon'] = min(3, m['summon'] + 1)
+    if key == 'mage_necromancer' and hit and 'rpg_soul_spend' in skill.tags and actor['level'] >= 18:
+        if actor.get('board_summons'):
+            from arena_summons import extend_undead
+            extend_undead(actor)
+        elif m.get('summon', 0) > 0:
+            m['summon'] = min(3, m['summon'] + 1)
     if key == 'mage_elementalist' and native:
         element = {'mana_shot': 'fire', 'mana_blob': 'ice', 'mana_overload': 'lightning'}.get(skill.skill_id)
         if element:

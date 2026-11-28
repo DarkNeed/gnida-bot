@@ -286,7 +286,7 @@ function fighterStatuses(side){
   if(f.compiled||f.compile_steps?.length)items.push({id:'final:compile',name:f.compiled?'Программа скомпилирована':'Компиляция',icon:3,count:f.compiled?'3/3':f.compile_steps.length+'/3',detail:'Три разных родных навыка превращают зарядку в «В продакшене разберёмся».'});
   if(f.program_until>(side.own_turns||0))items.push({id:'final:program',name:'Программа запущена',icon:3,count:String(f.program_until-(side.own_turns||0)),detail:'Следующий родной навык выбирает один режим: урон, перезарядки или энергия. Число — оставшиеся собственные действия.'});
   if(f.blood_debt>0)items.push({id:'final:blood',name:'Кровный долг',icon:1,count:String(f.blood_debt),detail:'Реально полученный прямой урон. От 25% max HP усиливает «За всю семью». Самоурон не учитывается; максимум — собственный max HP.'});
-  if(f.beast>0)items.push({id:'final:beast',name:'Чучело хищника',icon:12,count:String(f.beast),detail:'Осталось действий жизни слуги. Родная атака вызывает один укус, поддержка готовит защиту. Пассивки и питомец повторно не запускаются.'});
+  if(f.beast>0&&!side.board_summons)items.push({id:'final:beast',name:'Чучело хищника',icon:12,count:String(f.beast),detail:'Осталось действий жизни слуги. Родная атака вызывает один укус, поддержка готовит защиту. Пассивки и питомец повторно не запускаются.'});
   if(f.counter_until>(side.own_turns||0))items.push({id:'final:counter',name:'Контрстойка',icon:10,count:String(f.counter_until-(side.own_turns||0)),detail:'«Лунная дуга» превращена в «Луна уже за твоей спиной». Расход только при попадании; число — оставшиеся собственные действия.'});
   for(const [id,name,icon,detail] of [['mana','Перенасыщение',5,'Перегрузка: +35% урона за заряд. При трёх зарядах весь урон дополнительно ×1,5, вместе с Эхом и Потоком.'],['faith','Вера',11,'Кара: +20% урона за заряд; Страшный суд: +40%.'],['souls','Души',12,'Жатва душ: +30% урона за душу.'],['beast','Зверство',4,'+10% своего и входящего урона за заряд.'],['retribution','Воздаяние',6,'Кара Паладина: +15% урона за заряд.']]){
     if(rpg[id]>0)items.push({id:'rpg:'+id,name,icon,count:rpg[id]+'/3',detail:detail+' Это заряды, не длительность.'});
@@ -294,7 +294,7 @@ function fighterStatuses(side){
   if(rpg.weapon_open)items.push({id:'rpg:weapon',name:'Оружие раскрыто',icon:10,count:'1',detail:'Тяжёлый разрез сильнее, дороже и пробивает защиту. Возврат крови слабее, чем в сложенной форме.'});
   if(rpg.visceral_ready&&(side.own_turns||0)<rpg.visceral_until)items.push({id:'rpg:visceral',name:'Висцеральная атака готова',icon:14,count:String(rpg.visceral_until-(side.own_turns||0)),detail:'Открытие после прерывания. '+(side.archclass_id==='hunter_moon'&&side.level>=18?'Полный промах сохраняет окно до его истечения.':'Расходуется при попытке висцеральной атаки.')+' Число — оставшиеся собственные действия.'});
   if(rpg.rally>0)items.push({id:'rpg:rally',name:'Кровавый ответ',icon:1,count:String(rpg.rally),detail:'Можно вернуть до '+esc(rpg.rally)+' недавно потерянного HP следующей успешной атакой. Пропуск или поддержка теряет запас.'});
-  if(rpg.summon>0)items.push({id:'rpg:skeleton',name:rpg.death_servants?'Страж и Палач':'Скелет',icon:12,count:String(rpg.summon),detail:'Атакует после следующего действия хозяина. Осталось действий жизни: '+esc(rpg.summon)+'.'+(side.archclass_id==='mage_necromancer'?' Экипированная Упругая мана даёт заряд Перенасыщения за попавшую вражескую атаку при призыве, до 3; не больше одного за действие.'+(side.level>=12?' Поглощает 25% прямого урона без сокращения жизни призыва.':''):'')});
+  if(rpg.summon>0&&!side.board_summons)items.push({id:'rpg:skeleton',name:rpg.death_servants?'Страж и Палач':'Скелет',icon:12,count:String(rpg.summon),detail:'Атакует после следующего действия хозяина. Осталось действий жизни: '+esc(rpg.summon)+'.'+(side.archclass_id==='mage_necromancer'?' Экипированная Упругая мана даёт заряд Перенасыщения за попавшую вражескую атаку при призыве, до 3; не больше одного за действие.'+(side.level>=12?' Поглощает 25% прямого урона без сокращения жизни призыва.':''):'')});
   if(rpg.echo_ready||(side.class_id==='mage'&&side.archclass_id==='mage_archmage'&&side.level>=10))items.push({id:'rpg:echo',name:rpg.echo_ready?'Мановое эхо готово':'Подготовка Манового эха',icon:5,count:rpg.echo_ready?'2/2':(rpg.echo_steps?.length?1:0)+'/2',detail:rpg.echo_ready?'Следующая платная родная атака: +60% урона; с 12 уровня −10 маны, минимум 1. Полный промах сохраняет Эхо.':'Два разных родных действия, хотя бы одно — атака. Промахи тоже дают шаг. Повторы не добавляют шаг и не сбрасывают цепочку; одной поддержкой Эхо не подготовить.'});
   for(const [id,name,icon,max,detail] of [['onslaught','Натиск',4,3,'Усиливает родные атаки; повышает входящий урон.'],['heat','Жар',4,5,'3: горение и возможность возрождения. 5: Всё обратить в пепел.'],['steadfast','Стойкость',6,3,'Накапливается от прямого урона под защитой; 3 открывает Бастион.']]){
     if(rpg[id]>0)items.push({id:'rpg:'+id,name,icon,count:rpg[id]+'/'+max,detail});
@@ -442,16 +442,32 @@ function timelineIdentity(queue,key,name){
 function hud(s,key,queue){
   return '<div class="hud '+(key===near?"player":"enemy")+'"><div class="row"><div class="name">'+timelineIdentity(queue,key,s.name)+esc(s.name)+'</div><span class="badge">Lv.'+s.level+'</span><button class="stat-button" data-inspect="'+key+'" aria-label="Статистика '+esc(s.name)+'">ⓘ</button></div><div class="meta">'+esc(s.class_name)+(s.controlled?" · контроль −20%":"")+'</div><div class="barline"><span>HP</span><span id="hp-'+key+'" data-vital-label="hp-'+key+'">'+s.hp+" / "+s.stats.max_hp+'</span></div><div class="bar'+(s.hp/s.stats.max_hp<.3?' low':'')+'" id="health-'+key+'">'+vitalFill('hp-'+key,s.hp,s.stats.max_hp)+'</div><div class="barline"><span>'+esc(s.resource_name)+'</span><span id="mp-'+key+'" data-vital-label="mp-'+key+'">'+s.resource+" / "+s.stats.resource_max+'</span></div><div class="bar mana" id="mana-'+key+'">'+vitalFill('mp-'+key,s.resource,s.stats.resource_max)+'</div></div>';
 }
-function broodMarkup(unit,key,enemy,queue,slot=0,raid=false){
+const summonKey=key=>/^(brood|summon):/.test(key||'');
+const summonRoles={skeleton:['Скелет','До трёх костяных разрядов по своей отметке. Попадание даёт хозяину Душу. С 12-го уровня прикрывает хозяина на 25%.','skeleton'],
+  warden:['Страж','Принимает 35% урона по хозяину на себя. Гибель Стража не мешает Палачу атаковать.','brood_guard'],
+  executioner:['Палач','До трёх самостоятельных атак «Казнь». Попадание даёт хозяину Душу.','death_servants'],
+  effigy:['Чучело','После родной атаки хозяина готовит укус. Поддержка хозяина включает прикрытие на 20%. Замедленная цель получает больше урона; при двух ослаблениях укус игнорирует часть брони.','beast']};
+function summonMarkup(unit,key,enemy,queue,slot=0,raid=false,lane=0,count=1){
   const id=(raid?'raid-fighter-':'sprite-')+key, label=enemy?'Выбрать цель: '+unit.name:unit.name;
   const tag=enemy?'button':'div', select=enemy?' type="button" data-battle-target="'+esc(key)+'" aria-pressed="'+(key===battleTarget)+'"':'';
   const hp=Math.max(0,unit.hp);
-  return '<article class="combat-summon '+(enemy?'brood-far':'brood-near')+(raid?' brood-raid':'')+'" data-summon-key="'+esc(key)+'" data-summon-owner="'+esc(unit.owner)+'" style="--brood-slot:'+slot+'">'+
-    '<'+tag+' class="brood-figure"'+select+' aria-label="'+esc(label)+'"><img id="'+esc(id)+'" class="brood-sprite raid-sprite" src="/static/assets/shub_brood.png" alt=""></'+tag+'>'+
-    '<div class="brood-hud"><div class="brood-title">'+timelineIdentity(queue,key,unit.name)+'<span>Отпрыск</span><button type="button" class="stat-button" data-summon-info="'+esc((raid?'raid:':'')+key)+'" aria-label="Подробности: отпрыск">ⓘ</button></div>'+
-    '<div class="brood-meta"><span class="brood-stance">'+statusIcon(unit.predator?'brood_predator':'brood_guard')+(unit.predator?'Хищник':'Защитник')+'</span><span>'+hp+'/'+unit.max_hp+' HP</span></div>'+
+  const role=summonRoles[unit.kind], title=role?.[0]||'Отпрыск', kind=role?unit.kind:'brood';
+  const art=role?'/static/assets/summons/'+kind+'-v1.png':'/static/assets/shub_brood.png';
+  const stance=role?(unit.guarding?unit.guarding+'%':'×'+unit.remaining):(unit.predator?'Хищник':'Защитник');
+  return '<article class="combat-summon '+(enemy?'brood-far':'brood-near')+(raid?' brood-raid':'')+'" data-kind="'+kind+'" data-summon-key="'+esc(key)+'" data-summon-owner="'+esc(unit.owner)+'" data-pack="'+count+'" data-lane="'+lane+'" style="--brood-slot:'+slot+';--summon-lane:'+lane+'">'+
+    '<'+tag+' class="brood-figure"'+select+' aria-label="'+esc(label)+'"><img id="'+esc(id)+'" class="brood-sprite raid-sprite" src="'+art+'" alt=""></'+tag+'>'+
+    '<div class="brood-hud"><div class="brood-title">'+timelineIdentity(queue,key,unit.name)+'<span>'+title+'</span><button type="button" class="stat-button" data-summon-info="'+esc((raid?'raid:':'')+key)+'" aria-label="Подробности: '+(role?esc(title):'отпрыск')+'">ⓘ</button></div>'+
+    '<div class="brood-meta"><span class="brood-stance">'+statusIcon(role?.[2]||(unit.predator?'brood_predator':'brood_guard'))+stance+'</span><span>'+hp+'/'+unit.max_hp+' HP</span></div>'+
     '<div class="bar'+(hp/unit.max_hp<.3?' low':'')+'">'+vitalFill('brood-'+key,hp,unit.max_hp)+'</div>'+
     '<div class="brood-effects">'+statusButtons(unit,(raid?'raid:':'')+key)+'</div></div></article>';
+}
+function summonsMarkup(entries,enemyOwner,queue,owners=null){
+  const counts={},used={};
+  for(const [,u] of entries)counts[u.owner]=(counts[u.owner]||0)+1;
+  return entries.map(([k,u])=>{
+    const lane=used[u.owner]||0;used[u.owner]=lane+1;
+    return summonMarkup(u,k,u.owner===enemyOwner,queue,owners?Math.max(0,owners.indexOf(u.owner)):0,!!owners,lane,counts[u.owner]);
+  }).join('');
 }
 function previousBrood(field,token){
   return new Map(field?.dataset.broodBattle===token?[...field.querySelectorAll('.combat-summon')].map(el=>[el.dataset.summonKey,el]):[]);
@@ -465,6 +481,7 @@ function syncBrood(field,token,markup,previous=previousBrood(field,token)){
     const current=previous.get(next.dataset.summonKey);
     if(!current){field.append(next.cloneNode(true));continue;}
     current.className=next.className;current.style.cssText=next.style.cssText;
+    current.dataset.pack=next.dataset.pack;current.dataset.lane=next.dataset.lane;
     const figure=current.querySelector('.brood-figure'),desired=next.querySelector('.brood-figure');
     if(figure.tagName!==desired.tagName)figure.replaceWith(desired.cloneNode(true));
     else if(desired.hasAttribute('aria-pressed'))figure.setAttribute('aria-pressed',desired.getAttribute('aria-pressed'));
@@ -480,9 +497,11 @@ function showSummon(key){
   const old=document.getElementById('summon-details');old?.remove();
   const dialog=document.createElement('dialog');dialog.id='summon-details';dialog.className='effect-dialog';
   dialog.setAttribute('aria-label',unit.name);
-  dialog.innerHTML='<button class="small" data-close-summon aria-label="Закрыть подробности">✕</button>'+statusIcon(unit.predator?'brood_predator':'brood_guard')+'<h2>'+esc(unit.name)+'</h2>'+
-    '<p class="muted">Рост '+unit.stage+' / 3 · '+unit.hp+' / '+unit.max_hp+' HP</p>'+
-    '<p>'+(unit.predator?'Хищник: сам готовит «Хватку корней». Принимает на себя 15% прямого урона по хозяину.':'Защитник: принимает на себя 30% прямого урона по хозяину.')+
+  const role=summonRoles[unit.kind];
+  const lifeline=role?(unit.kind==='skeleton'||unit.kind==='executioner'?'Атак осталось: ':'Действий хозяина осталось: ')+unit.remaining:'Рост '+unit.stage+' / 3';
+  dialog.innerHTML='<button class="small" data-close-summon aria-label="Закрыть подробности">✕</button>'+statusIcon(role?.[2]||(unit.predator?'brood_predator':'brood_guard'))+'<h2>'+esc(unit.name)+'</h2>'+
+    '<p class="muted">'+lifeline+' · '+unit.hp+' / '+unit.max_hp+' HP</p>'+
+    '<p>'+(role?role[1]:unit.predator?'Хищник: сам готовит «Хватку корней». Принимает на себя 15% прямого урона по хозяину.':'Защитник: принимает на себя 30% прямого урона по хозяину.')+
     ' Если атака бьёт по обоим, перехвата нет.</p>'+statusDetails(unit);
   dialog.addEventListener('click',e=>{if(e.target===dialog||e.target.closest('[data-close-summon]'))dialog.close();});
   dialog.addEventListener('close',()=>dialog.remove());document.body.append(dialog);dialog.showModal();
@@ -512,6 +531,19 @@ async function rootsImpact(origin,target,field){
   }
   field.append(svg);await sleep(reduced?140:370);svg.remove();
 }
+async function combatProjectile(source,target,field,skill){
+  if(!source||!target||!field||reduced)return;
+  const a=source.getBoundingClientRect(),b=target.getBoundingClientRect(),r=field.getBoundingClientRect();
+  const x=a.x+a.width/2,y=a.y+a.height/2,dx=b.x+b.width/2-x,dy=b.y+b.height/2-y;
+  const orb=document.createElement('span');
+  const bone=skill==='summon_skeleton',angle=bone?' rotate('+Math.atan2(dy,dx)+'rad)':'';
+  orb.className='raid-projectile'+(bone?' summon-bolt':'');
+  orb.style.left=(x-r.x)+'px';orb.style.top=(y-r.y)+'px';field.append(orb);
+  try{
+    await orb.animate([{transform:'translate(0,0)'+angle},{transform:'translate('+dx+'px,'+dy+'px)'+angle}],
+      {duration:350,easing:'ease-in'}).finished;
+  }finally{orb.remove();}
+}
 function battleScreen(data,{vitals,casts}={}){
   window.ArenaQTEWatch?.context('battle',data.token,data.status==='active'&&!data.state?.finished);
   if(data.qte?.challenge)setTimeout(runPendingMiniGames,0);
@@ -529,10 +561,10 @@ function battleScreen(data,{vitals,casts}={}){
   if(!data.state.finished&&brood.some(([,u])=>u.owner===far)){
     enemySprite=enemySprite.replace('<img ', '<img data-battle-target="'+far+'" role="button" tabindex="0" aria-label="Выбрать цель: '+esc(b.name)+'" ');
   }
-  app.innerHTML='<section class="battle">'+top("Арена",data.state.mirror_token?'ЗЕРКАЛО · '+(data.floor===5?'БОСС':'ЭТАЖ '+data.floor+' / 5'):data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":data.ranked?"РЕЙТИНГ":"БЕЗ СТАВКИ")+'</span>')+
+  app.innerHTML='<section class="battle">'+top("Арена",data.state.mirror_token?'ЗЕРКАЛО · '+((data.state.mirror_boss??data.floor===5)?'БОСС'+(data.state.mirror_floor_length?' · ЭТАЖ '+data.floor+' / 10':''):'ЭТАЖ '+data.floor+' / '+(data.state.mirror_layout===2?10:5)):data.mode==="wasteland"?"ПУСТОШЬ · ЭТАЖ "+data.floor:"ГНИДА · ПОШАГОВЫЕ БОИ",'<span class="pill">'+(demo?"ДЕМО":data.stake?data.stake+" ₣":data.ranked?"РЕЙТИНГ":"БЕЗ СТАВКИ")+'</span>')+
     '<div class="field">'+hud(b,far,!data.state.finished&&data.state.action_queue)+'<div class="podium enemy"></div>'+enemySprite+'<div class="podium player"></div>'+fighterImage(a,"sprite player","sprite-"+near)+hud(a,near,!data.state.finished&&data.state.action_queue)+'<div class="status-row enemy" id="statuses-'+far+'" aria-label="Эффекты противника"></div><div class="status-row player" id="statuses-'+near+'" aria-label="Эффекты твоего бойца"></div></div><div class="turnbanner" id="turn"></div><div class="turn-timer" id="turn-timer" role="timer" hidden></div><section class="panel" id="panel" aria-live="polite"></section><footer class="foot"><span id="round">ХОД '+data.state.turn+'</span>'+(data.state.mirror_token&&data.actor_id===data.state.sides.a.controller_id?button("К забегу","mirror:"+data.state.mirror_token,"small"):"")+button("В меню","menu","small")+'</footer></section>';
   const field=app.querySelector('.battle .field');
-  syncBrood(field,data.token,brood.map(([key,u])=>broodMarkup(u,key,u.owner===far,data.state.action_queue)).join(''),oldBrood);
+  syncBrood(field,data.token,summonsMarkup(brood,far,data.state.action_queue),oldBrood);
   paintBattleTarget();
   paintVitals(field,vitals);
   mountBattleTimeline(data.state,casts);
@@ -551,8 +583,8 @@ function mountBattleTimeline(state,casts){
     const intent=document.createElement('div');intent.className='battle-next-intent';intent.setAttribute('role','status');
     const remaining=Math.max(0,next.at-(queue.time||0));
     const target=state.summons?.[next.targets?.[0]];
-    const redirected=next.interceptor===near&&next.original_target?.startsWith('brood:');
-    intent.textContent=enemy.name+' готовит: '+(skill?.name||next.skill)+(target?' → отпрыск':redirected?' → ты':'')+' · '+(remaining>.01?'через '+remaining.toFixed(2)+' с':'сейчас');
+    const redirected=next.interceptor===near&&summonKey(next.original_target);
+    intent.textContent=enemy.name+' готовит: '+(skill?.name||next.skill)+(target?' → '+target.name:redirected?' → ты':'')+' · '+(remaining>.01?'через '+remaining.toFixed(2)+' с':'сейчас');
     if(!next.resolving&&state.ready_sides?.includes(near)&&!current.qte?.waiting&&(target?.owner===near||redirected)){
       intent.insertAdjacentHTML('beforeend',button(redirected?'Отменить перехват':'Взять удар на себя · 8 энергии','brood-intercept:'+next.actor,'small brood-intercept'));
     }
@@ -629,7 +661,7 @@ async function animateEvent(event){
   if(isResourceRegenEvent(event))return;
   const panel=document.getElementById("panel"); if(!panel)return;
   const userTurn=current.state.sides[event.side]?.controller_id===current.actor_id;
-  document.getElementById("turn").textContent=event.source?.startsWith('brood:')?'Отпрыск · своё действие':
+  document.getElementById("turn").textContent=summonKey(event.source)?(event.actor_name||'Призванное существо')+' · своё действие':
     userTurn?"Твой ход":"Ход: "+current.state.sides[event.side].name;
   document.getElementById("round").textContent="ХОД "+event.seq;
   panel.innerHTML='<div class="battlelog">'+esc(event.skill_name||event.text)+'</div>';
@@ -640,6 +672,9 @@ async function animateEvent(event){
   const roots=(event.skill||event.skill_id)==='cult_roots'&&summonOrigin('.battle .field',event.side);
   attacker?.classList.add("attack");
   if(roots&&target)await rootsImpact(roots,target,app.querySelector('.battle .field'));
+  else if(event.damage_type==="magic"&&(summonKey(event.source)||summonKey(other))){
+    await combatProjectile(attacker,target,app.querySelector('.battle .field'),event.skill||event.skill_id);
+  }
   else if(event.damage_type==="magic"){
     const projectile=document.createElement("div");projectile.className="projectile";projectile.style.animation=(event.side===near?"projectile":"enemyProjectile")+" .5s forwards";
     document.querySelector(".field").append(projectile);setTimeout(()=>projectile.remove(),600);
@@ -649,11 +684,15 @@ async function animateEvent(event){
   if(event.hit_results||(event.hit&&event.damage)){
     for(const [i,amount] of (event.hits||[event.damage]).entries()){
       const part=event.hit_results?.[i],landed=part?part.hit:amount>0;
-      if(landed&&amount)target?.classList.add("hurt");const number=document.createElement("div");number.className="damage";number.textContent=part&&!landed?(part.blocked?"Блок":part.dodged?"Уклонение":"Промах"):amount?"−"+amount:"";if(other===near){number.style.left="23%";number.style.top="65%";}const field=document.querySelector(".field");if(other.startsWith('brood:')&&target){const a=target.getBoundingClientRect(),r=field.getBoundingClientRect();number.style.cssText='left:'+(a.x+a.width*.48-r.x)+'px;top:'+(a.y-r.y)+'px;right:auto;font-size:20px';}field.append(number);setTimeout(()=>number.remove(),1000);
+      if(landed&&amount)target?.classList.add("hurt");const number=document.createElement("div");number.className="damage";number.textContent=part&&!landed?(part.blocked?"Блок":part.dodged?"Уклонение":"Промах"):amount?"−"+amount:"";if(other===near){number.style.left="23%";number.style.top="65%";}const field=document.querySelector(".field");if(summonKey(other)&&target){const a=target.getBoundingClientRect(),r=field.getBoundingClientRect();number.style.cssText='left:'+(a.x+a.width*.48-r.x)+'px;top:'+(a.y-r.y)+'px;right:auto;font-size:20px';}field.append(number);setTimeout(()=>number.remove(),1000);
       if(event.hits){if(landed&&amount)await slashImpact(target);else await sleep(190);target?.classList.remove("hurt");}
     }
   }
   if(event.status_after)renderBattleStatuses(event.status_after);
+  if(event.summons_after){
+    const field=app.querySelector('.battle .field'),far=near==='a'?'b':'a';
+    syncBrood(field,current.token,summonsMarkup(Object.entries(event.summons_after),far,current.state.action_queue));
+  }
   await sleep(450);target?.classList.remove("hurt");panel.innerHTML='<div class="battlelog">'+esc(event.text)+'</div>';await sleep(700);
 }
 async function applyBattle(data,animate=true){
@@ -739,6 +778,12 @@ function mirrorScreen(data){
   audio.scene(data.status==='active'?'raid':'menu');
   closeEffect();statusViews=null;
   closeStats();mirrorRun=data;current=null;token="";chat=data.chat_id;
+  if(data.layout===2&&window.MirrorDungeon){
+    const chrome=top('Зеркальная Пустошь','',button('В меню','menu','small'));
+    const body=window.MirrorDungeon.render(data,{button,confirm:mirrorAbandonConfirm,petRewards,rarityBadge,chrome});
+    app.innerHTML='<section class="menu mirror mirror-v2">'+body+'</section>';
+    window.MirrorDungeon.focus(app,data);audio.refresh();window.scrollTo(0,0);return;
+  }
   const choice=(name,id,description,disabled=false)=>button(esc(name)+'<span class="muted">'+esc(description)+'</span>',id,'mirror-choice',disabled);
   let body='<div class="card"><h2>Этаж '+data.floor+' / '+data.total_floors+'</h2><p>HP '+data.hp+' / '+data.max_hp+' · Энергия '+data.resource+' / '+data.resource_max+'</p><p>Осколки: '+data.shards+' · Получено: '+data.xp+' XP</p><p class="muted">Осколки и дары временные. Энергия +30 после победы; здоровье сохраняется. Таймера нет.</p></div>';
   const itemRewards=(data.item_rewards||[]).map(item=>'<p>'+esc(item.kind==='skill'?'Трактат навыка: ':item.kind==='passive'?'Трактат пассивки: ':'')+esc(item.name)+' ×'+esc(item.quantity)+' '+rarityBadge(item.rarity)+'</p>').join('');
@@ -768,7 +813,7 @@ async function mirrorAction(action,value=''){
   document.querySelectorAll('.mirror button').forEach(b=>b.disabled=true);
   try{
     const data=await api('/api/mirror/'+mirrorRun.token,{action,value,revision:mirrorRun.revision});mirrorAbandonConfirm=false;
-    if(action==='next'&&data.phase==='combat'){current=null;lastSeq=0;battleScreen(await api('/api/battle/'+data.battle_token));}
+    if((action==='next'||action==='visit')&&data.phase==='combat'){current=null;lastSeq=0;battleScreen(await api('/api/battle/'+data.battle_token));}
     else mirrorScreen(data);
   }catch(error){toast(error.message);try{mirrorScreen(await api('/api/mirror/'+mirrorRun.token));}catch{mirrorScreen(mirrorRun);}}
   finally{busy=false;}
@@ -1003,7 +1048,7 @@ function menuScreen(data){
     body+='</div>';
   }
   if(data.active?.length)body+='<div class="card"><h3>Твои бои во всех чатах</h3>'+data.active.map(b=>'<div class="row">'+button('Открыть бой','battle:'+b.token)+button(b.status==='pending'?'Отменить приглашение':'Сдаться / выйти','leavebattle:'+b.token,'small danger')+'</div>').join('')+'</div>';
-  if(data.mirror_runs?.length)body+='<div class="card"><h3>Зеркальные забеги</h3><div class="stack">'+data.mirror_runs.map(r=>button((r.status==='active'?'Продолжить':'Итоги')+' · этаж '+r.floor+' / 5 · '+r.xp+' XP','mirror:'+r.token,r.status==='active'?'primary':'')+(r.status==='active'?button('Оставить забег','leavemirror:'+r.token,'small danger'):'' )).join('')+'</div></div>';
+  if(data.mirror_title||data.mirror_runs?.length)body+='<div class="card"><h3>Зеркальные забеги</h3>'+(data.mirror_title?'<p class="eyebrow">Титул · '+esc(data.mirror_title)+'</p>':'')+'<div class="stack">'+(data.mirror_runs||[]).map(r=>button((r.status==='active'?'Продолжить':r.phase==='reward'?'Выбрать трофей':'Итоги')+' · этаж '+r.floor+' / '+(r.total_floors||5)+' · '+r.xp+' XP','mirror:'+r.token,r.status==='active'?'primary':'')+(r.status==='active'?button('Оставить забег','leavemirror:'+r.token,'small danger'):'' )).join('')+'</div></div>';
   if(data.raids?.length)body+='<div class="card"><h3>Рейды и РП-встречи</h3><div class="stack">'+data.raids.map(r=>raidButton((r.protection_event?'Защита предприятий · ':r.boss_id==='encounter'?'РП-встреча · ':'')+(r.status==='active'?'Продолжить':r.status==='lobby'?'Сбор отряда':'Итоги')+' · раунд '+r.round,'open:'+r.token)+((r.status==='active'||r.status==='lobby')&&!(r.boss_id==='encounter'&&r.creator_id===data.actor_id)?button('Выйти из рейда','leaveraid:'+r.token,'small danger'):'' )).join('')+'</div></div>';
   app.innerHTML='<section class="menu">'+top("Твоя арена","ГНИДА · ЧАТ "+chat,button("Обновить","refresh","small"))+'<div class="content"><div class="stack">'+button('🏰 Владения · рабы и предприятия','holdings')+button('✦ Питомцы · посылки и коллекция','pets')+'</div>'+body+'</div></section>';
   audio.refresh();
@@ -1108,7 +1153,7 @@ app.addEventListener("click",async event=>{
   const info=event.target.closest('[data-summon-info]');if(info){showSummon(info.dataset.summonInfo);return;}
   const inspect=event.target.closest('[data-inspect]');if(inspect){showStats(inspect.dataset.inspect);return;}
   const target=event.target.closest('[data-battle-target]');
-  if(target&&!busy){battleTarget=target.dataset.battleTarget.startsWith('brood:')?target.dataset.battleTarget:'';paintBattleTarget();return;}
+  if(target&&!busy){battleTarget=summonKey(target.dataset.battleTarget)?target.dataset.battleTarget:'';paintBattleTarget();return;}
   const b=event.target.closest("button");if(!b||b.disabled||busy)return;
   if(b.dataset.skill){
     const s=current?.state?.sides?.[near]?.skill_details?.find(it=>it.skill_id===b.dataset.skill);
@@ -1360,6 +1405,7 @@ async function boot(){
     if(start==='pets'||/^pets_-?\d+$/.test(start)){location.replace('/pets'+(start==='pets'?'':'?chat='+start.slice(5))+location.hash);return;}
     if(start==='holdings'||/^holdings_-?\d+$/.test(start)){await openHoldings(start==='holdings'?null:Number(start.slice(9)));}
     else if(start.startsWith("r_")){raidScreen(await api('/api/raid/'+start.slice(2)));}
+    else if(/^m_[a-zA-Z0-9_-]{16,32}$/.test(start)){mirrorScreen(await api('/api/mirror/'+start.slice(2)));}
     else if(start.startsWith("b_")){token=start.slice(2);const data=await api("/api/battle/"+token);lastSeq=data.state?.log.at(-1)?.seq||0;battleScreen(data);}
     else if(/^(menu|shop)_-?\d+$/.test(start)){chat=Number(start.slice(5));if(start.startsWith('shop_'))page='merchant';await openMenu();}
     else app.innerHTML='<div class="loading"><h2>Открой арену из бота</h2><p class="muted">Кнопка «Арена» в /menu или «Открыть бой» под вызовом в чате.</p></div>';
@@ -1496,15 +1542,14 @@ function selectEncounterTarget(key){
   const label=document.getElementById('encounter-target-name');
   if(label)label.textContent=raidCurrent.data.enemies[key].name;
 }
-function raidName(data,key){return key==='boss'?data.boss_name:data.data?.enemies?.[key]?.name||data.data?.players[key]?.fighter.name||data.data?.summons?.[key]?.name||(key?.startsWith('brood:')?'Отпрыск Шуб-Ниггурата':'Участник');}
+function raidName(data,key){return key==='boss'?data.boss_name:data.data?.enemies?.[key]?.name||data.data?.players[key]?.fighter.name||data.data?.summons?.[key]?.name||(key?.startsWith('brood:')?'Отпрыск Шуб-Ниггурата':summonRoles[key?.split(':')[2]]?.[0]||'Участник');}
 function syncRaidBrood(field,data,previous){
   const d=data.data,owners=Object.keys(d?.players||{});
-  syncBrood(field,data.token,Object.entries(d?.summons||{}).map(([key,unit])=>
-    broodMarkup(unit,key,false,d.action_queue,Math.max(0,owners.indexOf(unit.owner)),true)).join(''),previous);
+  syncBrood(field,data.token,summonsMarkup(Object.entries(d?.summons||{}),null,d?.action_queue,owners),previous);
 }
 function soloRaidBroodIntercept(data,source,intent){
   const d=data.data,key=String(data.actor_id),target=d.summons?.[intent.targets?.[0]];
-  const undo=intent.interceptor===key&&intent.original_target?.startsWith('brood:');
+  const undo=intent.interceptor===key&&summonKey(intent.original_target);
   if(raidPlaying||(!target&&!undo)||window.RaidIntentLines?.showLines(data)||!window.RaidIntentLines?.canIntercept(data,intent))return '';
   return ' '+raidButton(undo?'Отменить перехват':'Взять удар на себя · 8 энергии','intercept:'+source,'small brood-intercept');
 }
@@ -1662,13 +1707,8 @@ async function raidAnimate(event,{sound=true}={}){
   if(event.skill&&event.damage_type&&actor&&target&&event.actor!==event.target){
     const roots=event.skill==='cult_roots'&&summonOrigin('.raid-field',event.actor);
     if(roots&&field)await rootsImpact(roots,target,field);
-    else if(event.damage_type==='magic'&&field){
-      const a=actor.getBoundingClientRect(),t=target.getBoundingClientRect(),r=field.getBoundingClientRect();
-      const orb=document.createElement('span');orb.className='raid-projectile';field.append(orb);
-      orb.style.left=(a.x+a.width/2-r.x)+'px';orb.style.top=(a.y+a.height/2-r.y)+'px';
-      if(!reduced)await orb.animate([{transform:'translate(0,0)'},{transform:'translate('+(t.x+t.width/2-a.x-a.width/2)+'px,'+(t.y+t.height/2-a.y-a.height/2)+'px)'}],{duration:350,easing:'ease-in'}).finished;
-      orb.remove();
-    }else{
+    else if(event.damage_type==='magic'&&field)await combatProjectile(actor,target,field,event.skill);
+    else{
       actor.classList.add(event.actor==='boss'||raidCurrent.data.enemies?.[event.actor]?'raid-strike-left':'raid-strike-right');await sleep(350);
       actor.classList.remove('raid-strike-left','raid-strike-right');
     }

@@ -151,12 +151,17 @@ def _player(data, key, skills, rng, entry=None):
     if not p:
         return
     actor, selected = p['fighter'], p['selected']
+    def log_pass(text, before):
+        if (loss := before - actor['hp']) > 0:
+            text += f' · горение: −{loss} HP'
+        _log(data, key, key, dict(text=text))
     p['manual_turns'] += int(selected is not None)
     p['missed'] = 0 if selected is not None else p['missed'] + 1
     p['reward_blocked'] = p.get('reward_blocked', False) or p['missed'] >= 3
     if any(e['kind'] == 'stun' for e in actor['effects']):
+        before=actor['hp']
         _tick(actor)
-        _log(data, key, key, dict(text='Ошеломление: каст сорван.'))
+        log_pass('Ошеломление: каст сорван.',before)
         return
     enemy_key = p.get('selected_target')
     enemy = data['enemies'].get(enemy_key)
@@ -166,9 +171,10 @@ def _player(data, key, skills, rng, entry=None):
     if selected in skills and not skills[selected].hostile and (not enemy or enemy['hp'] <= 0):
         enemy_key, enemy = living[0]
     if selected is None or selected == 'defend' or not enemy or enemy['hp'] <= 0:
+        before=actor['hp']
         defend(actor, living[0][1], data)
-        _log(data, key, key, dict(text='Защита: обе защиты +35%.' if selected in (None, 'defend') else
-                                'Цель уже повержена: защита без расхода энергии.'))
+        log_pass('Защита: обе защиты +35%.' if selected in (None, 'defend') else
+                 'Цель уже повержена: защита без расхода энергии.',before)
         return
     # A physical second cast is a new action.  It is deliberately not granted
     # the first cast's QTE proof; otherwise one perfect input could be replayed
@@ -182,8 +188,9 @@ def _player(data, key, skills, rng, entry=None):
                               allies=[v['fighter'] for v in alive_players(data).values()], raid_context=data)
         _log(data, key, enemy_key, event, selected)
     except ValueError:
+        before=actor['hp']
         defend(actor, enemy, data)
-        _log(data, key, key, dict(text='Навык стал недоступен: защита без расхода энергии.'))
+        log_pass('Навык стал недоступен: защита без расхода энергии.',before)
     finally:
         actor.pop('_qte_attack', None)
         actor.pop('_qte_pattern_attack', None)

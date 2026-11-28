@@ -55,6 +55,21 @@ class HoldingsTests(unittest.IsolatedAsyncioTestCase):
     async def post(self,body,chat=-100,user=10):
         return await self.client.post('/api/holdings/'+str(chat),json=body,headers={'X-Telegram-Init-Data':signed(user,now=int(time.time()))})
 
+    async def test_expedition_group_risk_is_explicit_and_preparation_matters(self):
+        from slave_expeditions import expedition_group_loss
+        users=list(range(100,105))
+        weak=await self.db.expedition_quote(-100,10,'ruins',users)
+        with self.db.connection:
+            for user in users:
+                self.db._arena_profile_locked(-100,user,True)
+                self.db.connection.execute('UPDATE personal_profiles SET level=20 WHERE user_id=? AND chat_id=0',(user,))
+        ready=await self.db.expedition_quote(-100,10,'ruins',users)
+        self.assertGreater(weak['group_loss_win'],70)
+        self.assertLess(ready['group_loss_win'],weak['group_loss_win'])
+        self.assertLess(ready['group_loss_fail'],weak['group_loss_fail'])
+        for key in ('win','fail'):
+            self.assertEqual(ready['group_loss_'+key],expedition_group_loss(m['loss_'+key] for m in ready['members']))
+
     async def test_batch_transfer_capacity_atomic_and_stale(self):
         a=await self.site();b=await self.site('tavern')
         v=await self.view();await self.db.enterprise_batch(-100,10,[100,101],a['id'],'worker',v['revision'])

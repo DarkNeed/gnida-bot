@@ -202,3 +202,120 @@ class SummonTests(unittest.TestCase):
         action(data, '10', 'defend', 'boss', 4.)
         queue.advance(data, SKILLS, Hits())
         self.assertTrue(any(e['actor'] == 'boss' and e['target'] == key and e.get('damage',0) > 0 for e in data['log']))
+
+
+class OtherSummonsTests(unittest.TestCase):
+    def duel(self, klass='mage', branch='mage_necromancer'):
+        loadout = ['mana_barrier','mana_focus','mana_shot','arch_mage_necromancer'] if klass=='mage' else [
+            'arch_ring_fauvist','first_stroke','unfinished_portrait','last_stroke']
+        first = dict(source(10, klass), archclass_id=branch, loadout=loadout)
+        data = create_battle_state(first, source(0, 'warrior'), action_queue_version=True)
+        for side in data['sides'].values():
+            side['hp'] = side['stats']['max_hp'] = 1000
+        queue.initialize(data, SKILLS)
+        queue.clock(data)['pending'][0]['end'] = 100
+        return data
+
+    def act(self, data, skill, period=1.5):
+        action(data, 'a', skill, 'b', queue.clock(data)['time']+period)
+        queue.advance(data, SKILLS, Hits())
+
+    def test_mid_fight_migration_keeps_remaining_charges_without_duplicate_follow_up(self):
+        old=self.duel()
+        owner=old['sides']['a']
+        owner.pop('board_summons')
+        owner['rpg_state']={'summon':2,'summon_power':6,'summon_fresh':False,'souls':1}
+        old['_queue_wait']={'pending_test':True}
+        queue.initialize(old,SKILLS)
+        self.assertEqual(owner['rpg_state']['summon'],2)
+        self.assertFalse(summons.public(old))
+        old.pop('_queue_wait')
+        queue.initialize(old,SKILLS)
+        unit_key, = summons.units(old)
+        self.assertEqual(summons.public(old)[unit_key]['remaining'],2)
+        self.assertNotIn('summon',owner['rpg_state'])
+        old=json.loads(json.dumps(old))
+        queue.initialize(old,SKILLS)
+        self.assertEqual(list(summons.units(old)),[unit_key])
+        self.assertEqual(sum(e['actor']==unit_key for e in queue.clock(old)['pending']),1)
+        self.act(old,'defend',2.4)
+        self.assertEqual(summons.public(old)[unit_key]['remaining'],1)
+        self.assertEqual(old['sides']['a']['rpg_state']['souls'],2)
+
+    def test_player_can_destroy_the_warden_without_targeting_necromancer(self):
+        mage=dict(source(10,'mage'),archclass_id='mage_necromancer',loadout=['mana_barrier','mana_focus'])
+        data=create_battle_state(mage,source(20,'warrior'),action_queue_version=True)
+        owner=data['sides']['a']
+        hp=owner['hp']
+        summons.enable(data)
+        summons.raise_units(owner,(summons.WARDEN,summons.EXECUTIONER))
+        owner['summon_entities'][summons.WARDEN]['hp']=1
+        guard,= [k for k,u in summons.public(data).items() if u['kind']==summons.WARDEN]
+        action(data,'b','bum_punch',guard,.5)
+        action(data,'a','defend','b',1.)
+        queue.advance(data,SKILLS,Hits())
+        self.assertEqual(owner['hp'],hp)
+        self.assertNotIn(guard,summons.public(data))
+        self.assertEqual([u['kind'] for u in summons.public(data).values()],[summons.EXECUTIONER])
+
+    def test_live_skeleton_attack_is_independent_and_three_is_the_limit(self):
+        data = self.duel()
+        self.act(data, 'mana_barrier', 1.)
+        owner = data['sides']['a']
+        key, = summons.units(data)
+        self.assertTrue(key.startswith('summon:a:skeleton:'))
+        self.assertNotIn('summon',owner.get('rpg_state',{}))
+        self.assertEqual(queue.ready(data),['a'])
+        for _ in range(3):
+            self.act(data, 'defend', 2.2)
+        attacks = [e for e in data['log'] if e.get('source')==key and e.get('skill')=='summon_skeleton']
+        self.assertEqual(len(attacks),3)
+        self.assertEqual(owner['rpg_state']['souls'],3)
+        self.assertNotIn(key,summons.units(data))
+
+    def test_death_servants_keep_independent_hp_guards_and_queue(self):
+        data = self.duel()
+        owner = data['sides']['a']
+        owner['rpg_state']={'souls':3}
+        self.act(data, 'mana_barrier', 1.)
+        live = {u['kind']:(k,u) for k,(_,_,u) in summons.units(data).items()}
+        warden, executor = live[summons.WARDEN], live[summons.EXECUTIONER]
+        self.assertEqual([warden[1]['hp'],executor[1]['hp']],[42,32])
+        self.assertEqual(owner['rpg_state']['souls'],0)
+        self.assertEqual(cult.incoming(owner,40),(26,14))
+        self.assertEqual(warden[1]['hp'],28)
+        warden[1]['hp']=0
+        self.assertEqual(cult.incoming(owner,40),(40,0))
+        self.act(data,'defend',3.)
+        self.assertTrue(any(e.get('source')==executor[0] for e in data['log']))
+        self.assertNotIn(warden[0],summons.units(data))
+
+    def test_effigy_only_bites_after_native_attack_and_guards_after_support(self):
+        data = self.duel('ring','ring_fauvist')
+        owner = data['sides']['a']
+        self.act(data,'arch_ring_fauvist')
+        key, = summons.units(data)
+        self.assertFalse(any(e['actor']==key for e in queue.clock(data)['pending']))
+        self.act(data,'unfinished_portrait')
+        self.assertEqual(cult.incoming(owner,25),(20,5))
+        self.act(data,'first_stroke')
+        self.assertEqual(cult.incoming(owner,25),(25,0))
+        self.assertTrue(any(e['actor']==key for e in queue.clock(data)['pending']))
+        self.act(data,'defend',2)
+        self.assertEqual(sum(e.get('source')==key and e.get('skill')=='summon_effigy' for e in data['log']),1)
+        self.assertFalse(summons.effigy_active(owner))
+
+    def test_scripted_aoe_hits_both_servants(self):
+        mage = dict(source(10,'mage'),archclass_id='mage_necromancer',loadout=['mana_barrier'])
+        data = create_raid_state([dict(actor_id=10, fighter_id=10, personal=True, slave_owner=10)],
+                                 [mage],FIGHTER_CLASSES,BUILTIN_SKILLS,'iron',unified=True)
+        data['qte_modes'] = {}
+        owner = data['players']['10']['fighter']
+        owner['hp'] = owner['stats']['max_hp'] = 1000
+        summons.enable(data)
+        summons.raise_units(owner,(summons.WARDEN,summons.EXECUTIONER))
+        expected=set(summons.units(data))
+        action(data,'10','defend','boss',4)
+        queue.advance(data,SKILLS,Hits())
+        targets={e['target'] for e in data['log'] if e['actor']=='boss' and e.get('damage',0)>0}
+        self.assertTrue(expected|{'10'} <= targets)

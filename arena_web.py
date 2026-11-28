@@ -120,7 +120,8 @@ async def battle_view(db, row: dict, actor: int) -> dict:
             if row["mode"] == "wasteland" and key == "b":
                 prefix = (
                     "Зеркальный босс"
-                    if state.get("mirror_token") and row["floor"] == 5
+                    if state.get("mirror_token") and state.get('mirror_boss',row['floor']==5)
+                    else "Элитное отражение" if state.get('mirror_elite')
                     else "Зеркало" if state.get("mirror_token") else "Пустошь"
                 )
                 side["name"] = f"{prefix} · {class_title(side, cls.name)}"
@@ -482,6 +483,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
     result.update(await db.arena_market_view(chat, actor))
     result['casino']=await db.arena_casino_view(chat,actor)
     result["mirror_runs"] = mirror_runs
+    result["mirror_title"] = await db.arena_mirror_title(actor)
     result["raids"] = await db.arena_raid_list(chat, actor)
     reward_status = await db.arena_raid_reward_status(actor)
     result["raid_bosses"] = [
@@ -800,7 +802,7 @@ def create_arena_app(
             or not isinstance(body.get("value", ""), str)
         ):
             raise ValueError("Некорректный запрос.")
-        if body["action"] == "next":
+        if body["action"] in {"next","visit"} and run["fighter_id"]!=actor:
             await require_member(bot, run["chat_id"], run["fighter_id"])
         run = await db.arena_mirror_action(
             run["token"],

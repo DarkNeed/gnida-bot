@@ -149,6 +149,8 @@ class SlotTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):await self.select(1,chat=2)
         await self.db.arena_raid_setup(raid['token'],10,'cancel')
         run=await self.db.arena_mirror_start(1,10,expected_slot=2)
+        node=next(n for n in run['route'][0]['nodes'] if 'mob' in n)
+        run=await self.db.arena_mirror_action(run['token'],10,run['revision'],'visit',node['id'])
         self.assertEqual((await self.db.arena_get(run['battle_token']))['a_character_slot'],2)
         with self.assertRaises(ValueError):await self.select(1,chat=2)
         await self.db.arena_leave_mirror(2,10,run['token']);await self.select(1)

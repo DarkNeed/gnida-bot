@@ -23,8 +23,10 @@ class GlobalArenaMixin:
                 row=self._mirror_row_locked(token)
                 if row['actor_id']!=actor or row['status']!='active':
                     raise ValueError('Это не твой активный забег.')
-                self._mirror_close_locked(row,'Забег оставлен. Награды за босса нет.')
-            return 'Зеркальный забег оставлен без награды за босса.'
+                new=json.loads(row['data_json']).get('layout')==2
+                reason='Забег оставлен. Награды за пройденные рубежи сохранены.' if new else 'Забег оставлен. Награды за босса нет.'
+                self._mirror_close_locked(row,reason)
+            return reason
 
     async def arena_leave_raid(self, chat, actor, token):
         await self.arena_require_enabled(chat)
@@ -82,7 +84,8 @@ class GlobalArenaMixin:
                 (json.dumps(data,ensure_ascii=False) if data else None,now,row['token']))
         for row in self.connection.execute("SELECT * FROM arena_mirror_runs WHERE status='active'"+where,params).fetchall():
             data=json.loads(row['data_json'])
-            data.update(phase='ended',result='Забег закрыт при обновлении или отключении арены. Уже полученный опыт сохранён.')
+            earned='Уже полученные награды рубежей сохранены.' if data.get('layout')==2 else 'Уже полученный опыт сохранён.'
+            data.update(phase='ended',result='Забег закрыт при обновлении или отключении арены. '+earned)
             self.connection.execute("UPDATE arena_mirror_runs SET status='finished',data_json=?,updated_at=? WHERE token=?",
                 (json.dumps(data,ensure_ascii=False),now,row['token']))
 

@@ -221,7 +221,10 @@ class SlaveTraderMixin:
                         if balance>MAX_FRANC_BALANCE-net:raise ValueError('У продавца достигнут предел кошелька.')
                         self._trader_debit_locked(chat,actor,r['price'])
                         status=self._transfer_slave_locked(chat,r['seller_id'],r['worker_id'],actor)
-                        if status!='transferred':raise ValueError('Покупка недоступна: покупатель сам в рабстве или не может владеть рабами.')
+                        if status!='transferred':raise ValueError({
+                            'recipient_is_slave':'Ты в рабстве в этом чате и не можешь купить другого игрока.',
+                            'pirojok_cannot_own':'Твой аккаунт не может владеть игроками.',
+                        }.get(status,'Предложение изменилось. Проверь рынок заново.'))
                         self._add_francs_locked(chat,r['seller_id'],net)
                         # The ownership trigger cancelled this listing; mark this exact transaction sold.
                         self.connection.execute("UPDATE slave_trader_listings SET status='sold',buyer_id=?,sold_at=? WHERE id=?",(actor,now(),listing))
@@ -260,4 +263,4 @@ class SlaveTraderMixin:
 
     def _trader_debit_locked(self, chat, actor, amount):
         paid=self.connection.execute('UPDATE franc_balances SET balance=balance-?,updated_at=? WHERE chat_id=? AND user_id=? AND balance>=?',(amount,now(),chat,actor,amount))
-        if not paid.rowcount:raise ValueError('Недостаточно франков в кошельке выбранного чата.')
+        if not paid.rowcount:raise ValueError(f'Недостаточно франков в кошельке выбранного чата: {self._trader_balance_locked(chat,actor)} ₣, нужно {amount} ₣.')

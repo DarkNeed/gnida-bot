@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 import random
 import secrets
-from arena_equipment import CATALOG,RANKS,RARITIES,AFFIXES,public_item,item_price,apply_stats
+from arena_equipment import CATALOG,RANKS,RARITIES,AFFIXES,public_item,item_price,apply_stats,EXCLUSIVE_BIOMES
 
 
 class GearMerchantMixin:
@@ -26,12 +26,12 @@ class GearMerchantMixin:
         # Fixed public properties, not a hidden reroll at checkout. Permanent
         # stock survives restarts; the daily showcase is global across chats.
         specs=[('','guild-gear-v1-'+rank+'-'+rarity+'-'+key,key,rarity)
-            for key,v in CATALOG.items() if v['biome']!='nazarick' for rarity in ('uncommon','rare')]
+            for key,v in CATALOG.items() if v['biome'] not in EXCLUSIVE_BIOMES for rarity in ('uncommon','rare')]
         if RANKS.index(rank)>=2:
             for slot in ('weapon','armor','accessory','relic'):
                 ident='guild-gear-v1-'+day+'-'+rank+'-'+slot
                 rng=random.Random(ident)
-                key=rng.choice([k for k,v in CATALOG.items() if v['slot']==slot and v['biome']!='nazarick'])
+                key=rng.choice([k for k,v in CATALOG.items() if v['slot']==slot and v['biome'] not in EXCLUSIVE_BIOMES])
                 specs.append((day,ident,key,'epic'))
         existing={r[0] for r in self.connection.execute("SELECT id FROM gear_guild_offers WHERE rank=? AND day IN ('',?)",(rank,day))}
         for stamp,ident,key,rarity in specs:
@@ -81,7 +81,7 @@ class GearMerchantMixin:
     def _gear_market_locked(self,chat,actor,visit=None):
         # Selling remains available at the merchant even when he is absent.
         gear=self._gear_view_locked(chat,actor)
-        return dict(offers=[],items=gear['items'],stats=gear['stats'],stat_names=gear['stat_names'],
+        return dict(offers=[],items=[i for i in gear['items'] if i['sellable']],stats=gear['stats'],stat_names=gear['stat_names'],
             revision=gear['revision'],character_slot=gear['character_slot'],level=gear['level'],
             hunter_rank=gear['hunter_rank'],busy=gear['busy'],moved_to_guild=True,sell_percent=gear['sell_percent'])
 
@@ -106,7 +106,7 @@ class GearMerchantMixin:
                 row=self.connection.execute('SELECT * FROM gear_guild_offers WHERE id=?',(offer,)).fetchone()
                 if not row or row['day'] not in ('',day):raise ValueError('Предложение устарело. Обнови лавку гильдии.')
                 item=json.loads(row['data'])
-                if item['rarity'] not in ('uncommon','rare','epic') or CATALOG[item['key']]['biome']=='nazarick':
+                if item['rarity'] not in ('uncommon','rare','epic') or CATALOG[item['key']]['biome'] in EXCLUSIVE_BIOMES:
                     raise ValueError('Эксклюзив не продаётся.')
                 reason=self._gear_guild_reason_locked(actor,item,day)
                 if reason:raise ValueError(reason)

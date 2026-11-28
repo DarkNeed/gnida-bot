@@ -5,7 +5,7 @@ import json
 import secrets
 import unittest
 from unittest.mock import patch
-from arena_equipment import CATALOG,PRICES,CHANCES,item_price,public_item
+from arena_equipment import CATALOG,PRICES,CHANCES,item_price,public_item,EXCLUSIVE_BIOMES
 from arena_market import MSK
 import test_guild as guild_tests
 
@@ -48,7 +48,7 @@ class GearMarketTests(unittest.IsolatedAsyncioTestCase):
     async def test_stock_persistent_global_and_no_exclusive_or_hidden_roll(self):
         a=await self.db.gear_guild_view(-100,10,'S');b=await self.db.gear_guild_view(-200,20,'S')
         self.assertEqual(a['offers'],b['offers']);self.assertEqual(sum(i['daily'] for i in a['offers']),4)
-        self.assertEqual(sum(not i['daily'] for i in a['offers']),2*len([v for v in CATALOG.values() if v['biome']!='nazarick']))
+        self.assertEqual(sum(not i['daily'] for i in a['offers']),2*len([v for v in CATALOG.values() if v['biome'] not in EXCLUSIVE_BIOMES]))
         for i in a['offers']:
             self.assertNotEqual(i['biome'],'nazarick');self.assertNotEqual(i['rarity'],'legendary');self.assertEqual(i['upgrade'],0)
         self.db.connection.commit();await self.db.close();await self.db.connect()

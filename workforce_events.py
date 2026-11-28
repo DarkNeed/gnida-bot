@@ -11,6 +11,10 @@ from npc_worker_rules import DAY,HOUR,PROFESSIONS
 from slave_recovery import code_feedback, RECOVERY_SYMBOLS
 from slavery_notices import SlaveryNoticesMixin
 
+WORKFORCE_AGREEMENT_PRICE = 150
+WORKFORCE_AGREEMENT_HOURS = 72
+ESCAPE_RETURN_PRICE = 250
+
 
 def now():
     from database import utc_timestamp
@@ -30,6 +34,8 @@ class WorkforceMixin(SlaveryNoticesMixin):
                 notified INTEGER NOT NULL DEFAULT 0);
             CREATE INDEX IF NOT EXISTS workforce_open ON workforce_events(status,deadline);
             CREATE TABLE IF NOT EXISTS workforce_rolls(owner INTEGER NOT NULL,day INTEGER NOT NULL,PRIMARY KEY(owner,day));
+            CREATE TABLE IF NOT EXISTS workforce_agreements(
+                chat INTEGER NOT NULL,owner INTEGER NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(chat,owner));
             CREATE TABLE IF NOT EXISTS workforce_warnings(
                 chat INTEGER NOT NULL,owner INTEGER NOT NULL,created INTEGER NOT NULL,
                 seen INTEGER,deadline INTEGER,reason TEXT NOT NULL,status TEXT NOT NULL,
@@ -60,19 +66,40 @@ class WorkforceMixin(SlaveryNoticesMixin):
         wallet=self.connection.execute('SELECT balance FROM franc_balances WHERE chat_id=? AND user_id=?',(chat,owner)).fetchone()
         if daily and (not wallet or wallet['balance']<daily):score+=1;reasons.append('в кошельке не хватает франков на сутки содержания')
         if any(r['data']['unpaid']>=24 for r in present):score+=1;reasons.append('содержание не оплачено больше суток')
-        if any(r['data']['fatigue']>=80 or r['data']['loyalty']<40 or r['data']['health']<50 for r in present):
-            score+=1;reasons.append('истощение, плохое здоровье или низкая лояльность NPC')
+        in_poor_shape=[(d['name'], [label for weak,label in ((d['fatigue']>=80,'усталость'),
+            (d['loyalty']<40,'лояльность ниже 40'),(d['health']<50,'здоровье ниже 50')) if weak])
+            for r in present for d in [r['data']]]
+        in_poor_shape=[(name,flags) for name,flags in in_poor_shape if flags]
+        if in_poor_shape:
+            score+=1
+            reasons.append('плохое состояние: '+', '.join(name+' ('+', '.join(flags)+')' for name,flags in in_poor_shape[:4])
+                +(f' и ещё {len(in_poor_shape)-4}' if len(in_poor_shape)>4 else ''))
         human_count=self.connection.execute('SELECT COUNT(*) FROM business_workers WHERE chat_id=? AND owner_id=?',(chat,owner)).fetchone()[0]
         leaders=self.connection.execute("SELECT COUNT(*) FROM business_workers WHERE chat_id=? AND owner_id=? AND role IN ('leader','manager','overseer')",(chat,owner)).fetchone()[0]
         leaders+=sum(r['status']=='work' and r['data'].get('role')=='leader' for r in present)
         unmanaged=human_count+sum(r['status']=='work' for r in present)>10 and not leaders
         if unmanaged:score+=1;reasons.append('больше десяти работников без управляющего')
-        if (rows or human_count) and estate['care']+2*DAY<now():score+=1;reasons.append('условия не проверялись больше 48 часов')
-        # Guards prevent kidnappings; a diplomat also lowers escape pressure.
+        stamp=now()
+        if score and estate['care']+2*DAY<stamp:score+=1;reasons.append('при плохих условиях проверка просрочена больше чем на 48 часов')
         protection=any(r['data']['trait']=='guard' and r['data']['health']>=60 and r['data']['fatigue']<80 for r in present)
         diplomacy=any(r['data']['trait']=='diplomat' and r['data']['health']>=60 and r['data']['fatigue']<80 for r in present)
-        score=max(0,min(3,score)-int(diplomacy))
-        return dict(tier=score,chance=(0,2,5,10)[score],reasons=reasons,protected=bool(protection),daily_upkeep=daily)
+        agreement=self.connection.execute('SELECT expires FROM workforce_agreements WHERE chat=? AND owner=?',(chat,owner)).fetchone()
+        expires=agreement['expires'] if agreement and agreement['expires']>stamp else None
+        score=max(0,min(3,score)-int(diplomacy)-int(bool(expires)))
+        escape=(0,1,2.5,5)[score]
+        kidnapping=0 if protection else escape
+        return dict(tier=score,chance=escape+kidnapping,escape_chance=escape,kidnap_chance=kidnapping,
+            reasons=reasons,protected=protection,diplomacy=diplomacy,daily_upkeep=daily,care_until=estate['care']+2*DAY,
+            agreement_until=expires,agreement_price=WORKFORCE_AGREEMENT_PRICE,agreement_hours=WORKFORCE_AGREEMENT_HOURS)
+
+    def _workforce_agreement_locked(self, chat, owner):
+        stamp=now()
+        if self.connection.execute('SELECT 1 FROM workforce_agreements WHERE chat=? AND owner=? AND expires>?',(chat,owner,stamp)).fetchone():
+            raise ValueError('Договор об условиях уже действует.')
+        self._npc_pay_locked(chat,owner,WORKFORCE_AGREEMENT_PRICE)
+        self.connection.execute('INSERT OR REPLACE INTO workforce_agreements VALUES(?,?,?)',(chat,owner,stamp+WORKFORCE_AGREEMENT_HOURS*HOUR))
+        self._workforce_tick_locked(chat,owner)
+        return dict(notice='Договор действует 72 часа и снижает обычный риск на одну ступень.')
 
     def _workforce_valid_locked(self, event):
         if event['worker_type']=='npc':
@@ -136,6 +163,9 @@ class WorkforceMixin(SlaveryNoticesMixin):
             self.connection.execute("UPDATE workforce_warnings SET status='resolved' WHERE chat=? AND owner=? AND status='warning'",(chat,owner))
         elif not warning or warning['status']!='warning':
             self.connection.execute("INSERT OR REPLACE INTO workforce_warnings VALUES(?,?,?,NULL,NULL,?,'warning')",(chat,owner,stamp,json.dumps(risk['reasons'],ensure_ascii=False)))
+        elif json.loads(warning['reason'])!=risk['reasons']:
+            self.connection.execute('UPDATE workforce_warnings SET reason=? WHERE chat=? AND owner=?',
+                (json.dumps(risk['reasons'],ensure_ascii=False),chat,owner))
         for event in self.connection.execute("SELECT * FROM workforce_events WHERE chat=? AND owner=? AND status IN ('open','playing','search')",(chat,owner)).fetchall():
             p=json.loads(event['data'])
             if not self._workforce_valid_locked(event):self._workforce_finish_locked(event,False)
@@ -145,7 +175,9 @@ class WorkforceMixin(SlaveryNoticesMixin):
                     self.connection.execute("UPDATE workforce_events SET status='open',revision=revision+1 WHERE id=?",(event['id'],))
                     # Search can fail without consuming the remaining recovery window.
                     if event['deadline']<=stamp:self._workforce_finish_locked(event,False)
-            elif event['deadline']<=stamp or (event['status']=='playing' and p['game_ends']<=stamp):self._workforce_finish_locked(event,False)
+            elif event['deadline']<=stamp:self._workforce_finish_locked(event,False)
+            elif event['status']=='playing' and p['game_ends']<=stamp:
+                self.connection.execute("UPDATE workforce_events SET status='open',revision=revision+1 WHERE id=?",(event['id'],))
 
     def _workforce_roll_locked(self, rng=None):
         rng=rng or random.SystemRandom();stamp=now();day=(stamp+3*HOUR)//DAY
@@ -164,8 +196,9 @@ class WorkforceMixin(SlaveryNoticesMixin):
             # One daily chance for the account, not one lottery per chat/refresh.
             if not self.connection.execute('INSERT OR IGNORE INTO workforce_rolls VALUES(?,?)',(owner,day)).rowcount:continue
             if self.connection.execute("SELECT 1 FROM workforce_events WHERE owner=? AND (status IN ('announcing','open','playing','search') OR created>?)",(owner,stamp-DAY)).fetchone():continue
-            chat,risk=max(choices,key=lambda x:(x[1]['tier'],-x[0]))
-            if rng.random()*100>=risk['chance']:continue
+            chat,risk=max(choices,key=lambda x:(x[1]['chance'],-x[0]))
+            roll=rng.random()*100
+            if roll>=risk['chance']:continue
             candidates=[]
             for r in self._npc_rows_locked(chat,owner):
                 if r['status'] in ('work','rest'):candidates.append(('npc',r['id'],r['created'],r['data']['name']))
@@ -175,8 +208,9 @@ class WorkforceMixin(SlaveryNoticesMixin):
                     candidates.append(('human',str(r['slave_id']),r['acquired_at'],r['display_name'] or str(r['slave_id'])))
             if not candidates:continue
             typ,worker,epoch,name=rng.choice(candidates)
-            kind='escaped' if risk['protected'] else rng.choice(('escaped','kidnapped'))
-            payload=dict(secret=rng.sample(range(len(RECOVERY_SYMBOLS)),3),history=[],bounty=0)
+            kind='escaped' if roll<risk['escape_chance'] else 'kidnapped'
+            payload=dict(secret=rng.sample(range(len(RECOVERY_SYMBOLS)),3),history=[],bounty=0,
+                         cause='conditions',risk_reasons=risk['reasons'])
             self.connection.execute("INSERT INTO workforce_events VALUES(?,?,?,?,?,?,?,?, 'announcing',?,NULL,NULL,NULL,0,?,0)",
                 (uuid4().hex,chat,owner,worker,typ,epoch,name,kind,stamp,json.dumps(payload)))
 
@@ -191,7 +225,9 @@ class WorkforceMixin(SlaveryNoticesMixin):
         for r in self.connection.execute('SELECT * FROM workforce_events WHERE chat=? AND (owner=? OR status IN (\'open\',\'playing\',\'search\')) ORDER BY created DESC LIMIT 15',(chat,owner)):
             p=json.loads(r['data'])
             if r['owner']!=owner and not p.get('bounty'):continue
-            e=dict(r);e.pop('data');e.update({k:v for k,v in p.items() if k not in ('secret','search_success')})
+            private={'secret','search_success'}
+            if r['owner']!=owner:private.update(('risk_reasons','cause'))
+            e=dict(r);e.pop('data');e.update({k:v for k,v in p.items() if k not in private})
             e['mine']=r['owner']==owner;events.append(e)
         return dict(risk=self._workforce_risk_locked(chat,owner),warning=dict(warning) if warning and warning['status']=='warning' else None,
             events=events,symbols=RECOVERY_SYMBOLS)
@@ -220,14 +256,16 @@ class WorkforceMixin(SlaveryNoticesMixin):
             if row['status']!='playing' or not isinstance(guess,list) or len(guess)!=3 or any(type(v) is not int or not 0<=v<6 for v in guess) or len(set(guess))!=3:raise ValueError('Нужны три разных символа.')
             exact,near=code_feedback(p['secret'],guess);p['history'].append(dict(guess=guess,exact=exact,near=near))
             if exact==3:self._workforce_finish_locked(row,True);return dict(notice='Код найден. Работник возвращён.')
-            if len(p['history'])>=6:self._workforce_finish_locked(row,False);return dict(notice='Шесть попыток исчерпаны. Работник потерян.')
+            if len(p['history'])>=6:
+                self.connection.execute("UPDATE workforce_events SET status='open',data=?,revision=revision+1 WHERE id=?",(json.dumps(p),row['id']))
+                return dict(notice='Шесть попыток исчерпаны. До общего срока ещё доступны другие способы розыска.')
         elif action in ('workforce_search','workforce_help'):
             helper=not mine
             if helper and (not p.get('bounty') or p.get('helper')):raise ValueError('Нет свободного заказа на розыск.')
             if stamp+2*HOUR>=row['deadline']:raise ValueError('До конца розыска меньше двух часов.')
             if not helper:self._npc_pay_locked(chat,actor,100)
             chance=.8 if helper else .65
-            if any(r['data']['trait']=='diplomat' and r['status'] not in ('missing','expedition') for r in self._npc_rows_locked(chat,row['owner'])):chance+=.1
+            if self._workforce_risk_locked(chat,row['owner'])['diplomacy']:chance+=.1
             p.update(search_ends=stamp+2*HOUR,search_success=random.SystemRandom().random()<chance,helper=actor if helper else None)
             self.connection.execute("UPDATE workforce_events SET status='search' WHERE id=?",(row['id'],))
         elif action=='workforce_bounty':
@@ -235,10 +273,12 @@ class WorkforceMixin(SlaveryNoticesMixin):
             amount=b.get('amount')
             if type(amount) is not int or not 50<=amount<=10000:raise ValueError('Награда от 50 до 10 000 франков.')
             self._npc_pay_locked(chat,actor,amount);p['bounty']=amount
-        elif action=='workforce_ransom':
-            if row['kind']!='kidnapped':raise ValueError('С беглецом выкуп не работает.')
-            self._npc_pay_locked(chat,actor,300);self._workforce_finish_locked(row,True)
-            return dict(notice='Выкуп 300 франков уплачен. Работник возвращён.')
+        elif action in ('workforce_ransom','workforce_negotiate'):
+            escape=action=='workforce_negotiate'
+            if row['kind']!=('escaped' if escape else 'kidnapped'):raise ValueError('Этот способ не подходит для данного розыска.')
+            price=ESCAPE_RETURN_PRICE if escape else 300
+            self._npc_pay_locked(chat,actor,price);self._workforce_finish_locked(row,True)
+            return dict(notice=f'{"Компенсация" if escape else "Выкуп"}: {price} ₣. Работник возвращён.')
         else:raise ValueError('Неизвестный способ розыска.')
         self.connection.execute('UPDATE workforce_events SET data=?,revision=revision+1 WHERE id=?',(json.dumps(p),row['id']))
         return dict(notice='Розыск обновлён. Внешний срок не останавливается.')
@@ -252,7 +292,7 @@ class WorkforceMixin(SlaveryNoticesMixin):
                 warnings=[dict(kind='warning',**dict(r)) for r in self.connection.execute('''SELECT w.*,c.title AS chat_title FROM workforce_warnings w LEFT JOIN chats c ON c.chat_id=w.chat
                     WHERE w.status='warning' AND w.seen IS NULL AND COALESCE((SELECT next_at FROM workforce_delivery_attempts
                     WHERE delivery_key='warning:'||w.chat||':'||w.owner||':'||w.created),0)<=? ORDER BY w.created LIMIT 20''',(now(),))]
-                events=[dict(r,kind='incident') for r in self.connection.execute('''SELECT w.*,c.title AS chat_title FROM workforce_events w LEFT JOIN chats c ON c.chat_id=w.chat
+                events=[dict(r,kind='incident',event_kind=r['kind']) for r in self.connection.execute('''SELECT w.*,c.title AS chat_title FROM workforce_events w LEFT JOIN chats c ON c.chat_id=w.chat
                     WHERE w.status='announcing' AND COALESCE((SELECT next_at FROM workforce_delivery_attempts
                     WHERE delivery_key='incident:'||w.id),0)<=? ORDER BY w.created LIMIT 20''',(now(),))]
                 result=[]

@@ -1,0 +1,26 @@
+{
+  "generator": "built-in imagegen",
+  "export": "RGBA PNG; crop to alpha bounds, resize for battle; original preserved",
+  "sprites": {
+    "skeleton": {
+      "asset": "webapp/assets/summons/skeleton-v1.png",
+      "source_id": "exec-ff783af2-005b-4294-a257-104f3541f2ea",
+      "prompt": "Use case: stylized-concept. Asset type: transparent 2D RPG battlefield combat sprite displayed at 60–110 pixels. Subject: A thin crooked ivory skeleton, aged green-gray rags and a small sickly teal shard gripped near its rib cage. Clearly a minor undead servant. Dark fantasy inked anime painting, strong readable silhouette and selectively lit edges, restrained colors, no cute or chibi proportions. One single figure, whole body and all extremities visible, balanced tight centered composition, three-quarter view faces screen right; grounded idle stance. Genuine transparent RGBA outside the figure. No platform, scenery, shadow, vapor, particles, aura, border, text or watermark."
+    },
+    "warden": {
+      "asset": "webapp/assets/summons/warden-v1.png",
+      "source_id": "exec-66269d66-dc57-48d1-b3e6-a709f696f3f8",
+      "prompt": "Use case: stylized-concept. Asset type: transparent 2D RPG battlefield combat sprite displayed at 60–110 pixels. Subject: A wide crouching armored bone sentinel with a rugged near-square iron shield raised diagonally, old dark metal and restrained teal oxidation; small skull visible behind shield. Dark fantasy inked anime painting, strong readable silhouette and selectively lit edges, restrained colors, no cute or chibi proportions. One single figure, whole body and all extremities visible, balanced tight centered composition, three-quarter view faces screen right; grounded idle stance. Genuine transparent RGBA outside the figure. No platform, scenery, shadow, vapor, particles, aura, border, text or watermark."
+    },
+    "executioner": {
+      "asset": "webapp/assets/summons/executioner-v1.png",
+      "source_id": "exec-5af00c18-7085-488d-9c59-ec3a537294b4",
+      "prompt": "Use case: stylized-concept. Asset type: transparent 2D RPG battlefield combat sprite displayed at 60–110 pixels. Subject: A lean imposing undead executioner with shrouded skull, long worn charcoal fabric and one huge chipped crescent axe, sparse crimson cloth accents. Axe entirely in frame. Dark fantasy inked anime painting, strong readable silhouette and selectively lit edges, restrained colors, no cute or chibi proportions. One single figure, whole body and all extremities visible, balanced tight centered composition, three-quarter view faces screen right; grounded idle stance. Genuine transparent RGBA outside the figure. No platform, scenery, shadow, vapor, particles, aura, border, text or watermark."
+    },
+    "effigy": {
+      "asset": "webapp/assets/summons/effigy-v1.png",
+      "source_id": "exec-156b9b52-09fd-4443-b7a5-50711e067451",
+      "prompt": "Use case: stylized-concept. Asset type: transparent 2D RPG battlefield combat sprite displayed at 60–110 pixels. Subject: A low predatory quadruped effigy stitched from patchwork ochre and burgundy painted canvas, brushstroke stripes, coarse exposed seams and straw at the joints; jagged stuffed muzzle and wooden claws. Clearly an artificial puppet, not a real animal. Dark fantasy inked anime painting, strong readable silhouette and selectively lit edges, restrained colors, no cute or chibi proportions. One single figure, whole body and all extremities visible, balanced tight centered composition, three-quarter view faces screen right; grounded idle stance. Genuine transparent RGBA outside the figure. No platform, scenery, shadow, vapor, particles, aura, border, text or watermark."
+    }
+  }
+}

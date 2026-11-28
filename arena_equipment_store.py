@@ -4,7 +4,7 @@ import json
 import random
 import secrets
 import time
-from arena_equipment import (CATALOG,RANKS,RARITIES,LEVELS,SLOTS,STATS,AFFIXES,CHANCES,EFFECTS,SELL_PERCENT,
+from arena_equipment import (CATALOG,RANKS,RARITIES,LEVELS,SLOTS,STATS,AFFIXES,CHANCES,EFFECTS,SELL_PERCENT,EXCLUSIVE_BIOMES,
                              public_item,apply_stats)
 from arena_gear_market import GearMerchantMixin
 
@@ -43,11 +43,11 @@ class EquipmentMixin(GearMerchantMixin):
         self.connection.execute('INSERT INTO gear_items VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',
                                 (item['id'],actor,json.dumps(item,ensure_ascii=False)))
 
-    def _gear_grant_locked(self,actor,key,rank,rarity,rng=None):
+    def _gear_grant_locked(self,actor,key,rank,rarity,rng=None,*,affixes=None):
         rng=rng or random.SystemRandom()
         count=min(2,RARITIES.index(rarity))
         choices=[k for k in AFFIXES if k!=CATALOG[key]['main']]
-        item=dict(id=secrets.token_hex(10),key=key,rank=rank,rarity=rarity,upgrade=0,affixes=rng.sample(choices,count),
+        item=dict(id=secrets.token_hex(10),key=key,rank=rank,rarity=rarity,upgrade=0,affixes=rng.sample(choices,count) if affixes is None else list(affixes),
                   favorite=False,rerolled=False,created=int(time.time()))
         self._gear_save_locked(actor,item);self._gear_touch_locked(actor)
         return item
@@ -113,7 +113,7 @@ class EquipmentMixin(GearMerchantMixin):
                     equipped=equipped,items=items,slots=SLOTS,stat_names=STATS,base_stats=base,stats=total,
                     stat_bonuses={key:round(total.get(key,0)-base.get(key,0),2) for key in STATS},
                     materials={r['rank']:r['quantity'] for r in self.connection.execute('SELECT * FROM gear_materials WHERE actor=?',(actor,))},
-                    catalog=[dict(v,description=EFFECTS[v['effect']]) for v in CATALOG.values() if v['biome']!='nazarick'],ranks=list(RANKS),min_levels=list(LEVELS),hunter_rank=RANKS[hunter['rank']],
+                    catalog=[dict(v,description=EFFECTS[v['effect']]) for v in CATALOG.values() if v['biome'] not in EXCLUSIVE_BIOMES],ranks=list(RANKS),min_levels=list(LEVELS),hunter_rank=RANKS[hunter['rank']],
                     chances=[dict(zip(RARITIES,row)) for row in CHANCES],sell_percent=SELL_PERCENT)
 
     @staticmethod
@@ -146,6 +146,7 @@ class EquipmentMixin(GearMerchantMixin):
                     key=body.get('key');rank=body.get('rank');rarity='epic' if action=='craft' else 'uncommon'
                     if not isinstance(key,str) or key not in CATALOG or rank not in RANKS:raise ValueError('Неизвестный предмет или ранг.')
                     if CATALOG[key]['biome']=='nazarick':raise ValueError('Это снаряжение можно получить только за завершение Назарика.')
+                    if CATALOG[key]['biome']=='mirror':raise ValueError('Это снаряжение можно получить только в Зеркальной пустоши.')
                     if RANKS.index(rank)>self._guild_hunter_locked(actor)['rank']:raise ValueError('Нужен соответствующий ранг гильдии.')
                     self._gear_material_locked(actor,rank,-40 if action=='craft' else -8)
                     self._gear_grant_locked(actor,key,rank,rarity)
@@ -163,6 +164,7 @@ class EquipmentMixin(GearMerchantMixin):
                         if item['favorite']:raise ValueError('Сначала убери вещь из избранного.')
                         if self.connection.execute('SELECT 1 FROM gear_loadouts WHERE actor=? AND item=?',(actor,ident)).fetchone():raise ValueError('Вещь надета на одном из персонажей.')
                         if action=='sell':
+                            if definition['biome']=='mirror':raise ValueError('Зеркальную вещь нельзя продать. Её можно разобрать.')
                             if body.get('confirm') is not True:raise ValueError('Подтверди продажу вещи.')
                             price=public_item(item)['sell_price']
                             if type(body.get('price')) is not int or body['price']!=price:

@@ -44,16 +44,20 @@ window.NpcWorkers=(()=>{
   }
   function expeditions(data){return (data.npc?.trips||[]).map(t=>{
     const m=data.missions.find(m=>m.id===t.mission),members=t.members||[];
-    return {...t,started_at:t.started,ends_at:t.ends,quote:{name:m?.name,members,chance:Math.round((1-Math.pow(t.loss_percent/100,members.length))*100)},
+    return {...t,started_at:t.started,ends_at:t.ends,quote:{name:m?.name,members,group_loss:t.group_loss??Math.round((1-Math.pow(1-t.loss_percent/100,members.length))*100)},
       result:t.status==='active'?null:{won:!!t.survivors?.length,francs:t.francs||0,tax:t.tax||0,pages:t.pages||0,page_rarity:t.page_rarity,members:t.results||members.map(p=>({user_id:p.user_id,outcome:t.status==='cancelled'?'cancelled':'removed'}))}};
   })}
-  function market(data){const n=data.npc;return '<article class="holdings-site"><h3>Рабы у торговца</h3><p class="muted">Новые NPC каждый день. Отдельного лимита количества нет. После покупки они появляются в общем списке «Рабы». Редкость раскрывается оценкой за 50 ₣.</p><div class="npc-grid">'+n.market.map(w=>card(w,true)).join('')+'</div></article>'}
-  function conditions(){const n=ctx.getData().npc,wf=n.workforce;modal('Условия и побеги',
-    '<p>Риск за сутки: <b>'+wf.risk.chance+'%</b>. '+(wf.risk.reasons.map(esc).join(' · ')||'Условия хорошие.')+'</p><p>Проверка условий действует 48 часов. Она не заменяет оплату содержания и отдых.</p>'+btn('Проверить условия','care','',true)+'<p>Сначала предупреждение на 24 часа, затем 8 часов на розыск. Есть мини-игра (3 минуты / 6 попыток), поисковая группа (100 ₣ / 2 часа), награда помощнику и выкуп похищенного (300 ₣).</p><p>Один суточный бросок на аккаунт: 0 / 2 / 5 / 10%. Большое число рабов само по себе не вызывает побеги. Охрана помогает против похищения, дипломат — при поиске и переговорах.</p><p>При провале игрок освобождается без потери арены, NPC становится беглецом с той же редкостью и историей. Содержание берётся из кошелька автоматически; резервов и отдельных слотов NPC нет.</p>');
+  function market(data){const n=data.npc;return '<article class="holdings-site"><h3>Рабы у торговца</h3><p class="muted">Кошелёк этого чата: <b>'+num(data.balance)+' ₣</b>. Новые NPC после полуночи по Москве. Купленные NPC появляются в списке «Рабы».</p><div class="npc-grid">'+(n.market.map(w=>card(w,true)).join('')||'<p>Предложения на сегодня закончились.</p>')+'</div></article>'}
+  function conditions(){const {risk,warning}=ctx.getData().npc.workforce;modal('Условия и побеги',
+    '<p>При суточной проверке: <b>побег '+(risk.escape_chance??risk.chance)+'% · похищение '+(risk.kidnap_chance??0)+'%</b>.</p>'+(risk.reasons.length?'<ul>'+risk.reasons.map(r=>'<li>'+esc(r)+'</li>').join('')+'</ul>':'<p>Условия хорошие.</p>')+
+    (warning?.deadline?'<p>Исправить условия до '+date(warning.deadline)+'. При нулевом риске предупреждение снимается.</p>':'<p>Без предупреждения и 24 часов на исправление обычный побег не начнётся.</p>')+
+    '<p>Пополняй кошелёк, отправляй уставших NPC отдыхать и назначай управляющего, если работников больше десяти.</p>'+btn('Проверить условия · бесплатно','care','',true)+
+    (risk.agreement_until?'<p>Договор действует до '+date(risk.agreement_until)+'.</p>':risk.agreement_price?'<p>Договор на '+risk.agreement_hours+' ч снижает риск на одну ступень. Не отменяет уже начатый розыск, события отказа от крыши и риски экспедиций.</p>'+btn('Договор об условиях · '+risk.agreement_price+' ₣','agreement'):'')+
+    '<p>Охранник предотвращает обычные похищения, дипломат снижает риск и помогает поисковой группе. После побега или похищения есть 8 часов на розыск. Неудача в мини-игре не сокращает этот срок: остаются поиск, помощь участников или гарантированное возвращение за франки.</p>');
   }
   async function quoteSelection(ids,users,mission){
     const r=await ctx.api('/api/holdings/'+ctx.getData().chat_id,{action:'npc_trip_quote',ids,users,mission,nonce:nonce()}),q=r.quote;
-    confirm('Отправить отряд?',q.names.map(esc).join(', ')+'<br>Риск освобождения каждого: <b>'+q.loss_percent+'%</b>. Срок: '+q.duration/3600+' ч. При возвращении всех: '+q.francs+' ₣ до налога и '+q.pages+' стр. Результат фиксируется при отправке.','npc_trip','',{ids,users,mission,revision:q.revision});
+    confirm('Отправить отряд?',(q.risks?.map(p=>esc(p.name)+' — '+p.loss+'%').join('<br>')||q.names.map(esc).join(', ')+': до '+q.loss_percent+'% на участника')+'<br>Хотя бы один побег: <b>'+(q.group_loss??'—')+'%</b>. Срок: '+q.duration/3600+' ч. При возвращении всех: '+q.francs+' ₣ до налога и '+q.pages+' стр. Риск повышают неподходящая сила, усталость и низкая лояльность NPC. Результат фиксируется при отправке.','npc_trip','',{ids,users,mission,revision:q.revision});
   }
   function modal(title,body){ctx.modal(title,body);return document.querySelector('.holdings-dialog')}
   function wById(id){const n=ctx.getData().npc;return [...n.workers,...n.market].find(w=>w.id===id)}
@@ -75,9 +79,23 @@ window.NpcWorkers=(()=>{
     const management=owned?'<div class="holdings-buttons">'+(!w.appraised?btn('Оценить · 50 ₣','appraise',w.id,true):'')+btn('Отдыхать','rest',w.id)+'</div><label>Предприятие<select id="npc-site">'+data.sites.map(s=>'<option value="'+s.id+'"'+(s.id===w.site?' selected':'')+'>'+esc(s.title)+' · '+(s.workers.length+(s.npc_count||0))+'/'+s.capacity+'</option>').join('')+'</select></label>'+btn('Назначить работником','assign',w.id,true)+'<details class="npc-fold"><summary>Обучение и история</summary><p>Работа автоматически даёт час опыта за час выработки. Каждые 240 ч — уровень профессии до 10; каждый уровень после первого даёт +2% выработки. Платное обучение: +1 уровень профессии за 12 ч и '+w.profession_level*100+' ₣; боевая подготовка: +1 уровень за 18 ч и '+w.level*100+' ₣ (до 20). Во время обучения NPC не работает, но требует содержания.</p><div class="holdings-buttons">'+btn('Обучить профессии','train-work',w.id)+btn('Боевая подготовка','train-combat',w.id)+'</div>'+(w.training?'<p>Обучение завершится '+date(w.training.ends)+'</p>':'')+(w.history||[]).map(h=>'<p><small>'+date(h.at)+'</small> · '+esc(h.text)+'</p>').join('')+'</details><hr>'+btn('Освободить NPC','release',w.id):btn('Приобрести · '+num(w.cost)+' ₣','buy',w.id,true);
     modal(w.name,portrait(w,true)+badge(w)+'<p>'+esc(w.description)+'</p>'+state+passport(w)+'<div class="npc-dashboard">'+metric('Здоровье',w.health+' / 100','Влияет на выработку и силу')+metric('Усталость',w.fatigue+' / 100','От 70: −30% выработки')+metric('Лояльность',w.loyalty+' / 100','Ниже 40: плохие условия')+metric('Сила экспедиции',w.power??'Оцени NPC','Не урон на арене')+'</div><p>Боевой уровень '+w.level+'/20 · профессия '+w.profession_level+'/10 · опыт работы '+w.experience+'/240 ч.</p>'+conditions+management);
   }
-  function recovery(e){eventId=e.id;guess=[];const p=e.status==='playing';const m=modal(e.name+' · розыск',`<div class="npc-warning"><b>Внешний срок: ${date(e.deadline)}</b><p>Отсутствующий не приносит доход. Таймер идёт даже без владельца.</p><b data-npc-countdown="${p?e.game_ends:e.deadline}"></b></div>${e.status==='search'?`<p>Поиск идёт до ${date(e.search_ends)}. Результат уже зафиксирован; обновление его не меняет.</p>`:e.mine?`${p?`<p>Найди три разных символа. «На месте» — правильный символ и позиция, «рядом» — символ правильный, позиция нет. Шесть попыток.</p><div class="npc-code"><b id="npc-guess">— — —</b><div>${ctx.getData().npc.workforce.symbols.map((s,i)=>btn(esc(s),'symbol',i)).join('')}</div>${btn('Стереть','undo')}${btn('Проверить код','guess',e.id,true)}</div><ol>${e.history.map(h=>`<li>${h.guess.map(i=>ctx.getData().npc.workforce.symbols[i]).join(' ')} · на месте ${h.exact}, рядом ${h.near}</li>`).join('')}</ol>`:btn('Начать мини-игру · 3 мин','start',e.id,true)}<div class="holdings-buttons">${btn('Поисковая группа · 100 ₣','search',e.id)}${!e.bounty?btn('Объявить награду','bounty',e.id):''}${e.kind==='kidnapped'?btn('Выкупить · 300 ₣','ransom',e.id):''}</div>${btn('Отказаться от работника','abandon',e.id)}`:btn('Взять заказ · 2 ч','help',e.id,true)}`);updateTimers();return m}
+  function recovery(e){
+    eventId=e.id;guess=[];
+    const playing=e.status==='playing', search=e.status==='search';
+    const origin=e.cause==='protection'?'Причина: не разобрались с угрозой после отказа от крыши.'
+      :e.risk_reasons?.length?'Причины при проверке: '+e.risk_reasons.map(esc).join(' · '):'';
+    const clock='<div class="npc-warning"><b>Крайний срок: '+date(e.deadline)+'</b><p>'+origin+'</p><b data-npc-countdown="'+(playing?e.game_ends:e.deadline)+'"></b></div>';
+    const symbols=ctx.getData().npc.workforce.symbols;
+    const game=playing
+      ?'<p>Найди три разных символа. «На месте» — символ и позиция верны, «рядом» — верен только символ.</p><div class="npc-code"><b id="npc-guess">— — —</b><div>'+symbols.map((s,i)=>btn(esc(s),'symbol',i)).join('')+'</div>'+btn('Стереть','undo')+btn('Проверить код','guess',e.id,true)+'</div><ol>'+e.history.map(h=>'<li>'+h.guess.map(i=>symbols[i]).join(' ')+' · на месте '+h.exact+', рядом '+h.near+'</li>').join('')+'</ol>'
+      :e.game_ends?'<p>Попытка мини-игры закончилась. Общий срок розыска ещё идёт.</p>':btn('Начать мини-игру · 3 мин','start',e.id,true);
+    const returnBtn=e.kind==='kidnapped'?btn('Выкупить · 300 ₣','ransom',e.id):btn('Договориться · 250 ₣','negotiate',e.id);
+    const options='<div class="holdings-buttons">'+(playing?'':btn('Поисковая группа · 100 ₣','search',e.id))+(!e.bounty?btn('Объявить награду','bounty',e.id):'')+returnBtn+'</div>'+btn('Отказаться от работника','abandon',e.id);
+    const m=modal(e.name+(e.kind==='kidnapped'?' · похищение':' · побег'),clock+(search?'<p>Поиск идёт до '+date(e.search_ends)+'. Результат уже зафиксирован.</p>':e.mine?game+options:btn('Взять заказ · 2 ч','help',e.id,true)));
+    m.dataset.npcEvent=e.id;m.dataset.npcRevision=e.revision;updateTimers();return m;
+  }
   function confirm(title,body,action,id,extra={}){const d=modal(title,`<p>${body}</p>${btn('Подтвердить','confirm',id,true)}`);d._npcBody={action,id,...extra}}
-  function nonce(){return crypto.randomUUID().replaceAll('-','')}
+  function nonce(){const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return Array.from(bytes,n=>n.toString(16).padStart(2,'0')).join('')}
   async function send(body,reopen){const ok=await ctx.mutate({...body,nonce:nonce(),confirm:true});if(ok&&reopen){const e=eventById(reopen);if(e&&['open','playing','search'].includes(e.status))recovery(e)}return ok}
   async function click(ev){const el=ev.target.closest('[data-npc-act]');if(!el||!ctx||el.disabled)return;const act=el.dataset.npcAct,id=el.dataset.npcId,w=wById(id),e=eventById(id);ev.preventDefault();
     if(act.startsWith('protection-')){
@@ -94,7 +112,8 @@ window.NpcWorkers=(()=>{
     if(act==='open'||act==='conditions'){conditions();return}
     if(act==='card'){details(w);return}if(act==='event'){recovery(e);return}
     if(act==='care'){await send({action:'npc_care'});return}
-    if(act==='buy'){confirm('Приобрести NPC?',esc(w.name)+' · '+num(w.cost)+' ₣. Ежедневное содержание '+w.upkeep+' ₣; редкость скрыта до оценки.','npc_buy',id);return}
+    if(act==='agreement'){const r=ctx.getData().npc.workforce.risk;confirm('Заключить договор?',r.agreement_price+' ₣ из кошелька этого чата, снижение обычного риска на одну ступень на '+r.agreement_hours+' ч.','npc_agreement','');return}
+    if(act==='buy'){if(!w)return;confirm('Приобрести NPC?',esc(w.name)+' · '+num(w.cost)+' ₣. В кошельке чата '+num(ctx.getData().balance)+' ₣. Ежедневное содержание '+w.upkeep+' ₣; редкость скрыта до оценки.','npc_buy',id,{price:w.cost});return}
     if(act==='appraise'){confirm('Оценить NPC?', '50 ₣. Это раскрывает постоянную редкость; повторного розыгрыша нет.','npc_appraise',id,{revision:w.revision});return}
     if(act==='assign'){const site=Number(document.querySelector('#npc-site').value);await send({action:'npc_assign',id,site,revision:w.revision});return}
     if(act==='rest'){await send({action:'npc_rest',id,revision:w.revision});return}
@@ -103,9 +122,9 @@ window.NpcWorkers=(()=>{
     if(act==='confirm'){const b=document.querySelector('.holdings-dialog')._npcBody;const ok=await send(b);if(b.action==='npc_trip'&&ok)ctx.onTripStarted();return}
     if(act==='symbol'){if(guess.length<3&&!guess.includes(Number(id)))guess.push(Number(id));document.querySelector('#npc-guess').textContent=[0,1,2].map(i=>ctx.getData().npc.workforce.symbols[guess[i]]||'—').join(' ');return}
     if(act==='undo'){guess.pop();document.querySelector('#npc-guess').textContent=[0,1,2].map(i=>ctx.getData().npc.workforce.symbols[guess[i]]||'—').join(' ');return}
-    if(['start','guess','search','ransom','help','abandon'].includes(act)){
+    if(['start','guess','search','ransom','negotiate','help','abandon'].includes(act)){
       if(act==='guess'&&guess.length!==3)return;
-      if(['search','ransom','abandon','help'].includes(act)){confirm('Подтвердить действие?',({search:'100 ₣, результат через 2 часа. Неудачный поиск оставляет время на другие способы.',ransom:'300 ₣ за гарантированное возвращение похищенного.',abandon:'Владение будет прекращено. NPC станет беглецом, игрок освободится.',help:'Поисковая группа вернётся через 2 часа. Награда начислится только при успехе.'})[act],'workforce_'+act,id,{revision:e.revision});return}
+      if(['search','ransom','negotiate','abandon','help'].includes(act)){confirm('Подтвердить действие?',({search:'100 ₣, результат через 2 часа. Неудачный поиск оставляет время на другие способы.',ransom:'300 ₣ за гарантированное возвращение похищенного.',negotiate:'250 ₣ за гарантированное возвращение беглеца.',abandon:'Владение будет прекращено. NPC станет беглецом, игрок освободится.',help:'Поисковая группа вернётся через 2 часа. Награда начислится только при успехе.'})[act],'workforce_'+act,id,{revision:e.revision});return}
       await send({action:'workforce_'+act,id,revision:e.revision,...(act==='guess'?{guess:[...guess]}:{})},id);return
     }
     if(act==='bounty'){const d=modal('Награда за розыск',`<label>Франков<input id="npc-amount" type="number" value="200" min="50" max="10000"></label><p>Сумма резервируется. Получить её может другой участник этого чата при успешном поиске. При неудаче деньги возвращаются.</p>${btn('Разместить','bounty-confirm',id,true)}`);d._npcRevision=e.revision;return}
@@ -117,13 +136,15 @@ window.NpcWorkers=(()=>{
   function mount(c){
     ctx=c;if(!c.getData().npc)return;const data=c.getData(),wf=data.npc.workforce,screen=c.app.querySelector('#holdings-screen');
     const missing=wf.events.filter(e=>e.mine&&['open','playing','search'].includes(e.status));
-    if(wf.warning||missing.length)c.app.querySelector('.holdings-tabs')?.insertAdjacentHTML('afterend','<div class="npc-warning"><b>'+(missing.length?'🚨 Пропавших работников: '+missing.length:'⚠ В хозяйстве плохие условия')+'</b><p>'+(missing.length?'Срок розыска уже идёт: 8 часов после извещения.':wf.risk.reasons.map(esc).join(' · ')+' · исправь до '+date(wf.warning.deadline))+'</p>'+btn('Условия и розыск','conditions')+(missing.length?missing.map(e=>btn('Вернуть: '+esc(e.name),'event',e.id)).join(''):'')+'</div>');
+    if(wf.warning||missing.length)c.app.querySelector('.holdings-tabs')?.insertAdjacentHTML('afterend','<div class="npc-warning"><b>'+(missing.length?'🚨 Пропавших работников: '+missing.length:'⚠ В хозяйстве плохие условия')+'</b><p>'+(missing.length?'Нажми на имя, чтобы увидеть причину, срок и варианты возвращения.':wf.risk.reasons.map(esc).join(' · ')+' · исправь до '+date(wf.warning.deadline))+'</p>'+btn('Условия и розыск','conditions')+(missing.length?missing.map(e=>btn('Вернуть: '+esc(e.name),'event',e.id)).join(''):'')+'</div>');
     if(c.tab==='overview')screen.insertAdjacentHTML('afterbegin',overview(data));
     if(c.tab==='overview'||c.tab==='sites')screen.insertAdjacentHTML('afterbegin',protectionPanel(data));
     if(c.tab==='sites')screen.insertAdjacentHTML('beforeend',protectionSettings(data));
     if(c.tab==='trader')screen.insertAdjacentHTML('afterbegin',market(data));
     if(!bound.has(c.app)){c.app.addEventListener('click',click);bound.add(c.app)}
+    const open=document.querySelector('.holdings-dialog[data-npc-event]');
+    if(open){const e=eventById(open.dataset.npcEvent);if(e&&String(e.revision)!==open.dataset.npcRevision){if(['open','playing','search'].includes(e.status))recovery(e);else modal(e.name,'<p>Розыск завершён.</p>')}}
   }
   document.addEventListener('click',e=>{if(e.target.closest('.holdings-dialog'))click(e)});
-  return {mount,people,row,expeditions,quoteSelection,openCard,leave(){},due(data,stamp){if(!data?.npc)return false;const n=data.npc;return data.protection?.events.some(e=>e.status==='open'&&e.deadline<=stamp)||(!data.protection?.enabled&&data.protection?.next_event<=stamp)||n.trips.some(t=>t.status==='active'&&t.ends<=stamp)||n.workers.some(w=>w.training&&w.training.ends<=stamp)||n.workforce.events.some(e=>['open','playing','search'].includes(e.status)&&(e.deadline<=stamp||e.search_ends<=stamp||e.game_ends<=stamp))}};
+  return {mount,people,row,expeditions,quoteSelection,openCard,leave(){},due(data,stamp){if(!data?.npc)return false;const n=data.npc;return data.protection?.events.some(e=>e.status==='open'&&e.deadline<=stamp)||(!data.protection?.enabled&&data.protection?.next_event<=stamp)||n.trips.some(t=>t.status==='active'&&t.ends<=stamp)||n.workers.some(w=>w.training&&w.training.ends<=stamp)||n.workforce.events.some(e=>['open','playing','search'].includes(e.status)&&(e.deadline<=stamp||e.status==='search'&&e.search_ends<=stamp||e.status==='playing'&&e.game_ends<=stamp))}};
 })();

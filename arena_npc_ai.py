@@ -57,14 +57,16 @@ def choose_skill(state, key, skills, rng=None):
                 score += 55 if actor['resource'] < 25 else 24 if missing >= 45 else -40
             elif kind in ('rpg_heal','heal_pct'):
                 score += 62 if hp < .40 else 30 if hp < .72 else -45
-            elif kind == 'rpg_summon':
-                score += 45 if not actor.get('rpg_state', {}).get('summon') else -40
+            elif kind in ('rpg_summon','rpg_death_servants'):
+                from arena_summons import undead_active
+                score += 45 if kind == 'rpg_death_servants' or not undead_active(actor) else -40
             elif effect.get('target') == 'self' and kind not in ('resource', 'rpg_heal', 'heal_pct'):
                 score += -20 if any(e.get('id') == effect.get('id') for e in actor['effects']) else 12
             elif kind == 'bleed' and not any(e['kind'] == 'bleed' for e in target['effects']):
                 score += 6
-        if sid == 'mana_focus' and actor.get('archclass_id') == 'mage_necromancer' and not actor.get('rpg_state', {}).get('summon'):
-            score += 45
+        if sid == 'mana_focus' and actor.get('archclass_id') == 'mage_necromancer':
+            from arena_summons import undead_active
+            if not undead_active(actor):score += 45
         if sid == 'cult_brood':
             score += 55
         if sid == 'cult_gate' and 'arch_cultist_yog' in actor['loadout'] and not any(

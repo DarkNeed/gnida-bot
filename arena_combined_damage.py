@@ -29,9 +29,9 @@ def incoming_group(data, released, skills):
     }
     saved = []
     counts = target_counts(released, skills)
-    if data.get('unified_version') == 3 and any(key.startswith('brood:') for key in counts):
-        from arena_summons import troop
-        fighters = {**fighters, **troop(data)}
+    if data.get('unified_version') == 3:
+        from arena_summons import troop, is_key
+        if any(is_key(key) for key in counts):fighters = {**fighters, **troop(data)}
     for key, count in counts.items():
         if key not in fighters:
             continue

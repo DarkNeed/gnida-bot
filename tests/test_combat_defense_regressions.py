@@ -20,6 +20,54 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DefenseRegressions(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'),'Node required')
+    def test_guild_dragon_replay_damage_matches_the_visible_contacts(self):
+        import arena_unified_queue as queue
+        from arena_encounters import create_encounter
+        from arena_engine import FIGHTER_CLASSES
+        from arena_guild_rules import mob_templates,MONSTERS
+        from arena_raid_engine import BOSS_SKILLS
+        skills={**BUILTIN_SKILLS,**BOSS_SKILLS}
+        for mid in ('dragon','ancient'):
+            for mode in ('dodge','block'):
+                for sid in MONSTERS[mid]['skills']:
+                    with self.subTest(monster=mid,mode=mode,skill=sid):
+                        templates=mob_templates(dict(rank=MONSTERS[mid]['rank'],kind='hunt',monsters=[mid]),dict(kind='boss'),1)
+                        data=create_encounter([dict(actor_id=10,fighter_id=10,personal=True,slave_owner=10)],
+                            [dict(slave_id=10,owner_id=10,class_id='warrior',level=20)],FIGHTER_CLASSES,skills,templates,10)
+                        data.update(unified_version=3,_cast_queue=dict(time=1,round=1))
+                        enemy=data['enemies']['e1'];enemy['guild_monster']=mid
+                        player=data['players']['10']['fighter'];player.update(hp=10000,defense_mode=mode)
+                        player['stats']['max_hp']=10000
+                        cast=dict(source='e1',fighter=deepcopy(enemy),intent=dict(skill=sid,targets=['10']))
+                        data['_queue_wait']=dict(attacks={},released=[cast],guards={})
+                        stage,=queue.stages(data,'10',skills)
+                        stage['members'][0]['seed']=17
+                        self.assertTrue(stage['members'][0]['fixed_contact_reference'])
+                        proof=dict(ticks=math.ceil(stage['duration']*120-1e-7),inputs=[])
+                        expected=json.loads(subprocess.check_output(['node','tests/qte_combined_trace.cjs'],cwd=ROOT,
+                            input=json.dumps(dict(stage=stage,proof=proof,withDamage=True)).encode()))
+                        result=replay(stage,proof,stage['duration'])
+                        queue.record_result(data,stage,result)
+                        _land(data,[cast],data['_queue_wait']['guards'],skills,random.Random(8))
+                        self.assertEqual(10000-player['hp'],sum(c['damage'] for c in expected['e1']))
+                        # A clean defense never receives damage or an on-hit status.
+                        player.update(hp=10000,effects=[])
+                        result=dict(sources={'e1':dict(dodge=[True]*stage['strikes'],pattern_dodge=dict(contacts=[],mode=mode))})
+                        queue.record_result(data,stage,result)
+                        _land(data,[cast],data['_queue_wait']['guards'],skills,random.Random(18))
+                        self.assertEqual(player['hp'],10000)
+                        self.assertFalse(player['effects'])
+
+    def test_encounter_defend_explains_burn_separately(self):
+        from arena_action_queue import _player
+        data=state();data['_cast_queue']=dict(time=1,round=1)
+        p=data['players']['20'];p['selected']='defend';before=p['fighter']['hp']
+        p['fighter']['effects'].append(dict(id='guild_dragon_burn',kind='burn',value=3,duration=2))
+        _player(data,'20',BUILTIN_SKILLS,random.Random(3))
+        self.assertEqual(p['fighter']['hp'],before-3)
+        self.assertIn('горение: −3 HP',data['log'][-1]['text'])
+
     def test_fast_collision_checks_keep_tangencies_and_swept_hits(self):
         from arena_qte_patterns import _segments_within, touches
         # A beam five pixels above a horizontal movement is exactly tangent.
