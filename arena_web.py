@@ -498,7 +498,8 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
 
 
 def create_arena_app(
-    db, bot, token: str, changed=None, raid_changed=None, *, pets_payments_enabled=False, rp_publisher=None, guild_publisher=None
+    db, bot, token: str, changed=None, raid_changed=None, *, pets_payments_enabled=False,
+    rp_publisher=None, guild_publisher=None, report_error=None
 ) -> web.Application:
     member_cache: OrderedDict[tuple[int, int], float] = OrderedDict()
 
@@ -544,10 +545,15 @@ def create_arena_app(
                 },
                 status=413,
             )
-        except web.HTTPException:
+        except web.HTTPException as error:
+            if error.status >= 500 and report_error:
+                report_error("HTTP-сервер мини-приложения", error)
             raise
-        except Exception:
-            logging.exception("Arena request failed: %s", request.path)
+        except Exception as error:
+            if report_error:
+                report_error("HTTP-сервер мини-приложения", error)
+            else:
+                logging.exception("Arena request failed: %s", request.path)
             return web.json_response(
                 {"error": "Ошибка сервера. Попробуйте ещё раз."}, status=500
             )

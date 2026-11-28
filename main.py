@@ -9,9 +9,12 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramAPIError
+from aiogram.types.error_event import ErrorEvent
 from dotenv import load_dotenv
 
+from custom_commands import CUSTOM_COMMAND_OWNER_ID
 from database import Database
+from runtime_diagnostics import ErrorNotifier, MemoryProbe, memory_log_interval
 from handlers.admin_message_blocks import create_admin_message_block_router
 from handlers.franc_events import create_franc_event_router
 from handlers.routes import create_router
@@ -50,6 +53,10 @@ def telegram_updates_limit() -> int:
 
 async def main() -> None:
     load_dotenv()
+    memory_interval = memory_log_interval(getenv("MEMORY_LOG_INTERVAL_SECONDS", "").strip())
+    memory = MemoryProbe() if memory_interval else None
+    if memory:
+        memory.log("before_database")
     token = getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN is missing in .env")
@@ -78,6 +85,8 @@ async def main() -> None:
         )
     database = Database(getenv("DATABASE_PATH", "data/gnida_bot.sqlite3"))
     await database.connect()
+    if memory:
+        memory.log("after_database")
     bot = Bot(token=token)
     try:
         username = (await bot.get_me()).username
@@ -86,9 +95,17 @@ async def main() -> None:
         await bot.session.close()
         raise
     publisher = ArenaPublisher(database, bot, username)
+    errors = ErrorNotifier(bot, CUSTOM_COMMAND_OWNER_ID,
+                           enabled=getenv("ERROR_DM_ENABLED", "1").strip() != "0")
     guild_publisher=GuildPublisher(database,bot,username)
     duel_publisher = QuickDuelPublisher(database, bot)
     dispatcher = Dispatcher()
+
+    async def on_update_error(event: ErrorEvent):
+        errors.report("Обработка обновления Telegram", event.exception)
+        return True
+
+    dispatcher.errors.register(on_update_error)
     # Root middleware counts messages even when another feature handles them.
     # Deliberately not registered on edited_message or channel_post.
     dispatcher.message.outer_middleware(MessageActivityMiddleware(database))
@@ -127,13 +144,15 @@ async def main() -> None:
     arena_task = None
     enterprise_task = None
     duel_task = None
+    memory_task = None
+    error_task = None
 
     async def duel_timeouts():
         while True:
             try:
                 await duel_publisher.sweep()
-            except Exception:
-                logging.exception('Quick duel sweep failed')
+            except Exception as error:
+                errors.report("Фоновая проверка дуэлей", error)
             await asyncio.sleep(5)
 
     async def enterprise_events():
@@ -161,8 +180,8 @@ async def main() -> None:
                         # a blocked PM must never cause re-awards or group spam.
                         logging.info('Expedition notification unavailable: %s',trip['id'])
                     await database.expedition_notified(trip['id'])
-            except Exception:
-                logging.exception('Enterprise event sweep failed')
+            except Exception as error:
+                errors.report("Фоновая проверка предприятий и экспедиций", error)
             await asyncio.sleep(5)
 
     async def arena_timeouts() -> None:
@@ -208,19 +227,34 @@ async def main() -> None:
                                 visit["chat_id"],
                                 error,
                             )
-            except Exception:
-                logging.exception("Arena timeout sweep failed")
+            except Exception as error:
+                errors.report("Фоновая проверка арены, рейдов и гильдии", error)
             await asyncio.sleep(5)
 
     logging.info("GnidaBot is starting (max %d Telegram update handlers)", updates_limit)
+    loop = asyncio.get_running_loop()
+    previous_error_handler = loop.get_exception_handler()
+
+    def on_task_error(current_loop, context):
+        if isinstance(error := context.get("exception"), Exception):
+            errors.report("Необработанная фоновая задача", error)
+        elif previous_error_handler is None:
+            current_loop.default_exception_handler(context)
+        else:
+            previous_error_handler(current_loop, context)
+
+    loop.set_exception_handler(on_task_error)
     try:
+        if errors.enabled:
+            error_task = asyncio.create_task(errors.run())
         if webapp_url:
             port = int(getenv("PORT") or getenv("WEBAPP_PORT") or "8080")
             if not 1 <= port <= 65535:
                 raise RuntimeError("PORT must be between 1 and 65535")
             runner = web.AppRunner(
                 create_arena_app(database, bot, token, publisher.changed, publisher.raid_changed,
-                                 pets_payments_enabled=pets_payments_enabled, rp_publisher=publisher.raids,guild_publisher=guild_publisher)
+                                 pets_payments_enabled=pets_payments_enabled, rp_publisher=publisher.raids,
+                                 guild_publisher=guild_publisher, report_error=errors.report)
             )
             await runner.setup()
             await web.TCPSite(runner, "0.0.0.0", port).start()
@@ -228,6 +262,9 @@ async def main() -> None:
         arena_task = asyncio.create_task(arena_timeouts())
         enterprise_task = asyncio.create_task(enterprise_events())
         duel_task = asyncio.create_task(duel_timeouts())
+        if memory:
+            memory.log("ready")
+            memory_task = asyncio.create_task(memory.run(memory_interval))
         await dispatcher.start_polling(
             bot,
             allowed_updates=dispatcher.resolve_used_update_types(),
@@ -236,7 +273,19 @@ async def main() -> None:
             # Telegram calls must not leave an unlimited backlog in Python.
             tasks_concurrency_limit=updates_limit,
         )
+    except Exception as error:
+        errors.report("Остановка бота из-за ошибки", error)
+        if error_task:
+            try:
+                await asyncio.wait_for(errors.queue.join(), timeout=5)
+            except TimeoutError:
+                pass
+        raise
     finally:
+        loop.set_exception_handler(previous_error_handler)
+        if memory_task:
+            memory_task.cancel()
+            await asyncio.gather(memory_task, return_exceptions=True)
         if duel_task:
             duel_task.cancel()
             await asyncio.gather(duel_task, return_exceptions=True)
@@ -248,6 +297,9 @@ async def main() -> None:
             await asyncio.gather(arena_task, return_exceptions=True)
         if runner:
             await runner.cleanup()
+        if error_task:
+            error_task.cancel()
+            await asyncio.gather(error_task, return_exceptions=True)
         await database.close()
         await bot.session.close()
 
