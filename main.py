@@ -28,6 +28,7 @@ from handlers.character_grants import create_character_grant_router
 from handlers.pet_grants import create_pet_grant_router
 from handlers.enterprises import create_enterprise_router, sweep_recovery_events
 from handlers.rp import create_rp_router
+from handlers.runtime_diagnostics import create_runtime_diagnostics_router
 from handlers.guild import create_guild_router,GuildPublisher
 from handlers.kingdom import create_kingdom_router
 from handlers.slave_finance import sweep_finance, create_finance_router
@@ -54,9 +55,11 @@ def telegram_updates_limit() -> int:
 async def main() -> None:
     load_dotenv()
     memory_interval = memory_log_interval(getenv("MEMORY_LOG_INTERVAL_SECONDS", "").strip())
-    memory = MemoryProbe() if memory_interval else None
-    if memory:
+    memory = MemoryProbe()
+    if memory_interval:
         memory.log("before_database")
+    else:
+        memory.capture()
     token = getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN is missing in .env")
@@ -85,7 +88,7 @@ async def main() -> None:
         )
     database = Database(getenv("DATABASE_PATH", "data/gnida_bot.sqlite3"))
     await database.connect()
-    if memory:
+    if memory_interval:
         memory.log("after_database")
     bot = Bot(token=token)
     try:
@@ -109,6 +112,7 @@ async def main() -> None:
     # Root middleware counts messages even when another feature handles them.
     # Deliberately not registered on edited_message or channel_post.
     dispatcher.message.outer_middleware(MessageActivityMiddleware(database))
+    dispatcher.include_router(create_runtime_diagnostics_router(memory))
     dispatcher.include_router(create_admin_menu_router(database))
     dispatcher.include_router(create_character_grant_router(database, username))
     dispatcher.include_router(create_pet_grant_router(database, username))
@@ -262,7 +266,7 @@ async def main() -> None:
         arena_task = asyncio.create_task(arena_timeouts())
         enterprise_task = asyncio.create_task(enterprise_events())
         duel_task = asyncio.create_task(duel_timeouts())
-        if memory:
+        if memory_interval:
             memory.log("ready")
             memory_task = asyncio.create_task(memory.run(memory_interval))
         await dispatcher.start_polling(

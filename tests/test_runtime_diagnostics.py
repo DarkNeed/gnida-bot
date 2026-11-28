@@ -9,9 +9,11 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
 from arena_web import create_arena_app
+from handlers.runtime_diagnostics import CUSTOM_COMMAND_OWNER_ID, create_runtime_diagnostics_router
 from runtime_diagnostics import ErrorNotifier, MemoryProbe, memory_log_interval
 
 
@@ -66,6 +68,54 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
                 await probe.run(60)
         self.assertEqual(timeline, [10, 20, 30, 60])
         self.assertEqual([call.args[0] for call in log.call_args_list], ['warmup', 'warmup', 'periodic'])
+
+    async def test_private_summary_compares_with_start_and_previous_peak(self):
+        probe = MemoryProbe()
+        unit = 1024 * 1024
+        with patch.object(probe, "sample", side_effect=[
+            dict(rss=100 * unit, cg_current=120 * unit),
+            dict(rss=600 * unit, cg_current=905 * unit),
+            dict(rss=500 * unit, cg_current=800 * unit, cg_oom_kill=2),
+        ]):
+            probe.capture()
+            probe.capture()
+            report = probe.telegram_summary()
+        self.assertIn("500.0 МиБ (+400.0 со старта) · пик по замерам 600.0", report)
+        self.assertIn("800.0 МиБ (+680.0 со старта) · пик по замерам 905.0", report)
+        self.assertIn("(OOM): 2", report)
+        with patch.object(probe, "sample", return_value={}):
+            self.assertIn("не открыл системные счётчики", probe.telegram_summary())
+
+    async def test_command_is_only_for_owner_in_private_chat(self):
+        probe = Mock(telegram_summary=Mock(return_value="only the owner should see this"))
+        dispatcher = Dispatcher()
+        dispatcher.include_router(create_runtime_diagnostics_router(probe))
+        bot = Bot(token="1:test")
+        serial = 0
+
+        async def update(actor, chat_type, text):
+            nonlocal serial
+            serial += 1
+            return await dispatcher.feed_update(bot, Update.model_validate(dict(
+                update_id=serial, message={
+                    "message_id": serial, "date": 1, "text": text,
+                    "chat": {"id": actor if chat_type == "private" else -1001, "type": chat_type},
+                    "from": {"id": actor, "is_bot": False, "first_name": "Example"},
+                })))
+
+        try:
+            with patch.object(Bot, "__call__", autospec=True, return_value=None) as request:
+                await update(CUSTOM_COMMAND_OWNER_ID + 1, "private", "/память")
+                await update(CUSTOM_COMMAND_OWNER_ID, "supergroup", "/memory")
+                await update(CUSTOM_COMMAND_OWNER_ID, "private", "/память")
+                await update(CUSTOM_COMMAND_OWNER_ID, "private", "/memory")
+                self.assertEqual(request.await_count, 2)
+                self.assertTrue(all(call.args[1].chat_id == CUSTOM_COMMAND_OWNER_ID
+                                    and call.args[1].text == "only the owner should see this"
+                                    for call in request.await_args_list))
+            self.assertEqual(probe.telegram_summary.call_count, 2)
+        finally:
+            await bot.session.close()
 
 
 class ErrorTests(unittest.IsolatedAsyncioTestCase):

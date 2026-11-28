@@ -65,6 +65,8 @@ class MemoryProbe:
         self.proc = proc
         self.cgroup, self.version = _cgroup_memory(proc, cgroup)
         self.started = time.monotonic()
+        self.initial = {}
+        self.peaks = {}
 
     def sample(self):
         status = _fields(_read(self.proc / "status"), proc=True)
@@ -89,9 +91,49 @@ class MemoryProbe:
         result.update(cg_oom=events.get("oom"), cg_oom_kill=events.get("oom_kill"))
         return result
 
+    def capture(self):
+        values = self.sample()
+        for key in ("rss", "rss_anon", "cg_current", "cg_anon", "cg_file"):
+            if (value := values.get(key)) is not None:
+                self.initial.setdefault(key, value)
+                self.peaks[key] = max(value, self.peaks.get(key, value))
+        return values
+
+    def telegram_summary(self):
+        values = self.capture()
+        minutes, seconds = divmod(int(time.monotonic() - self.started), 60)
+        lines = ["📊 Память Гнида-бота", f"После запуска: {minutes} мин {seconds} с"]
+        scale = 1024 * 1024
+
+        def metric(key, label, *, peak=False):
+            value = values.get(key)
+            if value is None:
+                return
+            line = f"{label}: {value / scale:.1f} МиБ"
+            if key in self.initial:
+                line += f" ({(value - self.initial[key]) / scale:+.1f} со старта)"
+            if peak:
+                line += f" · пик по замерам {self.peaks[key] / scale:.1f}"
+            lines.append(line)
+
+        metric("rss", "Процесс Python (RSS)", peak=True)
+        metric("rss_anon", "Анонимная память Python")
+        metric("cg_current", "Всего в контейнере", peak=True)
+        metric("cg_anon", "Анонимная память контейнера")
+        metric("cg_file", "Память файлов контейнера (включая кэш)")
+        metric("cg_limit", "Лимит контейнера")
+        if (kills := values.get("cg_oom_kill")) is not None:
+            lines.append(f"Завершений из-за нехватки памяти (OOM): {kills}")
+        if len(lines) == 2:
+            lines.append("Хостинг не открыл системные счётчики памяти.")
+        elif values.get("cg_current") is None:
+            lines.append("Общий счётчик контейнера недоступен.")
+        lines.append(f"Задач asyncio: {len(asyncio.all_tasks())}")
+        return "\n".join(lines)
+
     def log(self, stage):
         fields = []
-        for name, value in self.sample().items():
+        for name, value in self.capture().items():
             if value is None:
                 continue
             if name in ("cg_oom", "cg_oom_kill"):
