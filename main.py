@@ -20,7 +20,8 @@ from handlers.franc_events import create_franc_event_router
 from handlers.routes import create_router
 from handlers.message_activity import MessageActivityMiddleware, create_message_activity_router
 from handlers.arena import ArenaPublisher, create_arena_router
-from arena_web import create_arena_app
+from arena_web import ROOT as ARENA_WEB_ROOT, create_arena_app
+from runtime_cache_pressure import FileCachePressure, supported as cache_pressure_supported
 from arena_links import arena_link
 from handlers.pets import create_pet_router
 from handlers.admin_menu import create_admin_menu_router
@@ -55,7 +56,8 @@ def telegram_updates_limit() -> int:
 async def main() -> None:
     load_dotenv()
     memory_interval = memory_log_interval(getenv("MEMORY_LOG_INTERVAL_SECONDS", "").strip())
-    memory = MemoryProbe()
+    database_path = getenv("DATABASE_PATH", "data/gnida_bot.sqlite3")
+    memory = MemoryProbe(database=database_path)
     if memory_interval:
         memory.log("before_database")
     else:
@@ -86,8 +88,11 @@ async def main() -> None:
         raise RuntimeError(
             "WEBAPP_URL must be the public HTTPS address of this Python service"
         )
-    database = Database(getenv("DATABASE_PATH", "data/gnida_bot.sqlite3"))
+    database = Database(database_path)
     await database.connect()
+    cache_pressure = (FileCachePressure(memory, database.path, ARENA_WEB_ROOT / "assets")
+                      if getenv("FILE_CACHE_PRESSURE_RELIEF", "1").strip() != "0"
+                      and cache_pressure_supported(memory) else None)
     if memory_interval:
         memory.log("after_database")
     bot = Bot(token=token)
@@ -149,6 +154,7 @@ async def main() -> None:
     enterprise_task = None
     duel_task = None
     memory_task = None
+    cache_task = None
     error_task = None
 
     async def duel_timeouts():
@@ -192,9 +198,9 @@ async def main() -> None:
         last_merchant_sweep = float("-inf")
         while True:
             try:
-                for battle in await database.arena_expire():
+                for battle in await database.arena_expire(compact=True):
                     await publisher.changed(battle["token"])
-                for raid in await database.arena_raid_expire():
+                for raid in await database.arena_raid_expire(compact=True):
                     await publisher.raid_changed(raid["token"])
                 await publisher.raids.retry_pending()
                 await guild_publisher.sweep()
@@ -258,7 +264,8 @@ async def main() -> None:
             runner = web.AppRunner(
                 create_arena_app(database, bot, token, publisher.changed, publisher.raid_changed,
                                  pets_payments_enabled=pets_payments_enabled, rp_publisher=publisher.raids,
-                                 guild_publisher=guild_publisher, report_error=errors.report)
+                                 guild_publisher=guild_publisher, report_error=errors.report,
+                                 record_asset=cache_pressure.record_asset if cache_pressure else None)
             )
             await runner.setup()
             await web.TCPSite(runner, "0.0.0.0", port).start()
@@ -269,6 +276,8 @@ async def main() -> None:
         if memory_interval:
             memory.log("ready")
             memory_task = asyncio.create_task(memory.run(memory_interval))
+        if cache_pressure:
+            cache_task = asyncio.create_task(cache_pressure.run())
         await dispatcher.start_polling(
             bot,
             allowed_updates=dispatcher.resolve_used_update_types(),
@@ -290,6 +299,9 @@ async def main() -> None:
         if memory_task:
             memory_task.cancel()
             await asyncio.gather(memory_task, return_exceptions=True)
+        if cache_task:
+            cache_task.cancel()
+            await asyncio.gather(cache_task, return_exceptions=True)
         if duel_task:
             duel_task.cancel()
             await asyncio.gather(duel_task, return_exceptions=True)

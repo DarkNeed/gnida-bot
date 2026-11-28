@@ -499,7 +499,7 @@ async def _menu_view(db, chat: int, actor: int) -> dict:
 
 def create_arena_app(
     db, bot, token: str, changed=None, raid_changed=None, *, pets_payments_enabled=False,
-    rp_publisher=None, guild_publisher=None, report_error=None
+    rp_publisher=None, guild_publisher=None, report_error=None, record_asset=None
 ) -> web.Application:
     member_cache: OrderedDict[tuple[int, int], float] = OrderedDict()
 
@@ -564,6 +564,8 @@ def create_arena_app(
             # with a freshly deployed server. Keep image/audio caching unchanged.
             response.headers["Cache-Control"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
+        if record_asset and isinstance(response, web.FileResponse) and request.method == "GET":
+            record_asset(request.path)
         return response
 
     app = web.Application(middlewares=[guard], client_max_size=64 * 1024)

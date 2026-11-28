@@ -55,6 +55,10 @@ ARENA_PREPARATION_SECONDS = 3 * 60 * 60
 ARENA_TURN_SECONDS = 2 * 60
 ARENA_FEE_PERCENT = 10
 COMBAT_SLAVE_CAPACITY = 5
+_ARENA_DUE_KEYS = """SELECT id FROM arena_battles INDEXED BY idx_arena_live_deadline
+    WHERE mode<>'wasteland' AND status IN ('pending','active') AND deadline<=?
+    UNION SELECT id FROM arena_battles INDEXED BY idx_arena_unpublished
+    WHERE mode<>'wasteland' AND status IN ('pending','active') AND message_id IS NULL AND created_at<=?"""
 
 
 def utc_timestamp() -> int:
@@ -141,6 +145,12 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 created_at INTEGER NOT NULL, deadline INTEGER NOT NULL, finished_at INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_arena_active ON arena_battles(chat_id,status,deadline);
+            CREATE INDEX IF NOT EXISTS idx_arena_live_deadline ON arena_battles(deadline)
+                WHERE mode<>'wasteland' AND status IN ('pending','active');
+            CREATE INDEX IF NOT EXISTS idx_arena_unpublished ON arena_battles(created_at)
+                WHERE mode<>'wasteland' AND status IN ('pending','active') AND message_id IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_arena_live_state ON arena_battles(id)
+                WHERE status='active' AND state_json IS NOT NULL;
             CREATE TABLE IF NOT EXISTS arena_combat_slots (
                 chat_id INTEGER NOT NULL, owner_id INTEGER NOT NULL,
                 slave_id INTEGER NOT NULL, slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 5),
@@ -203,9 +213,13 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
         self._connect_global_arena()
         self._connect_characters()
         # Upgrade live battles once. Restarting must never renew a PvP deadline.
-        for raw in self.connection.execute(
-            "SELECT id,mode,state_json FROM arena_battles WHERE status='active' AND state_json IS NOT NULL"
-        ).fetchall():
+        live_ids = self.connection.execute(
+            """SELECT id FROM arena_battles INDEXED BY idx_arena_live_state
+               WHERE status='active' AND state_json IS NOT NULL"""
+        ).fetchall()
+        for key in live_ids:
+            raw = self.connection.execute("SELECT id,mode,state_json FROM arena_battles WHERE id=?",
+                                          (key["id"],)).fetchone()
             state = json.loads(raw["state_json"])
             timer = 0 if raw["mode"] == "wasteland" else ARENA_TURN_SECONDS
             if state.get("turn_timer_seconds") != timer:
@@ -1292,14 +1306,14 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 raise
             return self._arena_row_locked(token)
 
-    def _arena_expire_locked(self) -> list[dict]:
+    def _arena_expire_locked(self, *, compact=True) -> list[dict]:
         # Expiry can finish a ranked duel, award XP and refund escrow. Keep
         # these changes atomic even when triggered by a read/another offer.
         if not self.connection.in_transaction:
             self.connection.execute("BEGIN")
         self.connection.execute("SAVEPOINT arena_expiry")
         try:
-            result = self._arena_expire_rows_locked()
+            result = self._arena_expire_rows_locked(compact=compact)
         except Exception:
             self.connection.execute("ROLLBACK TO arena_expiry")
             self.connection.execute("RELEASE arena_expiry")
@@ -1307,14 +1321,15 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
         self.connection.execute("RELEASE arena_expiry")
         return result
 
-    def _arena_expire_rows_locked(self) -> list[dict]:
+    def _arena_expire_rows_locked(self, *, compact=True) -> list[dict]:
         self._qte_expire_locked('battle')
         expired = []
         now = utc_timestamp()
-        for raw in self.connection.execute(
-            "SELECT * FROM arena_battles WHERE mode<>'wasteland' AND status IN ('pending','active') AND (deadline<=? OR (message_id IS NULL AND created_at<=?))",
-            (now, now - 60),
-        ).fetchall():
+        due_ids = sorted(r["id"] for r in self.connection.execute(_ARENA_DUE_KEYS, (now, now - 60)))
+        for battle_id in due_ids:
+            raw = self.connection.execute("SELECT * FROM arena_battles WHERE id=?", (battle_id,)).fetchone()
+            if raw is None or raw["status"] not in ("pending", "active"):
+                continue
             row = dict(raw)
             invalid_owner = row["mode"] == "slaves" and any(
                 row[k + "_fighter"]
@@ -1332,7 +1347,7 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 if state.get('unified_version') == 3:
                     from arena_unified_store import expire
                     expire(self, 'battle', row, state)
-                    expired.append(self._arena_row_locked(row['token']))
+                    expired.append(dict(token=row["token"]) if compact else self._arena_row_locked(row["token"]))
                     continue
                 expired_side = state["active_side"]
                 skip_turn(state)
@@ -1353,12 +1368,12 @@ class ArenaMixin(ArenaMarketMixin, MirrorMixin, RaidMixin, PetMixin, GlobalArena
                 )
             else:
                 self._arena_refund_locked(row, "expired")
-            expired.append(self._arena_row_locked(row["token"]))
+            expired.append(dict(token=row["token"]) if compact else self._arena_row_locked(row["token"]))
         return expired
 
-    async def arena_expire(self) -> list[dict]:
+    async def arena_expire(self, *, compact=False) -> list[dict]:
         async with self._lock:
-            result = self._arena_expire_locked()
+            result = self._arena_expire_locked(compact=compact)
             self.connection.commit()
             return result
 

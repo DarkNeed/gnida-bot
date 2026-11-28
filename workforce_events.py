@@ -33,6 +33,7 @@ class WorkforceMixin(SlaveryNoticesMixin):
                 revision INTEGER NOT NULL DEFAULT 0,data TEXT NOT NULL,
                 notified INTEGER NOT NULL DEFAULT 0);
             CREATE INDEX IF NOT EXISTS workforce_open ON workforce_events(status,deadline);
+            CREATE INDEX IF NOT EXISTS workforce_estate_status ON workforce_events(chat,owner,status);
             CREATE TABLE IF NOT EXISTS workforce_rolls(owner INTEGER NOT NULL,day INTEGER NOT NULL,PRIMARY KEY(owner,day));
             CREATE TABLE IF NOT EXISTS workforce_agreements(
                 chat INTEGER NOT NULL,owner INTEGER NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(chat,owner));
@@ -148,7 +149,7 @@ class WorkforceMixin(SlaveryNoticesMixin):
         if event['worker_type']=='npc':
             self.connection.execute("UPDATE fictional_workers SET status='missing',revision=revision+1 WHERE id=?",(event['worker'],))
 
-    def _workforce_tick_locked(self, chat, owner):
+    def _workforce_tick_locked(self, chat, owner, *, return_risk=False):
         stamp=now()
         for e in self.connection.execute("SELECT * FROM workforce_events WHERE chat=? AND owner=? AND status='cancelled' AND json_extract(data,'$.bounty')>0 AND COALESCE(json_extract(data,'$.bounty_paid'),0)=0",(chat,owner)).fetchall():
             self._workforce_pay_bounty_locked(e,owner)
@@ -166,7 +167,8 @@ class WorkforceMixin(SlaveryNoticesMixin):
         elif json.loads(warning['reason'])!=risk['reasons']:
             self.connection.execute('UPDATE workforce_warnings SET reason=? WHERE chat=? AND owner=?',
                 (json.dumps(risk['reasons'],ensure_ascii=False),chat,owner))
-        for event in self.connection.execute("SELECT * FROM workforce_events WHERE chat=? AND owner=? AND status IN ('open','playing','search')",(chat,owner)).fetchall():
+        events=self.connection.execute("SELECT * FROM workforce_events WHERE chat=? AND owner=? AND status IN ('open','playing','search')",(chat,owner)).fetchall()
+        for event in events:
             p=json.loads(event['data'])
             if not self._workforce_valid_locked(event):self._workforce_finish_locked(event,False)
             elif event['status']=='search' and p['search_ends']<=stamp:
@@ -178,6 +180,8 @@ class WorkforceMixin(SlaveryNoticesMixin):
             elif event['deadline']<=stamp:self._workforce_finish_locked(event,False)
             elif event['status']=='playing' and p['game_ends']<=stamp:
                 self.connection.execute("UPDATE workforce_events SET status='open',revision=revision+1 WHERE id=?",(event['id'],))
+        if return_risk:
+            return self._workforce_risk_locked(chat,owner) if events else risk
 
     def _workforce_roll_locked(self, rng=None):
         rng=rng or random.SystemRandom();stamp=now();day=(stamp+3*HOUR)//DAY
@@ -187,10 +191,9 @@ class WorkforceMixin(SlaveryNoticesMixin):
         for a in accounts:
             if not self._feature_enabled_locked(a['chat'],'slavery'):continue
             self._enterprise_settle_owner_locked(a['chat'],a['owner'],stamp)
-            self._workforce_tick_locked(a['chat'],a['owner'])
-            risk=self._workforce_risk_locked(a['chat'],a['owner'])
+            risk=self._workforce_tick_locked(a['chat'],a['owner'],return_risk=True)
             warning=self.connection.execute("SELECT * FROM workforce_warnings WHERE chat=? AND owner=? AND status='warning'",(a['chat'],a['owner'])).fetchone()
-            if warning and warning['deadline'] and warning['deadline']<=stamp and risk['tier']:
+            if warning and warning['deadline'] and warning['deadline']<=stamp and risk and risk['tier']:
                 grouped.setdefault(a['owner'],[]).append((a['chat'],risk))
         for owner,choices in grouped.items():
             # One daily chance for the account, not one lottery per chat/refresh.

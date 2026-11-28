@@ -26,6 +26,43 @@ def _number(value):
         return None
 
 
+def _size(path):
+    try:
+        return path.stat().st_size
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        return None
+
+
+def _windows_memory():
+    # PrivateUsage is commit, not resident anonymous pages; expose separately.
+    import ctypes
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("page_faults", wintypes.DWORD)] + [
+            (name, ctypes.c_size_t) for name in (
+                "peak_working", "working", "peak_paged", "paged",
+                "peak_nonpaged", "nonpaged", "pagefile", "peak_pagefile", "private")
+        ]
+
+    try:
+        self_handle = ctypes.windll.kernel32.GetCurrentProcess
+        self_handle.argtypes = []
+        self_handle.restype = wintypes.HANDLE
+        get_info = ctypes.windll.psapi.GetProcessMemoryInfo
+        get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+        get_info.restype = wintypes.BOOL
+        counters = Counters()
+        counters.cb = ctypes.sizeof(counters)
+        if get_info(self_handle(), ctypes.byref(counters), counters.cb):
+            return dict(rss=counters.working, private_commit=counters.private)
+    except (AttributeError, OSError):
+        pass
+    return {}
+
+
 def _fields(text, *, proc=False):
     result = {}
     for line in text.splitlines():
@@ -61,9 +98,10 @@ def _cgroup_memory(proc, root):
 
 
 class MemoryProbe:
-    def __init__(self, proc=Path("/proc/self"), cgroup=Path("/sys/fs/cgroup")):
+    def __init__(self, proc=Path("/proc/self"), cgroup=Path("/sys/fs/cgroup"), *, database=None):
         self.proc = proc
         self.cgroup, self.version = _cgroup_memory(proc, cgroup)
+        self.database = Path(database) if database is not None else None
         self.started = time.monotonic()
         self.initial = {}
         self.peaks = {}
@@ -71,13 +109,19 @@ class MemoryProbe:
     def sample(self):
         status = _fields(_read(self.proc / "status"), proc=True)
         result = dict(rss=status.get("VmRSS"), rss_anon=status.get("RssAnon"))
+        if result["rss"] is None and os.name == "nt" and self.proc == Path("/proc/self"):
+            result.update(_windows_memory())
+        if self.database is not None:
+            result.update(db_size=_size(self.database),
+                          db_wal_size=_size(self.database.with_name(self.database.name + "-wal")))
         if self.cgroup is None:
             return result
         base = self.cgroup
         stats = _fields(_read(base / "memory.stat"))
         if self.version == 2:
             result.update(cg_anon=stats.get("anon"), cg_file=stats.get("file"),
-                          cg_shmem=stats.get("shmem"),
+                          cg_shmem=stats.get("shmem"), cg_file_inactive=stats.get("inactive_file"),
+                          cg_file_dirty=stats.get("file_dirty"),
                           cg_current=_number(_read(base / "memory.current").strip()),
                           cg_limit=_number(_read(base / "memory.max").strip()))
         else:
@@ -85,15 +129,21 @@ class MemoryProbe:
             result.update(cg_anon=stats.get("total_rss", stats.get("rss")),
                           cg_file=stats.get("total_cache", stats.get("cache")),
                           cg_shmem=stats.get("total_shmem", stats.get("shmem")),
+                          cg_file_inactive=stats.get("total_inactive_file", stats.get("inactive_file")),
+                          cg_file_dirty=stats.get("total_dirty", stats.get("dirty")),
                           cg_current=_number(_read(base / "memory.usage_in_bytes").strip()),
                           cg_limit=limit if limit is not None and limit < (1 << 60) else None)
         events = _fields(_read(base / ("memory.events" if self.version == 2 else "memory.oom_control")))
-        result.update(cg_oom=events.get("oom"), cg_oom_kill=events.get("oom_kill"))
+        if result["cg_current"] is not None and result["cg_file_inactive"] is not None:
+            result["cg_working_estimate"] = max(0, result["cg_current"] - result["cg_file_inactive"])
+        result.update(cg_oom=events.get("oom"), cg_oom_kill=events.get("oom_kill"),
+                      cg_limit_events=events.get("max"))
         return result
 
     def capture(self):
         values = self.sample()
-        for key in ("rss", "rss_anon", "cg_current", "cg_anon", "cg_file"):
+        for key in ("rss", "rss_anon", "private_commit", "cg_current", "cg_anon", "cg_file",
+                    "db_size", "db_wal_size"):
             if (value := values.get(key)) is not None:
                 self.initial.setdefault(key, value)
                 self.peaks[key] = max(value, self.peaks.get(key, value))
@@ -118,16 +168,25 @@ class MemoryProbe:
 
         metric("rss", "Процесс Python (RSS)", peak=True)
         metric("rss_anon", "Анонимная память Python")
+        metric("private_commit", "Частная выделенная память Python (Windows)")
         metric("cg_current", "Всего в контейнере", peak=True)
         metric("cg_anon", "Анонимная память контейнера")
         metric("cg_file", "Память файлов контейнера (включая кэш)")
+        metric("cg_file_inactive", "Неактивная файловая память")
+        metric("cg_shmem", "tmpfs / общая память (входит в файловую)")
+        metric("cg_file_dirty", "Не записанные на диск файловые страницы")
+        metric("cg_working_estimate", "Контейнер без неактивных файловых страниц (оценка)")
         metric("cg_limit", "Лимит контейнера")
+        if (hits := values.get("cg_limit_events")) is not None:
+            lines.append(f"Попыток выделения памяти на границе лимита: {hits}")
         if (kills := values.get("cg_oom_kill")) is not None:
             lines.append(f"Завершений из-за нехватки памяти (OOM): {kills}")
         if len(lines) == 2:
             lines.append("Хостинг не открыл системные счётчики памяти.")
-        elif values.get("cg_current") is None:
+        elif values.get("cg_current") is None and values.get("private_commit") is None:
             lines.append("Общий счётчик контейнера недоступен.")
+        metric("db_size", "Файл SQLite на диске")
+        metric("db_wal_size", "Журнал SQLite WAL на диске")
         lines.append(f"Задач asyncio: {len(asyncio.all_tasks())}")
         return "\n".join(lines)
 
@@ -136,7 +195,7 @@ class MemoryProbe:
         for name, value in self.capture().items():
             if value is None:
                 continue
-            if name in ("cg_oom", "cg_oom_kill"):
+            if name in ("cg_oom", "cg_oom_kill", "cg_limit_events"):
                 fields.append(f"{name}={value}")
             else:
                 fields.append(f"{name}_mib={value / (1024 * 1024):.1f}")

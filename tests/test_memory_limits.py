@@ -1,10 +1,14 @@
 import json
 import os
 import sqlite3
+from tempfile import TemporaryDirectory
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
 from arena_qte_live import ArenaQteMixin, _QTE_DUE_KEYS
+from arena_store import _ARENA_DUE_KEYS
+from database import Database
 from main import telegram_updates_limit
 
 
@@ -19,6 +23,35 @@ class TelegramLimitsTests(unittest.TestCase):
             with self.subTest(value=value), patch.dict(os.environ,TELEGRAM_UPDATES_LIMIT=value):
                 with self.assertRaisesRegex(RuntimeError,"TELEGRAM_UPDATES_LIMIT"):
                     telegram_updates_limit()
+
+
+class ArenaSweepMemoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_due_keys_use_partial_indexes_without_selecting_history(self):
+        with TemporaryDirectory() as temp:
+            db = Database(Path(temp) / "history.sqlite3")
+            await db.connect()
+            try:
+                conn = db.connection
+                conn.executemany("""INSERT INTO arena_battles(token,chat_id,message_id,mode,a_owner,b_owner,
+                    status,created_at,deadline) VALUES(?,1,1,'personal',10,20,'finished',1,20)""",
+                                 [(f"old-{i}",) for i in range(2000)])
+                conn.executemany("""INSERT INTO arena_battles(token,chat_id,message_id,mode,a_owner,b_owner,
+                    status,created_at,deadline) VALUES(?,1,?,'personal',10,20,'pending',?,?)""",
+                                 [("due", 1, 95, 99), ("both", None, 1, 98),
+                                  ("orphan", None, 1, 150), ("notdue", None, 98, 150)])
+                conn.commit()
+                plan = [r['detail'] for r in conn.execute("EXPLAIN QUERY PLAN " + _ARENA_DUE_KEYS, (100, 40))]
+                self.assertTrue(any('idx_arena_live_deadline' in row for row in plan), plan)
+                self.assertTrue(any('idx_arena_unpublished' in row for row in plan), plan)
+                with patch("arena_store.utc_timestamp", return_value=100):
+                    changed = await db.arena_expire(compact=True)
+                    self.assertEqual((await db.arena_get("notdue"))["status"], "pending")
+                self.assertEqual(changed, [dict(token="due"), dict(token="both"), dict(token="orphan")])
+                self.assertEqual((await db.arena_get("due"))["status"], "expired")
+                self.assertEqual((await db.arena_get("orphan"))["status"], "cancelled")
+                self.assertEqual(conn.execute('PRAGMA journal_size_limit').fetchone()[0], 8*1024*1024)
+            finally:
+                await db.close()
 
 
 class QteSweepTests(unittest.TestCase):

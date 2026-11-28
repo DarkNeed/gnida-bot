@@ -69,6 +69,14 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(timeline, [10, 20, 30, 60])
         self.assertEqual([call.args[0] for call in log.call_args_list], ['warmup', 'warmup', 'periodic'])
 
+    @unittest.skipUnless(os.name == 'nt', 'requires Windows process counters')
+    async def test_windows_exposes_real_process_rss_and_private_commit(self):
+        probe = MemoryProbe()
+        snapshot = probe.sample()
+        self.assertGreater(snapshot['rss'], 0)
+        self.assertGreater(snapshot['private_commit'], 0)
+        self.assertIn('Частная выделенная память Python (Windows)', probe.telegram_summary())
+
     async def test_private_summary_compares_with_start_and_previous_peak(self):
         probe = MemoryProbe()
         unit = 1024 * 1024

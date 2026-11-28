@@ -113,6 +113,9 @@ class Database(MessageActivityMixin, LeaderboardsMixin, TransferBatchMixin, Depo
         self._connection = sqlite3.connect(self.path)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA journal_mode=WAL")
+        # Cap leftover WAL allocation after a successful reset. This never
+        # truncates uncheckpointed data or weakens the sync policy.
+        self._connection.execute("PRAGMA journal_size_limit=8388608")
         self._connection.execute("PRAGMA foreign_keys=ON")
         self._connection.executescript(
             """

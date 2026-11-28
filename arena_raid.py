@@ -480,7 +480,7 @@ class RaidMixin:
                                                turn=data['round'], skill='', stages=[incoming], result={},
                                                reaction=True, guard_skill='whaler_punishment'), True)
 
-    def _raid_expire_locked(self):
+    def _raid_expire_locked(self, *, compact=True):
         self._qte_expire_locked('raid')
         changed = []
         now = int(time.time())
@@ -503,22 +503,22 @@ class RaidMixin:
                     "UPDATE arena_raids SET status='cancelled',revision=revision+1,finished_at=? WHERE token=?",
                     (now, row["token"]),
                 )
-                row = self._raid_row_locked(row["token"])
+                row = self._raid_row_locked(row["token"], participants=not compact)
             elif row["status"] == "active" and row["deadline"] <= now:
                 data = json.loads(row['data_json'])
                 if data.get('unified_version') == 3 and not data.get('_queue_wait'):
                     from arena_unified_store import expire
                     expire(self, 'raid', row, data)
                 else:self._raid_resolve_locked(row, data)
-                row = self._raid_row_locked(row["token"])
+                row = self._raid_row_locked(row["token"], participants=not compact)
             if row["revision"] != original["revision"]:
-                changed.append(row)
+                changed.append(dict(token=row["token"]) if compact else row)
         return changed
 
-    async def arena_raid_expire(self):
+    async def arena_raid_expire(self, *, compact=False):
         async with self._lock:
             try:
-                changed = self._raid_expire_locked()
+                changed = self._raid_expire_locked(compact=compact)
                 self.connection.commit()
                 return changed
             except Exception:
